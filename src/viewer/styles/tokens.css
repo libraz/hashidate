@@ -1,0 +1,87 @@
+/*
+ * Design tokens.
+ *
+ * The console is modelled on a broadcast switcher rather than on a web app:
+ * matte near-black panels, hairline rules, tabular numerals, and one backlight
+ * colour doing all the selection work. An operator watches the render, not the
+ * panel, so the panel's job is to be legible in peripheral vision and to never
+ * pull the eye with decoration.
+ *
+ * Two families of colour, deliberately kept apart:
+ *
+ *   --accent   selection and focus. Anything the operator chose.
+ *   --live     the character is speaking. On air, and nothing else.
+ *   --ok / --warn / --bad   measurement. The joint readout owns these, and
+ *                           nothing else may use them, or a green that means
+ *                           "inside natural range" starts also meaning "on".
+ */
+
+:root {
+  /* --- surfaces ---------------------------------------------------------- */
+  --bg: #0f1115;
+  --surface: #15171c;
+  --surface-raised: #1b1e25;
+  --surface-hover: #22262f;
+  --surface-sunken: #101317;
+
+  --line: #272b34;
+  --line-soft: #1e222a;
+
+  /* --- ink --------------------------------------------------------------- */
+  --fg: #dfe2e8;
+  --fg-dim: #8b919e;
+  --fg-faint: #626875;
+
+  /* --- signal ------------------------------------------------------------ */
+  --accent: #7ad3e8;
+  --accent-dim: #4d94a6;
+  --accent-ink: #08171c;
+  /* Selection fill and border, per the rule that a rounded element carries a
+     full border plus a tint rather than a stripe down one side. */
+  --accent-tint: color-mix(in srgb, var(--accent) 10%, var(--surface-raised));
+  --accent-edge: color-mix(in srgb, var(--accent) 34%, var(--line));
+
+  --live: #ff6b4a;
+  --live-tint: color-mix(in srgb, var(--live) 12%, var(--surface-raised));
+
+  --ok: #7fbf8f;
+  --warn: #d8b46a;
+  --bad: #e08a8a;
+
+  /* --- type -------------------------------------------------------------- */
+  --font-sans:
+    "IBM Plex Sans JP", "IBM Plex Sans", -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+
+  --text-xs: 10.5px;
+  --text-sm: 11.5px;
+  --text-md: 12.5px;
+  --text-lg: 14px;
+
+  /* --- metrics ----------------------------------------------------------- */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 20px;
+  --space-8: 28px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  --console-width: 384px;
+  --control-height: 26px;
+
+  /* Fast enough to feel like a switch rather than an animation. */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur: 120ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur: 0ms;
+  }
+}

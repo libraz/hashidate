@@ -1,0 +1,94 @@
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.chip {
+  height: var(--control-height);
+  padding: 0 var(--space-4);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.chip:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
+/*
+ * Chosen by the operator. A full border plus a tint rather than a stripe down
+ * one edge — a straight stripe against a rounded corner is the tell that
+ * something was styled rather than designed.
+ */
+.chip.on {
+  background: var(--accent-tint);
+  border-color: var(--accent-edge);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/*
+ * On screen, but put there by the emotion channel or the autopilot rather than
+ * clicked. Deliberately distinguishable from a selection, because clearing it
+ * is a different action: the operator cannot un-pick something they never
+ * picked. Border and text only, no fill.
+ */
+.chip.auto {
+  border-color: var(--accent-edge);
+  color: var(--accent-dim);
+}
+
+.chip:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* An action rather than a state — 停止, 解除, 再生. Never carries `on`. */
+.chip.action {
+  color: var(--fg-dim);
+  background: transparent;
+}
+
+.chip.action:hover:not(:disabled) {
+  border-color: var(--accent-edge);
+  color: var(--accent);
+  background: transparent;
+}
+
+.chip.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 500;
+}
+
+.chip.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, white);
+  color: var(--accent-ink);
+}
+
+/* The count badge on an overlay chip, and the strain figure on a hand chip. */
+.tag {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+
+.chip.on .tag,
+.chip.auto .tag {
+  color: inherit;
+  opacity: 0.75;
+}

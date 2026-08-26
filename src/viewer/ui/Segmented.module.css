@@ -1,0 +1,60 @@
+/*
+ * Segmented picker.
+ *
+ * Every segment is `flex: 1 1 0` and the track is full width, so the segments
+ * are equal regardless of label length. Width that varies with the label reads
+ * as unpolished next to the platform controls this sits beside, and it is worst
+ * exactly here — "顔" against "バストアップ" differ by a factor of four.
+ */
+
+.track {
+  display: flex;
+  width: 100%;
+  padding: 2px;
+  gap: 2px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+}
+
+.segment {
+  flex: 1 1 0;
+  /* Without this a long label pushes its own segment wider than its siblings,
+     which is the whole thing `flex: 1 1 0` is here to prevent. */
+  min-width: 0;
+  height: calc(var(--control-height) - 4px);
+  padding: 0 var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.segment:hover:not(.on) {
+  color: var(--fg);
+  background: var(--surface-hover);
+}
+
+.segment.on {
+  background: var(--accent-tint);
+  border-color: var(--accent-edge);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.segment:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

@@ -1,0 +1,169 @@
+.console {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* --- header --------------------------------------------------------------- */
+
+.header {
+  flex: 0 0 auto;
+  padding: var(--space-5) var(--space-5) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--fg-dim);
+}
+
+.link {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+
+.linkDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 99px;
+  background: var(--fg-faint);
+}
+
+.link.online {
+  color: var(--accent-dim);
+}
+
+.link.online .linkDot {
+  background: var(--accent);
+}
+
+.author {
+  margin-top: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+
+/* --- toolbar -------------------------------------------------------------- */
+
+.toolbar {
+  flex: 0 0 auto;
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+/* --- tabs ----------------------------------------------------------------- */
+
+.tabs {
+  flex: 0 0 auto;
+  padding: var(--space-4) var(--space-5) 0;
+}
+
+/*
+ * The scrolling region.
+ *
+ * `flex: 1 1 0` with `min-height: 0` rather than a height on the panel: the
+ * console's outer size must not change when a tab with more content is
+ * selected, and reserving the tallest variant's height would leave the short
+ * tabs with a lake of empty space. Fixing the *region* and scrolling inside it
+ * gives a stable container either way.
+ */
+.body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--space-5) var(--space-6);
+}
+
+.problems {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-4) var(--space-5);
+  background: color-mix(in srgb, var(--bad) 8%, var(--surface-sunken));
+  border: 1px solid color-mix(in srgb, var(--bad) 28%, var(--line));
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+  color: color-mix(in srgb, var(--bad) 70%, var(--fg));
+  white-space: pre-wrap;
+}
+
+/* --- composer ------------------------------------------------------------- */
+
+/*
+ * Speaking is the primary verb, and it is reached from every tab.
+ *
+ * It used to be the third section of a single long scroll, below an avatar
+ * picker that is touched once a session. Pinning it to the foot of the console
+ * costs 76 px and removes the most frequent scroll in the tool.
+ */
+.composer {
+  flex: 0 0 auto;
+  padding: var(--space-4) var(--space-5) var(--space-5);
+  border-top: 1px solid var(--line);
+  background: var(--surface-sunken);
+}
+
+.input {
+  width: 100%;
+  min-height: 46px;
+  max-height: 140px;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--fg);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent-edge);
+}
+
+.input::placeholder {
+  color: var(--fg-faint);
+}
+
+.composerRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.hint {
+  flex: 1 1 auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+
+.empty {
+  padding: var(--space-8) 0;
+  text-align: center;
+  color: var(--fg-faint);
+  font-size: var(--text-sm);
+}

@@ -1,0 +1,20 @@
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.label {
+  flex: 0 0 68px;
+  padding-top: 5px;
+  font-size: var(--text-sm);
+  color: var(--fg-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.control {
+  flex: 1 1 auto;
+  min-width: 0;
+}

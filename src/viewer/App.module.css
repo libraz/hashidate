@@ -1,0 +1,39 @@
+.app {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
+.stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--bg);
+}
+
+.stage canvas {
+  display: block;
+}
+
+.console {
+  flex: 0 0 var(--console-width);
+  width: var(--console-width);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+}
+
+.loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  letter-spacing: 0.08em;
+  pointer-events: none;
+}

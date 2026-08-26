@@ -1,0 +1,85 @@
+/*
+ * Fonts are installed from npm and bundled rather than fetched from a CDN: the
+ * viewer is loopback-only and has to work with the machine offline.
+ *
+ * Only the two subsets this console can actually render are imported. The
+ * unscoped entry point declares every subset the family ships — Cyrillic,
+ * Greek, Vietnamese and ninety-odd Japanese ranges — which is half a megabyte
+ * of `@font-face` before a glyph is drawn. The woff2 files themselves are
+ * fetched on demand either way; the CSS is not.
+ */
+@import "@fontsource/ibm-plex-sans-jp/latin-400.css";
+@import "@fontsource/ibm-plex-sans-jp/latin-500.css";
+@import "@fontsource/ibm-plex-sans-jp/latin-600.css";
+@import "@fontsource/ibm-plex-sans-jp/japanese-400.css";
+@import "@fontsource/ibm-plex-sans-jp/japanese-500.css";
+@import "@fontsource/ibm-plex-sans-jp/japanese-600.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
+@import "./tokens.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: 1.55;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  /* Every number in this tool is compared against the one above it — a joint
+     angle against its neighbour, a frame time against the last. Proportional
+     digits make a column of them jitter. */
+  font-variant-numeric: tabular-nums;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+/* The console is the only scrolling region, and it scrolls a lot. A visible
+   scrollbar in a dark panel reads as a seam, so it is thinned rather than
+   hidden — hiding it entirely leaves no indication that there is more below. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 99px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}

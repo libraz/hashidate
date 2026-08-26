@@ -1,0 +1,78 @@
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 22px;
+}
+
+.label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.input {
+  flex: 0 0 auto;
+  width: 140px;
+  height: 14px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.input::-webkit-slider-runnable-track {
+  height: 2px;
+  background: var(--line);
+  border-radius: 2px;
+}
+
+.input::-moz-range-track {
+  height: 2px;
+  background: var(--line);
+  border-radius: 2px;
+}
+
+/* A small square rather than the platform's circle: this panel is a set of
+   faders, and a square handle on a hairline track reads as one. */
+.input::-webkit-slider-thumb {
+  appearance: none;
+  width: 8px;
+  height: 14px;
+  margin-top: -6px;
+  background: var(--fg-dim);
+  border: none;
+  border-radius: 1.5px;
+  transition: background var(--dur) var(--ease);
+}
+
+.input::-moz-range-thumb {
+  width: 8px;
+  height: 14px;
+  background: var(--fg-dim);
+  border: none;
+  border-radius: 1.5px;
+}
+
+.input:hover::-webkit-slider-thumb,
+.input:focus-visible::-webkit-slider-thumb {
+  background: var(--accent);
+}
+
+.input:hover::-moz-range-thumb,
+.input:focus-visible::-moz-range-thumb {
+  background: var(--accent);
+}
+
+.value {
+  flex: 0 0 auto;
+  width: 42px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
