@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 312" width="960" height="312" role="img" aria-labelledby="ttl dsc">
+  <title id="ttl">A performance written into a line</title>
+  <desc id="dsc">A bracketed performance id starts that performance where it is written. The brackets are never spoken. The cue's position is held as a fraction of the utterance, not as a time, so it lands in the same place whether the line runs on the estimate made from the text or on a measured TTS take.</desc>
+
+  <style>
+    .bg   { fill:#f7f5f1 }
+    .seg1 { fill:#dfe9eb; stroke:#b6ccd0 }
+    .seg2 { fill:#c2d8db; stroke:#a2c0c5 }
+    .cue  { stroke:#1a6873; stroke-width:1.4; fill:none }
+    .brk  { stroke:#8c8b86; fill:none }
+    text  { font-family:Inter,"Helvetica Neue",Arial,sans-serif; fill:#1f2328 }
+    .lbl  { font-size:11px; fill:#6e7781; letter-spacing:.06em }
+    .h    { font-size:12px }
+    .s    { font-size:10.5px; fill:#6e7781 }
+    .code { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px }
+    .tag  { fill:#1a6873 }
+    .cuet { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:9.5px; fill:#1a6873 }
+    .inbar{ font-size:10px; fill:#1f2328 }
+    @media (prefers-color-scheme: dark) {
+      .bg{fill:#0d1117}
+      .seg1{fill:#1d2a2e;stroke:#33484d} .seg2{fill:#25393e;stroke:#3d585e}
+      .cue{stroke:#6fbcc7} .brk{stroke:#6e7781}
+      text{fill:#e6edf3} .lbl{fill:#8b949e} .s{fill:#8b949e}
+      .tag{fill:#6fbcc7} .cuet{fill:#6fbcc7} .inbar{fill:#e6edf3}
+    }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="960" height="312" rx="12"/>
+
+  <text class="lbl" x="40" y="40">written</text>
+  <text class="code" x="40" y="70"><tspan class="tag">[hello]</tspan>Good evening. <tspan class="tag">[explain]</tspan>Tonight I want to talk about this.</text>
+
+  <text class="lbl" x="40" y="106">spoken — the brackets are never read out</text>
+
+  <text class="cuet" x="150" y="124">[hello]</text>
+  <text class="cuet" x="244" y="124">[explain]</text>
+  <rect class="seg1" x="150" y="130" width="94" height="28" rx="3"/>
+  <text class="inbar" x="197" y="149" text-anchor="middle">Good evening.</text>
+  <rect class="seg2" x="244" y="130" width="246" height="28" rx="3"/>
+  <text class="inbar" x="367" y="149" text-anchor="middle">Tonight I want to talk about this.</text>
+  <path class="cue" d="M150,124 V164 M244,124 V164"/>
+  <text class="h" x="138" y="141" text-anchor="end">from the text</text>
+  <text class="s" x="138" y="156" text-anchor="end">no sidecar running</text>
+  <path class="brk" d="M150,172 V178 M244,172 V178 M150,175 H244"/>
+  <text class="s" x="197" y="192" text-anchor="middle">the first 28 % of the line</text>
+
+  <text class="cuet" x="150" y="216">[hello]</text>
+  <text class="cuet" x="305" y="216">[explain]</text>
+  <rect class="seg1" x="150" y="222" width="155" height="28" rx="3"/>
+  <text class="inbar" x="227.5" y="241" text-anchor="middle">Good evening.</text>
+  <rect class="seg2" x="305" y="222" width="405" height="28" rx="3"/>
+  <text class="inbar" x="507.5" y="241" text-anchor="middle">Tonight I want to talk about this.</text>
+  <path class="cue" d="M150,216 V256 M305,216 V256"/>
+  <text class="h" x="138" y="233" text-anchor="end">on a TTS take</text>
+  <text class="s" x="138" y="248" text-anchor="end">measured, and longer</text>
+  <path class="brk" d="M150,264 V270 M305,264 V270 M150,267 H305"/>
+  <text class="s" x="227.5" y="284" text-anchor="middle">the first 28 % of the line</text>
+
+  <text class="s" x="732" y="241">the same fraction,</text>
+  <text class="s" x="732" y="256">a different second</text>
+</svg>

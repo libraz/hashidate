@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 312" width="960" height="312" role="img" aria-labelledby="ttl dsc">
+  <title id="ttl">原稿に書いたプリセット</title>
+  <desc id="dsc">角括弧で囲んだプリセット id は、書かれた位置でそのプリセットを始めます。角括弧の中身は読み上げません。位置は時刻ではなく発話全体に対する割合で持つので、テキストから組み立てた尺で喋っても、実測した TTS の音声で喋っても、同じ場所に落ちます。</desc>
+
+  <style>
+    .bg   { fill:#f7f5f1 }
+    .seg1 { fill:#dfe9eb; stroke:#b6ccd0 }
+    .seg2 { fill:#c2d8db; stroke:#a2c0c5 }
+    .cue  { stroke:#1a6873; stroke-width:1.4; fill:none }
+    .brk  { stroke:#8c8b86; fill:none }
+    text  { font-family:Inter,"Helvetica Neue","Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic UI","Noto Sans JP",Meiryo,Arial,sans-serif; fill:#1f2328 }
+    .lbl  { font-size:11px; fill:#6e7781; letter-spacing:.06em }
+    .h    { font-size:12px }
+    .s    { font-size:10.5px; fill:#6e7781 }
+    .code { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px }
+    .tag  { fill:#1a6873 }
+    .cuet { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:9.5px; fill:#1a6873 }
+    .inbar{ font-size:10px; fill:#1f2328 }
+    @media (prefers-color-scheme: dark) {
+      .bg{fill:#0d1117}
+      .seg1{fill:#1d2a2e;stroke:#33484d} .seg2{fill:#25393e;stroke:#3d585e}
+      .cue{stroke:#6fbcc7} .brk{stroke:#6e7781}
+      text{fill:#e6edf3} .lbl{fill:#8b949e} .s{fill:#8b949e}
+      .tag{fill:#6fbcc7} .cuet{fill:#6fbcc7} .inbar{fill:#e6edf3}
+    }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="960" height="312" rx="12"/>
+
+  <text class="lbl" x="40" y="40">書いた原稿</text>
+  <text class="code" x="40" y="70"><tspan class="tag">[hello]</tspan>こんばんは。<tspan class="tag">[explain]</tspan>今日はこの話をします。</text>
+
+  <text class="lbl" x="40" y="106">喋る内容 — 角括弧は読み上げない</text>
+
+  <text class="cuet" x="180" y="124">[hello]</text>
+  <text class="cuet" x="300" y="124">[explain]</text>
+  <rect class="seg1" x="180" y="130" width="120" height="28" rx="3"/>
+  <text class="inbar" x="240" y="149" text-anchor="middle">こんばんは。</text>
+  <rect class="seg2" x="300" y="130" width="220" height="28" rx="3"/>
+  <text class="inbar" x="410" y="149" text-anchor="middle">今日はこの話をします。</text>
+  <path class="cue" d="M180,124 V164 M300,124 V164"/>
+  <text class="h" x="168" y="141" text-anchor="end">テキストの尺</text>
+  <text class="s" x="168" y="156" text-anchor="end">サイドカーなし</text>
+  <path class="brk" d="M180,172 V178 M300,172 V178 M180,175 H300"/>
+  <text class="s" x="240" y="192" text-anchor="middle">先頭から 35 %</text>
+
+  <text class="cuet" x="180" y="216">[hello]</text>
+  <text class="cuet" x="378" y="216">[explain]</text>
+  <rect class="seg1" x="180" y="222" width="198" height="28" rx="3"/>
+  <text class="inbar" x="279" y="241" text-anchor="middle">こんばんは。</text>
+  <rect class="seg2" x="378" y="222" width="362" height="28" rx="3"/>
+  <text class="inbar" x="559" y="241" text-anchor="middle">今日はこの話をします。</text>
+  <path class="cue" d="M180,216 V256 M378,216 V256"/>
+  <text class="h" x="168" y="233" text-anchor="end">TTS の実尺</text>
+  <text class="s" x="168" y="248" text-anchor="end">実測すると長い</text>
+  <path class="brk" d="M180,264 V270 M378,264 V270 M180,267 H378"/>
+  <text class="s" x="279" y="284" text-anchor="middle">先頭から 35 %</text>
+
+  <text class="s" x="770" y="241">割合は同じ、</text>
+  <text class="s" x="770" y="256">秒数だけが違う</text>
+</svg>

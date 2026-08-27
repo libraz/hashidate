@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 440" width="960" height="440" role="img" aria-labelledby="ttl dsc">
+  <title id="ttl">出力フレームの層</title>
+  <desc id="dsc">手前から順に、すべての上に描く計測の表示、キャラクターと背景をまとめた 1 枚のキャンバス、フレームと同じ解像度で焼く平らなスライドの層、そして単色または透明の後ろのページです。</desc>
+
+  <style>
+    .bg        { fill:#f7f5f1 }
+    .lyr-solid { fill:#e7e3db; stroke:#cfcbc3 }
+    .lyr-doc   { fill:#fdfdfc; stroke:#d3cfc7 }
+    .lyr-ghost { fill:none; stroke:#c3bfb7; stroke-dasharray:5 4 }
+    .area      { fill:#ffffff; fill-opacity:.5; stroke:#1a6873; stroke-dasharray:4 3 }
+    .figure    { fill:#1a6873 }
+    .docbar    { fill:#c6c1b8 }
+    .docln     { fill:#ded9d1 }
+    .shell     { fill:#1f2328; fill-opacity:.9 }
+    .shelln    { fill:#8fb9bf }
+    .lead      { stroke:#b8b4ac; fill:none }
+    .ln        { fill:none; stroke:#8c8b86; stroke-width:1.2 }
+    .ah        { fill:#8c8b86 }
+    text       { font-family:Inter,"Helvetica Neue","Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic UI","Noto Sans JP",Meiryo,Arial,sans-serif; fill:#1f2328 }
+    .h         { font-size:12.5px }
+    .s         { font-size:10.5px; fill:#6e7781 }
+    .mono      { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace }
+    @media (prefers-color-scheme: dark) {
+      .bg{fill:#0d1117}
+      .lyr-solid{fill:#1c222a;stroke:#30363d}
+      .lyr-ghost{stroke:#3d444d}
+      .area{stroke:#6fbcc7} .figure{fill:#6fbcc7}
+      .lead{stroke:#484f58} .ln{stroke:#6e7781} .ah{fill:#6e7781}
+      text{fill:#e6edf3} .s{fill:#8b949e}
+    }
+  </style>
+
+  <defs>
+    <marker id="a" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path class="ah" d="M0,0 L9,4.5 L0,9 z"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="960" height="440" rx="12"/>
+
+  <path class="ln" d="M52,338 L52,74" marker-end="url(#a)"/>
+  <text class="s" x="52" y="62"  text-anchor="middle">手前</text>
+  <text class="s" x="52" y="354" text-anchor="middle">奥</text>
+
+  <g transform="translate(90,306) skewY(-7.9)">
+    <rect class="lyr-solid" x="0" y="0" width="360" height="120" rx="4"/>
+  </g>
+
+  <g transform="translate(90,224) skewY(-7.9)">
+    <rect class="lyr-doc" x="0" y="0" width="360" height="120" rx="4"/>
+    <rect class="docbar" x="26" y="20" width="150" height="11" rx="2"/>
+    <rect class="docln"  x="26" y="46" width="240" height="6" rx="3"/>
+    <rect class="docln"  x="26" y="62" width="215" height="6" rx="3"/>
+    <rect class="docln"  x="26" y="78" width="168" height="6" rx="3"/>
+  </g>
+
+  <g transform="translate(90,142) skewY(-7.9)">
+    <rect class="lyr-ghost" x="0" y="0" width="360" height="120" rx="4"/>
+    <rect class="area" x="232" y="44" width="116" height="68" rx="3"/>
+    <circle class="figure" cx="290" cy="70" r="8"/>
+    <path class="figure" d="M277,112 C277,90 283,82 290,82 C297,82 303,90 303,112 Z"/>
+  </g>
+
+  <g transform="translate(90,60) skewY(-7.9)">
+    <rect class="lyr-ghost" x="0" y="0" width="360" height="120" rx="4"/>
+    <rect class="shell"  x="20" y="16" width="132" height="44" rx="3"/>
+    <rect class="shelln" x="28" y="26" width="88"  height="4" rx="2"/>
+    <rect class="shelln" x="28" y="36" width="104" height="4" rx="2"/>
+    <rect class="shelln" x="28" y="46" width="72"  height="4" rx="2"/>
+  </g>
+
+  <path class="lead" d="M452,70 H488"/>
+  <text class="h" x="496" y="67">計測の表示</text>
+  <text class="s" x="496" y="84"><tspan class="mono">debug</tspan> — スライドの層より上に描くので、スライドの区間でも隠れない</text>
+
+  <path class="lead" d="M452,152 H488"/>
+  <text class="h" x="496" y="149">描画</text>
+  <text class="s" x="496" y="166">キャラクターと背景で 1 枚のキャンバス。<tspan class="mono">place</tspan> がその絵をフレームの矩形に置く</text>
+
+  <path class="lead" d="M452,234 H488"/>
+  <text class="h" x="496" y="231">スライド</text>
+  <text class="s" x="496" y="248"><tspan class="mono">deck</tspan> — フレームと同じ解像度で焼く平らな DOM の層。テクスチャではない</text>
+
+  <path class="lead" d="M452,316 H488"/>
+  <text class="h" x="496" y="313">後ろのページ</text>
+  <text class="s" x="496" y="330">単色、あるいは <tspan class="mono">?transparent=1</tspan> で何も置かない</text>
+</svg>

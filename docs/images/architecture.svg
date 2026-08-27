@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 404" width="960" height="404" role="img" aria-labelledby="ttl dsc">
+  <title id="ttl">hashidate architecture</title>
+  <desc id="dsc">Any orchestrator — a script, an app or an LLM loop — posts commands to the local control server and reads state back, either as HTTP or as MCP tools. The server streams commands to the viewer over SSE and the viewer reports back. The viewer runs the engine, which reads an avatar descriptor, and reaches the speech sidecar through the server. OBS points at the viewer's page. Nothing inside the boundary holds a model, an SDK or a provider, and everything binds to 127.0.0.1.</desc>
+
+  <style>
+    .bg    { fill:#f7f5f1 }
+    .frame { fill:none; stroke:#cfcbc3 }
+    .grp   { fill:#edeae4 }
+    .box   { fill:#ffffff; stroke:#d7d4cd }
+    .box2  { fill:#fbfaf7; stroke:#d7d4cd }
+    .ext   { fill:none; stroke:#c3bfb7; stroke-dasharray:5 4 }
+    .rule  { stroke:#e2ded7 }
+    .ln    { fill:none; stroke:#1a6873; stroke-width:1.4 }
+    .lnb   { fill:none; stroke:#8c8b86; stroke-width:1.2; stroke-dasharray:5 4 }
+    .ah    { fill:#1a6873 }
+    .ahb   { fill:#8c8b86 }
+    text   { font-family:Inter,"Helvetica Neue",Arial,sans-serif; fill:#1f2328 }
+    .h     { font-size:13px }
+    .h2    { font-size:12px }
+    .s     { font-size:10.5px; fill:#6e7781 }
+    .xs    { font-size:9.5px; fill:#6e7781 }
+    .lbl   { font-size:10.5px; fill:#6e7781; letter-spacing:.08em }
+    .mono  { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace }
+    .edg   { font-size:10.5px; fill:#1a6873; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace }
+    .edgb  { font-size:10.5px; fill:#6e7781; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace }
+    @media (prefers-color-scheme: dark) {
+      .bg{fill:#0d1117} .frame{stroke:#30363d} .grp{fill:#12171d}
+      .box{fill:#161b22;stroke:#30363d} .box2{fill:#12171e;stroke:#30363d}
+      .ext{stroke:#3d444d} .rule{stroke:#262c34}
+      .ln{stroke:#6fbcc7} .lnb{stroke:#6e7781} .ah{fill:#6fbcc7} .ahb{fill:#6e7781}
+      text{fill:#e6edf3} .s{fill:#8b949e} .xs{fill:#8b949e} .lbl{fill:#8b949e}
+      .edg{fill:#6fbcc7} .edgb{fill:#8b949e}
+    }
+  </style>
+
+  <defs>
+    <marker id="a" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path class="ah" d="M0,0 L9,4.5 L0,9 z"/>
+    </marker>
+    <marker id="b" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path class="ahb" d="M0,0 L9,4.5 L0,9 z"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="960" height="404" rx="12"/>
+
+  <!-- outside this repository -->
+  <rect class="ext" x="750" y="2" width="166" height="34" rx="6"/>
+  <text class="h2" x="833" y="24" text-anchor="middle">OBS · browser source</text>
+
+  <text class="s" x="24" y="24">the caller decides what to say — hashidate holds no model, no SDK and no provider</text>
+
+  <rect class="ext" x="24" y="144" width="142" height="60" rx="6"/>
+  <text class="h2" x="95" y="170" text-anchor="middle">any orchestrator</text>
+  <text class="xs" x="95" y="187" text-anchor="middle">script, app, or LLM loop</text>
+
+  <!-- the runtime -->
+  <rect class="frame" x="180" y="44" width="756" height="346" rx="10"/>
+
+  <text class="lbl" x="196" y="66">callers</text>
+  <text class="lbl" x="465" y="66">control API</text>
+  <text class="lbl" x="750" y="66">renderer</text>
+
+  <rect class="grp" x="196" y="74" width="166" height="200" rx="8"/>
+
+  <rect class="box" x="208" y="86" width="142" height="52" rx="6"/>
+  <text class="h"    x="279" y="108" text-anchor="middle">MCP adapter</text>
+  <text class="xs mono" x="279" y="124" text-anchor="middle">src/mcp · stdio</text>
+
+  <rect class="box" x="208" y="150" width="142" height="52" rx="6"/>
+  <text class="h"    x="279" y="172" text-anchor="middle">ctl</text>
+  <text class="xs mono" x="279" y="188" text-anchor="middle">src/cli</text>
+
+  <rect class="box" x="208" y="214" width="142" height="52" rx="6"/>
+  <text class="h"    x="279" y="236" text-anchor="middle">broadcast panel</text>
+  <text class="xs mono" x="279" y="252" text-anchor="middle">src/panel · /panel/</text>
+
+  <rect class="box" x="465" y="104" width="170" height="170" rx="8"/>
+  <text class="h"    x="550" y="130" text-anchor="middle">control server</text>
+  <text class="xs mono" x="550" y="146" text-anchor="middle">src/server · :8765</text>
+  <line class="rule" x1="479" y1="158" x2="621" y2="158"/>
+  <text class="s" x="550" y="180" text-anchor="middle">turn queue</text>
+  <text class="s" x="550" y="200" text-anchor="middle">standing state</text>
+  <text class="s" x="550" y="220" text-anchor="middle">decks, read from disk</text>
+  <text class="s" x="550" y="240" text-anchor="middle">serves both pages</text>
+
+  <rect class="box" x="750" y="104" width="166" height="170" rx="8"/>
+  <text class="h"    x="833" y="130" text-anchor="middle">viewer</text>
+  <text class="xs mono" x="833" y="146" text-anchor="middle">src/viewer · /</text>
+  <line class="rule" x1="760" y1="158" x2="906" y2="158"/>
+  <rect class="box2" x="760" y="170" width="146" height="60" rx="6"/>
+  <text class="h2" x="833" y="190" text-anchor="middle">engine</text>
+  <text class="xs" x="833" y="205" text-anchor="middle">profile · rig · motion</text>
+  <text class="xs" x="833" y="219" text-anchor="middle">face · springs · director</text>
+  <text class="s" x="833" y="250" text-anchor="middle">AudioContext</text>
+
+  <rect class="box2" x="465" y="310" width="170" height="56" rx="8"/>
+  <text class="h2" x="550" y="334" text-anchor="middle">speech sidecar</text>
+  <text class="xs mono" x="550" y="350" text-anchor="middle">tools/tts · optional</text>
+
+  <rect class="box2" x="750" y="310" width="166" height="56" rx="8"/>
+  <text class="h2" x="833" y="334" text-anchor="middle">avatar descriptors</text>
+  <text class="xs mono" x="833" y="350" text-anchor="middle">src/avatars</text>
+
+  <!-- edges -->
+  <path class="ln"  d="M833,104 L833,42" marker-end="url(#a)"/>
+  <path class="ln"  d="M166,174 L188,174" marker-end="url(#a)"/>
+
+  <path class="ln"  d="M362,160 L461,160" marker-end="url(#a)"/>
+  <text class="edg"  x="412" y="152" text-anchor="middle">POST /api/command</text>
+  <path class="lnb" d="M461,208 L366,208" marker-end="url(#b)"/>
+  <text class="edgb" x="413" y="224" text-anchor="middle">GET /api/state</text>
+
+  <path class="ln"  d="M635,160 L746,160" marker-end="url(#a)"/>
+  <text class="edg"  x="690" y="152" text-anchor="middle">SSE /api/stream</text>
+  <path class="lnb" d="M746,208 L639,208" marker-end="url(#b)"/>
+  <text class="edgb" x="692" y="224" text-anchor="middle">POST /api/report</text>
+
+  <path class="ln"  d="M550,274 L550,306" marker-end="url(#a)"/>
+  <text class="edg" x="562" y="294">POST /api/speech</text>
+
+  <path class="ln"  d="M833,306 L833,278" marker-end="url(#a)"/>
+
+  <text class="s" x="196" y="380">loopback only — no --host, no CORS header, no tunnel</text>
+  <text class="s" x="920" y="380" text-anchor="end">dashed · outside this repository</text>
+</svg>

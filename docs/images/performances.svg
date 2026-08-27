@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" width="960" height="300" role="img" aria-labelledby="ttl dsc">
+  <title id="ttl">What a performance is made of</title>
+  <desc id="dsc">A performance is one name for a face and a movement together. The face is composed from emotion, expression and overlay; the movement from gesture and hop. The parts stay reachable for what the table has no name for, and the idle autopilot draws from the same table.</desc>
+
+  <style>
+    .bg    { fill:#f7f5f1 }
+    .top   { fill:#e2eef0; stroke:#a2c0c5 }
+    .grp   { fill:#edeae4 }
+    .chip  { fill:#ffffff; stroke:#d7d4cd }
+    .ln    { fill:none; stroke:#1a6873; stroke-width:1.4 }
+    .ah    { fill:#1a6873 }
+    text   { font-family:Inter,"Helvetica Neue","Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",Arial,sans-serif; fill:#1f2328 }
+    .t     { font-size:14px }
+    .lbl   { font-size:11px; fill:#6e7781; letter-spacing:.06em }
+    .s     { font-size:10.5px; fill:#6e7781 }
+    .xs    { font-size:9.5px; fill:#6e7781 }
+    .mono  { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px }
+    @media (prefers-color-scheme: dark) {
+      .bg{fill:#0d1117} .top{fill:#18292d;stroke:#3d585e} .grp{fill:#12171d}
+      .chip{fill:#161b22;stroke:#30363d} .ln{stroke:#6fbcc7} .ah{fill:#6fbcc7}
+      text{fill:#e6edf3} .lbl{fill:#8b949e} .s{fill:#8b949e} .xs{fill:#8b949e}
+    }
+  </style>
+
+  <defs>
+    <marker id="a" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path class="ah" d="M0,0 L9,4.5 L0,9 z"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="960" height="300" rx="12"/>
+
+  <rect class="top" x="40" y="44" width="880" height="62" rx="10"/>
+  <text class="t" x="480" y="72" text-anchor="middle">a performance — one name, like Delighted or Dozing off</text>
+  <text class="s" x="480" y="92" text-anchor="middle">Mood · Reaction · Greeting · Explaining · Feeling · Mannerism · Pose — the group says what kind of thing it is</text>
+
+  <path class="ln" d="M270,106 L270,144" marker-end="url(#a)"/>
+  <path class="ln" d="M720,106 L720,144" marker-end="url(#a)"/>
+
+  <rect class="grp" x="40" y="148" width="460" height="112" rx="10"/>
+  <text class="lbl" x="56" y="170">a face</text>
+  <rect class="chip" x="56"    y="180" width="133" height="62" rx="6"/>
+  <text class="mono" x="122.5" y="206" text-anchor="middle">emotion</text>
+  <text class="xs"   x="122.5" y="224" text-anchor="middle">a blend that persists</text>
+  <rect class="chip" x="203.3" y="180" width="133" height="62" rx="6"/>
+  <text class="mono" x="269.8" y="206" text-anchor="middle">expression</text>
+  <text class="xs"   x="269.8" y="224" text-anchor="middle">a drawn face</text>
+  <rect class="chip" x="350.7" y="180" width="133" height="62" rx="6"/>
+  <text class="mono" x="417.2" y="206" text-anchor="middle">overlay</text>
+  <text class="xs"   x="417.2" y="224" text-anchor="middle">a drawn effect, layered</text>
+
+  <rect class="grp" x="520" y="148" width="400" height="112" rx="10"/>
+  <text class="lbl" x="536" y="170">a movement</text>
+  <rect class="chip" x="536"  y="180" width="177" height="62" rx="6"/>
+  <text class="mono" x="624.5" y="206" text-anchor="middle">gesture</text>
+  <text class="xs"   x="624.5" y="224" text-anchor="middle">one movement, and it ends</text>
+  <rect class="chip" x="727"  y="180" width="177" height="62" rx="6"/>
+  <text class="mono" x="815.5" y="206" text-anchor="middle">hop</text>
+  <text class="xs"   x="815.5" y="224" text-anchor="middle">the whole skeleton moves</text>
+
+  <text class="s" x="40" y="284">the parts stay reachable for what the table has no name for — and the idle autopilot draws from the same table</text>
+</svg>

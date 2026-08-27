@@ -1,396 +1,111 @@
-# aituber
+# hashidate
+
+An avatar runtime for an AI VTuber: a browser-rendered character that something else drives over a local HTTP API, one turn of dialogue at a time. The renderer holds the character; the caller holds the script.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-7-blue?logo=typescript)](https://www.typescriptlang.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![three.js](https://img.shields.io/badge/three.js-r185-000000?logo=three.js&logoColor=white)](https://threejs.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
+[![MCP](https://img.shields.io/badge/MCP-7%20tools-1a6873)](docs/en/mcp.md)
+[![docs](https://img.shields.io/badge/docs-guides-b5892e)](docs/en/introduction.md)
 
-**aituber is an avatar runtime for an AI VTuber: a browser-rendered character
-that an orchestrator drives over a local HTTP API, one turn of dialogue at a
-time.** The renderer holds the character; the caller holds the script.
+![The broadcast panel saying three queued lines](docs/images/panel.webp)
 
-The engine holds no avatar data. Everything that is a property of one particular
-model — what its author named things, how its garments are built, how far its
-eyes turn, which of its shapes are drawn artwork rather than muscle-level parts —
-lives in a descriptor, and the runtime reads it through a profile. Swapping the
-avatar swaps that object and nothing else, which is the claim this repository
-exists to test: two models by different authors, one of which implements the
-ARKit 52 blendshape set and one of which implements none of it, driven by the
-same engine over the same command vocabulary.
+Three lines put on the queue, said one after another, each with a performance on it. The panel on the right is driving the same control API an orchestrator would.
 
-**Reach for it when you need to:**
+## It depends on no model
 
-- **Drive a character from an LLM loop** — one command is one turn: a line, a face and a movement, with an optional wait until the character has finished saying it.
-- **Ask in the character's own terms** — 「うれしい」 rather than joy 0.9 with a cheer gesture and three hops of 45 mm. The named performances are the vocabulary, and the idle autopilot draws from the same table.
-- **Change the avatar without touching the engine** — the descriptor is the only avatar-specific file, and what the model can be asked for is discovered from its own shapes and meshes rather than declared.
-- **Keep the whole thing on one machine** — the viewer and the control API bind to loopback, and there is no cloud dependency anywhere in the runtime.
+hashidate is an adapter, not an application. There is no provider SDK in the dependency tree, no API key to configure, and no persona, prompt, script or conversation state — those stay on your side of the line. What crosses the line is one turn — some words, optionally a performance to say them with, optionally the shot to say them in — and a character says and performs it.
 
-## What's inside
+![What crosses the boundary](docs/images/boundary.svg)
 
-- **Profile discovery** — bones, finger families, visemes, blink shapes and drawn-expression groups resolved from whatever the model actually ships, with ARKit detected rather than assumed.
-- **Performances** — a face and a movement named together, grouped by what kind of thing they are, entered and left as a state. One table, spoken by the control API, the console and the autopilot alike.
-- **Motion** — gaze with saccades and a sprung head, breathing and weight-shift idles, a gesture table, hop runs, and an arm solved back from where the fingertip has to be, with the joint strain reported.
-- **Face** — an emotion blend composed onto either ARKit or the model's own shapes, drawn expressions, layered effects, a blink scheduler with an eyelid droop, and text-timed lipsync.
-- **Secondary motion** — spring chains for hair and garments, with colliders and a tail.
-- **Wardrobe** — slots, presets and the hide-shapes that go with them, read from the model's meshes.
-- **The control API** — commands down an SSE stream, state and turn events back, and a vocabulary object built for pasting into a system prompt.
+Swap the model, the provider or the framework: nothing on the right-hand side changes. The same runtime is driven from an LLM loop in any language, from an MCP client, from a shell script with no model in it at all, or by a person at the broadcast panel — and all four can be mixed in one broadcast.
 
-## Repository layout
+## What you can build with it
 
-| | |
+| Use case | What it does | The part you touch |
+|---|---|---|
+| **An AI VTuber answering chat** | Your loop decides the line; hashidate says it and performs it. | `POST /api/command`, or the `speak` MCP tool |
+| **Commentary over a game** | She stands on the game capture with nothing behind her; OBS composites. | `?transparent=1&place=bottom-right:0.32x0.6` |
+| **A talk given from slides** | A PDF behind her, page turns riding on the lines. The deck is readable as text, so a model can write the script for it. | `deck`, `say --slide 2` |
+| **A scripted segment** | No model anywhere. A shell script is a perfectly good orchestrator. | `yarn ctl say …` |
+| **A broadcast run by hand** | The panel is a full operating surface, and everything it does goes through the same API. | `/panel/` |
+| **Checking a model you rigged** | What the avatar can be asked for is discovered from its own shapes and meshes. | `yarn ctl vocab` |
+
+Worked versions of all six: [Use cases](docs/en/use-cases.md).
+
+## What you need
+
+A clone of this repository is the runtime and nothing else. Two of the things it needs are deliberately not in the box:
+
+| Requirement | Notes |
 |---|---|
-| `src/engine` | The runtime. Profile, rig, anatomy, motion, face, secondary motion, director, session. Depends on three.js and on nothing in a browser. |
-| `src/avatars` | One descriptor per model. Adding an avatar is adding a file. |
-| `src/protocol` | The wire format, as zod schemas. The viewer, the server and the CLI all import it, so the command vocabulary cannot drift between them. |
-| `src/viewer` | The renderer: a three.js stage, with a development console beside it. This is the page OBS points at. |
-| `src/panel` | The broadcast panel, on `/panel/`. Everything it does goes through the control API, so what it can do is what an orchestrator can do. |
-| `src/server` | The local control API. Serves both pages and carries commands to the renderer. |
-| `src/cli` | `ctl` — a thin client, for driving the avatar by hand. |
-| `tools/blender` | The model pipeline. Python, because it runs inside Blender. |
+| Node 22 and Yarn 4 | Pinned in `mise.toml`. `mise install` gets both. |
+| **An avatar** | Required, and **not included.** The descriptors in `src/avatars` point at `public/models/<id>.glb`, which is git-ignored, so a fresh clone has nothing to draw. The two models this was built against are purchased and not ours to redistribute — bring your own, put it through `make glb`, and add one descriptor file. |
+| **A voice** | Not required to run, required in practice: a VTuber that never makes a sound is a test fixture. Needs `uv` and Python 3.11, and several GB of PyTorch come with it. The recordings it clones a voice from are of a real person and are **not included** either — bring your own. |
+| Blender, OBS | Only to convert a model, and only to put the result on a stream. |
 
-## Requirements
+Setting the voice up is putting a minute or two of WAV clips in `tools/tts/reference/clips/`, which ships empty for the purpose, and running one command:
 
-- Node and Yarn, pinned in `mise.toml` — `mise install`
-- Blender, for the model pipeline only
-- The avatar packages themselves, which are commercial products and are **not**
-  in this repository. See [Assets](#assets).
+```sh
+make voice
+```
+
+That builds the Python environment if there is not one, inspects the clips, and encodes them into what the sidecar loads at startup.
+
+Without a voice everything still runs: the line is mouthed silently on the timing the text implies, which is what the tests do. It is worth knowing that this works, and it is not what you want on a stream.
+
+The voice is swappable for the same reason the model is. The renderer asks its own origin for audio and the server proxies to `127.0.0.1:8770`, so anything that answers `POST /speak` with `{ text, reading? }` → WAV and `GET /health` can stand in — `HASHIDATE_TTS_PORT` moves the target. See [Speech](docs/en/speech.md).
+
+The details, and what a first run looks like: [Getting started](docs/en/getting-started.md).
 
 ## Quick start
 
 ```sh
+mise install
 yarn install
-yarn dev
+make dev
 ```
 
-`yarn dev` starts the viewer on `127.0.0.1:5173` and the control API on
-`127.0.0.1:8765`, and proxies `/api` from the first to the second. Drive it from
-another terminal:
+The viewer comes up on `127.0.0.1:5173`, the control API on `127.0.0.1:8765` and the speech sidecar — if its environment has been built — on `127.0.0.1:8770`. `yarn dev` starts the first two alone.
+
+Drive it from another terminal:
 
 ```sh
 yarn ctl vocab                                  # what this avatar can be asked to do
 yarn ctl perform happy                          # a face and a movement, named together
-yarn ctl say "こんばんは" --perform hello --wait
-yarn ctl say "[hello]こんばんは。[explain]今日はこの話をします。"
-yarn ctl perform                                # put it back
-yarn ctl point 40 25 --extent 0.9 --finger little
+yarn ctl say "Good evening." --perform hello --wait
+yarn ctl say "[hello]Good evening. [explain]Tonight I want to talk about this."
 yarn ctl idle on
 yarn ctl watch                                  # follow the turn events
 ```
 
-`yarn build` produces a static viewer in `dist/`; `yarn start` serves it from the
-control server alone, without vite.
+## How it fits together
 
-For a character that is actually audible, `make tts-setup` once and then
-`make tts` alongside. It is optional in the real sense — see [Speech](#speech).
+![hashidate architecture](docs/images/architecture.svg)
 
-## The control API
+Three processes and a page. A caller posts commands to the control server; the server streams them to the renderer over SSE and the renderer reports back. OBS points at the renderer's page. Everything binds to `127.0.0.1`. See [Architecture](docs/en/architecture.md).
 
-An orchestrator — in production, an LLM loop — posts commands and reads state:
+## Documentation
 
-```
-orchestrator  ──POST /api/command──►  server  ──SSE──►  viewer
-              ◄──GET  /api/state───          ◄─POST──
-```
+Start here: [Introduction](docs/en/introduction.md), [Use cases](docs/en/use-cases.md), [Getting started](docs/en/getting-started.md).
 
-The unit of work is a **turn**: one line of dialogue delivered with a face and a
-gesture, followed by the next one. `POST /api/command?wait=1` blocks until the
-turn ends, so a caller with nothing to do until the character stops talking does
-not have to poll.
+Driving it: [The control API](docs/en/control-api.md), [Commands](docs/en/commands.md), [Performances](docs/en/performances.md), [Lines and cues](docs/en/lines-and-cues.md), [The MCP adapter](docs/en/mcp.md).
 
-### Performances
+The picture and the sound: [Speech](docs/en/speech.md), [The stage](docs/en/stage.md), [Slides](docs/en/slides.md), [Two surfaces](docs/en/surfaces.md).
 
-What a turn is *delivered with* is usually a **performance** — a named face and
-movement together, like 「うれしい」 or 「ねおち」. The layers underneath are
-separate for good reasons (an emotion is a continuous blend that persists, a
-gesture is discrete and ends, a hop moves the whole skeleton) and none of them is
-the shape a caller thinks in.
+Under it: [Architecture](docs/en/architecture.md), [Avatars](docs/en/avatars.md).
 
-The table is grouped, and the group says what kind of thing an entry is: 気分
-(mood — a face and nothing else, which is most of what watching a character
-actually looks like), 相槌, 挨拶, 説明, 感情, 仕草, and ポーズ, which is held
-until something else is asked for. Every gesture the engine has appears in at
-least one performance, and a test says so: a movement with no face attached is
-one the autopilot would eventually play deadpan.
+## Non-goals
 
-A performance is a **state**, not an event. Starting one ends the last — the pose
-comes down, a raised effect is lowered, a droop on the eyelids is released. Its
-mood is the exception and persists, for the same reason a turn's emotion does:
-a mood does not end with the sentence that carried it.
+hashidate renders and animates a character; it is not the VTuber. It has no language model, no speech recognition and no stream output, and the orchestrator that decides what to say lives outside this repository.
 
-The parts stay reachable for what the table has no name for. The idle autopilot
-draws from the same table, so what the character does on its own and what it can
-be asked to do are one vocabulary.
+Speech is the one thing that crossed the line, and only as far as `tools/tts/`: a sidecar reached over HTTP and never imported. The engine holds no audio code either — it states what a spoken line is and the viewer, which has the `AudioContext`, provides one.
 
-### Cues in a line
+It is also deliberately loopback-only. There is no `--host` flag, no CORS header and no tunnel, because the avatars used for validation may not be republished: exposing the renderer would be a licensing decision before it was a code change.
 
-A performance usually applies to a whole turn. When it has to change *inside*
-one, it is written into the line:
-
-```
-[hello]こんばんは。[explain]今日はこの話をします。
-```
-
-A bracketed performance id starts that performance where it is written, and
-there is no other way to place one mid-sentence: a second turn would put a gap
-and a breath in the middle of a clause, and a separate `perform` command cannot
-know when the first half has been said — only the renderer knows how long that
-takes.
-
-**Brackets are reserved, and nothing inside them is ever spoken.** That is the
-reason the syntax exists in this shape rather than a detail of it. The caller is
-a language model, everything it writes goes to the mouth, and a character
-reading a stage direction out loud is the failure the design is arranged around.
-So it is guaranteed twice: a line whose markup does not parse fails the schema
-and the command is dropped, which keeps the character quiet and tells the
-caller — and the parser behind that is total, so a line arriving by any other
-route comes out with its markup removed rather than read. There is no flag that
-turns parsing off, and no second field a line can arrive on.
-
-A cue's position is a fraction of the utterance rather than a time, and it rides
-the mouth's own clock, so it stays where it was written when the line turns out
-longer than the estimate: a supplied `reading` is a different length, and TTS
-audio is a different length again. An id the performance table does not have is
-dropped — mid-sentence, a typo should do nothing rather than take the
-character's face away.
-
-### Speech
-
-If the speech sidecar in `tools/tts/` is running, a line is synthesised before
-it is played and the mouth runs on the audio instead of on an estimate. If it is
-not, nothing changes: the line is mouthed silently on the timing the text
-implies, which is what a machine without the voice does and what the tests do.
-
-Three things follow from having the finished audio in hand *before* the turn
-opens, which is worth the second it costs:
-
-- **The viseme track is stretched onto the real length.** The estimate's
-  constants only ever produce proportions, so normalising to a measurement
-  cancels them — which is what makes the timing survive a voice retrained to
-  speak at a different rate. On this machine the estimate runs 15% short on a
-  long line and far shorter on a brief one, every time.
-- **The mouth is put on the audio's clock rather than the frame's.** Frames drop
-  and audio does not, and a mouth adding up frame deltas can only ever run
-  ahead. Cues read the same clock, so they are corrected by the same call.
-- **Mouth travel is scaled by the take's own loudness.** Measured off the
-  decoded buffer once, normalised against that take's own level so there is no
-  gain to retune with the voice. It is what closes the mouth through a pause the
-  text never predicted, and it hides most of what the stretch cannot fix.
-
-Synthesis starts when a line is *queued* rather than when it is played, so a
-batch of three is three requests in flight at once and only the first turn of a
-run waits. A voice that fails or hangs costs the line its sound and nothing
-else: the turn plays silently rather than holding up the queue.
-
-Every take carries a SilentCipher watermark, sitting about 50 dB under the
-speech and identifying the audio as generated by this project. It is written
-last, after the noise removal, because a denoiser aimed at the level the mark
-lives at is a denoiser aimed at the mark. The sidecar checks a real take at
-startup and refuses to serve if the payload does not read back, so audio going
-out unmarked is a startup failure rather than something to discover later.
-
-Below about a second of audio the payload stops being readable — a property of
-the scheme, not of this pipeline — so a one-word turn goes out effectively
-unmarked. Padding it to reach the threshold is not available: the viewer
-measures the buffer it is handed to drive the mouth, so silence added to carry a
-watermark is silence the mouth would spend moving.
-
-### The room
-
-A take arrives with no space on it. The reference recordings carried one — a
-steady bed some 33 dB under the speech, which the model reproduced faithfully
-because reproducing the reference is its entire job — and it is taken off the
-references before they are ever encoded, so it never reaches a generated line.
-What the codec adds on top comes off the take on the way out. Between them the
-speech-to-noise on a line goes from about 32 dB to about 50 dB.
-
-That is the right raw material and the wrong thing to broadcast, because a voice
-with no early reflections reads as a voice in a vacuum. So the room is put back
-on the way to the speakers, and being a decision rather than an accident it is a
-command:
-
-    yarn ctl room hall
-    yarn ctl room            # dry
-
-Four of them — `booth`, `room`, `studio`, `hall` — each described as a physical
-space and turned into an impulse response, rather than dialled in as a decay
-time. The names come back in the vocabulary, and an unknown one is dry.
-
-The order matters more than it looks. The mouth is driven by an envelope
-measured off the *dry* take, before any of this, so the room can only ever be
-heard and never seen: it rings on after the mouth has closed, the way a room
-does, and an interrupt cuts the voice without cutting the space it was in. A
-long tail does overlap the next line — `hall` rings for well over a second,
-which is what a hall is for and why it is not the default.
-
-### The set
-
-The room the character is *seen* in, which is a separate axis from the one above
-and deliberately not chained to it. Four of them — `dusk`, `night`, `morning`,
-`rain` — and they are one room lit four ways rather than four rooms: the shell,
-the window and most of the furniture are shared, and what differs is where the
-light comes from, its colour temperature, and where the brightest and darkest
-values fall in the frame. A backdrop has to hold up behind a face for two hours,
-so each is built to a value structure rather than to a colour scheme.
-
-None of it is a model file. The geometry is written out and the surfaces —
-plaster, floorboards, woven cloth, what is outside the window — are generated
-into a canvas at startup. Nothing to license, nothing to redistribute, and a
-wall whose mottling can be reviewed in a diff.
-
-Set it on the URL, which is what a browser source in OBS is given:
-
-    http://127.0.0.1:8765/?stage=1&size=1920x1080&backdrop=night
-
-An unknown name renders the flat background rather than failing, because the URL
-is typed into a field with nowhere to report an error to. It is also a command,
-for changing the set mid-stream:
-
-    yarn ctl backdrop dusk
-    yarn ctl backdrop        # bare stage
-
-### Commands
-
-| | |
-|---|---|
-| `perform` | A named face and movement. No id releases the one that is up. |
-| `say` | Queue a turn. Takes a `perform`, or the parts spelled out, or performances written into the text itself. `hold` keeps the face up past the line. `reading` gives the kana pronunciation where the writing does not determine it, and carries no cues of its own. `stage` names the shot — see below. |
-| `emotion` | The persistent mood, as a blend rather than a choice. |
-| `expression` | One of the avatar's own drawn faces. `null` hands the face back to the emotion. |
-| `overlay` | A drawn effect, at a weight. It layers over whatever face is showing, so several can be up at once. |
-| `gesture` | One movement from the gesture table. No id stops it. |
-| `hop` | A run of hops. Its own command rather than a gesture because it translates the whole skeleton, and runs alongside whatever the arms are doing. |
-| `point` | Aim a fingertip at a bearing — degrees on the wire, and any of the five fingers. Held until released. |
-| `look` | How much the gaze tracks the camera, 0 to 1. |
-| `idle` | The autopilot, on or off. |
-| `camera` | The framing: `face`, `bust`, `upper`, `full`. |
-| `room` | The space the voice is heard in. No id is dry. Persistent, like the camera. |
-| `backdrop` | The room the character is seen in. No id is the flat background. A separate axis from `room` — a set can be cut without the microphone appearing to move. |
-| `wear` | One slot to an item, or a whole preset at once. |
-| `avatar` | Load a different character. The only command that replaces the session every other one talks to, so the renderer holds what arrives behind it until the model is standing — swap and dress in one breath does what it reads like. |
-| `tune` | The set-once layer: breath, sway, jump, tail, shading. Every field optional and merged onto what is running, so one fader is one small message. Bounded, unlike `point` — a breath period of zero is not an ambitious breath. |
-| `interrupt` / `clear` / `reset` | Stop mid-line and drop the queue / drop the queue and let the line finish / back to nothing. |
-
-A command the renderer does not understand is dropped rather than failing the
-request, and unknown fields are stripped: the orchestrator and the renderer are
-separate processes with separate release cycles, and a newer caller talking to an
-older renderer should degrade rather than break the stream.
-
-### Send a whole answer at once
-
-`camera`, `room` and `backdrop` take effect when they arrive, which is right for
-reacting to something and wrong for describing a line that has not been reached.
-So `say` carries the same three under `stage`, applied when its turn starts:
-
-    yarn ctl say "これが、ホール。" --camera full --room hall
-
-That exists for the silence. A caller that sends one line and waits for it before
-sending the next pays the whole of the next line's synthesis as a gap — measured
-here at 1.2 s between every pair of lines, against 0.3 s when the lines travel
-together, because the renderer asks for a line's audio the moment it is queued
-and a queue one deep leaves nothing to prepare during. Staging on the line is
-what lets a run of lines with four different shots be one request.
-
-So: put the whole of an answer in one `batch`, and let the shots ride on the
-lines. Only the first line of each answer pays for being made.
-
-An axis left out of `stage` keeps what it had; `null` empties it — dry for a
-room, the flat background for a backdrop. On the command line an omitted flag is
-the first and `--room ''` is the second.
-
-### Endpoints
-
-| | |
-|---|---|
-| `POST /api/command` | One command, or several under `batch` to be delivered together. `?wait=1` returns when the last queued turn ends. |
-| `GET /api/state` | Connection, the current state, and the event tail since `?since=`. |
-| `GET /api/events` | The event tail alone. `?wait=1` long-polls it. |
-| `GET /api/vocabulary` | What the loaded avatar can be asked for. |
-| `GET /api/stream` | The viewer's SSE down-channel. |
-| `POST /api/report` | The viewer's up-channel, and its heartbeat. Not for callers. |
-| `POST /api/speech` | The viewer's route to the speech sidecar. Not for callers. 503 when there is no sidecar, which is a normal answer. |
-
-`/api/speech` is a proxy rather than the viewer calling `tools/tts/` directly,
-and for the same reason everything else here is loopback: the sidecar sends no
-CORS header, so a page served from this origin cannot reach that one. The two
-ways to make a direct call work would be to add a CORS header to the voice or to
-move it off loopback, and both are licensing decisions. Proxying is neither.
-
-### What comes back
-
-`GET /api/vocabulary` returns what the loaded avatar can be asked for. It is
-discovered rather than declared — the expression list comes from the model's own
-shape groups and the wardrobe from its meshes — so it changes when the avatar
-does. That object is the one to paste into a system prompt, and the cue syntax
-is stated in it for that reason: a syntax the caller is never told about is a
-syntax nobody uses.
-
-`GET /api/state` is everything worth branching on, cheap enough to poll:
-`speaking`, the turn id, the queue depth, the emotion vector, the drawn
-expression and the raised effects, the performance and gesture that are up, and
-`strain` — what the last fingertip solve cost each arm. Pointing is deliberately
-*not* bounded to the range the vocabulary advertises. Those bounds are
-anatomical, and reaching past them is a supported outcome rather than an error:
-the arm goes as far as it can, which is what a person does, and the strain figure
-is the only way a caller can tell an aim that was met from one the arm could only
-approximate.
-
-Beside the state it carries three things the renderer reports about *itself*
-rather than about the performance: `voice`, the chain and the loudness of the
-last take; `tuning`, what the set-once layer is actually running, so a remote
-fader can be drawn at the value in force rather than at the last one somebody
-sent; and `avatars`, which characters this renderer can load — not the same
-question as what the loaded one can do.
-
-## Two surfaces
-
-There are two pages, and the difference between them is not what they can do —
-it is where they stand.
-
-**The panel**, on `/panel/`, is where a broadcast is run. It holds no renderer
-and no `AudioContext`: every control goes out through the control API, which
-means a control that works there is a control a language model can drive. Six
-tabs — キュー (the script, its history, and rewinding into it), 演じる, 音声, 装う,
-調律, 診る — with the avatar, the framing, the set and the idle switch under a
-preview, because those four are chosen by looking at the picture.
-
-**The renderer**, on `/`, is the page OBS points at. Opened with `?stage=1` it is
-the character and nothing else. Opened without, it carries a console that reaches
-*into* the live scene — `director.rig.measure('R')`, joint angles against their
-anatomical ranges, the resolved profile — which is a development instrument
-rather than a second control surface, and is the answer to "why does that pose
-look wrong".
-
-The panel is the full surface and the renderer is opened last, at the top of the
-broadcast. That is only true because the control server keeps the setup: the
-avatar, the costume, the shot, the set, the acoustic, the voice chain and the
-tuning are folded into a standing state as they are chosen, and handed to a
-renderer the moment it attaches — along with the pending queue, which is what has
-always made a reload survivable mid-stream. Nothing about the show lives in the
-URL a browser source was configured with.
-
-What is *not* replayed is anything that was a moment rather than a setting. A
-gesture ends on its own, an expression is released with the line that raised it,
-an interrupt has already happened; re-enacting those for a renderer joining an
-hour later would be the opposite of restoring a setup.
-
-## Assets
-
-The two validation avatars are purchased VRChat models. Their source packages,
-the extracted meshes and textures, and the GLB the viewer loads are all
-git-ignored: they are 1.5 GB together, and they are not ours to redistribute.
-
-The pipeline turns a purchased package into a GLB:
-
-```sh
-make            # what each target does
-make extract    # purchased zip  → backup/resource/
-make textures   # unitypackage   → PNG
-make resize     # 4K            → web-sized
-make glb        # FBX           → public/models/*.glb
-```
-
-`make check-assets` fails if anything over 1 MB has found its way into git. It
-runs against what git is actually tracking rather than against a list of paths,
-because a `.gitignore` only covers the paths someone thought of and a single
-half-gigabyte blob in the history is permanent.
+The engine is a runtime, not an editor. Rigging, weighting and garment authoring happen in Blender, and `tools/blender` is the seam between the two.
 
 ## Development
 
@@ -400,39 +115,12 @@ yarn lint          # biome
 yarn test          # vitest
 ```
 
-Tests build a synthetic avatar in code rather than loading a GLB — a suite that
-needs a purchased 16 MB model can only run on a machine that has bought it. See
-`tests/helpers/scene.ts`.
+Tests build a synthetic avatar in code rather than loading a GLB — a suite that needs a purchased 16 MB model can only run on a machine that has bought it.
 
-The numbers in `src/engine` were arrived at by watching two real avatars, and
-most of them carry a comment naming the failure they exist to prevent. They are
-not defaults to be tidied: changing one is a decision that needs a look at the
-render.
-
-## Non-goals
-
-aituber renders and animates a character; it is not the VTuber. It does not
-include a language model, speech recognition, or a stream output, and the
-orchestrator that decides what to say lives outside this repository.
-
-Speech is the one thing that crossed the line, and only as far as `tools/tts/`:
-a sidecar that turns a line into audio, reached over HTTP and never imported.
-The engine holds no audio code either — it states what a spoken line is and the
-viewer, which has the `AudioContext`, provides one. Without a sidecar the whole
-thing runs as before, with the mouth timed from the text.
-
-It is also deliberately loopback-only. There is no `--host` flag, no CORS header
-and no tunnel, because the avatars used for validation may not be republished:
-exposing the renderer would be a licensing decision before it was a code change.
-
-The engine is a runtime, not an editor. Rigging, weighting and garment authoring
-happen in Blender, and `tools/blender` is the seam between the two.
+The numbers in `src/engine` were arrived at by watching two real avatars, and most of them carry a comment naming the failure they exist to prevent. They are not defaults to be tidied: changing one is a decision that needs a look at the render.
 
 ## License
 
 [Apache-2.0](LICENSE) — the code in this repository.
 
-Nothing under `backup/` or `public/models/` is covered by it. The avatars are
-purchased commercial models under their authors' own terms, and this licence
-cannot and does not extend to them: a checkout gives you the runtime, not the
-characters it was built against.
+Nothing under `public/models/` is covered by it. The avatars are purchased commercial models under their authors' own terms: a checkout gives you the runtime, not the characters it was built against.
