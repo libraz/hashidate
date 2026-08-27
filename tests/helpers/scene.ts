@@ -44,6 +44,15 @@ export interface RigOptions {
   arkit?: boolean;
   /** Garment meshes to add, by name. */
   garments?: string[];
+  /**
+   * Delta length for named shapes, overriding the default per-index one.
+   *
+   * The measurements the face layer makes are projections of one shape's deltas
+   * onto another's, so what a shape is worth relative to its neighbours is the
+   * whole input. Stating it beats arranging shapes until the index arithmetic
+   * happens to produce the ratio a test needs.
+   */
+  deltas?: Record<string, number>;
 }
 
 /**
@@ -255,13 +264,22 @@ export function buildRig(opts: RigOptions = {}): SyntheticRig {
     faceShapes.push(separator(group), ...names);
   }
 
-  meshes.set('Face', makeMesh('Face', skeleton, head, faceShapes, root, scale));
+  const deltas = opts.deltas ?? {};
+  meshes.set('Face', makeMesh('Face', skeleton, head, faceShapes, root, scale, deltas));
   meshes.set(
     'Body',
-    makeMesh('Body', skeleton, chest, opts.ungrouped ?? ['NeckHide', 'BustHide'], root, scale),
+    makeMesh(
+      'Body',
+      skeleton,
+      chest,
+      opts.ungrouped ?? ['NeckHide', 'BustHide'],
+      root,
+      scale,
+      deltas,
+    ),
   );
   for (const g of opts.garments ?? []) {
-    meshes.set(g, makeMesh(g, skeleton, chest, [], root, scale));
+    meshes.set(g, makeMesh(g, skeleton, chest, [], root, scale, deltas));
   }
 
   const descriptor: AvatarDescriptor = {
@@ -289,6 +307,7 @@ function makeMesh(
   shapeNames: string[],
   root: THREE.Object3D,
   scale: number,
+  deltas: Record<string, number> = {},
 ): THREE.SkinnedMesh {
   const bands = 8;
   const sectors = 12;
@@ -331,7 +350,8 @@ function makeMesh(
       // A distinct delta per shape, so a projection of one onto another — which
       // is how a preset's lid closure is measured — has something to find.
       const delta = new Float32Array(count * 3);
-      for (let i = 0; i < count; i++) delta[i * 3 + 1] = ((index % 7) + 1) * 1e-3;
+      const dy = deltas[shape] ?? ((index % 7) + 1) * 1e-3;
+      for (let i = 0; i < count; i++) delta[i * 3 + 1] = dy;
       targets.push(new THREE.BufferAttribute(delta, 3));
     });
     geometry.morphAttributes.position = targets;

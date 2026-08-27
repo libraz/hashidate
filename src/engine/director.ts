@@ -85,6 +85,15 @@ interface WantedPreset {
   w: number;
 }
 
+/**
+ * Above this, a drawing counts as replacing the eye rather than reshaping it,
+ * and stops being something that can be shown by halves — see `swap` in
+ * `face/presets.ts` for what is measured and why a face like that is only ever
+ * correct at nothing or all of it. The measurement lands at the ends of the
+ * range, so the threshold only has to sit between them.
+ */
+const SWAPS_THE_EYE = 0.5;
+
 export class Director {
   readonly p: Profile;
   readonly a: AvatarDescriptor;
@@ -538,6 +547,11 @@ export class Director {
 
   // --- native expression presets -----------------------------------------
 
+  /** Whether this drawing replaces the eye, and so cannot be shown in part. */
+  private swapsTheEye(id: string | null): boolean {
+    return !!id && (this.presetById.get(id)?.swap ?? 0) > SWAPS_THE_EYE;
+  }
+
   /** Which authored face the current state asks for, and how strongly. */
   private wantedPreset(): WantedPreset | null {
     if (this._manualPreset) return { id: this._manualPreset, w: 1 };
@@ -548,7 +562,12 @@ export class Director {
     const name = dominantEmotion(this.emotion);
     const w = this.emotion[name] ?? 0;
     const id = this._emotionPreset[name];
-    return id && w > 0.35 && this.presetById.has(id) ? { id, w } : null;
+    if (!(id && w > 0.35 && this.presetById.has(id))) return null;
+    // How strongly an emotion is felt decides whether a drawing that replaces
+    // the eye fires, never how much of it is drawn. Asking for four tenths of
+    // one leaves the default iris four tenths of the way out of its opening,
+    // which is a broken eyeball rather than a milder feeling.
+    return { id, w: this.swapsTheEye(id) ? 1 : w };
   }
 
   private updatePreset(dt: number): void {
@@ -561,6 +580,14 @@ export class Director {
     // the outgoing one fades out on its own first, and only then does the
     // incoming one take the slot.
     if (this._preset && want?.id !== this._preset) {
+      // A drawing that swaps the eye cannot fade either, for the same reason it
+      // cannot be held at a fraction: every frame of the fade is a fraction. It
+      // leaves in one frame, which is how a drawn face changes anyway.
+      if (this.swapsTheEye(this._preset)) {
+        this._presetW = 0;
+        this._preset = null;
+        return;
+      }
       this._presetW -= this._presetW * k;
       if (this._presetW < 0.02) {
         this._presetW = 0;
@@ -574,6 +601,10 @@ export class Director {
         return;
       }
       this._preset = want.id;
+    }
+    if (this.swapsTheEye(this._preset)) {
+      this._presetW = want?.w ?? 0;
+      return;
     }
     this._presetW += ((want?.w ?? 0) - this._presetW) * k;
   }

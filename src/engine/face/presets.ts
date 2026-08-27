@@ -44,7 +44,30 @@ export interface ExpressionPreset {
   id: string;
   label: string;
   lid: LidClosure;
+  /** How much of the author's own "park this out of view" travel it carries, 0..1. */
+  swap: number;
 }
+
+/** Deltas accumulated against another shape's, before the ratio is taken. */
+interface Projection {
+  dot: number;
+  len: number;
+}
+
+/** Add one mesh's worth of `target` projected onto `onto`. */
+function accumulate(target: MorphAttribute, onto: MorphAttribute, into: Projection): void {
+  for (let i = 0; i < onto.count; i++) {
+    const bx = onto.getX(i);
+    const by = onto.getY(i);
+    const bz = onto.getZ(i);
+    into.dot += target.getX(i) * bx + target.getY(i) * by + target.getZ(i) * bz;
+    into.len += bx * bx + by * by + bz * bz;
+  }
+}
+
+/** How much of `onto` the accumulated deltas amount to, 0..1. */
+const ratio = ({ dot, len }: Projection): number =>
+  len > 1e-12 ? Math.min(1, Math.max(0, dot / len)) : 0;
 
 /**
  * How much of "close this eye" a preset already contains, per eye, 0..1.
@@ -77,21 +100,68 @@ function lidClosure(profile: Profile, id: string): LidClosure {
   if (!(a && l && r && attrs)) return { L: 0, R: 0 };
 
   const project = (target: MorphAttribute, onto: MorphAttribute): number => {
-    let dot = 0;
-    let len = 0;
-    for (let i = 0; i < onto.count; i++) {
-      const bx = onto.getX(i);
-      const by = onto.getY(i);
-      const bz = onto.getZ(i);
-      dot += target.getX(i) * bx + target.getY(i) * by + target.getZ(i) * bz;
-      len += bx * bx + by * by + bz * bz;
-    }
-    return len > 1e-12 ? Math.min(1, Math.max(0, dot / len)) : 0;
+    const p: Projection = { dot: 0, len: 0 };
+    accumulate(target, onto, p);
+    return ratio(p);
   };
   return {
     L: project(attrs[a.index], attrs[l.index]),
     R: project(attrs[a.index], attrs[r.index]),
   };
+}
+
+/** Every mesh this shape writes on, with the deltas it writes there. */
+function attributesOf(list: MorphTarget[] | undefined): Map<THREE.Mesh, MorphAttribute> {
+  const out = new Map<THREE.Mesh, MorphAttribute>();
+  for (const t of list ?? []) {
+    const attr = t.mesh.geometry?.morphAttributes?.position?.[t.index];
+    if (attr) out.set(t.mesh, attr);
+  }
+  return out;
+}
+
+/**
+ * How much of an authored parking shape a drawn face already contains, 0..1.
+ *
+ * Some finished faces do not deform the eye, they replace it. The author draws
+ * the new one and folds in the `*Hide` that takes the default iris, lashes and
+ * highlights out of their opening, so the two ship as a single shape. That fold
+ * is what makes the drawing correct at full weight and *only* at full weight:
+ * the hide is a translation, not a collapse, so at 0.4 the iris has travelled
+ * four tenths of the way out of its window and stops there, half in the opening
+ * and half over the new eye. It reads as a broken eyeball, and it is reached by
+ * nothing more exotic than an emotion that is felt at 0.4.
+ *
+ * Measured for the same reason the lid travel above is: which faces do it is a
+ * property of how each one was drawn, nothing in the naming marks them, and a
+ * face that visibly swaps the iris in a thumbnail may be reshaping it instead.
+ * The answer comes out at the ends of the range rather than across it — on the
+ * validation avatar, 1.0 for every face that swaps the eye and under 0.09 for
+ * every face that does not — so a threshold between them has an order of
+ * magnitude of room on either side.
+ *
+ * Which group holds the parking shapes is avatar data: a `*Hide` family is a
+ * convention of the author's, and the runtime has no way to recognise one.
+ */
+function artSwap(profile: Profile, id: string, hideIds: string[]): number {
+  const own = attributesOf(profile.morphTargets.get(id));
+  if (!own.size) return 0;
+
+  let best = 0;
+  for (const hideId of hideIds) {
+    // Summed over every mesh the two share rather than measured on one of them.
+    // A face arrives split across several meshes and a hide is doing its work on
+    // only some of them; adding the parts up weights each mesh by how much shape
+    // it actually carries, so one where the hide is a rounding error cannot
+    // decide the answer.
+    const p: Projection = { dot: 0, len: 0 };
+    for (const [mesh, onto] of attributesOf(profile.morphTargets.get(hideId))) {
+      const target = own.get(mesh);
+      if (target) accumulate(target, onto, p);
+    }
+    best = Math.max(best, ratio(p));
+  }
+  return best;
 }
 
 /** Shape ids in a declared group that actually exist on this GLB. */
@@ -111,10 +181,12 @@ function idsInGroup(profile: Profile, spec: DrawnShapeSpec | null | undefined): 
 export function buildPresets(profile: Profile, avatar?: AvatarDescriptor): ExpressionPreset[] {
   const spec = avatar?.presets;
   const label = spec?.label ?? ((id: string) => id);
+  const hideIds = (spec?.hideGroup ? profile.groups?.get(spec.hideGroup) : null) ?? [];
   return idsInGroup(profile, spec).map((id) => ({
     id,
     label: label(id),
     lid: lidClosure(profile, id),
+    swap: artSwap(profile, id, hideIds),
   }));
 }
 

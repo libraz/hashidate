@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildOverlays, buildPresets } from '@/engine/face';
 import { buildProfile } from '@/engine/profile';
-import type { AvatarDescriptor, Profile } from '@/engine/types';
+import type { AvatarDescriptor, PresetSpec, Profile } from '@/engine/types';
 import { buildRig } from '../helpers/scene';
 
 /**
@@ -170,7 +170,7 @@ describe('buildPresets / lid closure', () => {
     };
     const profile = buildProfile(rig.root, descriptor);
     expect(buildPresets(profile, descriptor)).toEqual([
-      { id: 'B_HAZUKASHII', label: 'B_HAZUKASHII', lid: { L: 0, R: 0 } },
+      { id: 'B_HAZUKASHII', label: 'B_HAZUKASHII', lid: { L: 0, R: 0 }, swap: 0 },
     ]);
   });
 
@@ -181,6 +181,83 @@ describe('buildPresets / lid closure', () => {
     for (const preset of buildPresets(profile, descriptor)) {
       expect(preset.lid).toEqual({ L: 0, R: 0 });
     }
+  });
+});
+
+/**
+ * The parking measurement, which decides whether a drawing can be shown in
+ * part. Its input is the same projection the lid closure uses, so the expected
+ * value is again a ratio of two stated deltas.
+ */
+describe('buildPresets / parking travel', () => {
+  const HIDE_GROUP = 'Hide';
+  // The larger travel first, so a measurement that stopped at the shape it
+  // happened to reach first would come out at half of the right answer.
+  const HIDES = ['H_LASH', 'H_IRIS'];
+  const DELTAS = { H_LASH: 8e-3, H_IRIS: 4e-3, F_SUYASUYA: 4e-3, F_DOYA: 2e-3, F_JITO: 0 };
+
+  function hideSetup(presets: Partial<PresetSpec> = {}): RigSetup {
+    const rig = buildRig({
+      arkit: false,
+      groups: [
+        [LID_GROUP, ['MyLidL', 'MyLidR']],
+        [HIDE_GROUP, HIDES],
+        [FACE_GROUP, FACE_IDS],
+      ],
+      deltas: DELTAS,
+    });
+    const descriptor: AvatarDescriptor = {
+      ...rig.descriptor,
+      shapes: { blink: { L: ['MyLidL'], R: ['MyLidR'] } },
+      presets: { group: FACE_GROUP, hideGroup: HIDE_GROUP, ...presets },
+    };
+    return { profile: buildProfile(rig.root, descriptor), descriptor };
+  }
+
+  const swapOf = (setup: RigSetup): Map<string, number> =>
+    new Map(buildPresets(setup.profile, setup.descriptor).map((p) => [p.id, p.swap]));
+
+  it('measures each drawing against the parking shapes rather than being told', () => {
+    const swap = swapOf(hideSetup());
+    // A drawing that carries the whole of `H_IRIS` reads as full; one that
+    // carries half of it reads as half; one that moves nothing reads as none.
+    expect(swap.get('F_SUYASUYA')).toBeCloseTo(1, 6);
+    expect(swap.get('F_DOYA')).toBeCloseTo(0.5, 6);
+    expect(swap.get('F_JITO')).toBeCloseTo(0, 6);
+  });
+
+  it('takes the shape it parks the most of, not the one it reaches first', () => {
+    // `F_SUYASUYA` is the whole of the shorter parking travel and half of the
+    // longer one. A face is whole-or-nothing as soon as it parks any one thing
+    // outright, so the larger of the two is the answer.
+    const swap = swapOf(hideSetup());
+    expect(swap.get('F_SUYASUYA')).toBeCloseTo(1, 6);
+    expect(swap.get('F_SUYASUYA')).not.toBeCloseTo(0.5, 6);
+  });
+
+  it('measures nothing when the avatar names no group of parking shapes', () => {
+    const swap = swapOf(hideSetup({ hideGroup: undefined }));
+    for (const v of swap.values()) expect(v).toBe(0);
+  });
+
+  it('measures nothing when the named group is not on this model', () => {
+    const swap = swapOf(hideSetup({ hideGroup: 'NoSuchGroup' }));
+    for (const v of swap.values()) expect(v).toBe(0);
+  });
+
+  it('measures nothing across meshes, where the deltas are not comparable', () => {
+    const rig = buildRig({
+      arkit: false,
+      groups: [[HIDE_GROUP, HIDES]],
+      ungrouped: ['___Body___', 'B_HAZUKASHII'],
+      deltas: DELTAS,
+    });
+    const descriptor: AvatarDescriptor = {
+      ...rig.descriptor,
+      presets: { group: 'Body', hideGroup: HIDE_GROUP },
+    };
+    const profile = buildProfile(rig.root, descriptor);
+    expect(buildPresets(profile, descriptor).map((p) => p.swap)).toEqual([0]);
   });
 });
 

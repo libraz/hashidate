@@ -64,6 +64,26 @@ export default {
    */
   presets: {
     group: 'YOKA',
+    // Where this author keeps the shapes that take a part out of view. Several
+    // of the drawings in the group above fold one in, because they replace the
+    // eye rather than reshaping it, and that is what makes them whole or
+    // nothing.
+    hideGroup: 'YOKA_Hide',
+    /**
+     * `F_PAH` is the drawing this avatar has for startlement, and it puts a dot
+     * where the pupil was.
+     *
+     * A dot-eyed face is a punchline, not a reaction. It reads as a gag panel
+     * for the length of a beat and as a doll for anything longer, and the
+     * composed surprise — the character's own eye, wider — is the one worth
+     * showing on a face that has to hold.
+     *
+     * Dropped from the list rather than merely left out of the table below,
+     * because a drawing nobody wants on the character is not one to reach for by
+     * hand either, and anything left in the list is something the autopilot can
+     * find between performances.
+     */
+    exclude: ['F_PAH'],
     label: (id: string) => id.replace(/^F_/, '').replace(/_/g, ' '),
     emotion: {
       /**
@@ -87,7 +107,10 @@ export default {
       joy: 'F_NIKO',
       anger: 'F_PUNPUN',
       sadness: 'F_IYAIYA',
-      surprise: 'F_PAH',
+      // No surprise. The only drawing for it is the dot-eyed one excluded
+      // above, and every other face in the set reads as some other feeling —
+      // so surprise is left to the composition, which is what an emotion with
+      // no drawing is supposed to fall back to.
       relaxed: 'F_HOWAWA',
       thinking: 'F_FUMUFUMU',
       shy: 'F_TERETERE',
