@@ -5,6 +5,11 @@ coverage/
 .DS_Store
 *.log
 
+# The speech sidecar's Python environment. Several GB once torch is in it, and
+# rebuilt by `make tts-setup`.
+.venv/
+__pycache__/
+
 # Purchased assets, extracted intermediates and internal specs. Never tracked.
 backup/
 

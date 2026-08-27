@@ -8,8 +8,11 @@ RES      = backup/resource
 OUT      = public/models
 TOOLS    = tools/blender
 
+TTS      = tools/tts
+
 .PHONY: help all extract textures resize glb \
         manuka manuka-extract manuka-textures manuka-glb \
+        tts-setup tts-refs tts \
         check-assets clean clean-tex
 
 help:
@@ -24,6 +27,10 @@ help:
 	@echo "  manuka-extract   購入 zip を展開する"
 	@echo "  manuka-textures  同梱テクスチャを Web 用に縮小する"
 	@echo "  manuka-glb       $(OUT)/manuka.glb を生成する"
+	@echo "-- 音声"
+	@echo "  tts-setup        音声サイドカーの Python 環境を作る（初回のみ）"
+	@echo "  tts-refs         backup/voice/clips の参照音声を潜在表現に変換する"
+	@echo "  tts              音声サーバを起動する（127.0.0.1:8770）"
 	@echo "-- 共通"
 	@echo "  all              2 体とも GLB まで通す（展開済みが前提）"
 	@echo "  check-assets     git 追跡対象に巨大ファイルが混ざっていないか検査する"
@@ -89,6 +96,21 @@ manuka-glb:
 	$(BLENDER) -b -P $(TOOLS)/export_glb.py -- --profile manuka \
 		$(RES)/manuka/MANUKA_ver1.02/MANUKA.fbx $(OUT)/manuka.glb $(RES)/manuka/tex_web \
 		2>&1 | grep -E '^@@@|Error'
+
+# ---------------------------------------------------------------------- 音声
+
+# Irodori-TTS を上流から直接入れる。torch を含むため 3 GB 前後になる。
+# Python は 3.10 固定（上流の要件）で、Node 側の環境とは完全に別物。
+tts-setup:
+	cd $(TTS) && uv venv --python 3.10 .venv
+	cd $(TTS) && uv pip install --python .venv -r pyproject.toml
+
+# 参照音声は backup/voice/clips/ に置く。git 追跡対象ではない
+tts-refs:
+	cd $(TTS) && .venv/bin/python refs.py
+
+tts:
+	cd $(TTS) && .venv/bin/python server.py
 
 # -------------------------------------------------------------------- 共通
 

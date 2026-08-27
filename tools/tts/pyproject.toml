@@ -1,0 +1,25 @@
+[project]
+name = "aituber-tts"
+version = "0.1.0"
+description = "Local speech sidecar for the avatar runtime"
+requires-python = ">=3.10,<3.11"
+
+# Irodori-TTS is installed straight from its repository: it is an inference and
+# training codebase rather than a published package, and the commit is pinned
+# because the voice has to come out the same tomorrow.
+#
+# The `cpu` extra is not about running on the CPU — that path is unusably slow.
+# Its index redirect only applies on Linux and Windows, so on macOS all it does
+# is hold torch to the 2.10 series the voice was tuned against, while the plain
+# PyPI wheel supplies the MPS backend that actually runs it.
+dependencies = [
+    "irodori-tts[cpu] @ git+https://github.com/Aratako/Irodori-TTS.git@8224dafb46d0aba89209a8f905f1cb7e3299d9c1",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "soundfile>=0.12",
+]
+
+[tool.uv]
+# The reference encoder and the model must agree on the codec, so both come from
+# the same install rather than from whatever happens to be on the machine.
+package = false
