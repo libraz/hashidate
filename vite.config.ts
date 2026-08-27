@@ -1,11 +1,43 @@
 import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 
-const CONTROL_PORT = Number(process.env.AITUBER_CONTROL_PORT ?? 8765);
+const CONTROL_PORT = Number(process.env.HASHIDATE_CONTROL_PORT ?? 8765);
+
+/**
+ * Print the panel's address next to the viewer's on startup.
+ *
+ * The dev server has two entries but only announces the one at the root, and
+ * the panel is the page an operator spends the broadcast in — leaving its
+ * address as something you had to already know made the second surface look
+ * like it was not running.
+ */
+function announcePanel(): Plugin {
+  return {
+    name: 'hashidate:announce-panel',
+    apply: 'serve',
+    configureServer(server) {
+      const printUrls = server.printUrls.bind(server);
+      // The arrow and the bold label vite prints for its own lines, written out
+      // rather than imported — its colour helper is internal. Dropped when
+      // stdout is not a terminal, which is how `yarn dev` runs it: the child of
+      // `concurrently` is a pipe, vite prints its own lines uncoloured there,
+      // and an escape sequence nothing interprets is left on screen as text.
+      const arrow = process.stdout.isTTY
+        ? '  \x1b[32m➜\x1b[39m  \x1b[1mPanel\x1b[22m'
+        : '  ➜  Panel';
+      server.printUrls = () => {
+        printUrls();
+        for (const url of server.resolvedUrls?.local ?? []) {
+          server.config.logger.info(`${arrow}:   ${url}panel/`);
+        }
+      };
+    },
+  };
+}
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), announcePanel()],
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
@@ -29,6 +61,22 @@ export default defineConfig({
         // The command channel is Server-Sent Events. Buffering it would hold
         // every command until the connection closed.
         ws: false,
+      },
+      // The documents the character presents from. They are not part of the
+      // build — an operator saves one into the directory during a broadcast —
+      // so they are served by the control server here and in production alike,
+      // and the directory can sit outside the document root entirely.
+      '/slides': {
+        target: `http://127.0.0.1:${CONTROL_PORT}`,
+        changeOrigin: false,
+      },
+      // pdf.js's character maps and standard font outlines, which it fetches
+      // for a document that names a font instead of carrying it. Served by the
+      // control server out of the installed package rather than copied into the
+      // build; see its `PDFJS_PREFIX`.
+      '/pdfjs': {
+        target: `http://127.0.0.1:${CONTROL_PORT}`,
+        changeOrigin: false,
       },
     },
   },

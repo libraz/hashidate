@@ -31,12 +31,12 @@ for f in "${tracked[@]}"; do
 done
 
 if [ ${#over[@]} -gt 0 ]; then
-  echo "追跡対象に $((MAX / 1024)) KiB を超えるファイルがある:" >&2
+  echo "tracked files over $((MAX / 1024)) KiB:" >&2
   printf '%s\n' "${over[@]}" >&2
   echo >&2
-  echo "リソースは backup/resource/ に、生成物は public/models/ に置くこと" >&2
-  echo "（どちらも .gitignore 済み）。" >&2
+  echo "put resources in backup/resource/ and generated files in public/models/" >&2
+  echo "(both are already in .gitignore)." >&2
   exit 1
 fi
 
-echo "追跡対象に $((MAX / 1024)) KiB 超のファイルなし（${#tracked[@]} 件を検査）"
+echo "no tracked file over $((MAX / 1024)) KiB (${#tracked[@]} checked)"

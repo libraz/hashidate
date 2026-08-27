@@ -1,4 +1,4 @@
-"""Blender headless: FBX の構造を報告する。
+"""Blender headless: report the structure of an FBX.
 
 usage: blender -b -P inspect_fbx.py -- <path.fbx>
 """

@@ -269,10 +269,10 @@ async function post(base: string, body: unknown, wait: boolean): Promise<void> {
     body: JSON.stringify(body),
   });
   const payload = (await res.json()) as { error?: string; viewers?: number; completed?: boolean };
-  if (!res.ok) throw new Error(`${res.status} ${payload.error ?? ''} — ビューアは開いていますか`);
+  if (!res.ok) throw new Error(`${res.status} ${payload.error ?? ''} — is the viewer open?`);
   // A line that timed out rather than ending is worth saying out loud: the tour
   // carries on, but the reason the next beat looks early is this one.
-  if (wait && payload.completed === false) console.warn('  (この行は待ちきれませんでした)');
+  if (wait && payload.completed === false) console.warn('  (gave up waiting on this line)');
 }
 
 /**
@@ -308,12 +308,12 @@ async function main(): Promise<void> {
   const base = flag >= 0 ? argv[flag + 1] : DEFAULT_BASE;
 
   const groups = runs(TOUR);
-  console.log(`${TOUR.length} ビートを ${groups.length} 回に分けて ${base} へ送ります`);
+  console.log(`sending ${TOUR.length} beats to ${base} in ${groups.length} requests`);
   for (const [index, run] of groups.entries()) {
     const spoken = run.filter((beat) => beat.say !== undefined);
     const first = spoken[0]?.say?.text;
-    const label = typeof first === 'string' ? first.replace(/\[[^\]]*\]/g, '') : '（配置のみ）';
-    const count = spoken.length > 1 ? ` (+${spoken.length - 1} 行)` : '';
+    const label = typeof first === 'string' ? first.replace(/\[[^\]]*\]/g, '') : '(staging only)';
+    const count = spoken.length > 1 ? ` (+${spoken.length - 1} lines)` : '';
     console.log(`\n[${index + 1}/${groups.length}]${count} ${label.slice(0, 46)}`);
 
     const commands = run.flatMap((beat) => [...(beat.before ?? []), ...wire(beat)]);
@@ -321,7 +321,7 @@ async function main(): Promise<void> {
     const hold = run.at(-1)?.hold;
     if (hold) await new Promise((done) => setTimeout(done, hold * 1000));
   }
-  console.log('\nおわり');
+  console.log('\ndone');
 }
 
 main().catch((error: unknown) => {

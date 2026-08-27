@@ -1,11 +1,11 @@
-"""unitypackage からテクスチャを取り出す。
+"""Pull the textures out of a unitypackage.
 
-.unitypackage は gzip 圧縮 tar で、アセットごとに
-  <guid>/asset      … ファイル実体
-  <guid>/pathname   … Unity プロジェクト上のパス
-の対を持つ。順序が保証されないため 2 パスで走査する。
+A .unitypackage is a gzip-compressed tar holding, for every asset, the pair
+  <guid>/asset      … the file itself
+  <guid>/pathname   … its path inside the Unity project
+The order is not guaranteed, so it is walked in 2 passes.
 
-usage: python3 extract_textures.py <pkg> <出力先> [パスに含む文字列]
+usage: python3 extract_textures.py <pkg> <outdir> [substring the path must contain]
 """
 import os
 import sys
@@ -17,7 +17,7 @@ needle = sys.argv[3] if len(sys.argv) > 3 else "/Texture_1K/"
 
 os.makedirs(out, exist_ok=True)
 
-# pass 1: guid -> Unity パス
+# pass 1: guid -> Unity path
 paths = {}
 with tarfile.open(pkg, "r|gz") as tf:
     for m in tf:
@@ -27,9 +27,9 @@ with tarfile.open(pkg, "r|gz") as tf:
 
 want = {g: p for g, p in paths.items()
         if needle in p and p.lower().endswith((".png", ".tga"))}
-print(f"対象 {len(want)} / 全アセット {len(paths)}")
+print(f"selected {len(want)} / {len(paths)} assets in total")
 
-# pass 2: 実体を書き出す
+# pass 2: write the files out
 got = 0
 with tarfile.open(pkg, "r|gz") as tf:
     for m in tf:
@@ -42,4 +42,4 @@ with tarfile.open(pkg, "r|gz") as tf:
         with open(dst, "wb") as f:
             f.write(tf.extractfile(m).read())
         got += 1
-print(f"抽出 {got} ファイル -> {out}")
+print(f"extracted {got} files -> {out}")

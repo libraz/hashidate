@@ -1,7 +1,8 @@
-"""Blender headless: FBX を読み込み、必要なシェイプキーだけ残して GLB を書き出す。
+"""Blender headless: read an FBX, keep only the shape keys needed, write out a GLB.
 
-追加の衣装 FBX は別アーマチュアを持って出てくるので、メインの骨格に付け替えて
-から統合する。ボーン名は共通なので頂点グループはそのまま通る。
+An extra outfit FBX comes out carrying its own armature, so it is re-parented onto
+the main skeleton before being merged. The bone names are shared, so the vertex
+groups carry over as they are.
 
 usage: blender -b -P export_glb.py -- [--profile NAME] <in.fbx|in.blend> <out.glb>
                                      [texdir] [extra.fbx ...]
@@ -145,10 +146,11 @@ else:
 main_arm = armature_of(bpy.data.objects)
 print(f"@@@ main armature '{main_arm.name}' bones={len(main_arm.data.bones)}")
 
-# --- 追加衣装をメインの骨格に付け替える
+# --- re-parent extra outfits onto the main skeleton
 #
-# 2 回目以降の FBX 取り込みでは Blender のユニット解決が効かず、100 倍のスケール
-# で入ってくる。1 体目の骨格の高さと突き合わせて倍率を求め、取り込み直す。
+# From the second FBX import onwards Blender's unit resolution stops working and
+# the file arrives at 100x scale. The ratio is worked out against the height of
+# the first skeleton's bones, and the file is imported again.
 main_bones = {b.name for b in main_arm.data.bones}
 
 
@@ -244,14 +246,14 @@ for path in EXTRA:
     bpy.data.objects.remove(arm, do_unlink=True)
     print(f"@@@ merged {name} -> {moved}  grafted_bones={grafted}")
 
-# --- 多マテリアルのメッシュをマテリアル単位に分割して命名する
+# --- split multi-material meshes per material and name the pieces
 #
-# glTF エクスポータはマテリアルごとにメッシュを分割し、分割後の名前を Mesh011 の
-# ような連番に振り直す。着せ替えでパーツを名前で指すには識別子が要るので、
-# 事前にこちらで分割して <元の名前>__<マテリアル名> を与えておく。
+# The glTF exporter splits a mesh per material and renumbers the pieces into a
+# sequence like Mesh011. Naming a part to swap an outfit needs an identifier, so
+# the split is done here first and each piece is given <original>__<material>.
 #
-# シェイプキーを持つメッシュ（顔）は対象外。分割するとモーフが複数メッシュに
-# 散り、表情の駆動先が壊れる。
+# Meshes that carry shape keys (the face) are excluded. Splitting one scatters its
+# morphs across several meshes and breaks what the expressions drive.
 split = []
 for ob in [o for o in bpy.data.objects if o.type == "MESH"]:
     if len(ob.data.materials) < 2 or ob.data.shape_keys:
@@ -273,7 +275,7 @@ for ob in [o for o in bpy.data.objects if o.type == "MESH"]:
 if split:
     print(f"@@@ split by material -> {split}")
 
-# --- テクスチャの再リンク（FBX 内の絶対 Windows パスをローカルへ差し替え）
+# --- relink textures (the absolute Windows paths in the FBX become local ones)
 relinked, miss = 0, []
 for im in bpy.data.images:
     base = os.path.basename(im.filepath.replace("\\", "/"))
@@ -337,7 +339,7 @@ for mat in bpy.data.materials:
 if wired or TEX_BY_MATERIAL:
     print(f"@@@ textures wired by material: {wired}")
 
-# --- シェイプキーの間引き
+# --- thin out the shape keys
 report = []
 for ob in [o for o in bpy.data.objects if o.type == "MESH"]:
     sk = ob.data.shape_keys
