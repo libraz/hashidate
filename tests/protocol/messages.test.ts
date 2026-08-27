@@ -228,6 +228,8 @@ describe('snapshotSchema', () => {
       state: session.state(),
       vocabulary: session.vocabulary(),
       events: session.takeEvents(),
+      voice: null,
+      queue: [],
     };
     const result = snapshotSchema.safeParse(snapshot);
     expect(result.error?.issues ?? []).toEqual([]);
@@ -242,6 +244,8 @@ describe('snapshotSchema', () => {
       state: {},
       vocabulary: {},
       events: [],
+      voice: null,
+      queue: [],
     });
     expect(result.error?.issues ?? []).toEqual([]);
   });
@@ -254,6 +258,8 @@ describe('snapshotSchema', () => {
         seq: 3,
         state: { speaking: false },
         vocabulary: { cameras: ['face'] },
+        voice: null,
+        queue: [],
         events: [],
       }).success,
     ).toBe(true);

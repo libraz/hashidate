@@ -3,6 +3,7 @@ import type {
   SessionEvent as EngineSessionEvent,
   SessionState as EngineSessionState,
   Vocabulary as EngineVocabulary,
+  VoiceReport as EngineVoiceReport,
   GestureGroup,
   PerformanceGroup,
   SessionEventType,
@@ -16,6 +17,7 @@ import {
   emotionVectorSchema,
   fingerNameSchema,
   sideSchema,
+  turnSchema,
 } from './commands';
 
 /**
@@ -40,6 +42,7 @@ export const sessionEventTypeSchema = z.enum([
   'turn.end',
   'turn.interrupted',
   'queue.dropped',
+  'queue.replaced',
   'queue.empty',
 ]);
 type _EventTypesMatchEngine = Expect<
@@ -157,6 +160,12 @@ export const vocabularySchema = z.object({
   /** Slot names are avatar data, so the keys are open. */
   wardrobe: z.record(z.string(), z.object({ label: z.string(), items: z.array(labelledIdSchema) })),
   wardrobePresets: z.array(labelledIdSchema),
+  /** Where the voice is heard. Empty on a renderer that has no voice at all. */
+  rooms: z.array(labelledIdSchema),
+  /** Where the character is seen. Empty on a renderer with no backdrops. */
+  backdrops: z.array(labelledIdSchema),
+  /** The named voice chains, on the same footing as the rooms above. */
+  voicePresets: z.array(labelledIdSchema),
 });
 
 export type Vocabulary = z.infer<typeof vocabularySchema>;
@@ -168,6 +177,30 @@ export type Vocabulary = z.infer<typeof vocabularySchema>;
  */
 type _VocabularyMatchesEngine = Assert<Vocabulary, EngineVocabulary>;
 type _EngineMatchesVocabulary = Assert<EngineVocabulary, Vocabulary>;
+
+/**
+ * What the voice says about itself, so a control surface can draw the chain it
+ * is actually running rather than the one it last asked for.
+ *
+ * `dsp` is the *resolved* configuration — the base preset with every override
+ * merged in — and is stated loosely here on purpose. The strict shape is
+ * `voiceDspSchema`, which governs what may be *sent*; what comes back is a
+ * readout, and a renderer on a newer libsonare that grew a processor should be
+ * able to report it rather than have the field stripped on the way through.
+ */
+export const voiceReportSchema = z.object({
+  preset: z.string().nullable(),
+  dsp: z.record(z.string(), z.unknown()).nullable(),
+  room: z.string().nullable(),
+  /** Integrated loudness of the last take, LUFS. Null before anything is spoken. */
+  lufs: z.number().nullable(),
+  /** True peak of the last take, dBTP. */
+  truePeakDb: z.number().nullable(),
+});
+
+export type VoiceReport = z.infer<typeof voiceReportSchema>;
+type _VoiceReportMatchesEngine = Assert<VoiceReport, EngineVoiceReport>;
+type _EngineMatchesVoiceReport = Assert<EngineVoiceReport, VoiceReport>;
 
 // --- viewer -> server -------------------------------------------------------
 
@@ -184,6 +217,7 @@ export const reportBodySchema = z.object({
   state: sessionStateSchema.optional(),
   events: z.array(sessionEventSchema).optional(),
   vocabulary: vocabularySchema.optional(),
+  voice: voiceReportSchema.optional(),
 });
 
 export type ReportBody = z.infer<typeof reportBodySchema>;
@@ -222,6 +256,80 @@ export const commandResponseSchema = z.object({
 
 export type CommandResponse = z.infer<typeof commandResponseSchema>;
 
+// --- the queue --------------------------------------------------------------
+
+/**
+ * One turn waiting to be said, as the control server holds it.
+ *
+ * A turn plus the three things only the server can know: which id it is filed
+ * under, who put it there, and when. `id` is not optional here the way it is on
+ * a `say` — an entry that cannot be named cannot be edited, moved or deleted,
+ * and it is also the id `turn.start` and `turn.end` come back under, so the
+ * panel can tell which row is being spoken without a second correlation.
+ *
+ * `source` and `note` are for the operator and are **never spoken**. They are
+ * how a queue full of lines stays legible when they came from three places at
+ * once — an orchestrator's script, a viewer's comment, something typed by hand
+ * mid-stream — which is the normal case during a broadcast rather than an
+ * unusual one.
+ */
+export const queueEntrySchema = turnSchema.extend({
+  id: z.string(),
+  /** Which producer put it here: an orchestrator, a comment, the panel. Free-form. */
+  source: z.string().optional(),
+  /** The operator's own note. Never spoken, never synthesised. */
+  note: z.string().optional(),
+  /** Epoch seconds it was queued, for ordering a display by age. */
+  at: z.number(),
+});
+
+export type QueueEntry = z.infer<typeof queueEntrySchema>;
+
+/**
+ * The body of a queue insertion.
+ *
+ * `turn` and `turns` both work, and the single form is not sugar: the caller
+ * that matters most is a comment handler with exactly one line to say, and
+ * making it wrap that line in an array it did not want is the kind of friction
+ * that gets worked around with a helper in every consumer.
+ */
+export const queueAddSchema = z.object({
+  turn: turnSchema.optional(),
+  turns: z.array(turnSchema).optional(),
+  /** Where it goes. Default is the end. */
+  at: z.enum(['push', 'unshift']).optional(),
+  /** Which producer this came from. Applied to every turn in the batch. Never spoken. */
+  source: z.string().optional(),
+  /** The operator's note. Never spoken. */
+  note: z.string().optional(),
+});
+
+export type QueueAdd = z.infer<typeof queueAddSchema>;
+
+/**
+ * The body of an edit: which entry, and what to change about it.
+ *
+ * Every field is optional except the id, so a panel that is only fixing a
+ * reading does not have to resend the emotion vector it never touched — and,
+ * more to the point, cannot clobber one that changed underneath it.
+ */
+export const queueUpdateSchema = turnSchema.extend({
+  id: z.string(),
+  source: z.string().optional(),
+  note: z.string().optional(),
+});
+
+export type QueueUpdate = z.infer<typeof queueUpdateSchema>;
+
+/** The reply to anything that reads or changes the queue. */
+export const queueResponseSchema = z.object({
+  queue: z.array(queueEntrySchema),
+  /** How many viewers the resulting queue was delivered to. */
+  viewers: z.number(),
+});
+
+export type QueueResponse = z.infer<typeof queueResponseSchema>;
+
 // --- server -> orchestrator -------------------------------------------------
 
 /**
@@ -241,6 +349,10 @@ export const snapshotSchema = z.object({
   state: sessionStateSchema.partial(),
   vocabulary: vocabularySchema.partial(),
   events: z.array(sessionEventSchema),
+  /** What the voice is running. Null until a viewer with a voice has reported. */
+  voice: voiceReportSchema.nullable(),
+  /** The pending turns, in the order they will be said. See `queue.ts`. */
+  queue: z.array(queueEntrySchema),
 });
 
 export type Snapshot = z.infer<typeof snapshotSchema>;

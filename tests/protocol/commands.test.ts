@@ -67,6 +67,21 @@ const SWITCH_CASES: Record<CommandName, Command[]> = {
     { cmd: 'wear', preset: 'default' },
     { cmd: 'wear' },
   ],
+  room: [{ cmd: 'room', id: 'hall' }, { cmd: 'room', id: null }, { cmd: 'room' }],
+  backdrop: [{ cmd: 'backdrop', id: 'night' }, { cmd: 'backdrop', id: null }, { cmd: 'backdrop' }],
+  queue: [
+    { cmd: 'queue', turns: [] },
+    {
+      cmd: 'queue',
+      turns: [{ text: 'ひとつめ' }, { id: 'q1', text: 'ふたつめ', perform: 'hello' }],
+    },
+  ],
+  voice: [
+    { cmd: 'voice', preset: 'bright-idol' },
+    { cmd: 'voice', preset: null },
+    { cmd: 'voice', dsp: { retune: { semitones: 3 }, eq: { airDb: 2 } } },
+    { cmd: 'voice' },
+  ],
 };
 
 /** The `cmd` tags the union actually carries. */

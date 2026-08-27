@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import type { ZodType } from 'zod';
 import {
+  backdropCommandSchema,
   cameraCommandSchema,
   commandSchema,
   emotionCommandSchema,
@@ -12,6 +13,7 @@ import {
   overlayCommandSchema,
   performCommandSchema,
   pointCommandSchema,
+  roomCommandSchema,
   sayCommandSchema,
   type Vocabulary,
   wearCommandSchema,
@@ -39,6 +41,7 @@ import { ControlClient, DEFAULT_BASE, fail } from './client';
  *     yarn ctl reset
  *     yarn ctl interrupt
  *     yarn ctl camera bust
+ *     yarn ctl backdrop dusk
  *     yarn ctl wear --preset stream
  *     yarn ctl watch
  *
@@ -352,6 +355,32 @@ const camera: Handler = async (client, args) => {
   );
 };
 
+/** No id is dry, matching `perform` and `gesture` rather than needing a word for it. */
+const room: Handler = async (client, args) => {
+  const { positionals } = parseArgs({ args, allowPositionals: true });
+  show(
+    await client.command(
+      build(roomCommandSchema, {
+        cmd: 'room',
+        id: positionals[0] ?? null,
+      }),
+    ),
+  );
+};
+
+/** Same shape as `room` beside it, and the same rule: no id is the bare stage. */
+const backdrop: Handler = async (client, args) => {
+  const { positionals } = parseArgs({ args, allowPositionals: true });
+  show(
+    await client.command(
+      build(backdropCommandSchema, {
+        cmd: 'backdrop',
+        id: positionals[0] ?? null,
+      }),
+    ),
+  );
+};
+
 const wear: Handler = async (client, args) => {
   const { values } = parseArgs({
     args,
@@ -436,6 +465,10 @@ const vocab: Handler = async (client) => {
   console.log(`hops: ${hops.map((h) => `${h.id} (${h.label})`).join(', ')}`);
   const cameras: Vocabulary['cameras'] = vocabulary.cameras ?? [];
   console.log(`cameras: ${cameras.join(', ')}`);
+  const rooms: Vocabulary['rooms'] = vocabulary.rooms ?? [];
+  console.log(
+    `rooms: ${rooms.length === 0 ? '(音声なし)' : rooms.map((r) => `${r.id} (${r.label})`).join(', ')}`,
+  );
   const wardrobe: Vocabulary['wardrobe'] = vocabulary.wardrobe ?? {};
   for (const [slot, entry] of Object.entries(wardrobe)) {
     console.log(
@@ -478,6 +511,8 @@ const HANDLERS: Record<string, Handler> = {
   hop,
   point,
   camera,
+  room,
+  backdrop,
   wear,
   idle,
   look,

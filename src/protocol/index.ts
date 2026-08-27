@@ -8,6 +8,8 @@
  */
 
 export {
+  backdropCommandSchema,
+  type CameraFrame,
   type Command,
   type CommandName,
   cameraCommandSchema,
@@ -28,9 +30,16 @@ export {
   parseCommand,
   performCommandSchema,
   pointCommandSchema,
+  queueCommandSchema,
   resetCommandSchema,
+  roomCommandSchema,
   sayCommandSchema,
   sideSchema,
+  type TurnRequest,
+  turnSchema,
+  type VoiceDsp,
+  voiceCommandSchema,
+  voiceDspSchema,
   wearCommandSchema,
 } from './commands';
 export {
@@ -41,6 +50,14 @@ export {
   type EventsResponse,
   eventsResponseSchema,
   labelledIdSchema,
+  type QueueAdd,
+  type QueueEntry,
+  type QueueResponse,
+  type QueueUpdate,
+  queueAddSchema,
+  queueEntrySchema,
+  queueResponseSchema,
+  queueUpdateSchema,
   type ReportBody,
   reportBodySchema,
   type SessionEvent,
@@ -53,5 +70,7 @@ export {
   snapshotSchema,
   streamMessageSchema,
   type Vocabulary,
+  type VoiceReport,
   vocabularySchema,
+  voiceReportSchema,
 } from './messages';

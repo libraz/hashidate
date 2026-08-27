@@ -72,6 +72,11 @@ type _FingersMatchEngine = Expect<Equals<z.infer<typeof fingerNameSchema>, Finge
 export const cameraFrameSchema = z.enum(['face', 'bust', 'upper', 'full']);
 type _CameraFramesMatchEngine = Expect<Equals<z.infer<typeof cameraFrameSchema>, CameraFrame>>;
 
+/** Re-exported for the same reason as `TurnRequest` below: the guard above makes
+ *  it the same type, so a caller building a command need not reach into the
+ *  engine to name one. */
+export type { CameraFrame };
+
 /**
  * Correlation id, carried by every command.
  *
@@ -155,6 +160,48 @@ export const sayCommandSchema = z.object({
 type _SayPayloadIsTurnRequest = Expect<
   Equals<Omit<z.infer<typeof sayCommandSchema>, 'cmd'>, TurnRequest>
 >;
+
+/**
+ * One turn as it travels inside a queue: the `say` payload without the verb.
+ *
+ * Derived from `sayCommandSchema` rather than written out again, so a field
+ * added to a spoken line cannot be one a queued line silently loses.
+ */
+export const turnSchema = sayCommandSchema.omit({ cmd: true });
+
+type _TurnPayloadIsTurnRequest = Expect<Equals<z.infer<typeof turnSchema>, TurnRequest>>;
+
+/**
+ * Re-exported so that a caller building a turn can reach the type without
+ * reaching into the engine. The guard above is what makes that honest: the two
+ * names are the same type, checked at compile time, so the protocol is not
+ * publishing a second opinion about what a turn is.
+ */
+export type { TurnRequest };
+
+/**
+ * Replace everything pending with this list, in order.
+ *
+ * The editable queue lives in the control server — that is what lets it survive
+ * a viewer reload and be reordered from a panel — and this is how an edit to it
+ * reaches the renderer. The whole list travels rather than a diff, because a
+ * diff would have to be applied against whatever the renderer's queue happened
+ * to hold at the moment it arrived, and the two ends disagree constantly by
+ * nature: a turn starts playing here while an edit is in flight from there.
+ *
+ * Sending the whole list is not as wasteful as it looks. A turn already queued
+ * under the same id, with the same words, keeps the audio that was made for it;
+ * see `Session.replaceQueue`. So a reorder costs one message and no synthesis,
+ * and only a line whose text actually changed is spoken again.
+ *
+ * The turn being said right now is not in this list and is not affected. It is
+ * already out of the queue; stopping it is what `interrupt` is for.
+ */
+export const queueCommandSchema = z.object({
+  cmd: z.literal('queue'),
+  id: correlationId,
+  turns: z.array(turnSchema),
+});
 
 /** Stop mid-sentence and drop everything pending. The stream's kill switch. */
 export const interruptCommandSchema = z.object({
@@ -321,6 +368,178 @@ export const cameraCommandSchema = z.object({
 });
 
 /**
+ * Put the voice in a named acoustic space, or take it out of one.
+ *
+ * `id` here is the room's own id, not the correlation id, and `null` is dry.
+ * The names come back in the vocabulary, like wardrobe slots and performances,
+ * because what rooms exist is renderer data rather than something the wire
+ * should be pinning down — an unknown one is dry rather than a rejected command.
+ *
+ * Persistent, like the camera and unlike everything under `say`. A room is
+ * where the stream is happening; it does not end with a line.
+ */
+export const roomCommandSchema = z.object({
+  cmd: z.literal('room'),
+  id: z.string().nullable().optional(),
+});
+
+/**
+ * Which room the character is *seen* in, as `room` is which one they are heard
+ * in. No id renders the character against the flat background.
+ *
+ * The id is a bare string for the same reason `room`'s is: what backdrops exist
+ * is renderer data, and an unknown one draws nothing rather than being rejected.
+ *
+ * ## It is not the same axis as `room`, and joining them would be wrong
+ *
+ * The temptation is obvious — a character in a small bedroom should sound like
+ * one — and it does not survive contact with what a stream is. The set is
+ * chosen for how it reads behind a face at a fixed framing; the acoustic is
+ * chosen for how a voice sits in a mix. A backdrop can be swapped mid-stream
+ * for a visual beat with no implication that the microphone moved, and the
+ * reverb has to stay put across that or every cut is audible. Two commands, and
+ * an orchestrator that wants them to agree says so twice.
+ *
+ * Persistent and survives an avatar swap, like the camera and the room.
+ */
+export const backdropCommandSchema = z.object({
+  cmd: z.literal('backdrop'),
+  id: z.string().nullable().optional(),
+});
+
+/**
+ * How the voice is processed on its way out: pitch, formant, EQ, gate,
+ * compressor, de-esser, reverb and limiter.
+ *
+ * ## The section names are the renderer's, deliberately
+ *
+ * Everywhere else at this boundary the wire uses its own vocabulary and the
+ * renderer translates — `point` is in degrees because the engine's radians are
+ * an internal form. This does the opposite and mirrors the processor's own
+ * layout one for one, because here there is nothing to translate *to*: a
+ * de-esser threshold is a de-esser threshold, and inventing a second set of
+ * names for the same twenty-odd numbers would only produce a mapping table for
+ * the two ends to drift across.
+ *
+ * ## Every field is optional and lands on top of a base preset
+ *
+ * `preset` names the starting point and the fields below override parts of it,
+ * on the same rule `say` follows for a performance and its three overrides. The
+ * renderer holds the base and merges, which is not merely convenient: the
+ * processor refuses a partial configuration outright, so a complete one has to
+ * be assembled *somewhere*, and the end that already has the preset table is
+ * the end that can do it without shipping the table over the wire.
+ *
+ * `preset: null` is no processing at all — the take is played as the
+ * synthesiser made it. Absent leaves the base where it was.
+ *
+ * ## Reverb is here and is not the room
+ *
+ * `reverb` is the tail this chain adds to the voice itself. The *room* — see
+ * `roomCommandSchema` — is a convolution downstream of the whole chain, derived
+ * from a physical space rather than dialled in as a decay time, and it is the
+ * one to reach for. Both at once is two rooms and sounds like it.
+ */
+export const voiceDspSchema = z.object({
+  /** Level into the chain, before anything else. */
+  inputGainDb: z.number().finite().optional(),
+  /** Level out of it, after everything but the limiter. */
+  outputGainDb: z.number().finite().optional(),
+  /** How much of the processed signal is heard against the untouched one. */
+  wetMix: z.number().min(0).max(1).optional(),
+  /** Pitch, moved without moving the formants — which is what keeps it a voice. */
+  retune: z
+    .object({
+      semitones: z.number().finite().optional(),
+      mix: z.number().min(0).max(1).optional(),
+      grainSize: z.number().finite().optional(),
+    })
+    .optional(),
+  /** The resonances that decide who it sounds like, moved without moving the pitch. */
+  formant: z
+    .object({
+      factor: z.number().finite().optional(),
+      amount: z.number().min(0).max(1).optional(),
+      body: z.number().finite().optional(),
+      brightness: z.number().finite().optional(),
+      nasal: z.number().finite().optional(),
+    })
+    .optional(),
+  eq: z
+    .object({
+      highpassHz: z.number().finite().optional(),
+      bodyDb: z.number().finite().optional(),
+      presenceDb: z.number().finite().optional(),
+      airDb: z.number().finite().optional(),
+    })
+    .optional(),
+  gate: z
+    .object({
+      thresholdDb: z.number().finite().optional(),
+      attackMs: z.number().finite().optional(),
+      releaseMs: z.number().finite().optional(),
+      rangeDb: z.number().finite().optional(),
+    })
+    .optional(),
+  compressor: z
+    .object({
+      thresholdDb: z.number().finite().optional(),
+      ratio: z.number().finite().optional(),
+      attackMs: z.number().finite().optional(),
+      releaseMs: z.number().finite().optional(),
+      makeupGainDb: z.number().finite().optional(),
+    })
+    .optional(),
+  deesser: z
+    .object({
+      frequencyHz: z.number().finite().optional(),
+      thresholdDb: z.number().finite().optional(),
+      ratio: z.number().finite().optional(),
+      rangeDb: z.number().finite().optional(),
+    })
+    .optional(),
+  reverb: z
+    .object({
+      mix: z.number().min(0).max(1).optional(),
+      timeMs: z.number().finite().optional(),
+      damping: z.number().min(0).max(1).optional(),
+      seed: z.number().finite().optional(),
+    })
+    .optional(),
+  limiter: z
+    .object({
+      ceilingDb: z.number().finite().optional(),
+      releaseMs: z.number().finite().optional(),
+      enableIspLimiter: z.boolean().optional(),
+      ispCeilingDbtp: z.number().finite().optional(),
+    })
+    .optional(),
+});
+
+export type VoiceDsp = z.infer<typeof voiceDspSchema>;
+
+/**
+ * Set the voice chain, or take it out of the way.
+ *
+ * Persistent, like the camera and the room and unlike everything under `say`:
+ * how the voice is processed is a property of the stream, not of a line. It
+ * applies from the next line synthesised — a take already made was made with
+ * the chain that was up at the time, and re-making the queue on every knob turn
+ * would send the whole thing back to the sidecar.
+ *
+ * `id` here is the correlation id; the base preset travels under `preset`,
+ * because unlike `expression` and `perform` this command has fields of its own
+ * and there is no ambiguity to resolve by spending `id` on the payload.
+ */
+export const voiceCommandSchema = z.object({
+  cmd: z.literal('voice'),
+  id: correlationId,
+  /** Base preset id. `null` bypasses the chain; absent keeps the current base. */
+  preset: z.string().nullable().optional(),
+  dsp: voiceDspSchema.optional(),
+});
+
+/**
  * Dress the avatar: one `slot` to an `item`, or a whole `preset` at once.
  *
  * `item: null` takes the slot's garment off. Slot and item names are avatar
@@ -344,6 +563,7 @@ export const wearCommandSchema = z.object({
  */
 export const commandSchema = z.discriminatedUnion('cmd', [
   sayCommandSchema,
+  queueCommandSchema,
   interruptCommandSchema,
   clearCommandSchema,
   emotionCommandSchema,
@@ -357,6 +577,9 @@ export const commandSchema = z.discriminatedUnion('cmd', [
   lookCommandSchema,
   idleCommandSchema,
   cameraCommandSchema,
+  roomCommandSchema,
+  backdropCommandSchema,
+  voiceCommandSchema,
   wearCommandSchema,
 ]);
 
