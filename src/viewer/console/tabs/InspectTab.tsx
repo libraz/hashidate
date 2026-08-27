@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { ZONES } from '@/engine/anatomy';
 import type { JointReading, SessionEvent, SessionState, Side } from '@/engine/types';
+import { Section } from '@/ui/Section';
+import { Segmented } from '@/ui/Segmented';
 import { useTick } from '../../hooks';
 import type { LoadedAvatar } from '../../scene/runtime';
-import { Section } from '../../ui/Section';
-import { Segmented } from '../../ui/Segmented';
 import styles from './InspectTab.module.css';
 
 const SIDES: Array<{ value: Side; label: string }> = [

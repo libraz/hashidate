@@ -1,7 +1,7 @@
 /*
  * Design tokens.
  *
- * The console is modelled on a broadcast switcher rather than on a web app:
+* The console and the panel are modelled on a broadcast switcher rather than on a web app:
  * matte near-black panels, hairline rules, tabular numerals, and one backlight
  * colour doing all the selection work. An operator watches the render, not the
  * panel, so the panel's job is to be legible in peripheral vision and to never

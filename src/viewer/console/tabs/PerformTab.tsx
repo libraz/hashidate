@@ -15,12 +15,12 @@ import type {
   SessionState,
   Side,
 } from '@/engine/types';
+import { Chip, ChipRow } from '@/ui/Chip';
+import { Field } from '@/ui/Field';
+import { Section } from '@/ui/Section';
+import { Segmented } from '@/ui/Segmented';
+import { Slider } from '@/ui/Slider';
 import type { LoadedAvatar } from '../../scene/runtime';
-import { Chip, ChipRow } from '../../ui/Chip';
-import { Field } from '../../ui/Field';
-import { Section } from '../../ui/Section';
-import { Segmented } from '../../ui/Segmented';
-import { Slider } from '../../ui/Slider';
 
 /** Every emotion but neutral — neutral is what "解除" means, not a thing to pick. */
 const MOODS = (Object.keys(EMOTIONS) as EmotionName[]).filter((n) => n !== 'neutral');

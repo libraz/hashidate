@@ -1,8 +1,19 @@
+/*
+ * A fader row.
+ *
+ * The label absorbs the slack and the track sits at the right, so a column of
+ * these lines up whatever the labels say. That works because the console is a
+ * fixed 384 px — but the broadcast panel is twice that, and unbounded the same
+ * rule puts half a metre of nothing between "フォルマント適用量" and the fader
+ * it belongs to. The cap is wide enough to change nothing in the console and
+ * narrow enough that the two stay one control.
+ */
 .row {
   display: flex;
   align-items: center;
   gap: var(--space-4);
   height: 22px;
+  max-width: 420px;
 }
 
 .label {

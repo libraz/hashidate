@@ -1,11 +1,11 @@
 import { type Dispatch, type SetStateAction, useRef, useState } from 'react';
 import { HOP_IDS, HOPS } from '@/engine/motion';
 import type { GazeLimits } from '@/engine/types';
+import { Chip, ChipRow } from '@/ui/Chip';
+import { Section } from '@/ui/Section';
+import { Slider } from '@/ui/Slider';
+import { Toggle } from '@/ui/Toggle';
 import type { AvatarRuntime, LoadedAvatar } from '../../scene/runtime';
-import { Chip, ChipRow } from '../../ui/Chip';
-import { Section } from '../../ui/Section';
-import { Slider } from '../../ui/Slider';
-import { Toggle } from '../../ui/Toggle';
 
 /**
  * Everything that is set once and left.

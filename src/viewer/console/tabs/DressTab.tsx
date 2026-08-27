@@ -1,8 +1,8 @@
 import { useState } from 'react';
+import { Chip, ChipRow } from '@/ui/Chip';
+import { Field } from '@/ui/Field';
+import { Section } from '@/ui/Section';
 import type { LoadedAvatar } from '../../scene/runtime';
-import { Chip, ChipRow } from '../../ui/Chip';
-import { Field } from '../../ui/Field';
-import { Section } from '../../ui/Section';
 
 /**
  * The wardrobe.
