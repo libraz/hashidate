@@ -1,0 +1,238 @@
+/*
+ * One queued line.
+ *
+ * The row is a card and carries its state in a full border plus a tint, never a
+ * stripe down one edge — a straight stripe against a rounded corner is the
+ * detail that makes a panel look assembled rather than designed. The insertion
+ * marker during a drag is the one exception, and it is drawn *between* rows
+ * rather than on one, which is what it means.
+ */
+
+.row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  cursor: grab;
+}
+
+.row:hover {
+  border-color: var(--line);
+}
+
+.dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
+/*
+ * A line the avatar cannot fully perform. Amber rather than red: the line will
+ * still be said, and a colour that means "broken" would be a lie about what
+ * happens next.
+ */
+.warned {
+  border-color: color-mix(in srgb, var(--warn) 34%, var(--line));
+  background: color-mix(in srgb, var(--warn) 7%, var(--surface-raised));
+}
+
+/*
+ * Where the dragged row would land. Drawn on the gap, one pixel, full width —
+ * an animated gap opening would be a transition to watch during a broadcast.
+ */
+.dropBefore::before,
+.dropAfter::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 99px;
+}
+
+.dropBefore::before {
+  top: calc(var(--space-2) * -1 - 1px);
+}
+
+.dropAfter::after {
+  bottom: calc(var(--space-2) * -1 - 1px);
+}
+
+/* --- grip ----------------------------------------------------------------- */
+
+.grip {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-1);
+  align-self: stretch;
+  justify-content: center;
+}
+
+.grip span {
+  display: block;
+  width: 10px;
+  height: 1px;
+  background: var(--fg-faint);
+}
+
+.row:hover .grip span {
+  background: var(--fg-dim);
+}
+
+/* --- body ----------------------------------------------------------------- */
+
+.body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.index {
+  min-width: 1.6em;
+  color: var(--fg-faint);
+}
+
+/* Which producer put the line here. Dim: it is provenance, not content. */
+.source {
+  color: var(--fg-dim);
+}
+
+.seconds {
+  margin-left: auto;
+}
+
+.tag {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+}
+
+.line {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-md);
+  line-height: 1.5;
+  color: var(--fg);
+  /* Three lines, then an ellipsis. A pending queue is scanned, not read; the
+     whole line is in the editor a click away. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.silent {
+  color: var(--fg-faint);
+  font-style: normal;
+}
+
+/* --- the performance a line carries --------------------------------------- */
+
+.cues {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.cue,
+.field {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+}
+
+/* Set once for the whole turn. */
+.field {
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+  color: var(--fg-dim);
+}
+
+/* Written into the line, so it reads as part of it. */
+.cue {
+  background: var(--accent-tint);
+  border: 1px solid var(--accent-edge);
+  color: var(--accent);
+}
+
+/* About to be dropped by the session, silently. Struck rather than hidden. */
+.unknown {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--warn) 40%, var(--line));
+  color: var(--warn);
+  text-decoration: line-through;
+}
+
+.note {
+  margin: var(--space-2) 0 0;
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+}
+
+.findings {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.noteFinding {
+  color: var(--fg-faint);
+}
+
+/* --- actions -------------------------------------------------------------- */
+
+.actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.actions button {
+  height: 20px;
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.actions button:hover {
+  background: var(--surface-hover);
+  border-color: var(--line);
+  color: var(--fg);
+}
+
+.remove:hover {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 40%, var(--line));
+}

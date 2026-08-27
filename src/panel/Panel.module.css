@@ -1,0 +1,236 @@
+/*
+ * The panel frame.
+ *
+ * A fixed header and tab strip over a scrolling body, so the transport bar is in
+ * the same place whatever is below it and whichever tab is up. The two tabs are
+ * very different heights and a frame that resized around the switch would move
+ * the stop button — which is the one control that has to be reachable without
+ * looking.
+ *
+ * Comfortably wider than the viewer's console. That panel is 384 px because it
+ * sits beside a render and must not steal from it; this page has the window to
+ * itself and holds lines of dialogue, which need the measure.
+ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /*
+   * Room for a monitor column beside the controls.
+   *
+   * The controls stay near the measure they were designed for — they hold lines
+   * of dialogue and do not get more legible for being wider — so every pixel
+   * past that goes to the picture, which does. Wide, because this page lives on
+   * a second display for the length of a broadcast and there is nothing else
+   * competing for the room.
+   */
+  max-width: 1600px;
+  margin: 0 auto;
+  border-left: 1px solid var(--line-soft);
+  border-right: 1px solid var(--line-soft);
+  background: var(--surface);
+}
+
+/* --- header --------------------------------------------------------------- */
+
+.header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--line);
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.title {
+  font-size: var(--text-md);
+  font-weight: 500;
+  color: var(--fg);
+}
+
+.avatar {
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--fg-faint);
+}
+
+.online {
+  color: var(--fg-dim);
+}
+
+.online .dot {
+  background: var(--ok);
+}
+
+/* --- transport ------------------------------------------------------------ */
+
+.transport {
+  margin-left: auto;
+  display: flex;
+  gap: var(--space-3);
+}
+
+.clear,
+.stop {
+  height: var(--control-height);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.clear {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--fg-dim);
+}
+
+.clear:hover {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
+/*
+ * The stop, which cuts the character off mid-word.
+ *
+ * Outlined while nothing is being said and filled while something is: it is the
+ * same button either way, but the moment it has an effect is the moment it
+ * should look like it does. Full border plus tint, never a stripe.
+ */
+.stop {
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--live) 30%, var(--line));
+  color: color-mix(in srgb, var(--live) 70%, var(--fg-dim));
+  font-weight: 500;
+}
+
+.stop:hover {
+  border-color: var(--live);
+  color: var(--live);
+}
+
+.armed {
+  background: var(--live-tint);
+  border-color: color-mix(in srgb, var(--live) 55%, var(--line));
+  color: var(--live);
+}
+
+/* --- error banner --------------------------------------------------------- */
+
+/*
+ * Square, so the one-sided accent edge is legitimate: a rule down a rounded
+ * corner is the detail that reads as unfinished, and this banner is deliberately
+ * not rounded so it can carry one.
+ */
+.error {
+  flex: 0 0 auto;
+  padding: var(--space-3) var(--space-5);
+  border-left: 2px solid var(--bad);
+  background: color-mix(in srgb, var(--bad) 10%, var(--surface-raised));
+  color: var(--bad);
+  font-size: var(--text-sm);
+}
+
+/* --- tabs and body -------------------------------------------------------- */
+
+.tabs {
+  flex: 0 0 auto;
+  padding: var(--space-4) var(--space-5) 0;
+}
+
+/*
+ * Monitor beside controls, both inside one scroll region.
+ *
+ * One region and not two, so there is a single scrollbar and the operator never
+ * has to work out which pane the wheel is over. The picture stays put anyway,
+ * because it is `position: sticky` inside its column.
+ */
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  /*
+   * The picture takes the slack and the controls are capped.
+   *
+   * That is the way round it has to be for a panel whose whole purpose is
+   * watching while operating: a queue row is a sentence and stops improving at
+   * about 640 px, while a face keeps improving all the way up.
+   */
+  grid-template-columns: minmax(360px, 1fr) minmax(0, 640px);
+  gap: var(--space-6);
+  align-items: start;
+  /*
+   * Both, and they are not the same thing.
+   *
+   * `align-items` places an item inside its row; `align-content` decides how
+   * tall the rows are when the grid has height to spare — and its default,
+   * `stretch`, hands the leftover out to every auto row. Stacked on a narrow
+   * window that put a couple of hundred pixels of nothing between the picture
+   * and the queue, with both items dutifully sitting at the top of rows far
+   * taller than they were.
+   */
+  align-content: start;
+  padding: var(--space-4) var(--space-5) var(--space-8);
+}
+
+.monitor {
+  min-width: 0;
+}
+
+.controls {
+  min-width: 0;
+}
+
+/*
+ * Below this the two columns would both be too narrow to be worth having: the
+ * queue rows hold sentences and the preview stops showing a face. So they stack,
+ * with the picture on top.
+ *
+ * The column is capped rather than the item inside it. Capping the item leaves
+ * the row sized against the full width it *could* have had — the preview's
+ * 16:9 box resolves against the column, not against the element — and the queue
+ * ends up pushed down by a couple of hundred pixels of nothing.
+ */
+@media (max-width: 1100px) {
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /*
+   * A definite width, not a `max-width`.
+   *
+   * The preview's box is 16:9 against its container, and a container that is
+   * merely *capped* still resolves that ratio against the full column during
+   * grid's intrinsic sizing pass. The element ends up the right size and the row
+   * it sits in does not, so the queue is pushed down by a couple of hundred
+   * pixels of nothing. A definite width resolves the same in every pass.
+   */
+  .monitor {
+    width: 420px;
+  }
+}

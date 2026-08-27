@@ -1,0 +1,195 @@
+import type { QueueEntry } from '@/protocol';
+import type { LineCheck } from '../lint';
+import styles from './QueueRow.module.css';
+
+/**
+ * One pending line, as a row that can be dragged, read and acted on.
+ *
+ * ## Everything visible here is derived, not stored
+ *
+ * The spoken text, the cues and the estimate all come from `checkLine`, which
+ * runs the *engine's own* parser over the line. That is the point: a row shows
+ * what the renderer will do with the line, not what was typed. A cue that will
+ * be dropped is drawn as dropped, and a bracket that will be swallowed is
+ * counted, before the character says any of it.
+ *
+ * ## Drag and drop with no library and no ghost element
+ *
+ * Native HTML drag events, and the drop target is decided by which half of a row
+ * the pointer is over — an insertion line above or below it. A list of at most a
+ * few dozen short rows does not need a virtualised reorder library, and the one
+ * behaviour a library would buy (an animated gap opening) is exactly the one
+ * worth not having here: the operator is reordering a script during a broadcast
+ * and wants the row to land, not to be shown a transition.
+ */
+
+interface Props {
+  entry: QueueEntry;
+  check: LineCheck;
+  index: number;
+  /** Where an in-flight drag would insert, so the row can draw the line. */
+  dropAt: number | null;
+  dragging: boolean;
+  onDragStart: () => void;
+  onDragOver: (at: number) => void;
+  onDragEnd: () => void;
+  onEdit: () => void;
+  onRemove: () => void;
+  /** Move to the front. What a comment that has to be answered now needs. */
+  onPromote: () => void;
+}
+
+/** Seconds as `1:04`, because a queue is read as a running time. */
+export const clock = (seconds: number): string => {
+  const whole = Math.max(0, Math.round(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+};
+
+export function QueueRow({
+  entry,
+  check,
+  index,
+  dropAt,
+  dragging,
+  onDragStart,
+  onDragOver,
+  onDragEnd,
+  onEdit,
+  onRemove,
+  onPromote,
+}: Props) {
+  const warnings = check.findings.filter((f) => f.severity === 'warn');
+  const notes = check.findings.filter((f) => f.severity === 'note');
+
+  const classes = [
+    styles.row,
+    dragging ? styles.dragging : '',
+    warnings.length ? styles.warned : '',
+    dropAt === index ? styles.dropBefore : '',
+    dropAt === index + 1 ? styles.dropAfter : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    <li
+      className={classes}
+      draggable
+      onDragStart={(e) => {
+        // Firefox refuses to start a drag without payload, and the payload is
+        // never read: the dragged row is held in the list's own state, because
+        // the drop has to know which entry moved and not which text was carried.
+        e.dataTransfer.setData('text/plain', entry.id);
+        e.dataTransfer.effectAllowed = 'move';
+        onDragStart();
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        // Which half of the row the pointer is over decides whether the line
+        // goes above or below it. Measured per event rather than from the
+        // element's cached box, since the list scrolls while dragging.
+        const box = e.currentTarget.getBoundingClientRect();
+        onDragOver(e.clientY < box.top + box.height / 2 ? index : index + 1);
+      }}
+      onDragEnd={onDragEnd}
+      onDrop={(e) => {
+        e.preventDefault();
+        onDragEnd();
+      }}
+    >
+      <div className={styles.grip} aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
+
+      <div className={styles.body}>
+        <div className={styles.meta}>
+          <span className={styles.index}>{index + 1}</span>
+          {entry.source ? <span className={styles.source}>{entry.source}</span> : null}
+          <span className={styles.seconds}>{clock(check.seconds)}</span>
+          {entry.reading ? (
+            <span className={styles.tag} title={`読み: ${entry.reading}`}>
+              読み
+            </span>
+          ) : null}
+          {entry.hold ? (
+            <span className={styles.tag} title="この行のあと表情を保持します">
+              hold
+            </span>
+          ) : null}
+        </div>
+
+        {/* The spoken line, with the cues drawn where they fall in it. A cue the
+            avatar does not have is struck through rather than hidden: it is
+            about to do nothing, and the row has to say so. */}
+        <p className={styles.line}>
+          {check.spoken || <span className={styles.silent}>(台詞なし)</span>}
+        </p>
+
+        {check.cues.length || entry.perform || entry.gesture || entry.expression ? (
+          <div className={styles.cues}>
+            {entry.perform ? (
+              <span className={styles.field} title="この行のあいだ演技">
+                {entry.perform}
+              </span>
+            ) : null}
+            {entry.gesture ? (
+              <span className={styles.field} title="この行のあいだ動作">
+                {entry.gesture}
+              </span>
+            ) : null}
+            {entry.expression ? (
+              <span className={styles.field} title="この行のあいだ表情">
+                {entry.expression}
+              </span>
+            ) : null}
+            {check.cues.map((cue) => (
+              <span
+                // Cues have no ids and the same performance may be cued twice in
+                // one line, so the position in the utterance is what tells two
+                // apart — and two cues cannot share one, since a position is
+                // where in the line the markup was written.
+                key={`${cue.perform}-${cue.at}`}
+                className={`${styles.cue} ${cue.known ? '' : styles.unknown}`}
+                title={`${Math.round(cue.at * 100)}% の位置`}
+              >
+                {cue.perform}
+              </span>
+            ))}
+          </div>
+        ) : null}
+
+        {entry.note ? <p className={styles.note}>{entry.note}</p> : null}
+
+        {warnings.length || notes.length ? (
+          <ul className={styles.findings}>
+            {warnings.map((f) => (
+              <li key={f.message} className={styles.warn}>
+                {f.message}
+              </li>
+            ))}
+            {notes.map((f) => (
+              <li key={f.message} className={styles.noteFinding}>
+                {f.message}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+
+      <div className={styles.actions}>
+        <button type="button" onClick={onPromote} title="先頭へ">
+          ↑↑
+        </button>
+        <button type="button" onClick={onEdit} title="編集">
+          編集
+        </button>
+        <button type="button" onClick={onRemove} title="削除" className={styles.remove}>
+          ✕
+        </button>
+      </div>
+    </li>
+  );
+}

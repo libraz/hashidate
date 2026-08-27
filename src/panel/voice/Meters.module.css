@@ -1,0 +1,103 @@
+/*
+ * The two meters.
+ *
+ * `--ok` / `--warn` / `--bad` are measurement colours and the token file says so
+ * — they mean "inside range", "off target", "will distort", and nothing here is
+ * a selection. A green that also meant "on" somewhere else would stop meaning
+ * either.
+ */
+
+.meters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5);
+  padding: var(--space-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+}
+
+.meter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.label {
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+}
+
+.value {
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  color: var(--fg);
+}
+
+.track {
+  position: relative;
+  height: 4px;
+  background: var(--surface-sunken);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 99px;
+  background: var(--fg-faint);
+  transition: width var(--dur) var(--ease);
+}
+
+/* The mark the reading is judged against, drawn on the scale it is on. */
+.target {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--fg-dim);
+  z-index: 1;
+}
+
+.foot {
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+}
+
+.ok {
+  color: var(--ok);
+}
+
+.fill.ok {
+  background: var(--ok);
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.fill.warn {
+  background: var(--warn);
+}
+
+.bad {
+  color: var(--bad);
+}
+
+.fill.bad {
+  background: var(--bad);
+}
+
+/* Nothing has been spoken yet. Not a state to colour. */
+.idle {
+  color: var(--fg-faint);
+}

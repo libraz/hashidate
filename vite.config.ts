@@ -37,5 +37,21 @@ export default defineConfig({
     emptyOutDir: true,
     // Models are several megabytes each and are served from public/ as-is.
     assetsInlineLimit: 4096,
+    rollupOptions: {
+      /*
+       * Two pages, and the split is the point rather than a build detail.
+       *
+       * `index.html` renders the character; `panel/` drives it and renders
+       * nothing. Separate entries mean the panel ships none of three.js and the
+       * stage ships none of the queue editor — which matters most in the
+       * direction nobody expects: the panel is the page left open on a second
+       * monitor for six hours, and a WebGL context it never uses is a context
+       * competing with the one that is on air.
+       */
+      input: {
+        viewer: fileURLToPath(new URL('./index.html', import.meta.url)),
+        panel: fileURLToPath(new URL('./panel/index.html', import.meta.url)),
+      },
+    },
   },
 });

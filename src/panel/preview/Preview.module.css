@@ -1,0 +1,137 @@
+/*
+ * The preview column.
+ *
+ * Sticky, because the whole point is watching the character while scrolling a
+ * queue — a picture that scrolls away is a picture that is only looked at when
+ * nothing is happening.
+ */
+
+.preview {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.title {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  letter-spacing: 0.04em;
+}
+
+.toggle {
+  margin-left: auto;
+  height: 20px;
+  padding: 0 var(--space-3);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.toggle:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
+.toggle:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/*
+ * The preview is making sound.
+ *
+ * Worth marking, because it is the setting most likely to be left on by
+ * accident and the one whose consequence — every line heard twice — is easy to
+ * blame on the renderer instead. Full border plus tint, never a stripe.
+ */
+.armed {
+  background: var(--accent-tint);
+  border-color: var(--accent-edge);
+  color: var(--accent);
+}
+
+/*
+ * The picture.
+ *
+ * 16:9 held by aspect-ratio rather than by a fixed height, so the column can be
+ * narrowed without the frame and the render disagreeing about their proportions.
+ */
+.frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--bg);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/*
+ * On air. The border only — a tint over a render would change the colours being
+ * judged, which is the one thing a monitor must not do.
+ */
+.live {
+  border-color: color-mix(in srgb, var(--live) 45%, var(--line));
+}
+
+/*
+ * The embedded viewer fills the frame and is given no `?size`, so its canvas is
+ * whatever the column currently is.
+ *
+ * That is the opposite of what OBS wants and is right for the opposite reason:
+ * a browser source is pinned to a pixel size so the render is never resampled,
+ * while this one is looked at by a person on a window they resize, and matching
+ * the element beats scaling a fixed render into it. The framebuffer being
+ * reallocated on a resize is the preview's own, not the one on air.
+ */
+.canvas {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  /* A monitor, not a control: the wheel scrolls the panel behind it and the
+     camera is moved by the framing buttons below. */
+  pointer-events: none;
+}
+
+.off {
+  margin: 0;
+  padding: var(--space-5);
+  text-align: center;
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  line-height: 1.8;
+}
+
+.framing {
+  display: flex;
+}
+
+/*
+ * Stacked, the picture is above the controls rather than beside them, and
+ * sticking it to the top would hold half a short viewport for a monitor while
+ * the queue it exists to serve is squeezed into the rest.
+ *
+ * The rule lives here rather than in the parent because turning it off from
+ * outside is a specificity tie with the rule above, and which of the two wins
+ * would depend on the order the bundler happened to emit two files in.
+ */
+@media (max-width: 1100px) {
+  .preview {
+    position: static;
+  }
+}

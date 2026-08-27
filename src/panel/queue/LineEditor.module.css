@@ -1,0 +1,221 @@
+/*
+ * The line editor.
+ *
+ * Sunken rather than raised, so an open editor reads as a well cut into the
+ * list rather than as a card floating over it — there is no modal here and the
+ * queue behind it stays legible, which is the whole reason it is inline.
+ */
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface-sunken);
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-md);
+}
+
+.label {
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+}
+
+.text,
+.reading {
+  width: 100%;
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.text::placeholder,
+.reading::placeholder {
+  color: var(--fg-faint);
+}
+
+.text:focus,
+.reading:focus {
+  border-color: var(--accent-dim);
+  outline: none;
+}
+
+.readingRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.readingRow .label {
+  flex: 0 0 auto;
+}
+
+.reading {
+  font-size: var(--text-sm);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.disclosure {
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.disclosure:hover,
+.disclosure.open {
+  color: var(--fg);
+  border-color: var(--line);
+  background: var(--surface-hover);
+}
+
+.estimate {
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.hold {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+/* --- the performance palette ---------------------------------------------- */
+
+.palette {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+}
+
+.paletteNote {
+  margin: 0;
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.paletteNote code {
+  font-family: var(--font-mono);
+  color: var(--fg-dim);
+}
+
+.performRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line-soft);
+}
+
+/* --- findings ------------------------------------------------------------- */
+
+.findings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-xs);
+  line-height: 1.7;
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.note {
+  color: var(--fg-faint);
+}
+
+/* --- buttons -------------------------------------------------------------- */
+
+.buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.cancel,
+.secondary,
+.submit {
+  height: var(--control-height);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+/*
+ * 割り込み: the same draft, sent to the front of the queue instead of the end.
+ *
+ * Outlined rather than filled. It is not the destructive action — nothing is cut
+ * off, the line simply goes next — but it does change the order of a running
+ * show, so it should not sit at the same weight as "add to the end".
+ */
+.secondary {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--fg-dim);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent-edge);
+  color: var(--accent);
+}
+
+.secondary:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.cancel {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--fg-dim);
+}
+
+.cancel:hover {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
+.submit {
+  background: var(--accent-tint);
+  border: 1px solid var(--accent-edge);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.submit:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-raised));
+}
+
+.submit:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

@@ -1,0 +1,21 @@
+.tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/*
+ * The chain is off. The sliders are gone rather than disabled: a column of
+ * greyed faders reads as "broken" and invites clicking, while a sentence saying
+ * what to do next is one line and is true.
+ */
+.bypassed {
+  margin: 0;
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--fg-faint);
+  font-size: var(--text-sm);
+  line-height: 1.8;
+  border: 1px dashed var(--line-soft);
+  border-radius: var(--radius-md);
+}

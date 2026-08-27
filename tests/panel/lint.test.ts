@@ -1,0 +1,162 @@
+import { describe, expect, it } from 'vitest';
+import { checkLine, checkQueue } from '@/panel/lint';
+import type { QueueEntry, Vocabulary } from '@/protocol';
+
+/**
+ * The checks the engine deliberately does not make.
+ *
+ * Everything asserted here is a failure the renderer is built to *survive*
+ * quietly — a cue naming nothing is dropped, a malformed bracket is stripped,
+ * a line is spoken with a face that never changed. That is the right behaviour
+ * on the render path and the reason none of it is visible until it has already
+ * gone out. These tests pin the one place it is visible.
+ */
+
+const vocabulary: Partial<Vocabulary> = {
+  performances: [
+    {
+      id: 'hello',
+      label: '挨拶',
+      group: 'greeting',
+      emotion: {},
+      gesture: null,
+      hop: null,
+      sustain: false,
+    },
+    {
+      id: 'explain',
+      label: '説明',
+      group: 'explain',
+      emotion: {},
+      gesture: null,
+      hop: null,
+      sustain: false,
+    },
+  ],
+  gestures: [{ id: 'wave', label: '手を振る', group: 'greeting', sustain: false }],
+  expressions: [{ id: 'F_DOYA', label: 'ドヤ' }],
+};
+
+const messages = (turn: Parameters<typeof checkLine>[0]): string[] =>
+  checkLine(turn, vocabulary).findings.map((f) => f.message);
+
+describe('checkLine, on cues', () => {
+  it('resolves a well-formed cue and marks it known', () => {
+    const check = checkLine({ text: '[hello]こんばんは。[explain]今日は' }, vocabulary);
+    expect(check.spoken).toBe('こんばんは。今日は');
+    expect(check.cues.map((c) => [c.perform, c.known])).toEqual([
+      ['hello', true],
+      ['explain', true],
+    ]);
+    expect(check.findings).toEqual([]);
+  });
+
+  it('flags a cue the performance table does not have', () => {
+    // The session drops this rather than playing it, and drops it silently —
+    // releasing the face mid-sentence over a typo would be worse. So this
+    // message is the only way anyone finds out before the stream does.
+    expect(messages({ text: '[greet]こんばんは' })).toEqual(['[greet] は演技表にありません']);
+  });
+
+  it('judges nothing before a vocabulary has arrived', () => {
+    // With no avatar loaded every id is unknown, and painting the whole queue
+    // yellow on startup would train the operator to ignore the colour.
+    const check = checkLine({ text: '[whatever]あ' }, {});
+    expect(check.cues[0].known).toBe(true);
+    expect(check.findings).toEqual([]);
+  });
+
+  it('flags a bracketed run that is not id-shaped', () => {
+    // `[笑]` is the one an LLM writes: markup that was meant to be a cue, is
+    // not one, and comes out of the spoken line leaving nothing behind.
+    const found = messages({ text: '[笑]おかしいですね' });
+    expect(found).toHaveLength(1);
+    expect(found[0]).toContain('キューとして読めない角括弧');
+  });
+
+  it('flags an unclosed bracket, which takes the rest of the line with it', () => {
+    const found = messages({ text: 'こんばんは[hello' });
+    expect(found.some((m) => m.includes('キューとして読めない角括弧'))).toBe(true);
+  });
+
+  it('passes a line with no brackets at all', () => {
+    expect(messages({ text: 'ふつうの台詞です' })).toEqual([]);
+  });
+});
+
+describe('checkLine, on the fields around the line', () => {
+  it('flags a bracket in a reading', () => {
+    expect(messages({ text: '三件', reading: 'さん[けん]' })).toContain('読みに角括弧は書けません');
+  });
+
+  it('flags a perform, gesture or expression the avatar does not have', () => {
+    expect(messages({ text: 'あ', perform: 'nope' })).toContain(
+      'perform: nope は演技表にありません',
+    );
+    expect(messages({ text: 'あ', gesture: 'nope' })).toContain('gesture: nope はありません');
+    expect(messages({ text: 'あ', expression: 'nope' })).toContain('expression: nope はありません');
+  });
+
+  it('accepts the ones it does have', () => {
+    expect(
+      messages({ text: 'あ', perform: 'hello', gesture: 'wave', expression: 'F_DOYA' }),
+    ).toEqual([]);
+  });
+
+  it('notes a turn that says and does nothing', () => {
+    expect(messages({ text: '   ' })).toEqual(['台詞も演技もない空のターンです']);
+  });
+
+  it('does not call a pose-only turn empty', () => {
+    // A turn with no text is a pose change, which is a legitimate thing to
+    // queue — it has no mouth to wait on and closes on the next frame.
+    expect(messages({ perform: 'hello' })).toEqual([]);
+  });
+});
+
+describe('checkLine, on length and spacing', () => {
+  it('measures against the reading when one is given', () => {
+    // The same rule the mouth follows: written, 三件 is guessed at four morae;
+    // the kana says otherwise, and the estimate has to follow the kana.
+    const written = checkLine({ text: '三件' }, vocabulary).seconds;
+    const read = checkLine({ text: '三件', reading: 'さんけん' }, vocabulary).seconds;
+    expect(read).not.toBeCloseTo(written, 6);
+  });
+
+  it('notes a line too long to be interrupted cleanly', () => {
+    const long = 'あいうえおかきくけこ'.repeat(20);
+    const found = messages({ text: long });
+    expect(found.some((m) => m.includes('割り込みが効きません'))).toBe(true);
+  });
+
+  it('notes two cues that land close enough that only the second is seen', () => {
+    const found = messages({ text: '[hello]あ[explain]いうえおかきくけこさしすせそ' });
+    expect(found.some((m) => m.includes('近すぎます'))).toBe(true);
+  });
+
+  it('does not flag cues that are comfortably apart', () => {
+    expect(
+      messages({ text: '[hello]あいうえおかきくけこ。[explain]さしすせそたちつてと' }),
+    ).toEqual([]);
+  });
+});
+
+describe('checkQueue', () => {
+  const entry = (id: string, text: string): QueueEntry => ({ id, text, at: 0 });
+
+  it('totals the estimate and counts only the warnings', () => {
+    const result = checkQueue(
+      [entry('a', '[hello]ふつうの行'), entry('b', '[nope]だめな行'), entry('c', '   ')],
+      vocabulary,
+    );
+    expect(result.checks.size).toBe(3);
+    expect(result.seconds).toBeGreaterThan(0);
+    // The empty turn is a note, not a warning: the count is what the operator
+    // has to act on before going live, and a note is an observation.
+    expect(result.warnings).toBe(1);
+  });
+
+  it('is empty for an empty queue', () => {
+    expect(checkQueue([], vocabulary)).toMatchObject({ seconds: 0, warnings: 0 });
+  });
+});

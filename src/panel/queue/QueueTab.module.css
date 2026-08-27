@@ -1,0 +1,183 @@
+/*
+ * The pending script.
+ *
+ * Three regions stacked, and the visual weight goes to the middle one: the
+ * on-air strip is a readout, the composer is a tool that is usually closed, and
+ * the list is what the operator is actually looking at for hours.
+ */
+
+.tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+}
+
+/* --- on air --------------------------------------------------------------- */
+
+.onAir {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+}
+
+/*
+ * `--live` and nothing else uses it. The token file reserves this colour for
+ * "the character is speaking", and spending it on a selection somewhere would
+ * cost it the only thing it is for.
+ */
+.live {
+  background: var(--live-tint);
+  border-color: color-mix(in srgb, var(--live) 34%, var(--line));
+}
+
+.airLabel {
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+}
+
+.live .airLabel {
+  color: var(--live);
+  font-weight: 500;
+}
+
+.airId {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+
+.airDot {
+  margin-left: auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  background: var(--live);
+}
+
+/* --- summary -------------------------------------------------------------- */
+
+.summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+}
+
+.count strong {
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
+.total {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+
+.warnings {
+  padding: 0 var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--line));
+  border-radius: var(--radius-sm);
+  color: var(--warn);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+}
+
+.summaryActions {
+  margin-left: auto;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.summaryActions button {
+  height: 22px;
+  padding: 0 var(--space-3);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.summaryActions button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
+.summaryActions button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.danger:hover:not(:disabled) {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 40%, var(--line));
+}
+
+/* --- the list ------------------------------------------------------------- */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.editingRow {
+  list-style: none;
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-7) var(--space-4);
+  text-align: center;
+  color: var(--fg-faint);
+  font-size: var(--text-sm);
+  line-height: 1.8;
+  border: 1px dashed var(--line-soft);
+  border-radius: var(--radius-md);
+}
+
+.empty code {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+
+/* --- composer ------------------------------------------------------------- */
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.add {
+  width: 100%;
+  height: var(--control-height);
+  background: transparent;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-md);
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition:
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.add:hover {
+  border-color: var(--accent-edge);
+  border-style: solid;
+  color: var(--accent);
+}
