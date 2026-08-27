@@ -2,14 +2,17 @@ import { useEffect, useState } from 'react';
 import { AVATARS } from '@/avatars';
 import { hasCueMarkup, isWellFormed } from '@/engine/cues';
 import type { CameraFrame } from '@/engine/types';
+import { Chip, ChipRow } from '@/ui/Chip';
+import { Segmented } from '@/ui/Segmented';
+import { Toggle } from '@/ui/Toggle';
 import type { ControlStatus } from '../control-client';
 import { useSessionState } from '../hooks';
+import { backdropList, backdropNote } from '../scene/backdrop';
 import { CAMERA_FRAMES, CAMERA_LABELS } from '../scene/framing';
 import type { AvatarRuntime, RuntimeStatus } from '../scene/runtime';
-import { Chip, ChipRow } from '../ui/Chip';
-import { Segmented } from '../ui/Segmented';
-import { Toggle } from '../ui/Toggle';
+import { rememberBackdrop } from '../stage-mode';
 import styles from './Console.module.css';
+import { DemoBar } from './DemoBar';
 import { DressTab } from './tabs/DressTab';
 import { InspectTab } from './tabs/InspectTab';
 import { PerformTab } from './tabs/PerformTab';
@@ -43,6 +46,13 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]['value'];
 
+/**
+ * "No backdrop" needs a value, because `Segmented` picks by string and null is
+ * not one. It is a sentinel and never leaves this file — `chooseBackdrop` maps
+ * it back to the null the runtime and the URL both use.
+ */
+const NO_BACKDROP = '-';
+
 interface Props {
   runtime: AvatarRuntime | null;
   status: RuntimeStatus;
@@ -60,6 +70,26 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
   // than no picker.
   const [frame, setFrame] = useState<CameraFrame>('bust');
   useEffect(() => runtime?.onCamera(setFrame), [runtime]);
+
+  /**
+   * The set, which starts as whatever the URL asked for.
+   *
+   * Held rather than followed, unlike the framing above. The camera has two
+   * masters — this picker and the control API — so it has to be subscribed to;
+   * the backdrop has the same two, but a set is changed a handful of times in a
+   * session against a shot changed every minute, and a subscription and its
+   * teardown are not worth carrying for a control that is never racing. If the
+   * orchestrator starts driving it live, this becomes an `onBackdrop`.
+   */
+  const [backdrop, setBackdrop] = useState<string | null>(null);
+  useEffect(() => setBackdrop(runtime?.backdropId ?? null), [runtime]);
+
+  const chooseBackdrop = (id: string) => {
+    const next = id === NO_BACKDROP ? null : id;
+    setBackdrop(next);
+    runtime?.setBackdrop(next);
+    rememberBackdrop(next);
+  };
 
   const loaded = status.phase === 'ready' ? status.loaded : null;
   const session = loaded?.session ?? null;
@@ -138,6 +168,31 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
           value={frame}
           onChange={goto}
         />
+        {/* Beside the camera, because both of them say where the shot is
+            rather than what the character is doing. */}
+        <div>
+          <Segmented
+            ariaLabel="背景"
+            options={[
+              { value: NO_BACKDROP, label: 'なし', title: '素の背景' },
+              ...backdropList().map((b) => ({
+                value: b.id,
+                label: b.label,
+                title: backdropNote(b.id) ?? b.label,
+              })),
+            ]}
+            value={backdrop ?? NO_BACKDROP}
+            onChange={chooseBackdrop}
+          />
+          {/* What the room is for, in a line. Four of them are four value
+              structures rather than four colour schemes, and the difference is
+              not something the labels can carry. */}
+          <p className={styles.note}>
+            {backdrop
+              ? backdropNote(backdrop)
+              : 'URL の ?backdrop= に入る。OBS のソースはこのアドレスをそのまま使える。'}
+          </p>
+        </div>
         <Toggle
           label="自動モード（アイドル）"
           checked={state?.idleEnabled ?? false}
@@ -147,6 +202,10 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
           }}
         />
       </div>
+
+      {/* Between the toolbar and the tabs, because it is a mode the whole
+          console is in rather than one of the things a tab does. */}
+      <DemoBar session={session} />
 
       <div className={styles.tabs}>
         <Segmented ariaLabel="操作の種類" options={TABS} value={tab} onChange={setTab} />

@@ -72,6 +72,22 @@
   border-bottom: 1px solid var(--line);
 }
 
+/*
+ * A line under a control saying what the choice means.
+ *
+ * `min-height` rather than letting it collapse: the notes are one line for some
+ * rooms and wrap to two for others, and a toolbar that changes height as the
+ * picker is clicked through moves everything below it — including the tabs,
+ * which are a click target.
+ */
+.note {
+  margin: var(--space-2) 0 0;
+  min-height: calc(var(--text-xs) * 2 * 1.6);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--fg-faint);
+}
+
 /* --- tabs ----------------------------------------------------------------- */
 
 .tabs {

@@ -184,6 +184,12 @@ export class ControlClient {
     this.pending = [];
     const body: ReportBody = { state: this.session.state(), events };
     if (withVocabulary) body.vocabulary = this.session.vocabulary();
+    // The chain the renderer is *actually* running, so a panel draws that rather
+    // than what it last sent — see `VoiceReport`. On the report timer and not
+    // only on change, because it carries the loudness of the last take and a
+    // meter that only updates when a setting moves is not a meter.
+    const voice = this.session.voice?.report();
+    if (voice) body.voice = voice;
 
     try {
       await fetch(`${this.base}/report`, {
@@ -222,6 +228,13 @@ export class ControlClient {
           perform: c.perform,
           hold: c.hold,
         });
+        return;
+      // The whole pending list, in order. Not `clear` plus a run of `say`: the
+      // session matches the new list against what it already holds and keeps the
+      // audio for any line whose words did not change, which is what makes a
+      // reorder cost one message instead of re-synthesising the script.
+      case 'queue':
+        s.replaceQueue(c.turns);
         return;
       case 'interrupt':
         s.interrupt();
@@ -269,6 +282,20 @@ export class ControlClient {
         return;
       case 'camera':
         s.setCamera(c.frame);
+        return;
+      // No id means dry, on the same rule as `gesture` and `perform`.
+      case 'room':
+        s.setRoom(c.id ?? null);
+        return;
+      // And no id means the flat background, which is the visual equivalent of
+      // dry and follows the same rule.
+      case 'backdrop':
+        s.setBackdrop(c.id ?? null);
+        return;
+      // Both fields are passed through as given. Absent `preset` means "keep the
+      // base", which is not the same as null, so it must not be defaulted here.
+      case 'voice':
+        s.setVoiceChain({ preset: c.preset, dsp: c.dsp });
         return;
       case 'wear':
         s.wear(c);

@@ -1,0 +1,89 @@
+/*
+ * The self-test strip.
+ *
+ * Sits under the toolbar and is quiet until it is running, at which point it
+ * takes the accent — it is a mode the console is in, and a mode that is not
+ * visible from a glance at the render is a mode the operator forgets they left
+ * on.
+ */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+/* Full border plus tint, never a stripe down one edge. */
+.running {
+  background: var(--accent-tint);
+  border-bottom-color: var(--accent-edge);
+}
+
+.button {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 var(--space-4);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
+.button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.running .button {
+  border-color: var(--accent-edge);
+  color: var(--accent);
+}
+
+.label {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.running .label {
+  color: var(--fg-dim);
+}
+
+.count {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+
+.track {
+  flex: 0 0 56px;
+  height: 2px;
+  background: var(--surface-sunken);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--dur) var(--ease);
+}
