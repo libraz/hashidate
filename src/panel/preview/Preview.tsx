@@ -67,6 +67,30 @@ const FRAMES: Array<{ value: CameraFrame; label: string }> = [
 const SHOWN_KEY = 'aituber.panel.preview';
 const HEARD_KEY = 'aituber.panel.preview.audio';
 
+/**
+ * How long a report of blocked audio keeps the warning up.
+ *
+ * Every renderer reports into the same slot, so with two of them — the preview
+ * here and whatever is on air — a flag that is true for only one of them
+ * alternates at the reporting interval. Held, the warning reads as a state
+ * rather than flashing; it clears a few reports after the last blocked one, and
+ * being a little late to disappear costs nothing next to being unreadable.
+ */
+const BLOCKED_HOLD_MS = 2500;
+
+function useHeld(flag: boolean, ms: number): boolean {
+  const [held, setHeld] = useState(flag);
+  useEffect(() => {
+    if (flag) {
+      setHeld(true);
+      return;
+    }
+    const timer = setTimeout(() => setHeld(false), ms);
+    return () => clearTimeout(timer);
+  }, [flag, ms]);
+  return held;
+}
+
 const readStored = (key: string, fallback: boolean): boolean => {
   try {
     const raw = localStorage.getItem(key);
@@ -106,6 +130,7 @@ export function Preview({ snapshot }: { snapshot: Snapshot }) {
 
   const avatar = snapshot.vocabulary.avatar?.id ?? null;
   const speaking = snapshot.state.speaking ?? false;
+  const blocked = useHeld(snapshot.voice?.blocked ?? false, BLOCKED_HOLD_MS);
 
   return (
     <section className={styles.preview}>
@@ -167,6 +192,17 @@ export function Preview({ snapshot }: { snapshot: Snapshot }) {
           </p>
         )}
       </div>
+
+      {/* Not a control, and deliberately not dismissible: nothing sent from this
+          panel can clear it. A browser will not start an audio device until the
+          page it is on has been interacted with, so a viewer nobody has clicked
+          mouths every line in silence — and from here that looks exactly like a
+          speech sidecar that is not running. */}
+      {blocked ? (
+        <p className={styles.blocked}>
+          音声ブロック中。ビューアの画面を一度クリックすると次の行から声が出ます。
+        </p>
+      ) : null}
 
       <div className={styles.framing}>
         <Segmented

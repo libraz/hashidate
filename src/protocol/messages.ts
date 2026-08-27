@@ -196,6 +196,13 @@ export const voiceReportSchema = z.object({
   lufs: z.number().nullable(),
   /** True peak of the last take, dBTP. */
   truePeakDb: z.number().nullable(),
+  /**
+   * Whether the browser is refusing that viewer an audio device until somebody
+   * touches the page. See `VoiceReport` in the engine — it is on the wire
+   * because it is the one fault here that a control surface cannot fix by
+   * sending anything, only by telling the operator where to click.
+   */
+  blocked: z.boolean(),
 });
 
 export type VoiceReport = z.infer<typeof voiceReportSchema>;

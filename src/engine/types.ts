@@ -664,6 +664,16 @@ export interface VoiceReport {
   lufs: number | null;
   /** True peak of the last take, dBTP. */
   truePeakDb: number | null;
+  /**
+   * Whether the renderer is being refused an audio device.
+   *
+   * A browser will not start one until the page it is on has been interacted
+   * with, so a viewer nobody has clicked plays every line silently. Nothing an
+   * orchestrator sends can clear it — the fix is a person touching that page —
+   * which is exactly why it is reported: from anywhere else the failure looks
+   * the same as a speech sidecar that is not running.
+   */
+  blocked: boolean;
 }
 
 /**

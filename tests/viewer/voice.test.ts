@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildEnvelope, envelopeAt } from '@/viewer/voice';
+import { buildEnvelope, envelopeAt, startContext } from '@/viewer/voice';
 
 /**
  * The envelope the mouth follows, measured off a decoded take.
@@ -72,6 +72,69 @@ describe('buildEnvelope', () => {
 
   it('survives an empty take', () => {
     expect(Array.from(buildEnvelope(new Float32Array(0), RATE))).toEqual([0]);
+  });
+});
+
+/**
+ * Starting the audio device.
+ *
+ * The one part of this that needs a browser and is still worth testing here,
+ * because what it exists for is a browser behaviour rather than an arithmetic:
+ * a context the page has not earned the right to start leaves `resume()`
+ * pending forever rather than rejecting it. Awaiting that directly is what made
+ * a viewer nobody had clicked silent for the rest of its life — the requests are
+ * chained, so the line that waited took every line behind it with it.
+ */
+describe('startContext', () => {
+  /** A context that answers a `resume()` the way the browser is willing to. */
+  const fake = (state: AudioContextState, starts: boolean) => {
+    const ctx = {
+      state,
+      resume: () =>
+        starts
+          ? Promise.resolve().then(() => {
+              ctx.state = 'running';
+            })
+          : // Refused: never settles. Not a rejection — that would be a kindness
+            // the browser does not extend.
+            new Promise<void>(() => {}),
+    };
+    return ctx;
+  };
+
+  it('answers immediately for a context that is already running', async () => {
+    const ctx = fake('running', true);
+    expect(await startContext(ctx, 50)).toBe(true);
+  });
+
+  it('starts a suspended context the browser is willing to start', async () => {
+    const ctx = fake('suspended', true);
+    expect(await startContext(ctx, 50)).toBe(true);
+    expect(ctx.state).toBe('running');
+  });
+
+  it('gives up on a refusal instead of waiting on a promise that never settles', async () => {
+    const ctx = fake('suspended', false);
+    expect(await startContext(ctx, 20)).toBe(false);
+    expect(ctx.state).toBe('suspended');
+  });
+
+  it('can be asked again, which is how the voice comes back after a click', async () => {
+    const ctx = fake('suspended', false);
+    expect(await startContext(ctx, 20)).toBe(false);
+    // The page has been interacted with. The same context starts on a second
+    // ask, which is why it is kept rather than thrown away and rebuilt.
+    ctx.resume = () =>
+      Promise.resolve().then(() => {
+        ctx.state = 'running';
+      });
+    expect(await startContext(ctx, 20)).toBe(true);
+  });
+
+  it('will not reopen a context that was closed on teardown', async () => {
+    const ctx = fake('closed', true);
+    expect(await startContext(ctx, 20)).toBe(false);
+    expect(ctx.state).toBe('closed');
   });
 });
 

@@ -36,6 +36,8 @@ export interface Hud {
   gesture: string | null;
   expression: string | null;
   auto: boolean;
+  /** The browser refusing this page an audio device. See `BrowserVoice.isBlocked`. */
+  voiceBlocked: boolean;
 }
 
 export interface LoadedAvatar {
@@ -380,6 +382,7 @@ export class AvatarRuntime {
     this.renderer.setAnimationLoop(null);
     this.resizeObserver.disconnect();
     this.timer.dispose();
+    this.voice.dispose();
     this.unmount();
     this.backdrop.dispose();
     this.controls.dispose();
@@ -446,6 +449,7 @@ export class AvatarRuntime {
       gesture: director.body.gesture?.def.label ?? null,
       expression: director.expression,
       auto: director.auto,
+      voiceBlocked: this.voice.isBlocked,
     };
     for (const fn of this.hudListeners) fn(hud);
   }

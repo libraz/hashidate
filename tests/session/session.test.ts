@@ -1275,6 +1275,7 @@ class FakeVoice implements Voice {
       room: this.roomsSet.at(-1) ?? null,
       lufs: null,
       truePeakDb: null,
+      blocked: false,
     };
   }
 }

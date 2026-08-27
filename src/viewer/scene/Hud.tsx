@@ -52,6 +52,14 @@ export function Hud({ runtime, avatar }: { runtime: AvatarRuntime; avatar: Avata
         ) : (
           <span className={styles.idle}>待機</span>
         )}
+        {/* The one readout here that asks for something. Everything else is a
+            measurement; this says the browser will not start the audio device
+            until somebody clicks this page, which no command can do for it. */}
+        {hud.voiceBlocked ? (
+          <span className={styles.blocked} title="ブラウザが操作されるまで音声を再生できません">
+            音声ブロック中 — この画面をクリック
+          </span>
+        ) : null}
         {hud.gesture ? <span className={styles.tag}>{hud.gesture}</span> : null}
         {hud.expression ? <span className={styles.tag}>{hud.expression}</span> : null}
         {hud.auto ? <span className={styles.auto}>自動</span> : null}

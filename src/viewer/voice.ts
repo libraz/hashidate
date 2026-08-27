@@ -87,6 +87,45 @@ const ENVELOPE_REFERENCE = 0.95;
 const RETRY_AFTER_MS = 20_000;
 
 /**
+ * How long to wait for a suspended context to start, in milliseconds.
+ *
+ * A browser that is refusing to start one does not say so: `resume()` is left
+ * pending — not rejected, pending — until the page is interacted with, which
+ * may be never. Awaiting it directly is what made this failure permanent rather
+ * than merely silent. `prepare` runs its requests in one chain, so a promise
+ * that never settles takes every line queued behind it as well, and the voice
+ * did not come back even after the operator clicked.
+ *
+ * A quarter of a second is far more than a context that is going to start needs
+ * — the race below returns as soon as `resume()` answers — and the wait is only
+ * ever paid on a page that is being refused.
+ */
+const RESUME_WAIT_MS = 250;
+
+/** Everything `startContext` needs, so a test can hand it something simpler. */
+type Startable = Pick<AudioContext, 'state' | 'resume'>;
+
+/**
+ * Start a context, or answer false rather than waiting forever.
+ *
+ * Refusal is retried rather than fatal, and retrying is what the caller does by
+ * asking again for the next line: a context that was refused *can* be started
+ * later — a plain `resume()` on it succeeds once the page has been interacted
+ * with, and it does not have to be called from inside the gesture to do so.
+ */
+export async function startContext(ctx: Startable, waitMs = RESUME_WAIT_MS): Promise<boolean> {
+  // A context closed on teardown is not something a line should reopen.
+  if (ctx.state === 'closed') return false;
+  if (ctx.state !== 'running') {
+    await Promise.race([
+      ctx.resume().catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, waitMs)),
+    ]);
+  }
+  return ctx.state === 'running';
+}
+
+/**
  * Turn one channel of audio into a loudness curve, 0..1.
  *
  * RMS rather than peak per window, because the mouth is following how much
@@ -217,6 +256,10 @@ export class BrowserVoice implements Voice {
   private ctx: AudioContext | null = null;
   private chainNodes: Chain | null = null;
   private silentUntil = 0;
+  /** See `isBlocked`. Set by `device`, which is the only thing that can know. */
+  private blocked = false;
+  /** Removes the gesture listeners. See `armUnlock`. */
+  private disarm: (() => void) | null = null;
   /** Requests are run through this one at a time. See `prepare`. */
   private chain: Promise<unknown> = Promise.resolve();
 
@@ -263,6 +306,68 @@ export class BrowserVoice implements Voice {
     // Resolve the default chain in the background, so the first line of a
     // session is processed rather than being the one that pays for the load.
     void this.applyChain(this.chainEpoch);
+    this.armUnlock();
+  }
+
+  /**
+   * Start a refused context the moment the operator touches the page.
+   *
+   * Without this the voice comes back on the *next* line after a click, because
+   * that is when something next asks for the device. With it, the click itself
+   * is enough — which matters because "click the picture and speak" is how
+   * anyone will check whether the sound is fixed, and a viewer that stays silent
+   * for one more line reads as still broken.
+   *
+   * Only ever revives a context that already exists and was refused. It does not
+   * make one: a page that has been touched gets a context that starts running
+   * anyway when the first line asks for it, and building one here would spend
+   * one of the few a document is allowed on a page that may never speak.
+   *
+   * Capturing, so a handler that stops propagation cannot hide the gesture, and
+   * passive, because nothing here has an opinion about the event itself.
+   */
+  private armUnlock(): void {
+    if (typeof addEventListener !== 'function') return;
+    const options = { capture: true, passive: true } as const;
+
+    const unlock = (): void => {
+      const ctx = this.ctx;
+      if (ctx?.state !== 'suspended') return;
+      void ctx.resume().then(
+        () => {
+          if (ctx.state !== 'running') return;
+          this.blocked = false;
+          this.disarm?.();
+        },
+        () => {},
+      );
+    };
+
+    addEventListener('pointerdown', unlock, options);
+    addEventListener('keydown', unlock, options);
+    this.disarm = () => {
+      this.disarm = null;
+      removeEventListener('pointerdown', unlock, options);
+      removeEventListener('keydown', unlock, options);
+    };
+  }
+
+  /**
+   * Give up the device and stop listening for the gesture that would start it.
+   *
+   * For the page going away rather than for an avatar swap — the voice outlives
+   * those deliberately. A context left open across a hot reload is one of the
+   * handful a document is allowed, spent on a renderer that no longer exists.
+   */
+  dispose(): void {
+    this.disarm?.();
+    const ctx = this.ctx;
+    this.ctx = null;
+    // The graph belongs to the context. Kept, it would hand a closed context's
+    // nodes to whatever asked next.
+    this.chainNodes = null;
+    this.roomEpoch += 1;
+    if (ctx) void ctx.close().catch(() => {});
   }
 
   /**
@@ -345,7 +450,22 @@ export class BrowserVoice implements Voice {
       room: this.room,
       lufs: this.lastMeasured.lufs,
       truePeakDb: this.lastMeasured.truePeakDb,
+      blocked: this.blocked,
     };
+  }
+
+  /**
+   * Whether the browser is refusing to start the audio device.
+   *
+   * False until a line has actually been asked for: nothing can know before
+   * then, and answering true on a page that has simply not spoken yet would put
+   * a warning in front of every operator who opened the viewer early.
+   *
+   * Reported rather than only logged because nothing in this program can clear
+   * it. It is the one failure here whose fix is a person touching the page.
+   */
+  get isBlocked(): boolean {
+    return this.blocked;
   }
 
   /**
@@ -438,9 +558,15 @@ export class BrowserVoice implements Voice {
    * A context built before the page has been interacted with starts suspended,
    * and a suspended one does not advance `currentTime` — so a take played on it
    * would leave the mouth frozen at the first mora for the length of the line.
-   * That is worse than no audio, so a suspended context answers null and the
-   * line is mouthed silently. The next line after the operator touches anything
-   * gets a running context and its voice.
+   * That is worse than no audio, so a refused context answers null and the line
+   * is mouthed silently. The next line after the operator touches anything gets
+   * a running context and its voice.
+   *
+   * Being refused is a state of the page rather than a property of the context,
+   * which is why the same one is kept and asked again rather than rebuilt: a
+   * context that was refused starts on a later `resume()` once the page has been
+   * interacted with. What must not happen is waiting on the first one — see
+   * `RESUME_WAIT_MS`.
    */
   private async device(): Promise<AudioContext | null> {
     if (this.ctx === null) {
@@ -449,10 +575,9 @@ export class BrowserVoice implements Voice {
       // is what makes `setRoom` order-independent against the first line.
       if (this.room !== null) void this.applyRoom(this.roomEpoch);
     }
-    if (this.ctx.state === 'suspended') {
-      await this.ctx.resume().catch(() => {});
-    }
-    return this.ctx.state === 'running' ? this.ctx : null;
+    const started = await startContext(this.ctx);
+    this.blocked = !started;
+    return started ? this.ctx : null;
   }
 
   /**

@@ -138,3 +138,15 @@
 .auto {
   color: var(--accent-dim);
 }
+
+/*
+ * The browser refusing to start the audio device.
+ *
+ * A measurement colour rather than `--live`, because that is what it is: a
+ * reading of this page's state, and one the operator clears themselves. It sits
+ * beside ON AIR because those two together are the whole answer to "is it
+ * speaking, and can anyone hear it".
+ */
+.blocked {
+  color: var(--warn);
+}
