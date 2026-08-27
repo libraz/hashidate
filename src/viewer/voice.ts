@@ -1,4 +1,16 @@
-import type { Take, Voice } from '@/engine/types';
+import type { LabelledId, Take, Voice, VoiceChainRequest, VoiceReport } from '@/engine/types';
+import type { VoiceDsp } from '@/protocol';
+import { buildImpulse, ROOMS, type RoomId, roomList } from './rooms';
+import {
+  DEFAULT_PRESET,
+  loadBase,
+  measure,
+  mergeDsp,
+  processTake,
+  type ResolvedDsp,
+  VOICE_PRESETS,
+  voicePresetList,
+} from './voice-chain';
 
 /**
  * The voice, as the browser can provide one.
@@ -20,6 +32,26 @@ import type { Take, Voice } from '@/engine/types';
  * same reason: no analyser node, no live gain to tune, and the loudness at any
  * moment is a lookup rather than a measurement that can lag the sound it
  * describes.
+ *
+ * ## The chain is upstream of the mouth; the room is downstream of both
+ *
+ * Two pieces of processing sit either side of the envelope, and which side they
+ * are on is the point. The voice chain — pitch, formants, EQ, gate, compressor,
+ * limiter; see `voice-chain.ts` — runs on the decoded buffer *before* the
+ * envelope is measured, because it changes where the loud parts of a line are
+ * and the jaw has to follow what will be heard. The room runs *after*, in the
+ * graph below, because a convolution tail is the space ringing rather than the
+ * character still speaking.
+ *
+ * ## The room is downstream of everything the mouth reads
+ *
+ * A take is played into a small fixed graph — dry and a convolver in parallel —
+ * rather than at the destination directly, and the room that convolver holds is
+ * chosen by `setRoom`. The order matters: the envelope is measured off the dry
+ * buffer, before any of this, so the mouth follows the voice and not the room's
+ * tail. It also means the tail is nobody's take. It hangs off a node that
+ * outlives every line, so it rings on past the end of the turn the way a room
+ * does, and an interrupt cuts the voice without cutting the space it was in.
  */
 
 /**
@@ -95,14 +127,16 @@ class BufferTake implements Take {
   readonly seconds: number;
 
   private readonly ctx: AudioContext;
+  private readonly output: AudioNode;
   private readonly buffer: AudioBuffer;
   private readonly envelope: Float32Array;
   private source: AudioBufferSourceNode | null = null;
   private startedAt: number | null = null;
   private stoppedAt: number | null = null;
 
-  constructor(ctx: AudioContext, buffer: AudioBuffer, envelope: Float32Array) {
+  constructor(ctx: AudioContext, output: AudioNode, buffer: AudioBuffer, envelope: Float32Array) {
     this.ctx = ctx;
+    this.output = output;
     this.buffer = buffer;
     this.envelope = envelope;
     this.seconds = buffer.duration;
@@ -112,7 +146,7 @@ class BufferTake implements Take {
     if (this.startedAt !== null) return;
     const source = this.ctx.createBufferSource();
     source.buffer = this.buffer;
-    source.connect(this.ctx.destination);
+    source.connect(this.output);
     source.start();
     this.source = source;
     this.startedAt = this.ctx.currentTime;
@@ -151,17 +185,251 @@ class BufferTake implements Take {
 
 export interface BrowserVoiceOptions {
   base?: string;
+  /**
+   * Render silently. See `StageMode.muted` — this is the panel's preview, which
+   * is a second renderer of the same commands and must not speak over the one on
+   * air.
+   *
+   * It is applied at the very end of the graph, after the room, so *everything*
+   * this voice would have made is silenced by one number. Muting by not
+   * synthesising would be cheaper and would put the preview on a different clock
+   * from the renderer it is monitoring.
+   */
+  muted?: boolean;
+}
+
+/** The dry and wet halves of the room, and the node a take is played into. */
+interface Chain {
+  input: GainNode;
+  dry: GainNode;
+  wet: GainNode;
+  convolver: ConvolverNode;
+  /**
+   * The last node before the device. Both halves of the room meet here, so a
+   * mute is one gain rather than two that could come to disagree.
+   */
+  output: GainNode;
 }
 
 export class BrowserVoice implements Voice {
   private readonly base: string;
+  private muted: boolean;
   private ctx: AudioContext | null = null;
+  private chainNodes: Chain | null = null;
   private silentUntil = 0;
   /** Requests are run through this one at a time. See `prepare`. */
   private chain: Promise<unknown> = Promise.resolve();
 
-  constructor({ base = '/api' }: BrowserVoiceOptions = {}) {
+  /**
+   * The chain, in three parts: which base was asked for, what was layered on
+   * top of it, and the resolved result the next take will actually be run
+   * through.
+   *
+   * The overrides are kept separately from the resolution because the base can
+   * change under them — switching preset while a pitch shift is dialled in has
+   * to keep the pitch shift, which means replaying the overrides onto the new
+   * base rather than diffing two resolved configurations.
+   *
+   * Null base means bypass: the take is played exactly as the synthesiser made
+   * it, which is also the state a renderer stays in if the WASM will not load.
+   */
+  private preset: string | null = DEFAULT_PRESET;
+  private overrides: VoiceDsp = {};
+  private dsp: ResolvedDsp | null = null;
+  /** See `roomEpoch` — the same race, for the same reason. */
+  private chainEpoch = 0;
+  private lastMeasured: { lufs: number | null; truePeakDb: number | null } = {
+    lufs: null,
+    truePeakDb: null,
+  };
+
+  private room: RoomId | null = null;
+  /**
+   * Which `setRoom` call is the current one.
+   *
+   * Building an impulse response is asynchronous — the WASM has to load the
+   * first time — so two calls in quick succession can finish out of order and
+   * leave the graph holding the room that was asked for first. The counter is
+   * how a stale result recognises itself.
+   */
+  private roomEpoch = 0;
+
+  readonly rooms: LabelledId[] = roomList();
+  readonly presets: LabelledId[] = voicePresetList();
+
+  constructor({ base = '/api', muted = false }: BrowserVoiceOptions = {}) {
     this.base = base;
+    this.muted = muted;
+    // Resolve the default chain in the background, so the first line of a
+    // session is processed rather than being the one that pays for the load.
+    void this.applyChain(this.chainEpoch);
+  }
+
+  /**
+   * Silence the output, or let it through.
+   *
+   * One gain, changed live, rather than a reload: the panel's preview is muted
+   * most of the time and unmuted whenever the operator wants to hear what is
+   * being said, and rebuilding the page for that would cost a model download and
+   * two seconds of black picture every time.
+   *
+   * Nothing else in the graph moves. A line already playing goes silent or
+   * audible from this instant, mid-word, because the take is upstream of here
+   * and does not know the difference.
+   */
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+    const chain = this.chainNodes;
+    if (chain) chain.output.gain.value = muted ? 0 : 1;
+  }
+
+  /** Whether the output is silenced. */
+  get isMuted(): boolean {
+    return this.muted;
+  }
+
+  /**
+   * Set the chain: a base preset, overrides on top of it, or both.
+   *
+   * Absent `preset` keeps the current base, so a panel dragging one slider does
+   * not have to restate which voice it is dragging it on. `preset: null`
+   * bypasses the chain entirely and clears the overrides with it — a bypass that
+   * remembered a pitch shift would come back wrong the next time a base was
+   * chosen, and "off" is the one setting that has to mean exactly nothing.
+   *
+   * Returns immediately. Resolving a base loads the WASM on the first call, and
+   * a line synthesised in between is heard unprocessed.
+   */
+  setChain({ preset, dsp }: VoiceChainRequest): void {
+    if (preset === null) {
+      this.preset = null;
+      this.overrides = {};
+      this.dsp = null;
+      this.chainEpoch += 1;
+      return;
+    }
+    if (preset !== undefined) {
+      // An unknown id falls back to the default rather than being refused, on
+      // the same rule `setRoom` follows.
+      this.preset = Object.hasOwn(VOICE_PRESETS, preset) ? preset : DEFAULT_PRESET;
+    } else if (this.preset === null) {
+      // Overrides arriving on a bypassed chain turn it back on. The alternative
+      // is silently discarding them, which from the panel looks like a slider
+      // that does nothing.
+      this.preset = DEFAULT_PRESET;
+    }
+    if (dsp) this.overrides = { ...this.overrides, ...(dsp as VoiceDsp) };
+    this.chainEpoch += 1;
+    void this.applyChain(this.chainEpoch);
+  }
+
+  private async applyChain(epoch: number): Promise<void> {
+    const preset = this.preset;
+    if (preset === null) return;
+    let base: ResolvedDsp;
+    try {
+      base = await loadBase(preset);
+    } catch {
+      // No WASM, or a build without the voice changer. Unprocessed is a working
+      // stream; a thrown error on this path would not be.
+      return;
+    }
+    if (epoch !== this.chainEpoch) return;
+    this.dsp = mergeDsp(base, this.overrides);
+  }
+
+  report(): VoiceReport {
+    return {
+      preset: this.preset,
+      dsp: this.dsp,
+      room: this.room,
+      lufs: this.lastMeasured.lufs,
+      truePeakDb: this.lastMeasured.truePeakDb,
+    };
+  }
+
+  /**
+   * Put the voice in a room, or take it out of one.
+   *
+   * An unknown id is dry rather than an error, on the rule the rest of the
+   * command set follows: ids are data, the wire carries them as strings, and a
+   * caller working from a stale list should get something reasonable rather
+   * than a broken stream.
+   *
+   * Returns immediately. The impulse response is built off the back of this and
+   * swapped in when it is ready, which for the first room on a page means after
+   * the WASM has loaded — a line spoken in between is heard dry.
+   */
+  setRoom(id: string | null): void {
+    const next = id !== null && Object.hasOwn(ROOMS, id) ? (id as RoomId) : null;
+    if (next === this.room) return;
+    this.room = next;
+    this.roomEpoch += 1;
+    void this.applyRoom(this.roomEpoch);
+  }
+
+  /** The room that is up, by id. Null is dry. */
+  get roomId(): string | null {
+    return this.room;
+  }
+
+  /**
+   * Build the graph a take is played into.
+   *
+   * Made once per context and kept, because the convolver holding the tail is
+   * the reason the tail survives the take that caused it.
+   */
+  private chainFor(ctx: AudioContext): Chain {
+    if (this.chainNodes) return this.chainNodes;
+    const input = ctx.createGain();
+    const dry = ctx.createGain();
+    const wet = ctx.createGain();
+    const convolver = ctx.createConvolver();
+    const output = ctx.createGain();
+    // Dry at unity and wet at zero: no room until one is asked for, and the
+    // voice at full level either way.
+    dry.gain.value = 1;
+    wet.gain.value = 0;
+    // Silence, if this renderer is a monitor. Nothing upstream of here knows or
+    // cares: the take is made, played and clocked exactly as it would have been.
+    output.gain.value = this.muted ? 0 : 1;
+    input.connect(dry).connect(output);
+    input.connect(convolver).connect(wet).connect(output);
+    output.connect(ctx.destination);
+    this.chainNodes = { input, dry, wet, convolver, output };
+    return this.chainNodes;
+  }
+
+  private async applyRoom(epoch: number): Promise<void> {
+    const ctx = this.ctx;
+    // No device yet. The room is remembered and applied by `device()` when one
+    // appears, so setting it before the first line is not a lost setting.
+    if (!ctx) return;
+    const chain = this.chainFor(ctx);
+    const room = this.room === null ? null : ROOMS[this.room];
+
+    if (room === null) {
+      chain.dry.gain.value = 1;
+      chain.wet.gain.value = 0;
+      return;
+    }
+
+    let impulse: AudioBuffer;
+    try {
+      impulse = await buildImpulse(ctx, room);
+    } catch {
+      // No acoustic support in the build, or the WASM would not load. Dry is a
+      // working stream; a thrown error here would not be.
+      return;
+    }
+    if (epoch !== this.roomEpoch) return;
+
+    chain.convolver.buffer = impulse;
+    // Equal power, so the voice does not drop as the room comes up. `mix` is
+    // the fraction of the *power*, which is what makes 0.22 in one room sound
+    // like the same amount of room as 0.22 in another.
+    chain.wet.gain.value = Math.sqrt(room.mix);
+    chain.dry.gain.value = Math.sqrt(1 - room.mix);
   }
 
   /**
@@ -175,7 +443,12 @@ export class BrowserVoice implements Voice {
    * gets a running context and its voice.
    */
   private async device(): Promise<AudioContext | null> {
-    this.ctx ??= new AudioContext();
+    if (this.ctx === null) {
+      this.ctx = new AudioContext();
+      // A room chosen before there was anything to play it in. Applying it here
+      // is what makes `setRoom` order-independent against the first line.
+      if (this.room !== null) void this.applyRoom(this.roomEpoch);
+    }
     if (this.ctx.state === 'suspended') {
       await this.ctx.resume().catch(() => {});
     }
@@ -207,6 +480,34 @@ export class BrowserVoice implements Voice {
     return next;
   }
 
+  /**
+   * Run a decoded line through the chain, and measure what came out.
+   *
+   * Mono, because the synthesiser is: taking channel 0 and processing that is
+   * not a simplification here, it is the whole signal. The result is written
+   * into a fresh single-channel buffer rather than back into the decoded one,
+   * so a failure part-way leaves the original intact to be played unprocessed.
+   *
+   * Nothing here is allowed to throw. The chain is a finish, and a stream that
+   * loses its voice because a limiter refused a buffer is a far worse outcome
+   * than one that sounds raw for a line.
+   */
+  private processed(ctx: AudioContext, decoded: AudioBuffer): AudioBuffer {
+    const dsp = this.dsp;
+    if (!dsp) return decoded;
+    try {
+      const samples = decoded.getChannelData(0);
+      const out = processTake(samples, decoded.sampleRate, dsp);
+      this.lastMeasured = measure(out, decoded.sampleRate);
+      const buffer = ctx.createBuffer(1, out.length, decoded.sampleRate);
+      buffer.getChannelData(0).set(out);
+      return buffer;
+    } catch {
+      this.lastMeasured = { lufs: null, truePeakDb: null };
+      return decoded;
+    }
+  }
+
   private async synthesise(text: string, reading?: string): Promise<Take | null> {
     if (Date.now() < this.silentUntil) return null;
     const ctx = await this.device();
@@ -232,10 +533,16 @@ export class BrowserVoice implements Voice {
     }
 
     try {
-      const buffer = await ctx.decodeAudioData(encoded);
+      const decoded = await ctx.decodeAudioData(encoded);
+      const buffer = this.processed(ctx, decoded);
       return new BufferTake(
         ctx,
+        this.chainFor(ctx).input,
         buffer,
+        // Measured off the buffer that will be *played*, which after the chain
+        // is not the one that arrived: a gate and a compressor move where the
+        // loud parts of a line are, and a mouth following the take as
+        // synthesised would be following a signal nobody can hear.
         buildEnvelope(buffer.getChannelData(0), buffer.sampleRate),
       );
     } catch {
