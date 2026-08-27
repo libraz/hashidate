@@ -2,7 +2,10 @@
 name = "aituber-tts"
 version = "0.1.0"
 description = "Local speech sidecar for the avatar runtime"
-requires-python = ">=3.10,<3.11"
+# Upstream asks for >=3.10 and sets no ceiling. 3.11 is the floor here because
+# libsonare needs it; the voice is unaffected, and that was checked rather than
+# assumed — the same line at the same seed comes out bit-identical on both.
+requires-python = ">=3.11"
 
 # Irodori-TTS is installed straight from its repository: it is an inference and
 # training codebase rather than a published package, and the commit is pinned
@@ -14,6 +17,12 @@ requires-python = ">=3.10,<3.11"
 # PyPI wheel supplies the MPS backend that actually runs it.
 dependencies = [
     "irodori-tts[cpu] @ git+https://github.com/Aratako/Irodori-TTS.git@8224dafb46d0aba89209a8f905f1cb7e3299d9c1",
+    # Noise removal, on the references and on every take. Chosen over a SciPy or
+    # torch filter because the model stack is already 3 GB and this is a 4 MB
+    # wheel with no runtime dependency beyond NumPy — and because the same
+    # library builds the viewer's room, so both ends of the audio path are
+    # described by one set of numbers.
+    "libsonare>=1.7",
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "soundfile>=0.12",

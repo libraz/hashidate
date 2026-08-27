@@ -44,6 +44,8 @@ from config import (
     REF_NORMALIZE_DB,
     runtime_key,
 )
+import watermark
+from repair import clean_take, trim
 
 BIND = "127.0.0.1"  # do not change; see the module docstring
 DEFAULT_PORT = 8770
@@ -89,12 +91,28 @@ async def lifespan(_: FastAPI):
     if not _latents:
         raise RuntimeError(f"no reference latents in {LATENTS}; run refs.py first")
     _runtime = InferenceRuntime.from_key(runtime_key())
-    # One short synthesis so the first real line does not pay for the backend
+    # Before anything is generated: the runtime marks takes on the way out of
+    # the decoder, and `speak` needs to mark them at the end instead.
+    watermark.claim(_runtime)
+    # One synthesis so the first real line does not pay for the backend
     # compiling its kernels — which it otherwise does, visibly, mid-sentence.
-    _runtime.synthesize(
+    #
+    # A sentence rather than a word, because this take is also what the
+    # watermark is checked against and the payload needs about a second of audio
+    # to be readable back. See `watermark.WATERMARK_MIN_SECONDS`.
+    warmup = _runtime.synthesize(
         SamplingRequest(
-            text="テスト", ref_latents=_latents, num_steps=DEFAULT_STEPS, seed=DEFAULT_SEED
+            text="音声の準備をしています。",
+            ref_latents=_latents,
+            num_steps=DEFAULT_STEPS,
+            seed=DEFAULT_SEED,
         )
+    )
+    # And it doubles as the proof that marking works, on the real path rather
+    # than on a tone. A failure here stops the sidecar: audio that goes out
+    # carrying the wrong payload, or none, is worse than no audio at all.
+    watermark.self_test(
+        _runtime, warmup.audio.squeeze().cpu().numpy(), int(warmup.sample_rate)
     )
     print(f"speech ready on {DEVICE}: {len(_latents)} reference latents", flush=True)
     yield
@@ -133,6 +151,20 @@ def speak(req: SpeakRequest) -> Response:
             )
         )
         audio = result.audio.squeeze().cpu().numpy()
+    # Clean, trim, then mark, and the order is the whole design.
+    #
+    # Trim after clean, because the ends are only quiet enough to find once the
+    # cleaning has run, and `X-Speech-Seconds` below is what the mouth runs on
+    # so it has to be the length of the voice rather than of the file.
+    #
+    # Mark after both, because the mark lives about 50 dB under the speech and
+    # a denoiser run over the top of it is a denoiser aimed straight at it. See
+    # `repair.py` and `watermark.py`.
+    audio = trim(clean_take(audio, result.sample_rate), result.sample_rate)
+    audio = watermark.mark(_runtime, audio, result.sample_rate)
+    # Measured off the buffer that is actually returned, and last, so that a
+    # step which quietly changed the length would change this number with it
+    # rather than leaving it describing an earlier version of the take.
     seconds = len(audio) / result.sample_rate
 
     buffer = io.BytesIO()

@@ -12,7 +12,7 @@ TTS      = tools/tts
 
 .PHONY: help all extract textures resize glb \
         manuka manuka-extract manuka-textures manuka-glb \
-        tts-setup tts-refs tts \
+        tts-setup tts-vet tts-refs tts \
         check-assets clean clean-tex
 
 help:
@@ -29,6 +29,7 @@ help:
 	@echo "  manuka-glb       $(OUT)/manuka.glb を生成する"
 	@echo "-- 音声"
 	@echo "  tts-setup        音声サイドカーの Python 環境を作る（初回のみ）"
+	@echo "  tts-vet          参照クリップを検品する（latent は作らない）"
 	@echo "  tts-refs         backup/voice/clips の参照音声を潜在表現に変換する"
 	@echo "  tts              音声サーバを起動する（127.0.0.1:8770）"
 	@echo "-- 共通"
@@ -100,10 +101,16 @@ manuka-glb:
 # ---------------------------------------------------------------------- 音声
 
 # Irodori-TTS を上流から直接入れる。torch を含むため 3 GB 前後になる。
-# Python は 3.10 固定（上流の要件）で、Node 側の環境とは完全に別物。
+# Python 3.11 は libsonare の要件（上流の TTS は 3.10 以上なら何でもよい）。
+# Node 側の環境とは完全に別物。
 tts-setup:
-	cd $(TTS) && uv venv --python 3.10 .venv
+	cd $(TTS) && uv venv --python 3.11 .venv
 	cd $(TTS) && uv pip install --python .venv -r pyproject.toml
+
+# 参照クリップの検品。latent を作らずに確認だけしたいとき用。
+# tts-refs も同じ検査を内部で走らせ、落ちたクリップがあれば中断する。
+tts-vet:
+	cd $(TTS) && .venv/bin/python vet.py
 
 # 参照音声は backup/voice/clips/ に置く。git 追跡対象ではない
 tts-refs:
