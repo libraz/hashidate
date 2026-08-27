@@ -33,6 +33,29 @@ better. A highpass on the reference removes the class of them that carries no
 speech-band energy; the numbers, and what it does not reach, are at
 `REFERENCE_HPF_HZ`.
 
+## A take can end after the line is already over
+
+The model is given a duration before it is given a chance to fill it, and when
+that prediction is long the surplus does not come back as silence — it comes
+back as more speech. Measured on four lines at the shipped settings, three of
+them carry a fragment after the line has finished and gone quiet:
+
+    line                      line ends   silence   fragment   last 50 ms
+    ...ひととおり説明します。      5.40 s     1.00 s      none      -78.6 dBFS
+    ...角度で指定します。          5.42 s     0.66 s    to the end  -41.4 dBFS
+    ...顔が面に見えるとか。        8.46 s     0.62 s    to the end  -11.6 dBFS
+    ...見てくれて、ありがとう。     4.08 s     0.68 s    to the end   -9.2 dBFS
+
+The fragment is not the end of the line — there is two thirds of a second of
+true floor between the two — and it does not finish, because the buffer runs out
+first. A take that stops on a voiced vowel at -9 dBFS is a step, and a step is a
+knock; through the viewer's room it is a knock with a tail on it.
+
+`duration_scale` does not fix it at source: at 0.80 one line still ends at -26.1
+dBFS while another loses a fifth of its voiced material, and no value tried was
+clean across all four. `SamplingRequest.trim_tail` makes no difference at all —
+on and off produce the same samples. So it is dealt with here, by `close_tail`.
+
 ## Cleaning the references makes the model pause differently
 
 Not a side effect of the filter — a different reference is a different
@@ -129,6 +152,49 @@ REFERENCE_HPF_HZ = 120.0
 REFERENCE_HPF_Q = (0.5412, 1.3066)
 _HPF_BLOCK = 4096
 
+# What a severed take looks like, and how far back to cut it.
+#
+# A take that finished ends on its own decay. One that ran out of buffer ends
+# wherever it happened to be, and the level of the last few milliseconds is what
+# separates the two: -78.6 dBFS for the line that finished against -41.4, -11.6
+# and -9.2 for the three that did not. -55 sits in the gap with room on both
+# sides, and nothing at -55 dBFS is a step anybody hears.
+TAIL_SEVERED_DBFS = -55.0
+TAIL_MEASURE_MS = 50.0
+
+# The grid the tail is read on. Short enough to land a cut inside a pause rather
+# than near one, long enough that a single glottal period does not read as a
+# frame of speech at this speaker's pitch.
+FRAME_MS = 20.0
+
+# How long the floor has to hold to count as a pause at all.
+#
+# Not "long enough to be the end of the line" — it cannot be. A line's own
+# interior pauses run as long as anything at its end: the four takes measured
+# carry interior silences of 0.40, 0.38 and 0.64 s against terminal gaps of
+# 0.44, 0.56 and 0.70. Length does not separate them and nothing here pretends
+# it does; `close_tail` is gated on the take being severed, and only then looks
+# backwards. All this threshold has to do is tell a pause from the closure
+# inside a consonant, and those measured 0.14 s and under.
+TAIL_GAP_MS = 250.0
+
+# And how much material may follow that pause and still be surplus rather than
+# the line. The three severed fragments measured 0.06, 0.20 and 0.22 s, so this
+# is roughly double the largest of them.
+#
+# The risk this bounds is real and worth stating: a take whose *own* closing
+# phrase was cut off, and which happens to have a pause in front of it, loses
+# that phrase here instead of keeping a broken version of it. Nothing in the
+# audio distinguishes the two cases — the model does not say which of the sounds
+# it made it meant. Keeping the window tight is what makes that rare, and it is
+# a trade rather than a solution.
+TAIL_FRAGMENT_MS = 400.0
+
+# When a take is severed and there is no floor to cut back to, the line itself
+# was cut and there is nothing to recover. Fading is not a repair, it is the
+# difference between a truncated word and a truncated word with a click on it.
+TAIL_FADE_MS = 15.0
+
 
 def _highpass_once(samples: np.ndarray, sample_rate: int) -> np.ndarray:
     """One pass of the cascade, in block-sized pieces because the EQ is streaming."""
@@ -210,6 +276,54 @@ def clean_take(samples: np.ndarray, sample_rate: int) -> np.ndarray:
         n_fft=N_FFT,
         hop_length=HOP_LENGTH,
     )
+
+
+def close_tail(samples: np.ndarray, sample_rate: int) -> np.ndarray:
+    """End a take on a decay rather than on a step.
+
+    Runs before `trim`, not after. What this leaves behind is the pause it cut
+    back to, and trimming is the thing that knows how to take a pause off an
+    end — doing it in the other order would mean measuring the same silence
+    twice and cutting it once.
+
+    Three outcomes, and the first is the common one:
+
+    - the take already ends quietly, and is returned untouched;
+    - it was severed, and there is a pause to cut back to, so the surplus goes;
+    - it was severed with no pause behind it, which means the line itself was
+      cut and there is nothing to recover, so the edge is faded instead.
+
+    The thresholds and what they are measured against are above.
+    """
+    frame = int(sample_rate * FRAME_MS / 1000.0)
+    if frame <= 0 or len(samples) < frame * 2:
+        return samples
+
+    tail = samples[-int(sample_rate * TAIL_MEASURE_MS / 1000.0) :]
+    if 20.0 * np.log10(np.sqrt((tail.astype(np.float64) ** 2).mean()) + 1e-20) <= TAIL_SEVERED_DBFS:
+        return samples
+
+    count = len(samples) // frame
+    energy = samples[: count * frame].reshape(-1, frame).astype(np.float64)
+    level = 20.0 * np.log10(np.sqrt((energy**2).mean(axis=1)) + 1e-20)
+    quiet = level <= TAIL_SEVERED_DBFS
+
+    need = max(1, int(TAIL_GAP_MS / FRAME_MS))
+    limit = int(TAIL_FRAGMENT_MS / FRAME_MS)
+    # Walk back from the end over the fragment, looking for the pause behind it.
+    run = 0
+    for index in range(count - 1, max(-1, count - 1 - limit - need), -1):
+        if quiet[index]:
+            run += 1
+            if run >= need:
+                return np.ascontiguousarray(samples[: (index + need) * frame])
+        else:
+            run = 0
+
+    fade = min(int(sample_rate * TAIL_FADE_MS / 1000.0), len(samples))
+    out = samples.copy()
+    out[len(out) - fade :] *= np.linspace(1.0, 0.0, fade, dtype=samples.dtype)
+    return out
 
 
 def trim(samples: np.ndarray, sample_rate: int) -> np.ndarray:

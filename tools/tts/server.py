@@ -45,7 +45,7 @@ from config import (
     runtime_key,
 )
 import watermark
-from repair import clean_take, trim
+from repair import clean_take, close_tail, trim
 
 BIND = "127.0.0.1"  # do not change; see the module docstring
 DEFAULT_PORT = 8770
@@ -151,16 +151,21 @@ def speak(req: SpeakRequest) -> Response:
             )
         )
         audio = result.audio.squeeze().cpu().numpy()
-    # Clean, trim, then mark, and the order is the whole design.
+    # Clean, close, trim, then mark, and the order is the whole design.
     #
-    # Trim after clean, because the ends are only quiet enough to find once the
-    # cleaning has run, and `X-Speech-Seconds` below is what the mouth runs on
-    # so it has to be the length of the voice rather than of the file.
+    # Close after clean, because it decides whether the take was severed by
+    # reading the level of its last few milliseconds, and that reading is only
+    # about the voice once the noise under it has gone.
     #
-    # Mark after both, because the mark lives about 50 dB under the speech and
-    # a denoiser run over the top of it is a denoiser aimed straight at it. See
-    # `repair.py` and `watermark.py`.
-    audio = trim(clean_take(audio, result.sample_rate), result.sample_rate)
+    # Trim after close, because closing cuts back to a pause and leaves it
+    # there; trimming is what takes a pause off an end. And `X-Speech-Seconds`
+    # below is what the mouth runs on, so it has to be the length of the voice
+    # rather than of the file.
+    #
+    # Mark after all three, because the mark lives about 50 dB under the speech
+    # and a denoiser run over the top of it is a denoiser aimed straight at it.
+    # See `repair.py` and `watermark.py`.
+    audio = trim(close_tail(clean_take(audio, result.sample_rate), result.sample_rate), result.sample_rate)
     audio = watermark.mark(_runtime, audio, result.sample_rate)
     # Measured off the buffer that is actually returned, and last, so that a
     # step which quietly changed the length would change this number with it
