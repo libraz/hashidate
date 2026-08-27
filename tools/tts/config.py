@@ -5,16 +5,46 @@ matter are `DEFAULT_STEPS` and the choice to precompute reference latents. Both
 have a failure they exist to prevent; see the comments.
 """
 
+import os
 from pathlib import Path
 
 from irodori_tts.inference_runtime import RuntimeKey, download_hf_checkpoint
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# Reference material and everything derived from it. Under `backup/` with the
-# purchased avatar packages, on the same rule: not ours to redistribute, never
-# tracked. `make check-assets` is the backstop.
-VOICE = ROOT / "backup" / "voice"
+# Where a voice is made from: `clips/` in, `latents/` out.
+#
+# `reference/` next to this file is the documented one and it ships in the
+# checkout, empty. Drop WAV files into `reference/clips/`, run `make voice`, and
+# the latents land beside them. Its own .gitignore keeps the directory tracked
+# and the contents out.
+#
+# The second location is the working tree this was developed in, which keeps its
+# reference material with the purchased avatar packages. It is a fallback only,
+# so an existing setup does not have to move; a fresh checkout never sees it.
+#
+# HASHIDATE_VOICE_DIR moves the whole thing elsewhere — including outside the
+# repository, which is the right answer for recordings that should not sit in a
+# working tree at all. Same shape wherever it points.
+#
+# None of it is ever tracked. The clips are recordings of a real person and the
+# latents are derived from them; `make check-assets` is the backstop.
+_CANDIDATES = (Path(__file__).resolve().parent / "reference", ROOT / "backup" / "voice")
+
+
+def _voice_dir() -> Path:
+    override = os.environ.get("HASHIDATE_VOICE_DIR")
+    if override:
+        return Path(override).expanduser().resolve()
+    for candidate in _CANDIDATES:
+        if any((candidate / "clips").glob("*.wav")):
+            return candidate
+    # Nothing to work from yet. Name the documented one, so the error a first
+    # run prints points at the directory the instructions talk about.
+    return _CANDIDATES[0]
+
+
+VOICE = _voice_dir()
 CLIPS = VOICE / "clips"
 LATENTS = VOICE / "latents"
 

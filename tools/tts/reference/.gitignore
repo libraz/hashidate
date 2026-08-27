@@ -1,0 +1,13 @@
+# What a voice is made from, and everything derived from it.
+#
+# `clips/` holds recordings of whoever the voice is supposed to be, and
+# `latents/` is what those recordings become. Neither is ours to publish, and
+# both are large, so nothing that lands here is ever tracked.
+#
+# The directory is, though. A checkout arrives with somewhere to put clips,
+# which is the point of keeping them here rather than behind a path somebody
+# has to be told about.
+*
+!*/
+!.gitignore
+!**/.gitkeep

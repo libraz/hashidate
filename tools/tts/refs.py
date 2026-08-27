@@ -12,9 +12,10 @@ place the recorded room can be removed and the only place worth removing it: a
 clean latent makes every line the model ever generates clean, at no per-line
 cost.
 
-Both the clips and the latents live under `backup/`, with the purchased avatar
-packages and for the same reason: they are derived from recordings that are not
-ours to redistribute. Nothing here may enter git.
+The clips go in `reference/clips/` and the latents land in `reference/latents/`
+beside them; `config.VOICE` resolves both and `HASHIDATE_VOICE_DIR` moves them.
+Neither may enter git: the clips are recordings of a real person and the latents
+are derived from them.
 
 usage: .venv/bin/python refs.py
 """
@@ -32,7 +33,17 @@ from vet import describe, vet
 def main() -> None:
     clips = sorted(CLIPS.glob("*.wav"))
     if not clips:
-        raise SystemExit(f"no reference clips in {CLIPS}")
+        raise SystemExit(
+            f"no reference clips in {CLIPS}\n"
+            "\n"
+            "Put a few WAV files of the voice there and run this again. Clean\n"
+            "speech, one speaker, no music and no second voice; `make tts-vet`\n"
+            "reports on a set without building anything. A handful of clips\n"
+            "totalling a minute or two is enough — this is a reference, not a\n"
+            "training set.\n"
+            "\n"
+            "HASHIDATE_VOICE_DIR points all of this somewhere else."
+        )
     # Before anything is encoded. A latent cannot be listened to, so this is the
     # last point at which what the voice is made of can still be seen.
     reports = vet(clips)

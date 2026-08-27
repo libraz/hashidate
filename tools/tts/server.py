@@ -60,10 +60,21 @@ DEFAULT_PORT = 8770
 #     -[IOGPUMetalCommandBuffer validate]: commit an already committed
 #     command buffer
 #
+#     -[IOGPUMetalCommandBuffer validate]:215: failed assertion
+#     `commit command buffer with uncommitted encoder'
+#
 # — which takes the voice down for every caller, not just the one that raced.
 # Serialising costs nothing real, because a single GPU was only ever going to
 # do these one after another anyway. It is a lock rather than a single worker so
 # that `/health` stays answerable while a line is being made.
+#
+# What it guards is *every* call that runs on the device, not synthesis alone.
+# The watermarker is a second model on the same MPS context — `encode_one` moves
+# the take onto it and encodes there — so a mark left outside this lock races
+# synthesis exactly as a second synthesis would, and the second assertion above
+# is what that looks like. The repair chain is numpy and libsonare throughout
+# and stays outside deliberately: it is the only part of a take that can be made
+# while another line is on the GPU.
 _gpu = threading.Lock()
 
 _runtime: InferenceRuntime | None = None
@@ -73,8 +84,9 @@ _latents: list[str] = []
 class SpeakRequest(BaseModel):
     text: str = Field(min_length=1)
     # Style, as a sentence. The voice comes from the reference clips and stays
-    # put; this only changes the delivery — "明るく元気な声で" and so on. It is
-    # per-request because a line's mood is a property of the line.
+    # put; this only changes the delivery — "明るく元気な声で" (in a bright,
+    # cheerful voice) and so on. It is per-request because a line's mood is a
+    # property of the line.
     caption: str | None = None
     # Exposed because a caller that wants a cheap preview can drop it, but the
     # default is the measured optimum and lowering it costs speaker identity
@@ -118,7 +130,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="aituber speech", lifespan=lifespan)
+app = FastAPI(title="hashidate speech", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -166,7 +178,8 @@ def speak(req: SpeakRequest) -> Response:
     # and a denoiser run over the top of it is a denoiser aimed straight at it.
     # See `repair.py` and `watermark.py`.
     audio = trim(close_tail(clean_take(audio, result.sample_rate), result.sample_rate), result.sample_rate)
-    audio = watermark.mark(_runtime, audio, result.sample_rate)
+    with _gpu:
+        audio = watermark.mark(_runtime, audio, result.sample_rate)
     # Measured off the buffer that is actually returned, and last, so that a
     # step which quietly changed the length would change this number with it
     # rather than leaving it describing an earlier version of the take.

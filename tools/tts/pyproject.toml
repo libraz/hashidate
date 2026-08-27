@@ -1,5 +1,5 @@
 [project]
-name = "aituber-tts"
+name = "hashidate-tts"
 version = "0.1.0"
 description = "Local speech sidecar for the avatar runtime"
 # Upstream asks for >=3.10 and sets no ceiling. 3.11 is the floor here because
