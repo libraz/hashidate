@@ -40,8 +40,9 @@ same engine over the same command vocabulary.
 | `src/engine` | The runtime. Profile, rig, anatomy, motion, face, secondary motion, director, session. Depends on three.js and on nothing in a browser. |
 | `src/avatars` | One descriptor per model. Adding an avatar is adding a file. |
 | `src/protocol` | The wire format, as zod schemas. The viewer, the server and the CLI all import it, so the command vocabulary cannot drift between them. |
-| `src/viewer` | The operator console: a React panel beside a three.js stage. |
-| `src/server` | The local control API. Serves the built viewer and carries commands to it. |
+| `src/viewer` | The renderer: a three.js stage, with a development console beside it. This is the page OBS points at. |
+| `src/panel` | The broadcast panel, on `/panel/`. Everything it does goes through the control API, so what it can do is what an orchestrator can do. |
+| `src/server` | The local control API. Serves both pages and carries commands to the renderer. |
 | `src/cli` | `ctl` — a thin client, for driving the avatar by hand. |
 | `tools/blender` | The model pipeline. Python, because it runs inside Blender. |
 
@@ -250,7 +251,7 @@ for changing the set mid-stream:
 | | |
 |---|---|
 | `perform` | A named face and movement. No id releases the one that is up. |
-| `say` | Queue a turn. Takes a `perform`, or the parts spelled out, or performances written into the text itself. `hold` keeps the face up past the line. `reading` gives the kana pronunciation where the writing does not determine it, and carries no cues of its own. |
+| `say` | Queue a turn. Takes a `perform`, or the parts spelled out, or performances written into the text itself. `hold` keeps the face up past the line. `reading` gives the kana pronunciation where the writing does not determine it, and carries no cues of its own. `stage` names the shot — see below. |
 | `emotion` | The persistent mood, as a blend rather than a choice. |
 | `expression` | One of the avatar's own drawn faces. `null` hands the face back to the emotion. |
 | `overlay` | A drawn effect, at a weight. It layers over whatever face is showing, so several can be up at once. |
@@ -263,12 +264,36 @@ for changing the set mid-stream:
 | `room` | The space the voice is heard in. No id is dry. Persistent, like the camera. |
 | `backdrop` | The room the character is seen in. No id is the flat background. A separate axis from `room` — a set can be cut without the microphone appearing to move. |
 | `wear` | One slot to an item, or a whole preset at once. |
+| `avatar` | Load a different character. The only command that replaces the session every other one talks to, so the renderer holds what arrives behind it until the model is standing — swap and dress in one breath does what it reads like. |
+| `tune` | The set-once layer: breath, sway, jump, tail, shading. Every field optional and merged onto what is running, so one fader is one small message. Bounded, unlike `point` — a breath period of zero is not an ambitious breath. |
 | `interrupt` / `clear` / `reset` | Stop mid-line and drop the queue / drop the queue and let the line finish / back to nothing. |
 
 A command the renderer does not understand is dropped rather than failing the
 request, and unknown fields are stripped: the orchestrator and the renderer are
 separate processes with separate release cycles, and a newer caller talking to an
 older renderer should degrade rather than break the stream.
+
+### Send a whole answer at once
+
+`camera`, `room` and `backdrop` take effect when they arrive, which is right for
+reacting to something and wrong for describing a line that has not been reached.
+So `say` carries the same three under `stage`, applied when its turn starts:
+
+    yarn ctl say "これが、ホール。" --camera full --room hall
+
+That exists for the silence. A caller that sends one line and waits for it before
+sending the next pays the whole of the next line's synthesis as a gap — measured
+here at 1.2 s between every pair of lines, against 0.3 s when the lines travel
+together, because the renderer asks for a line's audio the moment it is queued
+and a queue one deep leaves nothing to prepare during. Staging on the line is
+what lets a run of lines with four different shots be one request.
+
+So: put the whole of an answer in one `batch`, and let the shots ride on the
+lines. Only the first line of each answer pays for being made.
+
+An axis left out of `stage` keeps what it had; `null` empties it — dry for a
+room, the flat background for a backdrop. On the command line an omitted flag is
+the first and `--room ''` is the second.
 
 ### Endpoints
 
@@ -307,17 +332,44 @@ the arm goes as far as it can, which is what a person does, and the strain figur
 is the only way a caller can tell an aim that was met from one the arm could only
 approximate.
 
-## The console
+Beside the state it carries three things the renderer reports about *itself*
+rather than about the performance: `voice`, the chain and the loudness of the
+last take; `tuning`, what the set-once layer is actually running, so a remote
+fader can be drawn at the value in force rather than at the last one somebody
+sent; and `avatars`, which characters this renderer can load — not the same
+question as what the loaded one can do.
 
-The panel beside the stage is four tabs — 演じる (performances, emotions, drawn
-faces, effects, gestures, pointing), 装う (the wardrobe), 調律 (idle, secondary
-motion, hops, rendering) and 診る (read-only: joint strain, the resolved profile,
-the event log, the vocabulary). The avatar picker, the camera framing, the idle
-switch and the speech box sit outside the tabs, because none of them belongs to
-one of those four jobs.
+## Two surfaces
 
-It drives the same `Session` the control API does, rather than being a second
-path into the engine — which is what makes it usable as a check on the API.
+There are two pages, and the difference between them is not what they can do —
+it is where they stand.
+
+**The panel**, on `/panel/`, is where a broadcast is run. It holds no renderer
+and no `AudioContext`: every control goes out through the control API, which
+means a control that works there is a control a language model can drive. Six
+tabs — キュー (the script, its history, and rewinding into it), 演じる, 音声, 装う,
+調律, 診る — with the avatar, the framing, the set and the idle switch under a
+preview, because those four are chosen by looking at the picture.
+
+**The renderer**, on `/`, is the page OBS points at. Opened with `?stage=1` it is
+the character and nothing else. Opened without, it carries a console that reaches
+*into* the live scene — `director.rig.measure('R')`, joint angles against their
+anatomical ranges, the resolved profile — which is a development instrument
+rather than a second control surface, and is the answer to "why does that pose
+look wrong".
+
+The panel is the full surface and the renderer is opened last, at the top of the
+broadcast. That is only true because the control server keeps the setup: the
+avatar, the costume, the shot, the set, the acoustic, the voice chain and the
+tuning are folded into a standing state as they are chosen, and handed to a
+renderer the moment it attaches — along with the pending queue, which is what has
+always made a reload survivable mid-stream. Nothing about the show lives in the
+URL a browser source was configured with.
+
+What is *not* replayed is anything that was a moment rather than a setting. A
+gesture ends on its own, an expression is released with the line that raised it,
+an interrupt has already happened; re-enacting those for a renderer joining an
+hour later would be the opposite of restoring a setup.
 
 ## Assets
 
