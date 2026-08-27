@@ -5,6 +5,9 @@ import {
   type CommandResponse,
   type EventsResponse,
   parseCommand,
+  type QueueResponse,
+  queueAddSchema,
+  queueUpdateSchema,
   reportBodySchema,
 } from '../protocol';
 import type { Hub } from './hub';
@@ -146,6 +149,9 @@ function get(res: ServerResponse, hub: Hub, pathname: string, params: URLSearchP
     case '/api/events':
       void events(res, hub, params);
       return;
+    case '/api/queue':
+      json(res, { queue: hub.queue.list(), viewers: hub.viewers } satisfies QueueResponse);
+      return;
     default:
       json(res, { error: 'unknown endpoint' }, 404);
   }
@@ -163,7 +169,101 @@ async function post(
   if (pathname === '/api/command') return command(res, hub, body.value, params);
   if (pathname === '/api/report') return report(res, hub, body.value);
   if (pathname === '/api/speech') return handleSpeech(res, body.value);
+  if (pathname.startsWith('/api/queue')) return queue(res, hub, pathname, body.value);
   return json(res, { error: 'unknown endpoint' }, 404);
+}
+
+// --- the queue --------------------------------------------------------------
+
+/**
+ * Everything that changes the pending list.
+ *
+ * One handler rather than a route per verb, because every one of them ends the
+ * same way — mutate, push the whole list to the renderer, answer with the list —
+ * and splitting that tail across nine functions is how two of them come to
+ * differ. `DELETE` and `PATCH` are spelled as POSTs to sub-paths for the same
+ * reason the rest of this API is: it is read from a `fetch` in a panel and from
+ * `curl` at a prompt, and a verb nobody has to remember is worth more here than
+ * REST manners.
+ *
+ * An operation naming an entry that is no longer pending answers 404 with the
+ * current list attached. That is the ordinary outcome of editing a row that
+ * started playing while the form was open, and the caller needs the list it
+ * *should* have been looking at more than it needs the error.
+ */
+function queue(res: ServerResponse, hub: Hub, pathname: string, body: unknown): void {
+  const done = (ok: boolean): void => {
+    const viewers = hub.publishQueue();
+    const payload: QueueResponse = { queue: hub.queue.list(), viewers };
+    json(res, ok ? payload : { ...payload, error: 'no such entry' }, ok ? 200 : 404);
+  };
+  const fields = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
+  const id = typeof fields.id === 'string' ? fields.id : '';
+
+  switch (pathname) {
+    case '/api/queue':
+    case '/api/queue/push':
+    case '/api/queue/unshift': {
+      const parsed = queueAddSchema.safeParse(body);
+      if (!parsed.success) {
+        json(res, { error: 'invalid turns', detail: parsed.error.issues }, 400);
+        return;
+      }
+      // `turns` for a batch, `turn` for the single line that is the common case
+      // from a comment handler. Both, rather than making every caller wrap one
+      // line in an array it did not want.
+      const turns = parsed.data.turns ?? (parsed.data.turn ? [parsed.data.turn] : []);
+      if (turns.length === 0) {
+        json(res, { error: 'no turns' }, 400);
+        return;
+      }
+      hub.queue.add(turns, {
+        at: pathname === '/api/queue/unshift' ? 'unshift' : (parsed.data.at ?? 'push'),
+        source: parsed.data.source,
+        note: parsed.data.note,
+      });
+      done(true);
+      return;
+    }
+    case '/api/queue/update': {
+      const parsed = queueUpdateSchema.safeParse(body);
+      if (!parsed.success) {
+        json(res, { error: 'invalid patch', detail: parsed.error.issues }, 400);
+        return;
+      }
+      const { id: target, ...patch } = parsed.data;
+      done(hub.queue.update(target, patch));
+      return;
+    }
+    case '/api/queue/remove':
+      done(id !== '' && hub.queue.remove(id));
+      return;
+    case '/api/queue/move': {
+      const to = typeof fields.to === 'number' ? fields.to : Number.NaN;
+      if (!Number.isFinite(to)) {
+        json(res, { error: 'move needs a numeric to' }, 400);
+        return;
+      }
+      done(id !== '' && hub.queue.move(id, to));
+      return;
+    }
+    // These two answer with the entry they removed as well as the new list: the
+    // caller asked for a turn, not for a deletion, and a `pop` that does not
+    // hand back what was popped cannot be undone by the operator who ran it.
+    case '/api/queue/shift':
+    case '/api/queue/pop': {
+      const taken = pathname.endsWith('pop') ? hub.queue.pop() : hub.queue.shift();
+      const viewers = hub.publishQueue();
+      json(res, { queue: hub.queue.list(), viewers, entry: taken });
+      return;
+    }
+    case '/api/queue/clear':
+      hub.queue.clear();
+      done(true);
+      return;
+    default:
+      json(res, { error: 'unknown endpoint' }, 404);
+  }
 }
 
 /** SSE down-channel. One per open viewer. */

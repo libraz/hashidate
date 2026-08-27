@@ -75,6 +75,9 @@ const vocabulary = (): Vocabulary => ({
   },
   wardrobe: {},
   wardrobePresets: [],
+  rooms: [],
+  backdrops: [],
+  voicePresets: [],
 });
 
 let hub: Hub;
@@ -407,5 +410,57 @@ describe('Hub.waitFor', () => {
     const result = await pending;
     expect(result.completed).toBe(true);
     expect(result.snapshot.state.busy).toBe(false);
+  });
+});
+
+describe('the pending queue', () => {
+  it('hands the queue to a viewer the moment it attaches', () => {
+    hub.queue.add([{ text: 'あ' }, { text: 'い' }]);
+    const seen: StreamMessage[] = [];
+    hub.subscribe((message) => seen.push(message));
+    // A reload mid-stream comes back with an empty renderer queue. Re-delivering
+    // on connect is what makes the only thing lost the line that was in the air.
+    expect(seen).toHaveLength(1);
+    expect(seen[0].commands[0]).toMatchObject({ cmd: 'queue' });
+  });
+
+  it('says nothing to a viewer attaching to an empty queue', () => {
+    const seen: StreamMessage[] = [];
+    hub.subscribe((message) => seen.push(message));
+    expect(seen).toEqual([]);
+  });
+
+  it('drops an entry when the renderer reports its turn ended', () => {
+    const [a, b] = hub.queue.add([{ text: 'あ' }, { text: 'い' }]);
+    hub.report({ events: [event(a.id)] });
+    // Driven off the event and not off the reported depth: the count says how
+    // many are left, not which one left, and the panel is looking at rows.
+    expect(hub.queue.list().map((e) => e.id)).toEqual([b.id]);
+  });
+
+  it('empties itself when the renderer reports an interrupt', () => {
+    hub.queue.add([{ text: 'あ' }, { text: 'い' }]);
+    hub.report({ events: [{ type: 'turn.interrupted', turn: 'x' }] });
+    // Without this the list would be re-delivered on the next edit and the
+    // stream would resume a script the operator had just killed.
+    expect(hub.queue.list()).toEqual([]);
+  });
+
+  it('drops exactly the entries a clear dropped', () => {
+    const [a, b, c] = hub.queue.add([{ text: 'あ' }, { text: 'い' }, { text: 'う' }]);
+    hub.report({ events: [{ type: 'queue.dropped', turns: [a.id, c.id] }] });
+    expect(hub.queue.list().map((e) => e.id)).toEqual([b.id]);
+  });
+
+  it('reports the queue even when the state has gone stale', () => {
+    hub.subscribe(() => {});
+    hub.report({ state: state() });
+    hub.queue.add([{ text: 'あ' }]);
+    vi.advanceTimersByTime((STATE_STALE_SECONDS + 1) * 1000);
+    const snapshot = hub.snapshot();
+    // A stale state is a lie about what the avatar is doing; a script is still
+    // a script with nothing connected — which is when it is most looked at.
+    expect(snapshot.state).toEqual({});
+    expect(snapshot.queue).toHaveLength(1);
   });
 });

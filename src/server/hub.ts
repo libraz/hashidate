@@ -5,7 +5,9 @@ import type {
   Snapshot,
   StreamMessage,
   Vocabulary,
+  VoiceReport,
 } from '../protocol';
+import { TurnQueue } from './queue';
 
 /**
  * Fan-out to connected viewers, plus the last state they reported.
@@ -64,14 +66,45 @@ export class Hub {
   private seq = 0;
   private state: Partial<SessionState> = {};
   private vocabulary: Partial<Vocabulary> = {};
+  private voice: VoiceReport | null = null;
   private stateAt = 0;
+
+  /**
+   * The pending turns, and the authority on what they are. See `queue.ts`.
+   *
+   * It lives here rather than beside the routes because both of the things that
+   * keep it true are things the hub already sees: a viewer attaching, which is
+   * when the list has to be re-delivered, and a `turn.end` arriving, which is
+   * when an entry stops being pending.
+   */
+  readonly queue = new TurnQueue();
 
   // --- downstream (server -> viewer) ----------------------------------------
 
-  /** Attach a viewer. Returns the detach. */
+  /**
+   * Attach a viewer. Returns the detach.
+   *
+   * The pending queue goes down the new connection immediately. That is what
+   * makes a viewer reload survivable mid-stream: the renderer comes back with an
+   * empty queue and is handed the script back before it has said anything, so
+   * the only thing lost is the line that was in the air.
+   */
   subscribe(listener: ViewerListener): () => void {
     this.clients.add(listener);
+    if (this.queue.length > 0) listener({ type: 'command', commands: [this.queue.command()] });
     return () => this.unsubscribe(listener);
+  }
+
+  /**
+   * Push the queue to every viewer, and answer how many got it.
+   *
+   * Every edit ends here. Sending the whole list on each one is the deliberate
+   * trade `queueCommandSchema` describes: a renderer keeps the audio it has
+   * already made for any line whose words did not change, so a reorder costs one
+   * message and no synthesis.
+   */
+  publishQueue(): number {
+    return this.send({ type: 'command', commands: [this.queue.command()] });
   }
 
   unsubscribe(listener: ViewerListener): void {
@@ -97,9 +130,21 @@ export class Hub {
       this.stateAt = now();
     }
     if (body.vocabulary) this.vocabulary = body.vocabulary;
+    if (body.voice !== undefined) this.voice = body.voice;
     for (const event of body.events ?? []) {
       this.seq += 1;
       this.events.push({ ...event, seq: this.seq, at: event.at ?? now() });
+      // A line the renderer has finished with stops being pending. Driven off
+      // the event rather than off the reported `queued` count, because the count
+      // says how many are left and not which one left — and the panel is looking
+      // at rows, not at a number.
+      if (event.type === 'turn.end' && event.turn) this.queue.complete(event.turn);
+      // An interrupt drops everything pending in the renderer. Mirroring it here
+      // is what keeps the two lists the same: without it the queue would be
+      // re-delivered on the next edit and the stream would resume a script the
+      // operator had just killed.
+      if (event.type === 'turn.interrupted') this.queue.clear();
+      if (event.type === 'queue.dropped') for (const id of event.turns ?? []) this.queue.remove(id);
     }
     if (this.events.length > EVENT_LOG_MAX) {
       this.events.splice(0, this.events.length - EVENT_LOG_MAX);
@@ -117,6 +162,12 @@ export class Hub {
       state: fresh ? this.state : {},
       vocabulary: this.vocabulary,
       events: since === undefined ? [...this.events] : this.since(since),
+      // Not gated on `fresh`, unlike the state above. A stale state is a lie
+      // about what the avatar is doing right now; the chain and the queue are
+      // settings and a script, and both are still true with nothing connected —
+      // which is exactly when an operator is most likely to be looking at them.
+      voice: this.voice,
+      queue: this.queue.list(),
     };
   }
 
