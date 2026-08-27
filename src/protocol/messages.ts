@@ -2,14 +2,17 @@ import { z } from 'zod';
 import type { Tuning as EngineTuning } from '../engine/tuning';
 import type {
   LabelledId as EngineLabelledId,
+  PlacementReport as EnginePlacementReport,
   SessionEvent as EngineSessionEvent,
   SessionState as EngineSessionState,
+  SlideReport as EngineSlideReport,
   Vocabulary as EngineVocabulary,
   VoiceReport as EngineVoiceReport,
   GestureGroup,
   PerformanceGroup,
   SessionEventType,
 } from '../engine/types';
+import type { Localized } from '../i18n/locale';
 import {
   type Assert,
   cameraFrameSchema,
@@ -18,7 +21,9 @@ import {
   type Expect,
   emotionVectorSchema,
   fingerNameSchema,
+  placementSchema,
   sideSchema,
+  slidePlacementSchema,
   turnSchema,
 } from './commands';
 
@@ -96,9 +101,24 @@ export const sessionStateSchema = z.object({
 export type SessionState = z.infer<typeof sessionStateSchema>;
 type _StateMatchesEngine = Expect<Equals<SessionState, EngineSessionState>>;
 
+/**
+ * A display string in both languages at once.
+ *
+ * The wire carries the pair and the client picks one. The alternative — resolving
+ * at the source — would mean the server choosing a language on behalf of whoever
+ * happens to be reading the panel, and there is nothing in a control request that
+ * says who that is.
+ */
+export const localizedSchema = z.object({
+  en: z.string(),
+  ja: z.string(),
+});
+
+type _LocalizedMatchesEngine = Expect<Equals<z.infer<typeof localizedSchema>, Localized>>;
+
 export const labelledIdSchema = z.object({
   id: z.string(),
-  label: z.string(),
+  label: localizedSchema,
 });
 
 export type LabelledId = z.infer<typeof labelledIdSchema>;
@@ -131,7 +151,7 @@ type _PerformanceGroupsMatchEngine = Expect<
  */
 export const vocabularySchema = z.object({
   /** Which avatar this vocabulary describes; everything below it is that avatar's. */
-  avatar: z.object({ id: z.string().nullable(), label: z.string().nullable() }),
+  avatar: z.object({ id: z.string().nullable(), label: localizedSchema.nullable() }),
   emotions: z.array(labelledIdSchema),
   expressions: z.array(labelledIdSchema),
   overlays: z.array(labelledIdSchema),
@@ -148,7 +168,7 @@ export const vocabularySchema = z.object({
   gestures: z.array(labelledIdSchema.extend({ group: gestureGroupSchema, sustain: z.boolean() })),
   hops: z.array(labelledIdSchema),
   /** How to write a performance into a line. Stated, not discovered. */
-  cue: z.object({ syntax: z.string(), note: z.string() }),
+  cue: z.object({ syntax: z.string(), note: localizedSchema }),
   cameras: z.array(cameraFrameSchema),
   /**
    * Pointing is continuous, so it is advertised as ranges rather than as a list
@@ -160,10 +180,13 @@ export const vocabularySchema = z.object({
     elevation: z.tuple([z.number(), z.number()]),
     extent: z.tuple([z.number(), z.number()]),
     finger: z.array(fingerNameSchema),
-    note: z.string(),
+    note: localizedSchema,
   }),
   /** Slot names are avatar data, so the keys are open. */
-  wardrobe: z.record(z.string(), z.object({ label: z.string(), items: z.array(labelledIdSchema) })),
+  wardrobe: z.record(
+    z.string(),
+    z.object({ label: localizedSchema, items: z.array(labelledIdSchema) }),
+  ),
   wardrobePresets: z.array(labelledIdSchema),
   /** Where the voice is heard. Empty on a renderer that has no voice at all. */
   rooms: z.array(labelledIdSchema),
@@ -215,6 +238,80 @@ type _VoiceReportMatchesEngine = Assert<VoiceReport, EngineVoiceReport>;
 type _EngineMatchesVoiceReport = Assert<EngineVoiceReport, VoiceReport>;
 
 /**
+ * What the document layer is showing, so a control surface can draw it.
+ *
+ * On the same footing as `VoiceReport`: the page count is discovered by opening
+ * the file, and `ready` is the difference between a page that is up and one
+ * that is still being drawn — which is the only thing an operator holding an
+ * arrow key needs to know and the one thing the command cannot tell them.
+ *
+ * `error` is here for the same reason `blocked` is on the voice report: it is a
+ * fault nothing can be sent to fix, only reported to whoever can put the file
+ * back.
+ */
+export const slideReportSchema = z.object({
+  deck: z.string().nullable(),
+  page: z.number(),
+  pages: z.number(),
+  ready: z.boolean(),
+  error: z.string().nullable(),
+});
+
+export type SlideReport = z.infer<typeof slideReportSchema>;
+type _SlideReportMatchesEngine = Expect<Equals<SlideReport, EngineSlideReport>>;
+
+/**
+ * One document the control server can serve, as it found it on disk.
+ *
+ * Not in the vocabulary, and that is the point: the vocabulary is what the
+ * loaded avatar can be asked to do, discovered from the avatar. This is a
+ * directory listing, it changes when somebody saves a file, and it is re-read
+ * rather than cached — so it rides on the snapshot the panel is already polling
+ * and comes from the only process that can see the filesystem.
+ *
+ * `pages` is counted without rasterising anything, so it is known before the
+ * document has ever been shown.
+ */
+export const deckSchema = labelledIdSchema.extend({
+  pages: z.number(),
+  bytes: z.number(),
+  /** Epoch seconds of the file's last modification, for sorting by newest. */
+  at: z.number(),
+});
+
+export type Deck = z.infer<typeof deckSchema>;
+
+/** The reply to `GET /api/decks`, and to a rescan. */
+export const decksResponseSchema = z.object({
+  decks: z.array(deckSchema),
+});
+
+export type DecksResponse = z.infer<typeof decksResponseSchema>;
+
+/**
+ * The reply to `GET /api/decks/<id>/text`: what a document says, page by page.
+ *
+ * The piece that makes a document narratable. An orchestrator writing a script
+ * needs the words on the pages before it can write anything about them, and it
+ * cannot get them from the renderer — the control channel carries commands one
+ * way and a report the other, and a request for a document's contents is
+ * neither. So the server reads the text itself, which it can do without drawing
+ * anything.
+ *
+ * `pages` is 1 based and in order, with an entry for every page asked for —
+ * including the empty string for a page that is all picture, because a gap in
+ * the list would be indistinguishable from a page that was not requested.
+ */
+export const deckTextResponseSchema = z.object({
+  id: z.string(),
+  pages: z.number(),
+  from: z.number(),
+  text: z.array(z.string()),
+});
+
+export type DeckTextResponse = z.infer<typeof deckTextResponseSchema>;
+
+/**
  * What the set-once layer is running, so a remote fader can be drawn at the
  * value that is actually in force rather than at the one somebody last sent.
  *
@@ -253,6 +350,43 @@ export const tuningSchema = z.object({
 export type Tuning = z.infer<typeof tuningSchema>;
 type _TuningMatchesEngine = Expect<Equals<Tuning, EngineTuning>>;
 
+/**
+ * A rectangle of the frame as it is *in force*, rather than as somebody asked
+ * for it.
+ *
+ * ## Why this is not `placementSchema`
+ *
+ * That one governs what may be **sent**, so every field on it is optional and an
+ * absent one means "leave it alone" — which is what lets a slider under the
+ * pointer send one number. Read back, the same shape would be useless: a report
+ * with three fields missing says what the last patch happened to name, and the
+ * surface asking has no way to tell an anchor that is centred from an anchor
+ * nobody has mentioned. So the limits, the anchor list and the fit stay stated
+ * once, in the command schema, and this is that schema with the optionality
+ * taken off.
+ */
+const resolvedPlacementSchema = placementSchema.required();
+const resolvedSlidePlacementSchema = slidePlacementSchema.required();
+
+/**
+ * How the frame is laid out, so a control surface can draw the layout that is
+ * actually going to air.
+ *
+ * Reported for the same reason `tuningSchema` is: the value belongs to whatever
+ * is applying it, and a panel that inferred it from its own command history
+ * would be wrong from the moment it opened. Here that is not a corner case but
+ * the ordinary one — a browser source opened on `?place=bottom-right:0.32x0.6`
+ * is showing a corner that no command ever asked for.
+ */
+export const placementReportSchema = z.object({
+  avatar: resolvedPlacementSchema,
+  slide: resolvedSlidePlacementSchema,
+});
+
+export type PlacementReport = z.infer<typeof placementReportSchema>;
+type _PlacementReportMatchesEngine = Assert<PlacementReport, EnginePlacementReport>;
+type _EngineMatchesPlacementReport = Assert<EnginePlacementReport, PlacementReport>;
+
 // --- viewer -> server -------------------------------------------------------
 
 /**
@@ -270,6 +404,16 @@ export const reportBodySchema = z.object({
   vocabulary: vocabularySchema.optional(),
   voice: voiceReportSchema.optional(),
   tuning: tuningSchema.optional(),
+  /**
+   * What the document layer is showing. Absent from a renderer that has none,
+   * which is how a panel tells "no document layer" from "no document up".
+   */
+  slides: slideReportSchema.optional(),
+  /**
+   * How this renderer is laying the frame out. Absent from one that draws only
+   * one way, on the same footing as the slide report above.
+   */
+  placement: placementReportSchema.optional(),
   /**
    * Every avatar this renderer can load, which is not the same question as what
    * the loaded one can do. It rides with the vocabulary rather than on the timer
@@ -461,6 +605,25 @@ export type HistoryResponse = z.infer<typeof historyResponseSchema>;
 // --- server -> orchestrator -------------------------------------------------
 
 /**
+ * What the control server last saw of the speech sidecar.
+ *
+ * Four states rather than a flag, because "there is no voice on this machine"
+ * and "the voice stopped answering" deserve opposite treatment. Most machines
+ * never have `tools/tts/` running — the model is another three gigabytes and
+ * the recordings behind the voice are not ours — so a server that has never
+ * reached it is working as designed, and `absent` says that quietly.
+ *
+ * `down` is the one worth interrupting somebody over: something was answering
+ * on that port and has stopped, which on air means every line from here is
+ * mouthed in silence. Telling the two apart is the whole reason this is not a
+ * boolean, because a panel that cried about a missing sidecar on every machine
+ * without one would be ignored by the time it mattered.
+ */
+export const speechStateSchema = z.enum(['absent', 'loading', 'ready', 'down']);
+
+export type SpeechState = z.infer<typeof speechStateSchema>;
+
+/**
  * The reply to `GET /api/state`.
  *
  * `state` and `vocabulary` are partial because the server genuinely may have
@@ -481,8 +644,24 @@ export const snapshotSchema = z.object({
   voice: voiceReportSchema.nullable(),
   /** What the set-once layer is running. Null until a viewer has reported. */
   tuning: tuningSchema.nullable(),
+  /** How the frame is laid out. Null until a viewer has reported one. */
+  placement: placementReportSchema.nullable(),
   /** What this renderer can load. Empty until a viewer has reported. */
   avatars: z.array(labelledIdSchema),
+  /**
+   * The documents on disk, as the server last read them. Empty when there is no
+   * document directory or nothing in it — see `deckSchema` for why this is here
+   * rather than in the vocabulary.
+   */
+  decks: z.array(deckSchema),
+  /** What the document layer is showing. Null until a viewer with one reports. */
+  slides: slideReportSchema.nullable(),
+  /**
+   * Whether the voice is answering. This one is the server's own observation
+   * rather than a viewer's report — the sidecar is reached from here and only
+   * from here. See `speechStateSchema`.
+   */
+  speech: speechStateSchema,
   /** The pending turns, in the order they will be said. See `queue.ts`. */
   queue: z.array(queueEntrySchema),
 });

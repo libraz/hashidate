@@ -4,14 +4,20 @@ import { buildProfile } from '@/engine/profile';
 import { Wardrobe } from '@/engine/scene';
 import { Session } from '@/engine/session';
 import type { WardrobeTable } from '@/engine/types';
+import { same } from '@/i18n/locale';
 import {
   commandRequestSchema,
+  deckSchema,
+  decksResponseSchema,
+  deckTextResponseSchema,
   eventsResponseSchema,
   historyEntrySchema,
+  placementReportSchema,
   queueRewindSchema,
   reportBodySchema,
   sessionEventSchema,
   sessionStateSchema,
+  slideReportSchema,
   snapshotSchema,
   streamMessageSchema,
   vocabularySchema,
@@ -29,9 +35,21 @@ const DT = 1 / 60;
 
 const WARDROBE: WardrobeTable = {
   slots: {
-    top: { label: 'トップス', items: [{ id: 'shirt', label: 'シャツ', meshes: ['Shirt'] }] },
+    top: {
+      label: same('トップス'),
+      items: [{ id: 'shirt', label: same('シャツ'), meshes: ['Shirt'] }],
+    },
   },
-  presets: { default: { label: '既定', set: { top: 'shirt' } } },
+  presets: { default: { label: same('既定'), set: { top: 'shirt' } } },
+};
+
+/** What a renderer with a document up says about it. */
+const SLIDES = { deck: 'intro', page: 3, pages: 12, ready: true, error: null };
+
+/** And how it is laying the frame out: the character in a corner of one. */
+const PLACEMENT = {
+  avatar: { anchor: 'bottom-right', width: 0.32, height: 0.6, margin: 0.04 },
+  slide: { anchor: 'center', width: 1, height: 1, margin: 0, fit: 'contain' },
 };
 
 /** A live session over a synthetic rig, real from the profile up. */
@@ -128,6 +146,35 @@ describe('a real Vocabulary against vocabularySchema', () => {
     const result = vocabularySchema.safeParse(vocabulary);
     expect(result.error?.issues ?? []).toEqual([]);
   });
+
+  it('carries every label in both languages, so the client picks rather than the server', () => {
+    const { session } = buildSession();
+    const vocabulary = session.vocabulary();
+    for (const item of [
+      ...vocabulary.emotions,
+      ...vocabulary.expressions,
+      ...vocabulary.overlays,
+      ...vocabulary.performances,
+      ...vocabulary.gestures,
+      ...vocabulary.hops,
+      ...vocabulary.wardrobePresets,
+    ]) {
+      expect(item.label.en, item.id).not.toBe('');
+      expect(item.label.ja, item.id).not.toBe('');
+    }
+    expect(vocabulary.cue.note.en).not.toBe(vocabulary.cue.note.ja);
+    expect(vocabulary.pointing.note.en).not.toBe(vocabulary.pointing.note.ja);
+  });
+
+  it('refuses a label given in one language only', () => {
+    const { session } = buildSession();
+    const vocabulary = session.vocabulary();
+    const half = {
+      ...vocabulary,
+      hops: vocabulary.hops.map((hop) => ({ ...hop, label: { ja: hop.label.ja } })),
+    };
+    expect(vocabularySchema.safeParse(half).success).toBe(false);
+  });
 });
 
 describe('a real event stream against sessionEventSchema', () => {
@@ -179,6 +226,195 @@ describe('reportBodySchema', () => {
 
   it('rejects an events array holding something that is not an event', () => {
     expect(reportBodySchema.safeParse({ events: [{ type: 'turn.exploded' }] }).success).toBe(false);
+  });
+
+  it('carries what the document layer is showing alongside the state', () => {
+    const { session } = buildSession();
+    const body = { state: session.state(), slides: SLIDES };
+    const result = reportBodySchema.safeParse(body);
+    expect(result.error?.issues ?? []).toEqual([]);
+    expect(result.data).toEqual(body);
+  });
+
+  it('leaves slides absent for a renderer that has no document layer at all', () => {
+    // Absent is how a panel tells "there is nothing to show a document on" from
+    // "nothing is up", which are two different things to draw.
+    const { session } = buildSession();
+    const parsed = reportBodySchema.safeParse({ state: session.state() });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.slides).toBeUndefined();
+  });
+
+  it('rejects a report whose slide report is malformed', () => {
+    expect(reportBodySchema.safeParse({ slides: { deck: 'intro' } }).success).toBe(false);
+  });
+
+  it('carries how the frame is laid out, which no command need ever have asked for', () => {
+    // A browser source opened on `?place=bottom-right:0.32x0.6` is showing a
+    // corner nothing on the wire put it in, so the report is the only way a
+    // control surface finds out.
+    const { session } = buildSession();
+    const body = { state: session.state(), placement: PLACEMENT };
+    const result = reportBodySchema.safeParse(body);
+    expect(result.error?.issues ?? []).toEqual([]);
+    expect(result.data).toEqual(body);
+  });
+
+  it('leaves the placement absent for a renderer that draws only one way', () => {
+    const { session } = buildSession();
+    const parsed = reportBodySchema.safeParse({ state: session.state() });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.placement).toBeUndefined();
+  });
+
+  it('rejects a placement report that answers with the patch it was sent', () => {
+    // Half a rectangle is what the last `place` happened to name, and a surface
+    // reading it cannot tell a centred anchor from one nobody has mentioned.
+    const { avatar: _dropped, ...half } = PLACEMENT;
+    expect(reportBodySchema.safeParse({ placement: half }).success).toBe(false);
+    expect(
+      reportBodySchema.safeParse({
+        placement: { ...PLACEMENT, avatar: { anchor: 'bottom-right', width: 0.32 } },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('placementReportSchema', () => {
+  it('accepts both layers, resolved', () => {
+    const result = placementReportSchema.safeParse(PLACEMENT);
+    expect(result.error?.issues ?? []).toEqual([]);
+    expect(result.data).toEqual(PLACEMENT);
+  });
+
+  it('rejects a rectangle missing any field a control would be drawn at', () => {
+    for (const key of ['anchor', 'width', 'height', 'margin'] as const) {
+      const { [key]: _dropped, ...missing } = PLACEMENT.avatar;
+      const result = placementReportSchema.safeParse({ ...PLACEMENT, avatar: missing });
+      expect(result.success, key).toBe(false);
+    }
+    // The document's rectangle answers one question more than the character's.
+    const { fit: _fit, ...noFit } = PLACEMENT.slide;
+    expect(placementReportSchema.safeParse({ ...PLACEMENT, slide: noFit }).success).toBe(false);
+  });
+
+  it('holds the report to the limits the command is held to', () => {
+    // Both come off `placementSchema`, so a fraction the wire would refuse
+    // cannot come back through the report either — below a tenth of the frame
+    // the character is a smudge, and a report saying so is a renderer to fix.
+    const under = { ...PLACEMENT, avatar: { ...PLACEMENT.avatar, width: 0.02 } };
+    expect(placementReportSchema.safeParse(under).success).toBe(false);
+    const over = { ...PLACEMENT, avatar: { ...PLACEMENT.avatar, height: 1.5 } };
+    expect(placementReportSchema.safeParse(over).success).toBe(false);
+  });
+
+  it('rejects an anchor that is not one of the nine', () => {
+    const nowhere = { ...PLACEMENT, avatar: { ...PLACEMENT.avatar, anchor: 'nowhere' } };
+    expect(placementReportSchema.safeParse(nowhere).success).toBe(false);
+  });
+});
+
+describe('slideReportSchema', () => {
+  it('accepts a document that is up and drawn', () => {
+    const result = slideReportSchema.safeParse(SLIDES);
+    expect(result.error?.issues ?? []).toEqual([]);
+    expect(result.data).toEqual(SLIDES);
+  });
+
+  it('accepts the state of a renderer with nothing up', () => {
+    const empty = { deck: null, page: 0, pages: 0, ready: true, error: null };
+    expect(slideReportSchema.safeParse(empty).data).toEqual(empty);
+  });
+
+  it('carries the page that is still being drawn, which the command cannot say', () => {
+    // `ready` is the difference between the page asked for and the page on
+    // screen, and it is the only thing an operator holding an arrow key needs.
+    const drawing = { ...SLIDES, page: 4, ready: false };
+    expect(slideReportSchema.safeParse(drawing).data).toEqual(drawing);
+  });
+
+  it('carries why a document is not up, for whoever can put the file back', () => {
+    const failed = { deck: 'intro', page: 0, pages: 0, ready: true, error: 'ファイルがありません' };
+    expect(slideReportSchema.safeParse(failed).data).toEqual(failed);
+  });
+
+  it('rejects a report missing a field a control surface would draw', () => {
+    for (const key of ['deck', 'page', 'pages', 'ready', 'error'] as const) {
+      const { [key]: _dropped, ...missing } = SLIDES;
+      expect(slideReportSchema.safeParse(missing).success, key).toBe(false);
+    }
+  });
+});
+
+describe('deckSchema', () => {
+  const DECK = {
+    id: 'intro',
+    label: same('イントロ'),
+    pages: 12,
+    bytes: 240_000,
+    at: 1_800_000_000,
+  };
+
+  it('accepts one document as the server found it on disk', () => {
+    const result = deckSchema.safeParse(DECK);
+    expect(result.error?.issues ?? []).toEqual([]);
+    expect(result.data).toEqual(DECK);
+  });
+
+  it('rejects one that does not say how many pages it has', () => {
+    // Counted without rasterising anything, so it is known before the document
+    // has ever been shown — a listing without it cannot be offered as a choice.
+    const { pages: _dropped, ...missing } = DECK;
+    expect(deckSchema.safeParse(missing).success).toBe(false);
+  });
+
+  it('rejects one with no label to put in front of an operator', () => {
+    const { label: _dropped, ...missing } = DECK;
+    expect(deckSchema.safeParse(missing).success).toBe(false);
+  });
+});
+
+describe('decksResponseSchema', () => {
+  it('accepts the listing, newest first', () => {
+    const response = {
+      decks: [
+        { id: 'today', label: same('今日'), pages: 4, bytes: 90_000, at: 1_800_000_100 },
+        { id: 'intro', label: same('イントロ'), pages: 12, bytes: 240_000, at: 1_800_000_000 },
+      ],
+    };
+    const result = decksResponseSchema.safeParse(response);
+    expect(result.error?.issues ?? []).toEqual([]);
+    expect(result.data).toEqual(response);
+  });
+
+  it('accepts an empty directory', () => {
+    expect(decksResponseSchema.safeParse({ decks: [] }).success).toBe(true);
+  });
+
+  it('rejects a reply with no list in it', () => {
+    expect(decksResponseSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe('deckTextResponseSchema', () => {
+  it('accepts what a document says, page by page', () => {
+    const response = { id: 'intro', pages: 3, from: 1, text: ['こんばんは', '本日の話', 'まとめ'] };
+    const result = deckTextResponseSchema.safeParse(response);
+    expect(result.error?.issues ?? []).toEqual([]);
+    expect(result.data).toEqual(response);
+  });
+
+  it('accepts an empty string for a page that is all picture', () => {
+    // A gap in the list would be indistinguishable from a page nobody asked
+    // for, so a wordless page is present and empty rather than missing.
+    const response = { id: 'intro', pages: 3, from: 2, text: ['', 'まとめ'] };
+    expect(deckTextResponseSchema.safeParse(response).data).toEqual(response);
+  });
+
+  it('rejects a reply that does not say which page the text starts at', () => {
+    expect(deckTextResponseSchema.safeParse({ id: 'intro', pages: 3, text: ['あ'] }).success).toBe(
+      false,
+    );
   });
 });
 
@@ -280,7 +516,13 @@ describe('snapshotSchema', () => {
       events: session.takeEvents(),
       voice: null,
       tuning: session.tuning(),
-      avatars: [{ id: 'sample', label: 'サンプル' }],
+      placement: PLACEMENT,
+      avatars: [{ id: 'sample', label: same('サンプル') }],
+      decks: [
+        { id: 'intro', label: same('イントロ'), pages: 12, bytes: 240_000, at: 1_800_000_000 },
+      ],
+      slides: SLIDES,
+      speech: 'ready',
       queue: [],
     };
     const result = snapshotSchema.safeParse(snapshot);
@@ -298,10 +540,91 @@ describe('snapshotSchema', () => {
       events: [],
       voice: null,
       tuning: null,
+      placement: null,
       avatars: [],
+      decks: [],
+      slides: null,
+      speech: 'absent',
       queue: [],
     });
     expect(result.error?.issues ?? []).toEqual([]);
+  });
+
+  it('carries the documents on disk, which are a listing rather than vocabulary', () => {
+    // They change when somebody saves a file, so they ride on the snapshot the
+    // panel already polls and come from the only process that can see the disk.
+    const decks = [{ id: 'intro', label: same('イントロ'), pages: 12, bytes: 240_000, at: 1 }];
+    const result = snapshotSchema.safeParse({
+      connected: true,
+      viewers: 1,
+      seq: 1,
+      state: {},
+      vocabulary: {},
+      events: [],
+      voice: null,
+      tuning: null,
+      placement: null,
+      avatars: [],
+      decks,
+      slides: null,
+      speech: 'absent',
+      queue: [],
+    });
+    expect(result.error?.issues ?? []).toEqual([]);
+    expect(result.data?.decks).toEqual(decks);
+    // Null until a viewer with a document layer has reported, which is not the
+    // same as a viewer reporting that nothing is up.
+    expect(result.data?.slides).toBeNull();
+  });
+
+  it('rejects a snapshot that says nothing about the documents, the frame or the voice', () => {
+    const base = {
+      connected: false,
+      viewers: 0,
+      seq: 0,
+      state: {},
+      vocabulary: {},
+      events: [],
+      voice: null,
+      tuning: null,
+      placement: null,
+      avatars: [],
+      decks: [],
+      slides: null,
+      speech: 'absent',
+      queue: [],
+    };
+    expect(snapshotSchema.safeParse(base).success).toBe(true);
+    for (const key of ['decks', 'slides', 'placement', 'speech'] as const) {
+      const { [key]: _dropped, ...missing } = base;
+      expect(snapshotSchema.safeParse(missing).success, key).toBe(false);
+    }
+  });
+
+  it('carries the layout the frame is in, null until a viewer has reported one', () => {
+    // Nullable like `tuning` beside it and for the reason it is: the value
+    // belongs to whatever is applying it, and a panel drawing its composition
+    // controls from its own command history is wrong from the moment it opens.
+    const base = {
+      connected: true,
+      viewers: 1,
+      seq: 1,
+      state: {},
+      vocabulary: {},
+      events: [],
+      voice: null,
+      tuning: null,
+      placement: null,
+      avatars: [],
+      decks: [],
+      slides: null,
+      speech: 'absent',
+      queue: [],
+    };
+    expect(snapshotSchema.safeParse(base).data?.placement).toBeNull();
+    const reported = snapshotSchema.safeParse({ ...base, placement: PLACEMENT });
+    expect(reported.error?.issues ?? []).toEqual([]);
+    expect(reported.data?.placement).toEqual(PLACEMENT);
   });
 
   it('accepts a partial state, since a stale server withholds fields rather than lying', () => {
@@ -314,7 +637,11 @@ describe('snapshotSchema', () => {
         vocabulary: { cameras: ['face'] },
         voice: null,
         tuning: null,
+        placement: null,
         avatars: [],
+        decks: [],
+        slides: null,
+        speech: 'absent',
         queue: [],
         events: [],
       }).success,

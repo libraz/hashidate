@@ -1,14 +1,19 @@
 import { z } from 'zod';
 import { hasCueMarkup, isWellFormed } from '../engine/cues';
-import { TUNING_RANGES, type TuningPatch, type TuningRange } from '../engine/tuning';
+import { TUNING_RANGES, type TuningPatch } from '../engine/tuning';
 import type {
+  Anchor,
   CameraFrame,
   EmotionName,
   FingerName,
+  Placement,
+  Shot,
   Side,
+  SlidePlacement,
   Staging,
   TurnRequest,
 } from '../engine/types';
+import { PLACEMENT_LIMITS, SHOT_LIMITS } from '../engine/types';
 
 /**
  * The command vocabulary, as it travels on the wire.
@@ -96,6 +101,9 @@ export type { CameraFrame };
  */
 const correlationId = z.string().optional();
 
+/** A number no further than the thing it moves may travel. */
+const within = (range: { min: number; max: number }) => z.number().min(range.min).max(range.max);
+
 // --- turns ------------------------------------------------------------------
 
 /**
@@ -120,6 +128,18 @@ export const stageSchema = z.object({
   camera: cameraFrameSchema.optional(),
   backdrop: z.string().nullable().optional(),
   room: z.string().nullable().optional(),
+  /** Which document is up. Normally set once before a segment; see `deckCommandSchema`. */
+  deck: z.string().nullable().optional(),
+  /**
+   * Which page of it, 1 based and **absolute**.
+   *
+   * There is deliberately no relative form on a line. A queued line can be
+   * dropped, reordered or sent round again, and a "next page" written into one
+   * means a different page every time the script is edited — the rest of the
+   * deck slips by one and nothing in the queue says why. `slide`'s `by` is for
+   * the operator turning a page live, who is reacting rather than describing.
+   */
+  slide: z.number().int().min(1).optional(),
 });
 
 type _StageIsStaging = Expect<Equals<z.infer<typeof stageSchema>, Staging>>;
@@ -408,14 +428,74 @@ export const idleCommandSchema = z.object({
   on: z.boolean().optional(),
 });
 
+/**
+ * Print the measurements over the frame, or stop. Absent `on` means on.
+ *
+ * The one verb here that reaches nothing in the session and changes nothing
+ * about the performance. It says what a renderer *draws over itself* — the
+ * breath, the gaze, the frame rate, which document is up — and every renderer
+ * attached does it, including the one going to air, because the operator asking
+ * for it is usually asking about that one.
+ *
+ * **It is deliberately not a standing setting.** Every other command that
+ * outlives a turn is folded into the setup a renderer is handed on connect, and
+ * this one must not be: a readout raised to answer a question during rehearsal
+ * would then come back by itself on the source OBS reloads at the top of the
+ * broadcast, which is the one way a debugging tool can end up on a stream. Off
+ * is what a fresh renderer is, always. See `Persistent` in `server/standing.ts`,
+ * which is an allowlist for exactly this reason.
+ */
+export const debugCommandSchema = z.object({
+  cmd: z.literal('debug'),
+  id: correlationId,
+  on: z.boolean().optional(),
+});
+
 // --- staging ----------------------------------------------------------------
 
-/** Frame the shot. The viewer owns the camera; this only names a framing. */
+/**
+ * Place the camera: a named framing, and how far to stand off it.
+ *
+ * The framing is the part a script cares about — how much of the character is
+ * in shot — and what it means in metres is the renderer's business, since the
+ * two validation avatars differ in height and in where their bones sit.
+ *
+ * The three offsets are what a *drag* produces, and they are stated against the
+ * framing rather than in world space for the same reason: a camera position
+ * measured on one avatar puts the next one's head out of frame, and a
+ * quarter-turn means the same thing on both. See `Shot` in the engine.
+ *
+ * Every field is optional and an absent one is left alone. A framing change
+ * sends one field, a drag sends two, and neither disturbs the other — which is
+ * what lets the panel's preview be the place the shot is set while a script
+ * goes on naming framings.
+ *
+ * The bounds are a guard rather than a taste: a pitch at the pole has no
+ * bearing to speak of, and a zoom outside these puts the camera inside the
+ * character's head or somewhere it can no longer be seen from.
+ */
 export const cameraCommandSchema = z.object({
   cmd: z.literal('camera'),
   id: correlationId,
-  frame: cameraFrameSchema,
+  frame: cameraFrameSchema.optional(),
+  /** Degrees around the framing's target. 0 is straight on. */
+  yaw: within(SHOT_LIMITS.yaw).optional(),
+  /** Degrees above it. Stopped short of the pole, where there is no bearing. */
+  pitch: within(SHOT_LIMITS.pitch).optional(),
+  /** Multiplier on the framing's distance. 1 is the framing, higher is closer. */
+  zoom: within(SHOT_LIMITS.zoom).optional(),
 });
+
+/**
+ * The payload is a `Shot` and nothing else, on the same footing as `say` and
+ * its `TurnRequest`: the guard trips if the engine's notion of where a camera
+ * can stand moves without this schema following.
+ */
+type _CameraPayloadIsShot = Expect<
+  Equals<Omit<z.infer<typeof cameraCommandSchema>, 'cmd' | 'id'>, Shot>
+>;
+
+export type { Shot };
 
 /**
  * Put the voice in a named acoustic space, or take it out of one.
@@ -455,6 +535,131 @@ export const roomCommandSchema = z.object({
 export const backdropCommandSchema = z.object({
   cmd: z.literal('backdrop'),
   id: z.string().nullable().optional(),
+});
+
+/**
+ * Put a document up behind the character, or take it down.
+ *
+ * `id` here is the document's own id — the file's name without its extension —
+ * and not the correlation id, on the same rule as `backdrop` and `expression`.
+ * `null` takes it down. An id the renderer cannot open leaves the stream
+ * running and is reported as an error rather than failing the command: the
+ * document is a file an operator dropped in a directory, so a name that is a
+ * minute out of date is the ordinary case rather than a bug.
+ *
+ * ## What documents exist is *not* in the vocabulary
+ *
+ * Rooms and backdrops are there because they are renderer data, decided in the
+ * source it ships with. A document is whatever is in the directory right now,
+ * which only the process with a filesystem can answer — so the roster comes
+ * back on the snapshot, from the control server, and is re-read rather than
+ * cached for the life of a page.
+ *
+ * ## It occupies the same place as a backdrop
+ *
+ * Both go behind the character, so a renderer showing a document puts the room
+ * away for as long as it is up and brings it back exactly when it comes down.
+ * That is a renderer's decision and is stated where it is made; here they stay
+ * two commands, because a segment that goes to slides and back is one command
+ * each way and neither one should have to restate the room.
+ *
+ * `page` is where to open it. Absent is the first page rather than "whatever
+ * page we were on", which was a page of the document being replaced.
+ */
+export const deckCommandSchema = z.object({
+  cmd: z.literal('deck'),
+  id: z.string().nullable().optional(),
+  page: z.number().int().min(1).optional(),
+});
+
+/**
+ * Turn a page.
+ *
+ * Two ways to say it, because they are two different things a caller knows.
+ * `page` is an absolute page, 1 based, which is what a script has. `by` is a
+ * number of pages to move, which is what an operator with a hand on an arrow
+ * key has — they are reacting to what is on screen and do not know the number.
+ *
+ * `page` wins if both are given. Neither means `by: 1`, so the bare command is
+ * "next", which is the one an operator sends a hundred times in a broadcast and
+ * the one a hotkey should not have to spell out.
+ *
+ * Past either end of the document is clamped rather than refused. A caller that
+ * sends one turn too many at the end of a deck has made a very ordinary
+ * mistake, and stopping on the last page is what it meant.
+ */
+export const slideCommandSchema = z.object({
+  cmd: z.literal('slide'),
+  id: correlationId,
+  page: z.number().int().min(1).optional(),
+  by: z.number().int().optional(),
+});
+
+const anchorSchema = z.enum([
+  'center',
+  'top-left',
+  'top',
+  'top-right',
+  'left',
+  'right',
+  'bottom-left',
+  'bottom',
+  'bottom-right',
+]);
+type _AnchorsMatchEngine = Expect<Equals<z.infer<typeof anchorSchema>, Anchor>>;
+
+/**
+ * A rectangle of the output frame. See `Placement` in the engine for why it is
+ * two fractions rather than a size and an aspect ratio.
+ *
+ * Every field is optional and an absent one is left alone, so a slider under
+ * the pointer sends one number.
+ */
+export const placementSchema = z.object({
+  anchor: anchorSchema.optional(),
+  width: within(PLACEMENT_LIMITS.width).optional(),
+  height: within(PLACEMENT_LIMITS.height).optional(),
+  margin: within(PLACEMENT_LIMITS.margin).optional(),
+});
+
+type _PlacementMatchesEngine = Expect<Equals<z.infer<typeof placementSchema>, Placement>>;
+
+export const slidePlacementSchema = placementSchema.extend({
+  fit: z.enum(['contain', 'cover']).optional(),
+});
+
+type _SlidePlacementMatchesEngine = Assert<z.infer<typeof slidePlacementSchema>, SlidePlacement>;
+type _EngineMatchesSlidePlacement = Assert<SlidePlacement, z.infer<typeof slidePlacementSchema>>;
+
+/**
+ * Lay out the frame: where the character stands in it, and where the document
+ * behind them sits.
+ *
+ * ## Why this is not the camera
+ *
+ * A `camera` says where to stand to look at the character; this says where the
+ * resulting picture goes in the frame that is broadcast. Sliding the character
+ * into a corner by moving the camera would mean re-framing every line of the
+ * segment and would put the gestures — which are authored against a framing —
+ * somewhere they were never drawn for. Here the shot is untouched and the
+ * picture of it is simply smaller and off to one side.
+ *
+ * ## Why both layers are one command
+ *
+ * They are one decision. A document that fills the frame wants the character
+ * small in a corner; a document in the left two thirds wants them standing in
+ * the right one. Sending those as two commands means a frame that is briefly
+ * wrong between them, in the direction that is most visible — two things
+ * overlapping.
+ *
+ * Both halves are partials that merge onto what is set, like a tuning patch.
+ * Absent means "leave it", never "reset it".
+ */
+export const placeCommandSchema = z.object({
+  cmd: z.literal('place'),
+  id: correlationId,
+  avatar: placementSchema.optional(),
+  slide: slidePlacementSchema.optional(),
 });
 
 /**
@@ -631,9 +836,6 @@ export const avatarCommandSchema = z.object({
   id: z.string(),
 });
 
-/** A number stated as far as its control may travel. See `TUNING_RANGES`. */
-const within = (range: TuningRange) => z.number().min(range.min).max(range.max);
-
 /**
  * Move part of the set-once layer: breath, sway, jump, tail, shading.
  *
@@ -729,9 +931,13 @@ export const commandSchema = z.discriminatedUnion('cmd', [
   pointCommandSchema,
   lookCommandSchema,
   idleCommandSchema,
+  debugCommandSchema,
   cameraCommandSchema,
   roomCommandSchema,
   backdropCommandSchema,
+  deckCommandSchema,
+  slideCommandSchema,
+  placeCommandSchema,
   voiceCommandSchema,
   wearCommandSchema,
   avatarCommandSchema,
