@@ -24,9 +24,9 @@ import { serveStatic } from './static';
  * a second down, a state snapshot a second up.
  *
  * **Binds to 127.0.0.1 only, and that is a licence condition, not a default.**
- * The avatar may not be published; see 02-license.md. There is deliberately no
- * CORS header either — the viewer is same-origin, so allowing another origin
- * would only ever serve a page that is not ours.
+ * The avatar may not be republished. There is deliberately no CORS header
+ * either — the viewer is same-origin, so allowing another origin would only
+ * ever serve a page that is not ours.
  *
  * usage: yarn start [--port 8765] [--root dist] [--slides slides]
  */

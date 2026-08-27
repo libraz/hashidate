@@ -49,9 +49,9 @@ export default defineConfig({
       // model pipeline writes.
       ignored: ['**/backup/**', '**/public/models/**'],
     },
-    // Loopback only, and that is a licence condition rather than a default —
-    // see backup/plans/02-license.md. The avatars used for validation may not
-    // be published, so the viewer must not be reachable from another machine.
+    // Loopback only, and that is a licence condition rather than a default. The
+    // avatars used for validation may not be republished, so the viewer must
+    // not be reachable from another machine.
     host: '127.0.0.1',
     port: 5173,
     proxy: {
