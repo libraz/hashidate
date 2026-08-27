@@ -45,6 +45,17 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * `?transparent=1`: a source stacked over a game capture in OBS.
+ *
+ * The renderer clears its canvas to zero alpha, and that only uncovers what CSS
+ * painted below it — so the page's own colour has to come off too. Set from the
+ * renderer, which owns the decision; see `AvatarRuntime.setTransparent`.
+ */
+html[data-transparent] body {
+  background: transparent;
+}
+
 button,
 input,
 textarea,

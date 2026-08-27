@@ -15,7 +15,8 @@ import { ROOMS, roomList } from '@/viewer/rooms';
 describe('the room table', () => {
   it('describes every room as a room that could exist', () => {
     for (const [id, room] of Object.entries(ROOMS)) {
-      expect(room.label, id).not.toBe('');
+      expect(room.label.en, id).not.toBe('');
+      expect(room.label.ja, id).not.toBe('');
       for (const m of [room.lengthM, room.widthM, room.heightM]) {
         expect(m, id).toBeGreaterThan(0);
       }
@@ -47,7 +48,7 @@ describe('the room table', () => {
     const listed = roomList();
     expect(listed.map((r) => r.id)).toEqual(Object.keys(ROOMS));
     for (const { id, label } of listed) {
-      expect(label).toBe(ROOMS[id as keyof typeof ROOMS].label);
+      expect(label).toEqual(ROOMS[id as keyof typeof ROOMS].label);
     }
   });
 });

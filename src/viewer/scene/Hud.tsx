@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AvatarDescriptor } from '@/engine/types';
+import { useT } from '@/i18n';
 import styles from './Hud.module.css';
 import type { AvatarRuntime, Hud as HudData } from './runtime';
 
@@ -11,6 +12,7 @@ import type { AvatarRuntime, Hud as HudData } from './runtime';
  * see while costing frames the simulation wants.
  */
 export function Hud({ runtime, avatar }: { runtime: AvatarRuntime; avatar: AvatarDescriptor }) {
+  const { t, tx } = useT();
   const [hud, setHud] = useState<HudData | null>(null);
   useEffect(() => runtime.onHud(setHud), [runtime]);
 
@@ -22,21 +24,25 @@ export function Hud({ runtime, avatar }: { runtime: AvatarRuntime; avatar: Avata
         <span className={styles.fact}>
           <b>{hud.fps}</b> fps
         </span>
-        <span className={styles.fact}>{avatar.label}</span>
+        <span className={styles.fact}>{tx(avatar.label)}</span>
         <span className={styles.fact}>{hud.channel}</span>
         <span className={styles.fact}>
           morph <b>{hud.morphs}</b>
         </span>
         <span className={styles.fact}>
-          揺れ <b>{hud.sway ?? 'off'}</b>
+          {t('console.hud.sway')} <b>{hud.sway ?? 'off'}</b>
         </span>
       </div>
 
       <div className={styles.meters}>
-        <Meter label="呼吸" value={hud.breath} readout={`${Math.round(hud.breath * 100)}%`} />
-        <Meter label="瞬き" value={hud.blink} readout={hud.blink.toFixed(2)} />
         <Meter
-          label="視線"
+          label={t('console.hud.breath')}
+          value={hud.breath}
+          readout={`${Math.round(hud.breath * 100)}%`}
+        />
+        <Meter label={t('console.hud.blink')} value={hud.blink} readout={hud.blink.toFixed(2)} />
+        <Meter
+          label={t('console.hud.gaze')}
           value={hud.gazeX}
           centred
           readout={`${hud.gazeX >= 0 ? '+' : ''}${hud.gazeX.toFixed(2)}`}
@@ -50,19 +56,19 @@ export function Hud({ runtime, avatar }: { runtime: AvatarRuntime; avatar: Avata
             ON AIR
           </span>
         ) : (
-          <span className={styles.idle}>待機</span>
+          <span className={styles.idle}>{t('console.hud.idle')}</span>
         )}
         {/* The one readout here that asks for something. Everything else is a
             measurement; this says the browser will not start the audio device
             until somebody clicks this page, which no command can do for it. */}
         {hud.voiceBlocked ? (
-          <span className={styles.blocked} title="ブラウザが操作されるまで音声を再生できません">
-            音声ブロック中 — この画面をクリック
+          <span className={styles.blocked} title={t('console.hud.voiceBlocked.title')}>
+            {t('console.hud.voiceBlocked')}
           </span>
         ) : null}
         {hud.gesture ? <span className={styles.tag}>{hud.gesture}</span> : null}
         {hud.expression ? <span className={styles.tag}>{hud.expression}</span> : null}
-        {hud.auto ? <span className={styles.auto}>自動</span> : null}
+        {hud.auto ? <span className={styles.auto}>{t('console.hud.auto')}</span> : null}
       </div>
     </div>
   );

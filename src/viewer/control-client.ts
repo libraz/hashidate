@@ -43,16 +43,21 @@ export type ControlStatus = 'online' | 'offline';
  *
  * Every other command in the set is one session call, which is what keeps the
  * command set honest — a verb that cannot be expressed as one means the session
- * is missing something. `avatar` genuinely cannot be: it *replaces* the session,
- * along with the scene, the rig and the wardrobe underneath it. So it is named
- * here as an exception rather than smuggled in as a special case.
+ * is missing something. These two genuinely cannot be: `avatar` *replaces* the
+ * session along with the scene, the rig and the wardrobe underneath it, and
+ * `debug` reaches nothing in the scene at all — it is a readout the page draws
+ * over itself. So they are named here as exceptions rather than smuggled in as
+ * special cases.
  *
  * Absent on a renderer that loads one avatar and stays on it, which is every
- * test: `avatar` then does nothing and the roster it reports is empty.
+ * test: `avatar` then does nothing, the roster it reports is empty, and a
+ * `debug` arriving on a page with no readout to draw is dropped.
  */
 export interface RendererControls {
   /** Every avatar this renderer can load, including the one it has. */
   readonly avatars: LabelledId[];
+  /** Print the measurements over the frame, or stop. */
+  setDebug(on: boolean): void;
   /**
    * Start loading one. Answers whether anything is actually going to happen.
    *
@@ -285,6 +290,18 @@ export class ControlClient {
     // meter that only updates when a setting moves is not a meter.
     const voice = this.session.voice?.report();
     if (voice) body.voice = voice;
+    // Beside the voice and on the timer for the same reason: how many pages a
+    // document has is discovered by opening it, and whether the page asked for
+    // is the page showing changes without anything being sent.
+    const slides = this.session.slides?.report();
+    if (slides) body.slides = slides;
+    // And the layout beside it, on the timer for the reason the tuning report
+    // is: it is what a remote control surface draws its composition controls
+    // from, and most of the layouts that reach a renderer were never sent as a
+    // command at all — a browser source carries its own on the URL it was
+    // opened with.
+    const placement = this.session.composition?.report();
+    if (placement) body.placement = placement;
 
     try {
       await fetch(`${this.base}/report`, {
@@ -319,6 +336,15 @@ export class ControlClient {
    * swap is in flight is queued and applied when the new session is bound.
    */
   apply(c: Command): void {
+    // Ahead of the hold, and the only command that goes ahead of it. It never
+    // touches the session, so there is nothing about a swap for it to wait
+    // for — and an operator switching the readout on to watch a slow avatar
+    // load would otherwise be given it once the load had finished, which is
+    // exactly when it has stopped being the question.
+    if (c.cmd === 'debug') {
+      this.renderer?.setDebug(c.on ?? true);
+      return;
+    }
     if (this.held) {
       this.held.push(c);
       if (this.held.length > HELD_MAX) this.held.splice(0, this.held.length - HELD_MAX);
@@ -399,8 +425,10 @@ export class ControlClient {
       case 'idle':
         s.setIdle(c.on ?? true);
         return;
+      // The whole shot, not just the framing: an absent field is left where it
+      // was, so a drag on the panel's preview sends two angles and nothing else.
       case 'camera':
-        s.setCamera(c.frame);
+        s.setCamera(c);
         return;
       // No id means dry, on the same rule as `gesture` and `perform`.
       case 'room':
@@ -410,6 +438,23 @@ export class ControlClient {
       // dry and follows the same rule.
       case 'backdrop':
         s.setBackdrop(c.id ?? null);
+        return;
+      // Same rule again for the document, and `page` is where to open it —
+      // absent is the first page rather than the page the last document was on.
+      case 'deck':
+        s.setDeck(c.id ?? null, c.page);
+        return;
+      // An absolute page wins over a relative move, and neither given is
+      // "next": the bare command is the one an operator sends all broadcast.
+      case 'slide':
+        if (c.page !== undefined) s.setSlide(c.page);
+        else s.turnSlide(c.by ?? 1);
+        return;
+      // Both halves in one call, because they are one decision — sent as two,
+      // the frame is briefly wrong in the way that shows most, with the
+      // character over the document.
+      case 'place':
+        s.setPlacement({ avatar: c.avatar, slide: c.slide });
         return;
       // Both fields are passed through as given. Absent `preset` means "keep the
       // base", which is not the same as null, so it must not be defaulted here.

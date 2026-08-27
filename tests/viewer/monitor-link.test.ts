@@ -93,11 +93,11 @@ describe('onMonitorMute, embedded', () => {
   it('ignores anything that is not this message', () => {
     for (const data of [
       null,
-      'aituber.mute',
+      'hashidate.mute',
       42,
       {},
-      { type: 'aituber.mute' },
-      { type: 'aituber.mute', muted: 'yes' },
+      { type: 'hashidate.mute' },
+      { type: 'hashidate.mute', muted: 'yes' },
       { type: 'something.else', muted: true },
       // React DevTools and Vite's HMR client both post objects at every frame.
       { source: 'react-devtools-bridge' },

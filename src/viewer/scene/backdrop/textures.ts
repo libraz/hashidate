@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { fbm, mulberry32 } from './noise';
 
 /**
- * Every surface in the backdrop, drawn rather than downloaded.
+ * Most backdrop surfaces are drawn rather than downloaded. The small number of
+ * project-owned raster assets are loaded here too, so their colour space and
+ * disposal follow the same rules.
  *
  * ## Why these are generated
  *
@@ -96,6 +98,18 @@ export function generatedFabric(
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
   texture.repeat.set(repeatX, repeatY);
+  texture.anisotropy = 16;
+  bin.push(texture);
+  return texture;
+}
+
+/** A single image inside a frame. Unlike fabric, it must never tile at an edge. */
+export function framedPrint(bin: TextureBin, path: string): THREE.Texture | null {
+  if (typeof document === 'undefined') return null;
+  const texture = new THREE.TextureLoader().load(path);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.anisotropy = 16;
   bin.push(texture);
   return texture;

@@ -5,6 +5,7 @@ import {
   realtimeVoiceChangerPresetJson,
   voiceChangeRealtime,
 } from '@libraz/libsonare';
+import type { Localized } from '@/i18n/locale';
 import type { VoiceDsp } from '@/protocol';
 
 /**
@@ -61,13 +62,13 @@ import type { VoiceDsp } from '@/protocol';
  * four-megabyte WASM download on a machine that is only ever going to run the
  * renderer without a voice.
  */
-export const VOICE_PRESETS: Record<string, string> = {
-  'neutral-monitor': '素のまま',
-  'bright-idol': '明るい',
-  'soft-whisper': 'ささやき',
-  'deep-narrator': '低く落ち着いた',
-  'robot-mascot': 'ロボット',
-  'dark-villain': '暗い',
+export const VOICE_PRESETS: Record<string, Localized> = {
+  'neutral-monitor': { en: 'As recorded', ja: '素のまま' },
+  'bright-idol': { en: 'Bright', ja: '明るい' },
+  'soft-whisper': { en: 'Whispered', ja: 'ささやき' },
+  'deep-narrator': { en: 'Low and steady', ja: '低く落ち着いた' },
+  'robot-mascot': { en: 'Robot', ja: 'ロボット' },
+  'dark-villain': { en: 'Dark', ja: '暗い' },
 };
 
 /** The default base. Broadcast discipline without a change of character. */
@@ -172,8 +173,8 @@ export function processTake(
 ): Float32Array {
   const preset: Preset = {
     schemaVersion: 1,
-    id: 'aituber',
-    name: 'aituber',
+    id: 'hashidate',
+    name: 'hashidate',
     category: 'custom',
     dsp,
   };

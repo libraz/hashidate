@@ -10,7 +10,7 @@ import type { AvatarDescriptor } from '@/engine/types';
  * whatever eventually drives the production stream.
  */
 
-const STORAGE_KEY = 'aituber.avatar';
+const STORAGE_KEY = 'hashidate.avatar';
 
 /**
  * `?avatar=<id>` wins, so a link can pin one and a reload cannot drift off it.

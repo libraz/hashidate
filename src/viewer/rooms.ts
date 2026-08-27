@@ -1,5 +1,6 @@
 import { init, synthesizeRir } from '@libraz/libsonare';
 import type { LabelledId } from '@/engine/types';
+import type { Localized } from '@/i18n/locale';
 
 /**
  * The spaces the voice can be heard in.
@@ -22,7 +23,7 @@ import type { LabelledId } from '@/engine/types';
  */
 
 export interface Room {
-  label: string;
+  label: Localized;
   /** Metres. The listener stands `LISTENER_OFFSET_M` in front of the speaker. */
   lengthM: number;
   widthM: number;
@@ -69,12 +70,26 @@ const SEED = 7;
  */
 export const ROOMS: Record<string, Room> = {
   /** RT60 0.08 s. A treated box — not silence, but nothing you would call a room. */
-  booth: { label: 'ブース', lengthM: 3.0, widthM: 2.4, heightM: 2.4, absorption: 0.6, mix: 0.16 },
+  booth: {
+    label: { en: 'Booth', ja: 'ブース' },
+    lengthM: 3.0,
+    widthM: 2.4,
+    heightM: 2.4,
+    absorption: 0.6,
+    mix: 0.16,
+  },
   /** RT60 0.27 s. An ordinary room in an ordinary building, which is the default. */
-  room: { label: '部屋', lengthM: 5.5, widthM: 4.0, heightM: 2.5, absorption: 0.3, mix: 0.22 },
+  room: {
+    label: { en: 'Room', ja: '部屋' },
+    lengthM: 5.5,
+    widthM: 4.0,
+    heightM: 2.5,
+    absorption: 0.3,
+    mix: 0.22,
+  },
   /** RT60 0.58 s. Larger and harder — a live room rather than a treated one. */
   studio: {
-    label: 'スタジオ',
+    label: { en: 'Studio', ja: 'スタジオ' },
     lengthM: 8.0,
     widthM: 6.0,
     heightM: 3.2,
@@ -82,7 +97,14 @@ export const ROOMS: Record<string, Room> = {
     mix: 0.26,
   },
   /** RT60 2.17 s. Somewhere to say something that needs the space. */
-  hall: { label: 'ホール', lengthM: 26.0, widthM: 18.0, heightM: 11.0, absorption: 0.15, mix: 0.3 },
+  hall: {
+    label: { en: 'Hall', ja: 'ホール' },
+    lengthM: 26.0,
+    widthM: 18.0,
+    heightM: 11.0,
+    absorption: 0.15,
+    mix: 0.3,
+  },
 };
 
 export type RoomId = keyof typeof ROOMS;

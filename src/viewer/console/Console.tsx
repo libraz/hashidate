@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { AVATARS } from '@/avatars';
 import { hasCueMarkup, isWellFormed } from '@/engine/cues';
 import type { CameraFrame } from '@/engine/types';
+import { useT } from '@/i18n';
 import { Chip, ChipRow } from '@/ui/Chip';
+import { LocaleSwitch } from '@/ui/LocaleSwitch';
 import { Segmented } from '@/ui/Segmented';
 import { Toggle } from '@/ui/Toggle';
 import type { ControlStatus } from '../control-client';
@@ -10,7 +12,7 @@ import { useSessionState } from '../hooks';
 import { backdropList, backdropNote } from '../scene/backdrop';
 import { CAMERA_FRAMES, CAMERA_LABELS } from '../scene/framing';
 import type { AvatarRuntime, RuntimeStatus } from '../scene/runtime';
-import { rememberBackdrop } from '../stage-mode';
+import { rememberBackdrop, rememberTransparent } from '../stage-mode';
 import styles from './Console.module.css';
 import { DemoBar } from './DemoBar';
 import { DressTab } from './tabs/DressTab';
@@ -28,20 +30,20 @@ import { TuneTab } from './tabs/TuneTab';
  * stiffness, gaze limits) and buried the diagnostics inside whichever feature
  * happened to produce them.
  *
- *   演じる  the live surface — face, gesture, pointing, the demo script
- *   装う    the wardrobe, which is avatar data and a separate task
- *   調律    every slider that is set once and left
- *   診る    read-only: joint strain, the resolved profile, the event log
+ *   perform  the live surface — face, gesture, pointing, the demo script
+ *   dress    the wardrobe, which is avatar data and a separate task
+ *   tune     every slider that is set once and left
+ *   inspect  read-only: joint strain, the resolved profile, the event log
  *
  * The avatar picker, the camera framing, the idle switch and the speech box all
  * sit outside the tabs, because none of them belongs to one of those four jobs.
  */
 
 const TABS = [
-  { value: 'perform', label: '演じる' },
-  { value: 'dress', label: '装う' },
-  { value: 'tune', label: '調律' },
-  { value: 'inspect', label: '診る' },
+  { value: 'perform', message: 'console.tabs.perform' },
+  { value: 'dress', message: 'console.tabs.dress' },
+  { value: 'tune', message: 'console.tabs.tune' },
+  { value: 'inspect', message: 'console.tabs.inspect' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['value'];
@@ -62,6 +64,7 @@ interface Props {
 }
 
 export function Console({ runtime, status, control, rejected, onSwitch }: Props) {
+  const { t, tx } = useT();
   const [tab, setTab] = useState<TabId>('perform');
   const [text, setText] = useState('こんばんは。今日も配信を見に来てくれてありがとうございます。');
   const [reading, setReading] = useState('');
@@ -91,6 +94,23 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
     rememberBackdrop(next);
   };
 
+  /**
+   * Whether "なし" (none) means the flat colour or nothing at all.
+   *
+   * Held beside the picker rather than inside it, because it is not a fifth set:
+   * a room is opaque and covers this either way, so it only decides what the
+   * absence of one looks like. What it is for is written down on
+   * `StageMode.transparent`.
+   */
+  const [transparent, setTransparent] = useState(false);
+  useEffect(() => setTransparent(runtime?.isTransparent ?? false), [runtime]);
+
+  const chooseTransparent = (on: boolean) => {
+    setTransparent(on);
+    runtime?.setTransparent(on);
+    rememberTransparent(on);
+  };
+
   const loaded = status.phase === 'ready' ? status.loaded : null;
   const session = loaded?.session ?? null;
   const state = useSessionState(session);
@@ -106,9 +126,9 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
    * until the line is one the API would have accepted.
    */
   const problem = !isWellFormed(text)
-    ? '角括弧が閉じていないか、[] の中身が id ではない'
+    ? t('console.speech.badCue')
     : hasCueMarkup(reading)
-      ? '読みに演出は書けない。角括弧は文章のほうへ'
+      ? t('console.speech.cueInReading')
       : null;
 
   const say = () => {
@@ -136,26 +156,34 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
 
   const goto = (f: CameraFrame) => runtime?.goto(f);
 
+  // A set that has no note answers null, which is not something to resolve.
+  const setNote = backdrop ? backdropNote(backdrop) : null;
+  const backdropText = setNote ? tx(setNote) : null;
+
   return (
     <div className={styles.console}>
       <header className={styles.header}>
         <div className={styles.brand}>
-          <h1 className={styles.title}>AITUBER</h1>
+          <h1 className={styles.title}>HASHIDATE</h1>
           <span className={`${styles.link} ${control === 'online' ? styles.online : ''}`}>
             <span className={styles.linkDot} />
-            {control === 'online' ? '制御接続' : '制御未接続'}
-            {rejected > 0 ? ` · 不正 ${rejected}` : ''}
+            {control === 'online' ? t('console.link.online') : t('console.link.offline')}
+            {rejected > 0 ? ` · ${t('console.link.rejected', { count: rejected })}` : ''}
           </span>
+          {/* Set once a session at most, so it sits on the identity line rather
+              than among the controls reached for every minute. */}
+          <LocaleSwitch />
         </div>
         <Segmented
-          ariaLabel="アバター"
-          options={AVATARS.map((a) => ({ value: a.id, label: a.label }))}
+          ariaLabel={t('console.avatar.aria')}
+          options={AVATARS.map((a) => ({ value: a.id, label: tx(a.label) }))}
           value={loaded?.avatar.id ?? (status.phase === 'loading' ? status.avatar.id : null)}
           onChange={onSwitch}
         />
         {loaded ? (
           <div className={styles.author}>
-            {loaded.avatar.author ?? '—'} · ARKit {loaded.profile.arkit.count}/52 · シェイプ{' '}
+            {loaded.avatar.author ? tx(loaded.avatar.author) : '—'} · ARKit{' '}
+            {loaded.profile.arkit.count}/52 · {t('console.header.shapes')}{' '}
             {Object.keys(loaded.profile.dict).length}
           </div>
         ) : null}
@@ -163,8 +191,8 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
 
       <div className={styles.toolbar}>
         <Segmented
-          ariaLabel="カメラ"
-          options={CAMERA_FRAMES.map((f) => ({ value: f, label: CAMERA_LABELS[f] }))}
+          ariaLabel={t('console.camera.aria')}
+          options={CAMERA_FRAMES.map((f) => ({ value: f, label: tx(CAMERA_LABELS[f]) }))}
           value={frame}
           onChange={goto}
         />
@@ -172,29 +200,44 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
             rather than what the character is doing. */}
         <div>
           <Segmented
-            ariaLabel="背景"
+            ariaLabel={t('console.backdrop.aria')}
             options={[
-              { value: NO_BACKDROP, label: 'なし', title: '素の背景' },
+              {
+                value: NO_BACKDROP,
+                label: t('console.backdrop.none'),
+                title: t('console.backdrop.none.title'),
+              },
               ...backdropList().map((b) => ({
                 value: b.id,
-                label: b.label,
-                title: backdropNote(b.id) ?? b.label,
+                label: tx(b.label),
+                title: tx(backdropNote(b.id) ?? b.label),
               })),
             ]}
             value={backdrop ?? NO_BACKDROP}
             onChange={chooseBackdrop}
           />
+          {/* Only with no room. A room covers this whichever way it is set, and
+              a control that changes nothing is worse than one that is absent. */}
+          {backdrop === null ? (
+            <Toggle
+              label={t('console.backdrop.transparent')}
+              checked={transparent}
+              onChange={chooseTransparent}
+            />
+          ) : null}
           {/* What the room is for, in a line. Four of them are four value
               structures rather than four colour schemes, and the difference is
               not something the labels can carry. */}
           <p className={styles.note}>
             {backdrop
-              ? backdropNote(backdrop)
-              : 'URL の ?backdrop= に入る。OBS のソースはこのアドレスをそのまま使える。'}
+              ? backdropText
+              : transparent
+                ? t('console.backdrop.note.transparent')
+                : t('console.backdrop.note.url')}
           </p>
         </div>
         <Toggle
-          label="自動モード（アイドル）"
+          label={t('console.idle.auto')}
           checked={state?.idleEnabled ?? false}
           onChange={(v) => {
             session?.setIdle(v);
@@ -208,14 +251,19 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
       <DemoBar session={session} />
 
       <div className={styles.tabs}>
-        <Segmented ariaLabel="操作の種類" options={TABS} value={tab} onChange={setTab} />
+        <Segmented
+          ariaLabel={t('console.tabs.aria')}
+          options={TABS.map((it) => ({ value: it.value, label: t(it.message) }))}
+          value={tab}
+          onChange={setTab}
+        />
       </div>
 
       <div className={styles.body}>
         {status.phase === 'failed' ? (
           <>
             <p className={styles.problems}>{status.message}</p>
-            <p className={styles.empty}>別のアバターを選ぶか、make glb で書き出し直す。</p>
+            <p className={styles.empty}>{t('console.load.failedHint')}</p>
           </>
         ) : null}
 
@@ -232,7 +280,7 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
             {tab === 'inspect' ? <InspectTab loaded={loaded} state={state} /> : null}
           </>
         ) : status.phase !== 'failed' ? (
-          <p className={styles.empty}>読み込み中…</p>
+          <p className={styles.empty}>{t('console.load.loading')}</p>
         ) : null}
       </div>
 
@@ -240,10 +288,10 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
         <textarea
           id="speech"
           name="speech"
-          aria-label="しゃべらせたい文章"
+          aria-label={t('console.speech.aria')}
           className={styles.input}
           value={text}
-          placeholder="しゃべらせたい文章（[hello] のように演出を挟める）"
+          placeholder={t('console.speech.placeholder')}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -255,10 +303,10 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
         <input
           id="reading"
           name="reading"
-          aria-label="読み（かな・任意）"
+          aria-label={t('console.reading.label')}
           className={styles.reading}
           value={reading}
-          placeholder="読み（かな・任意）"
+          placeholder={t('console.reading.label')}
           onChange={(e) => setReading(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -269,11 +317,21 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
         />
         <div className={styles.composerRow}>
           <span className={problem ? styles.hintBad : styles.hint}>
-            {problem ?? (state?.queued ? `待ち ${state.queued}` : '⌘⏎ / Space')}
+            {problem ??
+              (state?.queued ? t('console.speech.queued', { count: state.queued }) : '⌘⏎ / Space')}
           </span>
           <ChipRow>
-            <Chip label="止める" variant="action" onClick={() => session?.interrupt()} />
-            <Chip label="話す" variant="primary" onClick={say} disabled={!!problem} />
+            <Chip
+              label={t('console.speech.stop')}
+              variant="action"
+              onClick={() => session?.interrupt()}
+            />
+            <Chip
+              label={t('console.speech.say')}
+              variant="primary"
+              onClick={say}
+              disabled={!!problem}
+            />
           </ChipRow>
         </div>
       </div>

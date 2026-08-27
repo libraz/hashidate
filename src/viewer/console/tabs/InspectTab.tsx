@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { ZONES } from '@/engine/anatomy';
 import type { JointReading, SessionEvent, SessionState, Side } from '@/engine/types';
+import { type MessageKey, useT } from '@/i18n';
 import { Section } from '@/ui/Section';
 import { Segmented } from '@/ui/Segmented';
 import { useTick } from '../../hooks';
 import type { LoadedAvatar } from '../../scene/runtime';
 import styles from './InspectTab.module.css';
 
-const SIDES: Array<{ value: Side; label: string }> = [
-  { value: 'R', label: '右腕' },
-  { value: 'L', label: '左腕' },
-];
+const SIDES = [
+  { value: 'R', message: 'console.inspect.side.right' },
+  { value: 'L', message: 'console.inspect.side.left' },
+] as const satisfies ReadonlyArray<{ value: Side; message: MessageKey }>;
 
 /** How many turn events to keep. Enough to see a whole demo script sequence. */
 const LOG_LIMIT = 60;
@@ -37,6 +38,7 @@ export function InspectTab({
   loaded: LoadedAvatar;
   state: SessionState | null;
 }) {
+  const { t, tx } = useT();
   const { director, profile, session, avatar } = loaded;
   const [side, setSide] = useState<Side>('R');
 
@@ -52,20 +54,25 @@ export function InspectTab({
   return (
     <>
       <Section
-        title="関節の負担"
+        title={t('console.inspect.strain')}
         meta={state ? `L ${state.strain.L.toFixed(2)} · R ${state.strain.R.toFixed(2)}` : ''}
         note={[
-          '各関節の実測値と判定。緑は日常の動作が使う範囲、黄はやればできるが無理のある範囲、赤は解剖学的な限界に張り付いている。',
-          '限界に達した関節はそこで止まるので、要求どおりの姿勢にはならない。「—」は姿勢からその量が決まらないもの — 下ろした腕の挙上面や、伸びきった腕の回旋がそれにあたる。',
-          '身体貫通は角度ではなく体幹半径に対する割合。腕が自分の胸や頭にめり込んでいる量で、これだけは可動域とは別の話。',
+          t('console.inspect.strain.note.zones'),
+          t('console.inspect.strain.note.limits'),
+          t('console.inspect.strain.note.penetration'),
         ]}
       >
-        <Segmented ariaLabel="どちらの腕" options={SIDES} value={side} onChange={setSide} />
+        <Segmented
+          ariaLabel={t('console.inspect.side.aria')}
+          options={SIDES.map((s) => ({ value: s.value, label: t(s.message) }))}
+          value={side}
+          onChange={setSide}
+        />
         {rows ? (
           <div className={styles.joints}>
             {rows.map((r) => (
               <div key={r.id} className={styles.joint}>
-                <span className={styles.jointLabel}>{r.label}</span>
+                <span className={styles.jointLabel}>{tx(r.label)}</span>
                 <span className={styles.jointValue}>
                   {r.deg >= 0 ? '' : '−'}
                   {Math.abs(r.deg).toFixed(0)}
@@ -76,45 +83,58 @@ export function InspectTab({
                     r.measured ? styles[r.zone] : styles.unmeasured
                   }`}
                 >
-                  {r.measured ? ZONES[r.zone] : '—'}
+                  {r.measured ? tx(ZONES[r.zone]) : '—'}
                 </span>
               </div>
             ))}
           </div>
         ) : (
-          <p className={styles.facts}>体幹フレーム未解決のため計測不可</p>
+          <p className={styles.facts}>{t('console.inspect.strain.unmeasurable')}</p>
         )}
       </Section>
 
       <Section
-        title="プロファイル"
-        meta={profile.missing.length ? `未解決 ${profile.missing.length}` : '完全'}
+        title={t('console.inspect.profile')}
+        meta={
+          profile.missing.length
+            ? t('console.inspect.profile.unresolved', { count: profile.missing.length })
+            : t('console.inspect.profile.complete')
+        }
         note={[
-          'エンジンが読み込み時にこのモデルから見つけたもの。ボーン名もシェイプ名も作者ごとに違うので、正規スロットへの対応付けはすべてここで解決している。',
-          '未解決があっても動く — 解決できなかったものはその機能が黙って落ちるだけで、失敗にはならない。',
+          t('console.inspect.profile.note.discovered'),
+          t('console.inspect.profile.note.partial'),
         ]}
       >
         <div className={styles.facts}>
           <Fact label="ARKit" value={`${profile.arkit.count} / 52`} />
           <Fact
-            label="ビセーム"
+            label={t('console.inspect.fact.viseme')}
             value={Object.entries(profile.viseme)
               .map(([k, v]) => `${k}=${v}`)
               .join(' · ')}
           />
-          <Fact label="指ボーン" value={`${Object.keys(profile.fingerBones).length} 系統`} />
-          <Fact label="表情メッシュ" value={`${profile.faceMeshes.length}`} />
-          <Fact label="シェイプ群" value={groups || 'なし'} />
-          <Fact label="未解決" value={profile.missing.join(' / ') || 'なし'} />
+          <Fact
+            label={t('console.inspect.fact.fingerBones')}
+            value={t('console.inspect.fact.chains', {
+              count: Object.keys(profile.fingerBones).length,
+            })}
+          />
+          <Fact
+            label={t('console.inspect.fact.faceMeshes')}
+            value={`${profile.faceMeshes.length}`}
+          />
+          <Fact label={t('console.inspect.fact.shapeGroups')} value={groups || t('console.none')} />
+          <Fact
+            label={t('console.inspect.fact.unresolved')}
+            value={profile.missing.join(' / ') || t('console.none')}
+          />
         </div>
       </Section>
 
       <Section
-        title="イベント"
+        title={t('console.inspect.events')}
         meta={`${log.length}`}
-        note={[
-          'セッションが出すターン境界。外部の制御 API が受け取るのと同じもので、オーケストレータはこれを待って次の行を送る。',
-        ]}
+        note={[t('console.inspect.events.note')]}
       >
         {log.length ? (
           <div className={styles.log}>
@@ -129,16 +149,16 @@ export function InspectTab({
             ))}
           </div>
         ) : (
-          <p className={styles.facts}>まだ何も起きていない。</p>
+          <p className={styles.facts}>{t('console.inspect.events.empty')}</p>
         )}
       </Section>
 
       <Section
-        title="語彙"
+        title={t('console.inspect.vocabulary')}
         meta={avatar.id}
         note={[
-          'このアバターに何を頼めるかの一覧。宣言ではなく発見されたもので、表情はモデル自身のシェイプ群から、衣装はメッシュから引いている。アバターを差し替えると中身が変わる。',
-          'LLM のシステムプロンプトに貼るのはこのオブジェクト。',
+          t('console.inspect.vocabulary.note.discovered'),
+          t('console.inspect.vocabulary.note.prompt'),
         ]}
       >
         <pre className={styles.json}>{JSON.stringify(session.vocabulary(), null, 1)}</pre>

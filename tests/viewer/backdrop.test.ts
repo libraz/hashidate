@@ -1,4 +1,6 @@
+import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
+import { BackdropStage } from '@/viewer/scene/backdrop';
 import { fbm, mulberry32 } from '@/viewer/scene/backdrop/noise';
 import { ROOM, WINDOW } from '@/viewer/scene/backdrop/parts';
 import { PATTERNS } from '@/viewer/scene/backdrop/patterns';
@@ -60,8 +62,10 @@ describe('the pattern table', () => {
   it('gives every room an id, a label and a note', () => {
     for (const pattern of PATTERNS) {
       expect(pattern.id, pattern.id).toMatch(/^[a-z]+$/);
-      expect(pattern.label, pattern.id).not.toBe('');
-      expect(pattern.note, pattern.id).not.toBe('');
+      for (const locale of ['en', 'ja'] as const) {
+        expect(pattern.label[locale], pattern.id).not.toBe('');
+        expect(pattern.note[locale], pattern.id).not.toBe('');
+      }
     }
   });
 
@@ -105,12 +109,118 @@ describe('reading the room off the URL', () => {
   });
 
   it('comes off the query string with the rest of the presentation', () => {
-    expect(readStageMode('?stage=1&size=1920x1080&backdrop=night')).toEqual({
-      stage: true,
+    expect(readStageMode('?size=1920x1080&backdrop=night')).toMatchObject({
+      console: false,
       size: { width: 1920, height: 1080 },
       backdrop: 'night',
       muted: false,
     });
     expect(readStageMode('').backdrop).toBeNull();
+  });
+});
+
+/**
+ * A room put away while a document is behind the character, and brought back.
+ *
+ * The two occupy the same place in the frame, so one of them gives way — and
+ * what matters is that the one that gives way comes back *unchanged*. A room is
+ * geometry, textures, six renderer and scene settings and a light rig, and the
+ * failure mode of rebuilding it instead is neither a crash nor a wrong picture:
+ * it is a visible rebuild in the middle of a segment, or a setting that comes
+ * back a little different from the one that went away.
+ */
+function mountable() {
+  const scene = new THREE.Scene();
+  const flat = new THREE.Color(0x0f1115);
+  scene.background = flat;
+  // Enough of a renderer for what a backdrop reads and writes. A real one needs
+  // a GL context, which is the thing this suite exists in order not to need.
+  const renderer = {
+    toneMapping: THREE.NoToneMapping,
+    toneMappingExposure: 1,
+    shadowMap: { enabled: false, type: THREE.BasicShadowMap },
+  } as unknown as THREE.WebGLRenderer;
+  const lights = new THREE.Group();
+  scene.add(lights);
+  const backdrop = new BackdropStage(scene, renderer, [lights]);
+  return { scene, renderer, lights, backdrop };
+}
+
+type Mountable = ReturnType<typeof mountable>;
+
+/** Everything a room touches that is not its own. */
+const captured = (s: Mountable) => ({
+  fog: s.scene.fog,
+  background: s.scene.background,
+  environment: s.scene.environment,
+  environmentIntensity: s.scene.environmentIntensity,
+  toneMapping: s.renderer.toneMapping,
+  exposure: s.renderer.toneMappingExposure,
+  lightsVisible: s.lights.visible,
+  inScene: s.scene.children.length,
+});
+
+describe('putting the room away for a document', () => {
+  const room = PATTERNS[0].id;
+
+  it('leaves the scene exactly as clearing it would', () => {
+    const cleared = mountable();
+    cleared.backdrop.setBackdrop(room);
+    cleared.backdrop.clear();
+
+    const suspended = mountable();
+    suspended.backdrop.setBackdrop(room);
+    suspended.backdrop.suspend();
+
+    expect(captured(suspended)).toEqual(captured(cleared));
+  });
+
+  it('keeps the room, so it is the same one that comes back', () => {
+    const s = mountable();
+    s.backdrop.setBackdrop(room);
+    const mounted = captured(s);
+    const built = s.scene.children.find((child) => child.name !== '');
+
+    s.backdrop.suspend();
+    // Still standing, just not being shown — which is what lets the picker and
+    // the report keep saying which room this source is.
+    expect(s.backdrop.current).toBe(room);
+
+    s.backdrop.resume();
+    expect(captured(s)).toEqual(mounted);
+    // The same objects, not a second build of the same pattern.
+    expect(s.scene.children).toContain(built);
+  });
+
+  it('records a room asked for while it is away, and shows it on the way back', () => {
+    // Otherwise a `backdrop` command would silently do nothing for the length
+    // of a slide segment — which is the stretch during which the run after it
+    // is being set up.
+    const s = mountable();
+    const other = PATTERNS[1].id;
+    s.backdrop.suspend();
+    s.backdrop.setBackdrop(other);
+    expect(s.backdrop.current).toBe(other);
+    expect(captured(s).lightsVisible).toBe(true);
+
+    s.backdrop.resume();
+    expect(captured(s).lightsVisible).toBe(false);
+    expect(s.backdrop.current).toBe(other);
+  });
+
+  it('does nothing on a resume that was never suspended', () => {
+    const s = mountable();
+    s.backdrop.setBackdrop(room);
+    const mounted = captured(s);
+    s.backdrop.resume();
+    expect(captured(s)).toEqual(mounted);
+  });
+
+  it('gives the flat background back when nothing was standing', () => {
+    const s = mountable();
+    const bare = captured(s);
+    s.backdrop.suspend();
+    s.backdrop.resume();
+    expect(captured(s)).toEqual(bare);
   });
 });

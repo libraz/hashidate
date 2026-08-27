@@ -1,0 +1,305 @@
+/*
+ * A terminal, standing on the frame.
+ *
+ * The HUD next door is a panel: rounded, blurred, a slab of the console's own
+ * background laid over the render. This is deliberately not that. There is no
+ * panel at all — no fill, no border, no blur — because the thing underneath is
+ * the reason the page exists, and a readout that may be up during a broadcast
+ * has no business covering a rectangle of it. What is left is type: one dense
+ * block of fixed-width characters in the corner, standing on the picture.
+ *
+ * ## The legibility is in a keyline with no blur in it
+ *
+ * With nothing behind it the text has to survive both ends of what can be under
+ * it — a dark room, and a slide that is white to the edges. Near-white type on
+ * white needs an edge, and the edge is four black shadows a tenth of an em out,
+ * one per side, **every one of them at zero radius**.
+ *
+ * The absent blur is the whole point. A soft halo is the obvious answer and is
+ * the wrong one at this size: anything with a radius bleeds into the counters of
+ * a ten-pixel glyph and the row stops being type and turns into a smear. Four
+ * hard copies do not bleed anywhere — they lay a keyline around the letter and
+ * leave its shape exactly as the face drew it, which is why this reads as
+ * outlined rather than as blurred.
+ *
+ * ## Neon, and why it is defined here
+ *
+ * This is the only surface in the program drawn over arbitrary content rather
+ * than on the console's own background, and the token ramp is calibrated for
+ * `--bg` sitting behind it — its dim end is a grey that disappears on a white
+ * page. So the readout keeps the *shape* of that ramp and restates it hot: a
+ * saturated cyan doing the work `--accent` does elsewhere, a magenta for the
+ * handful of values an operator chose, and an ink ramp that starts near white.
+ * Hue carries the meaning at every level, so none of it depends on being able
+ * to tell two greys apart against something unknown.
+ *
+ * The measurement colours appear only on the readings that are faults — see
+ * `Tone` in `readout.ts`. `--live` is the token, unchanged, because ON AIR
+ * means the same thing here as it does everywhere else.
+ */
+
+/*
+ * The frame, only so that there is something to measure.
+ *
+ * `Telemetry.tsx` watches this and hands back its width over 1920, and every
+ * length below is stated in `em` off a font size scaled by it. That is what
+ * makes the readout the same fraction of the picture on the source going to air
+ * and in the panel's preview — in pixels they were the same rows over a third
+ * as much frame, and a monitor that composes differently from the thing it
+ * monitors is not a monitor.
+ */
+.frame {
+  position: absolute;
+  inset: 0;
+  /*
+   * Above both layers the runtime mounts into this host: the document sits at
+   * 0 and the WebGL canvas at 1, and the whole point of this readout is that a
+   * slide segment does not hide it. Stated rather than left to document order,
+   * because React's children are in the host before the runtime appends
+   * anything to it.
+   */
+  z-index: 2;
+  pointer-events: none;
+  user-select: none;
+}
+
+.shell {
+  position: absolute;
+  /*
+   * Packed into the top-right corner, close enough that the margin reads as the
+   * edge of the frame rather than as a gap it is floating in. A corner rather
+   * than the middle of a side because that is where a readout laid over a
+   * picture has the least chance of being over the subject of it, and the right
+   * one because a slide is written from the left: its title, its first bullet
+   * and its margin note are all on that side, and the top right is the part of
+   * a page that is usually empty.
+   */
+  right: 0.8em;
+  top: 0.8em;
+  /*
+   * Fixed, so nothing moves when a gesture with a longer name comes up. The
+   * gauges are the widest thing here and they are a constant eighteen cells —
+   * of the fallback face's advance, which is wider than this one's, so the
+   * figure allows for that rather than for the nominal cell.
+   */
+  width: 22em;
+  display: flex;
+  flex-direction: column;
+  /* The only thing separating the groups, now that there is nothing to draw a
+     rule on. Half a line — enough to read as a break, not enough to make the
+     block float apart into four things. */
+  gap: 0.6em;
+
+  --neon: #2ff0ff;
+  --neon-pick: #ff62ef;
+  --neon-track: #1f5e6c;
+  --neon-warn: #ffd24a;
+  --neon-bad: #ff5570;
+  --ink: #e8fbff;
+  --ink-dim: #b3c6cd;
+  --ink-faint: #85a1ab;
+
+  font-family: var(--font-mono);
+  /*
+   * Small and tight, and the one length everything else is measured in.
+   *
+   * The token is the size on a 1920-wide frame; `--scale` is what this frame is
+   * against that one. What makes the readout legible is the keyline rather than
+   * the size, so the size is free to be the one that takes the least of the
+   * picture — and a dense block of it reads as one instrument, where the same
+   * rows spread out read as text somebody left on the screen.
+   */
+  font-size: calc(var(--text-xs) * var(--scale, 1));
+  line-height: 1.35;
+  color: var(--ink);
+  /* Every figure here is compared against the one it was on the last sample. */
+  font-variant-numeric: tabular-nums;
+
+  /* In `em` like everything else: a keyline that stayed one device pixel while
+     the type halved would read as an outline drawn around a smaller word. */
+  text-shadow:
+    0.1em 0 0 #000,
+    -0.1em 0 0 #000,
+    0 0.1em 0 #000,
+    0 -0.1em 0 #000;
+}
+
+/* --- head ----------------------------------------------------------------- */
+
+.head {
+  display: flex;
+  flex-direction: column;
+}
+
+.source,
+.ident {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6em;
+}
+
+.host {
+  color: var(--neon);
+  letter-spacing: 0.1em;
+}
+
+.size,
+.channel {
+  color: var(--ink-faint);
+}
+
+.size,
+.fps {
+  margin-left: auto;
+}
+
+.avatar {
+  color: var(--ink);
+}
+
+/* --- gauges --------------------------------------------------------------- */
+
+.gauges {
+  display: grid;
+  /* The reading column is wide enough for a signed two-place figure and is
+     fixed there, so `+0.00` and `-0.08` end in the same place. */
+  grid-template-columns: 4.6em auto 3.4em;
+  gap: 0 0.6em;
+  align-items: baseline;
+}
+
+.bar {
+  /* A centred gauge at zero has an empty run between two full ones; collapsing
+     whitespace anywhere in here would move the reading column. */
+  white-space: pre;
+}
+
+.bracket {
+  color: var(--ink-faint);
+}
+
+/* Opaque rather than a transparency of the phosphor: a track mixed with
+   `transparent` takes the colour of whatever is under it, which on a white page
+   is the one place it has to stay visible. */
+.track {
+  color: var(--neon-track);
+}
+
+.fill {
+  color: var(--neon);
+}
+
+.reading {
+  text-align: right;
+}
+
+/* --- fields --------------------------------------------------------------- */
+
+.fields {
+  display: grid;
+  /* `minmax(0, …)` rather than `1fr`: a grid track's automatic minimum is its
+     content, so a long deck name would widen the readout instead of being
+     clipped by the rule below, and the width is fixed on purpose. */
+  grid-template-columns: 4.6em minmax(0, 1fr);
+  gap: 0 0.6em;
+}
+
+.row {
+  display: contents;
+}
+
+.key {
+  color: var(--ink-faint);
+}
+
+.value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- state ---------------------------------------------------------------- */
+
+.flags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.6em;
+}
+
+.flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  letter-spacing: 0.08em;
+}
+
+/*
+ * On air.
+ *
+ * `--live` is allowed here on the same terms it is on the HUD: it is the one
+ * signal that means the character is currently being watched saying something,
+ * and it is the only thing here that is not a measurement. The dark ring is the
+ * shadow the text gets, done the way a filled shape has to have it.
+ */
+.dot {
+  width: 0.5em;
+  height: 0.5em;
+  border-radius: 99px;
+  background: var(--live);
+  box-shadow: 0 0 0 0.1em rgb(0 0 0 / 0.7);
+}
+
+.cursor {
+  margin-left: auto;
+  color: var(--neon);
+  animation: cursor 1.06s steps(1) infinite;
+}
+
+@keyframes cursor {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0.08;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cursor {
+    animation: none;
+  }
+}
+
+/* --- tones ---------------------------------------------------------------- */
+
+.ink {
+  color: var(--ink);
+}
+
+.dim {
+  color: var(--ink-dim);
+}
+
+.faint {
+  color: var(--ink-faint);
+}
+
+/* What the operator chose, as against what the simulation is doing. */
+.accent {
+  color: var(--neon-pick);
+}
+
+.warn {
+  color: var(--neon-warn);
+}
+
+.bad {
+  color: var(--neon-bad);
+}
+
+.live {
+  color: var(--live);
+}

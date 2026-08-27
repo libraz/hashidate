@@ -4,20 +4,31 @@
   min-height: 0;
 }
 
+/*
+ * `overflow: hidden` because the render deliberately hangs off the edge.
+ *
+ * A character pulled to the right of the frame is put there by *its own*
+ * silhouette, not by the edge of the picture it is drawn in — see `hugContent`
+ * — so the empty side of that picture ends up outside the frame. Clipped here,
+ * which is what an overlay hanging off the side of a shot looks like anyway.
+ */
 .stage {
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
   background: var(--bg);
 }
 
 /*
- * Stage mode: what OBS opens.
+ * The default: what OBS opens, and what this page is unless `?console=1`.
  *
  * The cursor is hidden because a browser source keeps whatever the pointer was
  * doing when the page loaded, and a stray arrow parked on the character is the
- * kind of thing nobody notices until it is in the recording. Orbit controls are
- * still live — the pointer works, it is only invisible.
+ * kind of thing nobody notices until it is in the recording. The camera cannot
+ * be dragged here either — see `AvatarRuntime`, where the orbit controls are
+ * switched off on a page with no console. A shot nudged by a stray drag on the
+ * output would be a shot the panel no longer agrees with.
  *
  * `overflow: hidden` matters when a fixed `?size=` is larger than the window:
  * the render stays at its configured size and the window clips it, rather than
@@ -26,6 +37,12 @@
 .staged {
   cursor: none;
   overflow: hidden;
+}
+
+/* The other opaque layer under the canvas. See the rule on `body` in
+   global.css, which this is the second half of. */
+:global(html[data-transparent]) .stage {
+  background: transparent;
 }
 
 .stage canvas {

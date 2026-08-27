@@ -1,5 +1,8 @@
 import type { Session } from '@/engine/session';
 import type { Vocabulary } from '@/engine/types';
+import { getLocale, type Localized, pick } from '@/i18n/locale';
+import type { MessageKey } from '@/i18n/messages';
+import { type Params, translate } from '@/i18n/translate';
 
 /**
  * The self-test: everything this avatar can do, performed once, unattended.
@@ -63,6 +66,10 @@ const STEP_TIMEOUT = 12;
  */
 export function buildDemo(vocabulary: Vocabulary): Step[] {
   const steps: Step[] = [];
+  // The walk is watched on this page, so the labels it prints are resolved
+  // against this page's locale rather than carried as pairs into a step.
+  const name = (text: Localized): string => pick(text, getLocale());
+  const say = (key: MessageKey, params?: Params): string => translate(key, getLocale(), params);
 
   const pose = (label: string, run: (s: Session) => void): void => {
     steps.push({ label, hold: POSE_HOLD, run });
@@ -73,44 +80,56 @@ export function buildDemo(vocabulary: Vocabulary): Step[] {
 
   // --- the shot -------------------------------------------------------------
   for (const frame of vocabulary.cameras) {
-    pose(`カメラ ${frame}`, (s) => s.setCamera(frame));
+    pose(say('console.demo.step.camera', { name: frame }), (s) => s.setCamera({ frame }));
   }
-  pose('カメラを戻す', (s) => s.setCamera('bust'));
+  pose(say('console.demo.step.cameraBack'), (s) => s.setCamera({ frame: 'bust' }));
 
   // --- the face -------------------------------------------------------------
   // The emotion vector before the drawn expressions, because the drawn ones sit
   // on top of it: a mask that never lifts is only visible against a face that
   // was doing something underneath.
   for (const emotion of vocabulary.emotions) {
-    pose(`感情 ${emotion.label}`, (s) => s.setEmotion({ [emotion.id]: 1 }));
+    pose(say('console.demo.step.emotion', { name: name(emotion.label) }), (s) =>
+      s.setEmotion({ [emotion.id]: 1 }),
+    );
   }
-  pose('感情を戻す', (s) => s.setEmotion({ neutral: 1 }));
+  pose(say('console.demo.step.emotionBack'), (s) => s.setEmotion({ neutral: 1 }));
 
   for (const expression of vocabulary.expressions) {
-    pose(`表情 ${expression.label}`, (s) => s.setExpression(expression.id));
+    pose(say('console.demo.step.expression', { name: name(expression.label) }), (s) =>
+      s.setExpression(expression.id),
+    );
   }
-  pose('表情を解除', (s) => s.resetExpression());
+  pose(say('console.demo.step.expressionOff'), (s) => s.resetExpression());
 
   for (const overlay of vocabulary.overlays) {
-    pose(`効果 ${overlay.label}`, (s) => s.setOverlay(overlay.id, 1));
-    pose(`効果 ${overlay.label} を下げる`, (s) => s.setOverlay(overlay.id, 0));
+    pose(say('console.demo.step.overlay', { name: name(overlay.label) }), (s) =>
+      s.setOverlay(overlay.id, 1),
+    );
+    pose(say('console.demo.step.overlayDown', { name: name(overlay.label) }), (s) =>
+      s.setOverlay(overlay.id, 0),
+    );
   }
 
   // --- the body -------------------------------------------------------------
   // Performances first and in full, since they are the command an orchestrator
   // should be reaching for and each one is a face and a movement together.
   for (const performance of vocabulary.performances) {
-    pose(`演技 ${performance.label}`, (s) => s.perform(performance.id));
+    pose(say('console.demo.step.performance', { name: name(performance.label) }), (s) =>
+      s.perform(performance.id),
+    );
   }
-  pose('演技を解除', (s) => s.perform(null));
+  pose(say('console.demo.step.performanceOff'), (s) => s.perform(null));
 
   for (const gesture of vocabulary.gestures) {
-    pose(`動作 ${gesture.label}`, (s) => s.gesture(gesture.id));
+    pose(say('console.demo.step.gesture', { name: name(gesture.label) }), (s) =>
+      s.gesture(gesture.id),
+    );
   }
-  pose('動作を停止', (s) => s.stopGesture());
+  pose(say('console.demo.step.gestureStop'), (s) => s.stopGesture());
 
   for (const hop of vocabulary.hops) {
-    pose(`跳躍 ${hop.label}`, (s) => s.hop(hop.id));
+    pose(say('console.demo.step.hop', { name: name(hop.label) }), (s) => s.hop(hop.id));
   }
 
   // Pointing is continuous, so it is swept rather than enumerated: the failure
@@ -119,26 +138,28 @@ export function buildDemo(vocabulary: Vocabulary): Step[] {
   for (const side of vocabulary.pointing.side) {
     for (const azimuth of [-90, -45, 0, 45, 90]) {
       steps.push({
-        label: `指差し ${side} ${azimuth}°`,
+        label: say('console.demo.step.point', { side, azimuth }),
         hold: 0.45,
         run: (s) => s.point({ side, azimuth, elevation: 10, extent: 0.85 }),
       });
     }
   }
-  pose('腕を下ろす', (s) => s.stopGesture());
+  pose(say('console.demo.step.armsDown'), (s) => s.stopGesture());
 
   // --- the voice ------------------------------------------------------------
   // One line per room, and the same line, so the rooms can be told apart. This
   // is silent on a machine with no sidecar and still exercises the mouth, which
   // is the part that has to work either way.
-  line('台詞', (s) => s.say({ text: 'こんばんは。動作確認をしています。' }));
-  line('読み付きの台詞', (s) => s.say({ text: '三件あります。', reading: 'さんけんあります' }));
+  line(say('console.demo.step.line'), (s) => s.say({ text: 'こんばんは。動作確認をしています。' }));
+  line(say('console.demo.step.lineWithReading'), (s) =>
+    s.say({ text: '三件あります。', reading: 'さんけんあります' }),
+  );
 
   const cueable = vocabulary.performances.slice(0, 2).map((p) => p.id);
   if (cueable.length === 2) {
     // The one thing no other step covers: a performance change landing partway
     // through a line, on the mouth's own clock.
-    line('行中のキュー', (s) =>
+    line(say('console.demo.step.cueInLine'), (s) =>
       s.say({
         text: `[${cueable[0]}]まずこう言って、[${cueable[1]}]途中で表情が変わります。`,
       }),
@@ -146,27 +167,29 @@ export function buildDemo(vocabulary: Vocabulary): Step[] {
   }
 
   for (const room of vocabulary.rooms) {
-    line(`部屋 ${room.label}`, (s) => {
+    line(say('console.demo.step.room', { name: name(room.label) }), (s) => {
       s.setRoom(room.id);
       s.say({ text: 'この部屋の響きです。' });
     });
   }
-  if (vocabulary.rooms.length) pose('部屋をドライに', (s) => s.setRoom(null));
+  if (vocabulary.rooms.length) pose(say('console.demo.step.roomDry'), (s) => s.setRoom(null));
 
   // --- the wardrobe ---------------------------------------------------------
   // Last: it swaps meshes, and a failure here leaves the character missing a
   // garment for everything that follows.
   for (const preset of vocabulary.wardrobePresets) {
-    pose(`衣装 ${preset.label}`, (s) => s.wear({ preset: preset.id }));
+    pose(say('console.demo.step.outfit', { name: name(preset.label) }), (s) =>
+      s.wear({ preset: preset.id }),
+    );
   }
 
   steps.push({
-    label: 'おわり',
+    label: say('console.demo.step.end'),
     hold: 0,
     run: (s) => {
       s.perform(null);
       s.resetExpression();
-      s.setCamera('bust');
+      s.setCamera({ frame: 'bust' });
     },
   });
 

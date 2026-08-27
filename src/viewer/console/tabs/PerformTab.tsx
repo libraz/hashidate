@@ -15,6 +15,7 @@ import type {
   SessionState,
   Side,
 } from '@/engine/types';
+import { type MessageKey, useT } from '@/i18n';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { Field } from '@/ui/Field';
 import { Section } from '@/ui/Section';
@@ -22,21 +23,21 @@ import { Segmented } from '@/ui/Segmented';
 import { Slider } from '@/ui/Slider';
 import type { LoadedAvatar } from '../../scene/runtime';
 
-/** Every emotion but neutral — neutral is what "解除" means, not a thing to pick. */
+/** Every emotion but neutral — neutral is what "解除" (release) means, not a thing to pick. */
 const MOODS = (Object.keys(EMOTIONS) as EmotionName[]).filter((n) => n !== 'neutral');
 
-const FINGERS: Array<{ value: FingerName; label: string }> = [
-  { value: 'thumb', label: '親' },
-  { value: 'index', label: '人差' },
-  { value: 'middle', label: '中' },
-  { value: 'ring', label: '薬' },
-  { value: 'little', label: '小' },
-];
+const FINGERS = [
+  { value: 'thumb', message: 'console.perform.finger.thumb' },
+  { value: 'index', message: 'console.perform.finger.index' },
+  { value: 'middle', message: 'console.perform.finger.middle' },
+  { value: 'ring', message: 'console.perform.finger.ring' },
+  { value: 'little', message: 'console.perform.finger.little' },
+] as const satisfies ReadonlyArray<{ value: FingerName; message: MessageKey }>;
 
-const SIDES: Array<{ value: Side; label: string }> = [
-  { value: 'R', label: '右手' },
-  { value: 'L', label: '左手' },
-];
+const SIDES = [
+  { value: 'R', message: 'console.perform.side.right' },
+  { value: 'L', message: 'console.perform.side.left' },
+] as const satisfies ReadonlyArray<{ value: Side; message: MessageKey }>;
 
 interface Props {
   loaded: LoadedAvatar;
@@ -45,6 +46,7 @@ interface Props {
 }
 
 export function PerformTab({ loaded, state, onCamera }: Props) {
+  const { t, tx } = useT();
   const { director, session, avatar, profile } = loaded;
   const [mixing, setMixing] = useState(false);
   const [side, setSide] = useState<Side>('R');
@@ -56,7 +58,7 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
   const emotion: EmotionVector = state?.emotion ?? {};
 
   /**
-   * What every 解除 in this tab does, including the one under the presets.
+   * What every 解除 (release) in this tab does, including the one under the presets.
    *
    * Not `perform(null)`, which is the *turn's* release and puts back only what a
    * performance is holding — a pose, closed lids, a dropped gaze. Three quarters
@@ -87,27 +89,27 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
     });
 
   const composition = profile.arkit.supported
-    ? 'ARKit 52 合成'
+    ? t('console.perform.channel.arkit')
     : avatar.emotionShapes
-      ? 'モデル固有シェイプ合成'
-      : 'VRM プリセット';
+      ? t('console.perform.channel.custom')
+      : t('console.perform.channel.vrm');
 
   const strain = state?.strain?.[side] ?? 0;
 
   return (
     <>
       <Section
-        title="プリセット"
+        title={t('console.perform.presets')}
         meta={state?.performance ?? ''}
         note={[
-          '表情とモーションをひと組にしたもの。ここから下の「感情」「ジェスチャ」はその部品で、プリセットに名前のない組み合わせを作るときに使う。',
-          '台詞に添えたプリセットは行の終わりで自分から抜けるが、気分だけは残る — 気分は台詞と一緒には終わらない。ここの「解除」はそれとは別で、気分も重ねた効果も含めて素の顔に戻す。',
-          '* 印は自分では終わらないもの。姿勢・伏し目・視線は、次のプリセットを押すか解除するまで保持する。',
-          '自動モードもこの表から選ぶので、パネルで押せるものと自動で出るものは同じ語彙になる。',
+          t('console.perform.presets.note.parts'),
+          t('console.perform.presets.note.line'),
+          t('console.perform.presets.note.held'),
+          t('console.perform.presets.note.auto'),
         ]}
       >
         {PERFORMANCES_BY_GROUP.map((g) => (
-          <Field key={g.key} label={PERFORMANCE_GROUPS[g.key] ?? g.label}>
+          <Field key={g.key} label={tx(PERFORMANCE_GROUPS[g.key] ?? g.label)}>
             <ChipRow>
               {g.ids.map((id) => {
                 const def = PERFORMANCE_TABLE[id];
@@ -115,8 +117,11 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
                 return (
                   <Chip
                     key={id}
-                    label={held ? `${def.label} *` : def.label}
-                    title={`${id}  ${[def.gesture, def.hop].filter(Boolean).join(' + ') || '表情のみ'}`}
+                    label={held ? `${tx(def.label)} *` : tx(def.label)}
+                    title={`${id}  ${
+                      [def.gesture, def.hop].filter(Boolean).join(' + ') ||
+                      t('console.perform.faceOnly')
+                    }`}
                     state={state?.performance === id ? 'on' : 'off'}
                     onClick={() => (state?.performance === id ? rest() : session.perform(id))}
                   />
@@ -126,40 +131,44 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
           </Field>
         ))}
         <ChipRow>
-          <Chip label="解除" variant="action" onClick={rest} />
+          <Chip label={t('console.release')} variant="action" onClick={rest} />
         </ChipRow>
       </Section>
 
       <Section
-        title="感情"
+        title={t('console.perform.emotion')}
         meta={composition}
         note={[
-          '感情は連続値で、複数を混ぜると中間表情になる。チップは単独指定、スライダーは配合。',
+          t('console.perform.emotion.note.mix'),
           profile.arkit.supported
-            ? '筋肉レベルのシェイプを加算しているので、感情どうしが同じ頂点を奪い合わない。'
+            ? t('console.perform.emotion.note.arkit')
             : avatar.emotionShapes
-              ? 'このモデルは ARKit 非対応。同じ感情語彙を、モデル自身のシェイプ名で書いた対応表から合成している。部品単位のシェイプなので合成の性質は変わらない。'
-              : 'このモデルは ARKit 非対応で、固有の対応表も未作成。優勢な感情ひとつを VRM プリセットに流すだけの縮退動作になっている。',
+              ? t('console.perform.emotion.note.custom')
+              : t('console.perform.emotion.note.vrm'),
         ]}
       >
         <ChipRow>
           {MOODS.map((name) => (
             <Chip
               key={name}
-              label={EMOTION_LABELS[name] ?? name}
+              label={tx(EMOTION_LABELS[name])}
               title={name}
               state={(emotion[name] ?? 0) > 0.5 ? 'auto' : 'off'}
               onClick={() => setMood(name)}
             />
           ))}
-          <Chip label="解除" variant="action" onClick={rest} />
-          <Chip label="配合" state={mixing ? 'on' : 'off'} onClick={() => setMixing((v) => !v)} />
+          <Chip label={t('console.release')} variant="action" onClick={rest} />
+          <Chip
+            label={t('console.perform.emotion.blend')}
+            state={mixing ? 'on' : 'off'}
+            onClick={() => setMixing((v) => !v)}
+          />
         </ChipRow>
         {mixing
           ? MOODS.map((name) => (
               <Slider
                 key={name}
-                label={`${EMOTION_LABELS[name] ?? name}  ${name}`}
+                label={`${tx(EMOTION_LABELS[name])}  ${name}`}
                 value={emotion[name] ?? 0}
                 onChange={(v) => mix(name, v)}
               />
@@ -169,18 +178,18 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
 
       {director.presets.length ? (
         <Section
-          title="描き起こし表情"
+          title={t('console.perform.expressions')}
           meta={`${director.presets.length}`}
           note={[
-            'モデル同梱の完成形の表情。ARKit 合成では作れない目や口の形が含まれるため、合成とは別系統として持つ。選択中は合成側が比例して引く。',
-            '塗りつぶしが操作者の選択、枠線だけのものは感情または自動モードが選んだもの。後者は解除できない — 選んでいないものは外せない。',
+            t('console.perform.expressions.note.source'),
+            t('console.perform.expressions.note.state'),
           ]}
         >
           <ChipRow>
             {director.presets.map((p) => (
               <Chip
                 key={p.id}
-                label={p.label}
+                label={tx(p.label)}
                 title={p.id}
                 state={
                   state?.pickedExpression === p.id
@@ -194,51 +203,49 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
                 }
               />
             ))}
-            <Chip label="解除" variant="action" onClick={rest} />
+            <Chip label={t('console.release')} variant="action" onClick={rest} />
           </ChipRow>
         </Section>
       ) : null}
 
       {director.overlays.length ? (
         <Section
-          title="重ねる効果"
+          title={t('console.perform.overlays')}
           meta={`${director.overlays.length}`}
-          note={[
-            'ハート目・ぐるぐる目・頬染め・涙といった、合成では作れない描き起こし。表情を置き換えるのではなく上に重なるため、複数を同時に出せる。',
-          ]}
+          note={[t('console.perform.overlays.note')]}
         >
           <ChipRow>
             {director.overlays.map((o) => (
               <Chip
                 key={o.id}
-                label={o.label}
+                label={tx(o.label)}
                 title={o.id}
                 state={(state?.overlays?.[o.id] ?? 0) > 0 ? 'on' : 'off'}
                 onClick={() => session.setOverlay(o.id, (state?.overlays?.[o.id] ?? 0) > 0 ? 0 : 1)}
               />
             ))}
-            <Chip label="全解除" variant="action" onClick={rest} />
+            <Chip label={t('console.releaseAll')} variant="action" onClick={rest} />
           </ChipRow>
         </Section>
       ) : null}
 
       <Section
-        title="ジェスチャ"
+        title={t('console.perform.gestures')}
         meta={state?.gesture ?? ''}
         note={[
-          '表情を伴わない、体だけの語彙。ふだんはプリセット側から呼ばれる。',
-          '再生ごとに速さ・振幅・左右が変わる。切り替えは前の動作をクロスフェードで送る。',
-          'ポーズ群は解除するまで保持する。それ以外は自分で終わる。',
-          '跳躍は骨格全体を動かすので、腕のジェスチャと同時に走る。',
+          t('console.perform.gestures.note.body'),
+          t('console.perform.gestures.note.variation'),
+          t('console.perform.gestures.note.hold'),
+          t('console.perform.gestures.note.hop'),
         ]}
       >
         {GESTURES_BY_GROUP.map((g) => (
-          <Field key={g.key} label={GESTURE_GROUPS[g.key] ?? g.label}>
+          <Field key={g.key} label={tx(GESTURE_GROUPS[g.key] ?? g.label)}>
             <ChipRow>
               {g.ids.map((id) => (
                 <Chip
                   key={id}
-                  label={GESTURES[id].label}
+                  label={tx(GESTURES[id].label)}
                   title={id}
                   state={state?.gesture === id ? 'auto' : 'off'}
                   onClick={() => session.gesture(id)}
@@ -247,30 +254,32 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
             </ChipRow>
           </Field>
         ))}
-        <Field label="跳躍">
+        <Field label={t('console.perform.hops')}>
           <ChipRow>
             {HOP_IDS.map((id) => (
-              <Chip key={id} label={HOPS[id].label} title={id} onClick={() => session.hop(id)} />
+              <Chip
+                key={id}
+                label={tx(HOPS[id].label)}
+                title={id}
+                onClick={() => session.hop(id)}
+              />
             ))}
           </ChipRow>
         </Field>
         <ChipRow>
-          <Chip label="停止" variant="action" onClick={() => session.stopGesture()} />
+          <Chip label={t('console.stop')} variant="action" onClick={() => session.stopGesture()} />
         </ChipRow>
       </Section>
 
       <Section
-        title="指さし"
-        meta={strain > 0 ? `負担 ${strain.toFixed(2)}` : ''}
-        note={[
-          '指先の方位・仰角・伸ばしを与えると、肩・肘・手首を逆算する。肘は肩と手首を結ぶ線のまわりを一周できてしまうため、可動域の負担が最小になる位置を探索して決める。',
-          '正面から大きく外れた方位では体幹も一緒に向きを変える。可動域を超える指示は失敗せず、届く範囲まで伸ばして止まる — どれだけ無理をしたかは「診る」の関節表に出る。',
-        ]}
+        title={t('console.perform.point')}
+        meta={strain > 0 ? t('console.perform.strain', { value: strain.toFixed(2) }) : ''}
+        note={[t('console.perform.point.note.solve'), t('console.perform.point.note.limits')]}
       >
-        <Field label="手">
+        <Field label={t('console.perform.point.hand')}>
           <Segmented
-            ariaLabel="どちらの手"
-            options={SIDES}
+            ariaLabel={t('console.perform.point.hand.aria')}
+            options={SIDES.map((s) => ({ value: s.value, label: t(s.message) }))}
             value={side}
             onChange={(v) => {
               setSide(v);
@@ -278,10 +287,10 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
             }}
           />
         </Field>
-        <Field label="指">
+        <Field label={t('console.perform.point.finger')}>
           <Segmented
-            ariaLabel="どの指"
-            options={FINGERS}
+            ariaLabel={t('console.perform.point.finger.aria')}
+            options={FINGERS.map((f) => ({ value: f.value, label: t(f.message) }))}
             value={finger}
             onChange={(v) => {
               setFinger(v);
@@ -290,7 +299,7 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
           />
         </Field>
         <Slider
-          label="方位  azimuth"
+          label={t('console.perform.point.azimuth')}
           value={azimuth}
           min={-120}
           max={120}
@@ -300,7 +309,7 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
           onChange={setAzimuth}
         />
         <Slider
-          label="仰角  elevation"
+          label={t('console.perform.point.elevation')}
           value={elevation}
           min={-70}
           max={110}
@@ -309,23 +318,35 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
           unit="°"
           onChange={setElevation}
         />
-        <Slider label="伸ばし  extent" value={extent} min={0.2} max={1} onChange={setExtent} />
+        <Slider
+          label={t('console.perform.point.extent')}
+          value={extent}
+          min={0.2}
+          max={1}
+          onChange={setExtent}
+        />
         <ChipRow>
-          <Chip label="指す" variant="primary" onClick={() => aim()} />
-          <Chip label="解除" variant="action" onClick={() => session.stopGesture()} />
+          <Chip label={t('console.perform.point.aim')} variant="primary" onClick={() => aim()} />
+          <Chip
+            label={t('console.release')}
+            variant="action"
+            onClick={() => session.stopGesture()}
+          />
         </ChipRow>
       </Section>
 
       <Section
-        title="デモ台本"
-        meta={avatar.script?.length ? `${avatar.script.length} ターン` : 'なし'}
-        note={[
-          '台本を 1 行 1 ターンとしてキューに積む。時刻指定はない — 各ターンは前の口パクが終わってから始まる。外部制御 API が受け取るのもこの形。',
-        ]}
+        title={t('console.perform.script')}
+        meta={
+          avatar.script?.length
+            ? t('console.perform.script.turns', { count: avatar.script.length })
+            : t('console.none')
+        }
+        note={[t('console.perform.script.note')]}
       >
         <ChipRow>
           <Chip
-            label="台本を再生"
+            label={t('console.perform.script.play')}
             variant="primary"
             disabled={!avatar.script?.length}
             onClick={() => {
@@ -334,7 +355,7 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
               for (const step of avatar.script ?? []) session.say(step);
             }}
           />
-          <Chip label="停止" variant="action" onClick={() => session.interrupt()} />
+          <Chip label={t('console.stop')} variant="action" onClick={() => session.interrupt()} />
         </ChipRow>
       </Section>
     </>

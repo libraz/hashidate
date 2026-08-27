@@ -2,6 +2,7 @@ import { type Dispatch, type SetStateAction, useRef, useState } from 'react';
 import { HOP_IDS, HOPS } from '@/engine/motion';
 import { TUNING_RANGES as R } from '@/engine/tuning';
 import type { GazeLimits } from '@/engine/types';
+import { useT } from '@/i18n';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { Section } from '@/ui/Section';
 import { Slider } from '@/ui/Slider';
@@ -30,6 +31,7 @@ export function TuneTab({
   loaded: LoadedAvatar;
   runtime: AvatarRuntime | null;
 }) {
+  const { t, tx } = useT();
   const { director, profile } = loaded;
   const { body, spring, tail } = director;
 
@@ -81,14 +83,11 @@ export function TuneTab({
   return (
     <>
       <Section
-        title="アイドル"
-        note={[
-          '呼吸と重心移動はジェスチャ中も止まらない。手を上げた瞬間に呼吸が止まる character は人形に見える。',
-          'まばたきは視線移動に引き寄せられる。目の可動域は白目が出ない範囲に絞ってあり、限界へは漸近するだけで到達しない — 向きを変えるのはほぼ頭の仕事になる。',
-        ]}
+        title={t('console.tune.idle')}
+        note={[t('console.tune.idle.note.breath'), t('console.tune.idle.note.blink')]}
       >
         <Slider
-          label="呼吸の深さ"
+          label={t('console.tune.breathDepth')}
           value={breathDepth}
           {...R.idle.breathDepth}
           onChange={set(setBreathDepth, (v) => {
@@ -96,7 +95,7 @@ export function TuneTab({
           })}
         />
         <Slider
-          label="呼吸の周期"
+          label={t('console.tune.breathPeriod')}
           value={breathPeriod}
           {...R.idle.breathPeriod}
           onChange={set(setBreathPeriod, (v) => {
@@ -104,7 +103,7 @@ export function TuneTab({
           })}
         />
         <Slider
-          label="頭のマイクロムーブ"
+          label={t('console.tune.headMicro')}
           value={idleAmount}
           {...R.idle.idleAmount}
           onChange={set(setIdleAmount, (v) => {
@@ -112,7 +111,7 @@ export function TuneTab({
           })}
         />
         <Slider
-          label="重心移動"
+          label={t('console.tune.weightShift')}
           value={weightShift}
           {...R.idle.weightShift}
           onChange={set(setWeightShift, (v) => {
@@ -120,14 +119,14 @@ export function TuneTab({
           })}
         />
         <Slider
-          label="カメラ目線"
+          label={t('console.tune.lookAt')}
           value={lookAt}
           onChange={set(setLookAt, (v) => {
             body.lookAt = v;
           })}
         />
         <Slider
-          label="視線のゆらぎ"
+          label={t('console.tune.gazeDrift')}
           value={gazeAmount}
           {...R.idle.gazeAmount}
           onChange={set(setGazeAmount, (v) => {
@@ -135,7 +134,7 @@ export function TuneTab({
           })}
         />
         <Slider
-          label="目の可動限界"
+          label={t('console.tune.eyeLimit')}
           value={eyeLimit}
           {...R.idle.eyeLimit}
           onChange={set(setEyeLimit, (v) => {
@@ -144,7 +143,7 @@ export function TuneTab({
           })}
         />
         <Toggle
-          label="自動まばたき"
+          label={t('console.tune.blink')}
           checked={blinkEnabled}
           onChange={set(setBlinkEnabled, (v) => {
             director.blinkEnabled = v;
@@ -154,25 +153,30 @@ export function TuneTab({
 
       {spring.active ? (
         <Section
-          title="揺れもの"
-          meta={`${spring.groups.length}系統 ${spring.count}ジョイント`}
+          title={t('console.tune.sway')}
+          meta={t('console.tune.sway.meta', {
+            groups: spring.groups.length,
+            joints: spring.count,
+          })}
           note={[
-            '髪・衣装・リボンなど、駆動されず親に遅れて揺れるだけのボーン。1/60 秒固定ステップで解いているので、フレームレートが変わっても揺れ幅は変わらない。',
-            `倍率のスライダーはモデルに書かれた値に対するもの。系統: ${spring.groups
-              .map((g) => `${g.label} ${g.joints.length}`)
-              .join('・')}`,
-            ...(spring.missing.length ? [`未解決: ${spring.missing.join(' / ')}`] : []),
+            t('console.tune.sway.note.solver'),
+            t('console.tune.sway.note.scale', {
+              chains: spring.groups.map((g) => `${tx(g.label)} ${g.joints.length}`).join(' · '),
+            }),
+            ...(spring.missing.length
+              ? [t('console.tune.sway.note.missing', { names: spring.missing.join(' / ') })]
+              : []),
           ]}
         >
           <Toggle
-            label="揺れを有効にする"
+            label={t('console.tune.sway.enabled')}
             checked={swayEnabled}
             onChange={set(setSwayEnabled, (v) => {
               spring.enabled = v;
             })}
           />
           <Slider
-            label="硬さ"
+            label={t('console.tune.sway.stiffness')}
             value={stiffness}
             {...R.sway.stiffness}
             onChange={set(setStiffness, (v) => {
@@ -180,7 +184,7 @@ export function TuneTab({
             })}
           />
           <Slider
-            label="揺れの持続"
+            label={t('console.tune.sway.inertia')}
             value={inertia}
             {...R.sway.inertia}
             onChange={set(setInertia, (v) => {
@@ -188,7 +192,7 @@ export function TuneTab({
             })}
           />
           <Slider
-            label="重力"
+            label={t('console.tune.sway.gravity')}
             value={swayGravity}
             {...R.sway.gravity}
             onChange={set(setSwayGravity, (v) => {
@@ -196,22 +200,26 @@ export function TuneTab({
             })}
           />
           <ChipRow>
-            <Chip label="静止させる" variant="action" onClick={() => spring.reset()} />
+            <Chip
+              label={t('console.tune.sway.settle')}
+              variant="action"
+              onClick={() => spring.reset()}
+            />
           </ChipRow>
         </Section>
       ) : null}
 
       <Section
-        title="跳躍"
+        title={t('console.tune.hop')}
         note={[
-          '揺れものが正しく調整されているかを見るための機能。呼吸は胸を数ミリ動かすだけで、チェーンが生きているかは分かっても、よく調整されているかは分からない。着地の一瞬がそれを決める。',
-          '高さと重力だけで弧が決まる（v₀=√(2gh)、滞空=2v₀/g）。質量は自由飛行では打ち消し合うので要らない。重力を下げると同じ高さのまま頂点で浮く。',
-          '連続で跳ぶときは着地の沈み込みがそのまま次の踏み切りの沈み込みになる — どちらも「沈みきって静止」で終わるので、速度が途切れない。間隔という設定値がないのはそのため。',
-          '脚はリグに含まれないので、沈み込みで足が床に潜り滞空中は浮く。バストアップか上半身の画角で見ること。',
+          t('console.tune.hop.note.why'),
+          t('console.tune.hop.note.arc'),
+          t('console.tune.hop.note.repeat'),
+          t('console.tune.hop.note.legs'),
         ]}
       >
         <Slider
-          label="跳ぶ高さ"
+          label={t('console.tune.hop.height')}
           value={jumpHeight}
           min={R.hop.height.min * 100}
           max={R.hop.height.max * 100}
@@ -223,7 +231,7 @@ export function TuneTab({
           })}
         />
         <Slider
-          label="重力"
+          label={t('console.tune.hop.gravity')}
           value={gravity}
           {...R.hop.gravity}
           onChange={set(setGravity, (v) => {
@@ -232,27 +240,24 @@ export function TuneTab({
         />
         <ChipRow>
           {HOP_IDS.map((id) => (
-            <Chip key={id} label={HOPS[id].label} title={id} onClick={() => director.hop(id)} />
+            <Chip key={id} label={tx(HOPS[id].label)} title={id} onClick={() => director.hop(id)} />
           ))}
           <Chip
-            label="この高さで"
+            label={t('console.tune.hop.once')}
             variant="primary"
             onClick={() => director.body.hop()}
-            title="上のスライダーの高さで 1 回"
+            title={t('console.tune.hop.once.title')}
           />
         </ChipRow>
       </Section>
 
       {tail.active ? (
         <Section
-          title="尻尾"
-          note={[
-            '尻尾は腰にぶら下がっているだけなので、揺れもの層に任せると入力がなく止まって見える。感情ベクトルから振りの速さ・幅・高さを決めて根元を能動的に振り、その先は揺れもの層が遅れて追う。',
-            '喜びは速く広く、悲しみは下がってほぼ止まり、驚きは振らずに立つ。',
-          ]}
+          title={t('console.tune.tail')}
+          note={[t('console.tune.tail.note.drive'), t('console.tune.tail.note.mood')]}
         >
           <Slider
-            label="振りの大きさ"
+            label={t('console.tune.tail.amount')}
             value={tailAmount}
             {...R.tail.amount}
             onChange={set(setTailAmount, (v) => {
@@ -263,18 +268,14 @@ export function TuneTab({
       ) : null}
 
       <Section
-        title="描画"
+        title={t('console.tune.render')}
         note={[
-          'トゥーンを切ると、GLB が持ってきたマテリアルそのままになる。両面描画とアルファの扱いはどちらの経路でも同じ規則で直している。',
-          ...(profile.arkit.supported
-            ? [
-                'ARKit 合成を切ると VRM プリセットに落ちる。プリセットは顔全体の彫刻なので同時にひとつしか出せず、混ぜると崩れる — 縮退動作がどう見えるかの確認用。',
-              ]
-            : []),
+          t('console.tune.render.note.toon'),
+          ...(profile.arkit.supported ? [t('console.tune.render.note.arkit')] : []),
         ]}
       >
         <Toggle
-          label="トゥーン表示"
+          label={t('console.tune.toon')}
           checked={toon}
           onChange={set(setToon, (v) => runtime?.setToon(v))}
         />
@@ -283,7 +284,7 @@ export function TuneTab({
             a bug. */}
         {profile.arkit.supported ? (
           <Toggle
-            label="表情を ARKit 合成で駆動"
+            label={t('console.tune.arkit')}
             checked={useArkit}
             onChange={set(setUseArkit, (v) => {
               director.useArkit = v;

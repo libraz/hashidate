@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AVATARS, getAvatar } from '@/avatars';
+import { useT } from '@/i18n';
 import styles from './App.module.css';
 import { initialAvatar, rememberAvatar } from './avatar-selection';
 import { Console } from './console/Console';
@@ -7,6 +8,7 @@ import { ControlClient, type ControlStatus, type RendererControls } from './cont
 import { onMonitorMute } from './monitor-link';
 import { Hud } from './scene/Hud';
 import { AvatarRuntime, type RuntimeStatus } from './scene/runtime';
+import { Telemetry } from './scene/Telemetry';
 import { stageMode } from './stage-mode';
 
 /**
@@ -19,13 +21,42 @@ import { stageMode } from './stage-mode';
  */
 const MODE = stageMode();
 
+/**
+ * The key that brings the telemetry up and takes it down.
+ *
+ * Backquote, on the convention every game console in thirty years has used, and
+ * because it is the one key on a keyboard that is never part of anything typed
+ * into this page. Matched on `key` rather than `code`, so a layout that puts it
+ * behind a modifier — JIS, where it is shift and `@` — still reaches it.
+ *
+ * A key at all, and not only the URL, because of when the readout is wanted: a
+ * question about the frame rate or the gaze arrives while a broadcast is
+ * running, and the answer is not worth reloading the browser source for.
+ */
+const TELEMETRY_KEY = '`';
+
+/** Anything the operator could be typing into. The stage page has none. */
+const isTyping = (target: EventTarget | null): boolean =>
+  target instanceof HTMLElement &&
+  (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+
 export function App() {
+  const { t, tx, locale } = useT();
   const hostRef = useRef<HTMLDivElement>(null);
   const controlRef = useRef<ControlClient | null>(null);
   const [runtime, setRuntime] = useState<AvatarRuntime | null>(null);
   const [status, setStatus] = useState<RuntimeStatus>({ phase: 'idle' });
   const [control, setControl] = useState<ControlStatus>('offline');
   const [rejected, setRejected] = useState(0);
+  /**
+   * The telemetry readout, which the URL opens and the key toggles.
+   *
+   * State rather than the module constant every other part of the mode is read
+   * from, because this is the one thing about how the page presents itself that
+   * may change while it is on air — and deliberately not written back to the
+   * address bar. See `StageMode.debug`.
+   */
+  const [debug, setDebug] = useState(MODE.debug);
 
   /**
    * The runtime again, reachable without a render.
@@ -53,14 +84,15 @@ export function App() {
   }, []);
 
   /**
-   * Which avatar is on screen, as a thing the control API can ask for.
+   * What the control API can ask of the page rather than of the scene.
    *
-   * The same call the picker in the console makes, which is deliberate: the
-   * panel and the console switch avatars by the same path, so the choice is
+   * The avatar picker in the console makes the same call, which is deliberate:
+   * the panel and the console switch avatars by the same path, so the choice is
    * remembered and pinned to the URL either way. See `avatar-selection.ts`.
    */
   const rendererControls = useRef<RendererControls>({
     avatars: AVATARS.map((a) => ({ id: a.id, label: a.label })),
+    setDebug,
     load: (id) => {
       const next = getAvatar(id);
       const rt = runtimeRef.current;
@@ -89,6 +121,33 @@ export function App() {
     if (!runtime) return;
     return onMonitorMute((muted) => runtime.setMuted(muted));
   }, [runtime]);
+
+  /**
+   * The tab's own name, which the document carries before React exists.
+   *
+   * `index.html` states it in English so that the first paint is not in a
+   * language nobody chose; from here it follows the switch, because a browser
+   * source is picked out of a list of window titles. `lang` moves with it, so
+   * the document never claims a language its text is not in.
+   */
+  useEffect(() => {
+    document.title = t('console.documentTitle');
+    document.documentElement.lang = locale;
+  }, [t, locale]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // A modifier makes it somebody else's shortcut — the browser's own
+      // console is on one of them. Shift is not checked: on a JIS layout it is
+      // how this character is reached at all.
+      if (e.key !== TELEMETRY_KEY || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (isTyping(e.target)) return;
+      e.preventDefault();
+      setDebug((on) => !on);
+    };
+    addEventListener('keydown', onKey);
+    return () => removeEventListener('keydown', onKey);
+  }, []);
 
   /**
    * The control channel outlives the avatar.
@@ -133,13 +192,13 @@ export function App() {
    *
    * Development only. Half of what this tool is for is answering "why does that
    * pose look wrong", and the answer usually comes from measuring the rig by
-   * hand — `__aituber.loaded.director.rig.measure('R')` — which is not something
+   * hand — `__hashidate.loaded.director.rig.measure('R')` — which is not something
    * a panel can be built to anticipate.
    */
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    const w = window as typeof window & { __aituber?: unknown };
-    w.__aituber = { runtime, ...(status.phase === 'ready' ? { loaded: status.loaded } : {}) };
+    const w = window as typeof window & { __hashidate?: unknown };
+    w.__hashidate = { runtime, ...(status.phase === 'ready' ? { loaded: status.loaded } : {}) };
   }, [runtime, status]);
 
   const switchTo = (id: string) => {
@@ -159,12 +218,26 @@ export function App() {
         {/* The HUD is a measurement readout — text over the character's face —
             so it belongs with the console rather than beside it. Including
             while the model is still arriving: a stream that opens on
-            「読み込み中…」 has put that on the stream. */}
-        {MODE.console && status.phase === 'ready' && runtime ? (
+            「読み込み中…」 (loading…) has put that on the stream. */}
+        {MODE.console && !debug && status.phase === 'ready' && runtime ? (
           <Hud runtime={runtime} avatar={status.loaded.avatar} />
         ) : null}
+        {/* The same measurements, printed as a shell. It takes over from the
+            HUD rather than joining it: two readouts of one set of numbers on
+            one frame is a page arguing with itself, and this one says
+            everything the HUD does and the state of the document besides. */}
+        {debug && status.phase === 'ready' && runtime ? (
+          <Telemetry
+            runtime={runtime}
+            avatar={status.loaded.avatar}
+            problems={status.loaded.problems.length}
+            mode={MODE}
+          />
+        ) : null}
         {MODE.console && status.phase === 'loading' ? (
-          <div className={styles.loading}>{status.avatar.label} を読み込み中…</div>
+          <div className={styles.loading}>
+            {t('console.load.avatar', { name: tx(status.avatar.label) })}
+          </div>
         ) : null}
       </div>
       {MODE.console ? (

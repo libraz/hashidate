@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { LabelledId } from '@/engine/types';
+import type { Localized } from '@/i18n/locale';
 import { SceneryAssets } from './assets';
 import type { BuiltBackdrop, Pattern } from './patterns';
 import { PATTERNS } from './patterns';
@@ -59,7 +60,7 @@ interface Baseline {
 export const backdropList = (): LabelledId[] => PATTERNS.map((p) => ({ id: p.id, label: p.label }));
 
 /** The note shown under the picker, or null for an id that is not one of ours. */
-export const backdropNote = (id: string): string | null =>
+export const backdropNote = (id: string): Localized | null =>
   PATTERNS.find((p) => p.id === id)?.note ?? null;
 
 export class BackdropStage {
@@ -71,6 +72,17 @@ export class BackdropStage {
   private readonly scenery = new SceneryAssets();
 
   private mounted: Mounted | null = null;
+  /**
+   * Whether the room is standing but not being shown.
+   *
+   * A document goes behind the character in the same place a room does, so one
+   * of them has to give way — and it is the room, for as long as the document
+   * is up. Suspending rather than clearing is the same decision the default
+   * lights are already an example of: nothing is read, scaled or copied, so a
+   * segment that goes to slides and comes back gets the room it left, not a
+   * room rebuilt from numbers that were put somewhere in the meantime.
+   */
+  private suspended = false;
   /**
    * Built once and shared by every pattern.
    *
@@ -124,7 +136,15 @@ export class BackdropStage {
     return backdropList();
   }
 
-  /** Mount a pattern by id, or pass null for the plain background. */
+  /**
+   * Mount a pattern by id, or pass null for the plain background.
+   *
+   * A room asked for while a document is up is built and recorded but not
+   * shown, and appears when the document comes down. Refusing it instead would
+   * mean an orchestrator's `backdrop` silently doing nothing for the length of
+   * a slide segment — which is exactly the stretch during which a run is set up
+   * for what follows it.
+   */
   setBackdrop(id: string | null): void {
     if (id === this.current) return;
     this.clear();
@@ -136,6 +156,52 @@ export class BackdropStage {
     const textures: TextureBin = [];
     const built = pattern.build(textures);
 
+    this.mounted = { pattern, built, textures };
+    if (!this.suspended) this.raise();
+  }
+
+  update(dt: number): void {
+    if (this.suspended) return;
+    this.mounted?.built.update?.(dt);
+  }
+
+  /**
+   * Put the room away for as long as something else is behind the character.
+   *
+   * Everything `clear` restores is restored, and nothing it releases is
+   * released: the geometry, the textures and the lights stay built, so the room
+   * that comes back is the room that went away rather than a second one costing
+   * a rebuild in the middle of a live segment.
+   */
+  suspend(): void {
+    if (this.suspended) return;
+    this.suspended = true;
+    if (this.mounted) this.lower();
+  }
+
+  /** Show it again. Nothing happens if no room was standing when it went away. */
+  resume(): void {
+    if (!this.suspended) return;
+    this.suspended = false;
+    if (this.mounted) this.raise();
+  }
+
+  /** Take the room down and put the scene back exactly as it was found. */
+  clear(): void {
+    const mounted = this.mounted;
+    if (!mounted) return;
+    // Before the reference goes, since taking it out of the scene needs it.
+    this.lower();
+    this.mounted = null;
+
+    release(mounted.built.root);
+    for (const texture of mounted.textures) texture.dispose();
+  }
+
+  /** Show the mounted room: its geometry, its light and its whole grade. */
+  private raise(): void {
+    const built = this.mounted?.built;
+    if (!built) return;
     for (const light of this.defaultLights) light.visible = false;
     this.scene.add(built.root);
     this.scenery.attach(this.scene);
@@ -148,24 +214,19 @@ export class BackdropStage {
     this.scene.background = new THREE.Color(built.fog ? built.fog.color : 0x0f1115);
     this.renderer.toneMapping = built.toneMapping;
     this.renderer.toneMappingExposure = built.exposure;
-
-    this.mounted = { pattern, built, textures };
   }
 
-  update(dt: number): void {
-    this.mounted?.built.update?.(dt);
-  }
-
-  /** Take the room down and put the scene back exactly as it was found. */
-  clear(): void {
-    const mounted = this.mounted;
-    if (!mounted) return;
-    this.mounted = null;
-
+  /**
+   * Take it out of the scene and give the six captured values back.
+   *
+   * Idempotent, because the two callers overlap: a room cleared while it is
+   * suspended has already been lowered, and every step here is a restore rather
+   * than an undo.
+   */
+  private lower(): void {
+    const built = this.mounted?.built;
     this.scenery.detach(this.scene);
-    this.scene.remove(mounted.built.root);
-    release(mounted.built.root);
-    for (const texture of mounted.textures) texture.dispose();
+    if (built) this.scene.remove(built.root);
 
     this.scene.fog = this.baseline.fog;
     this.scene.background = this.baseline.background;

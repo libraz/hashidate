@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { Localized } from '@/i18n/locale';
 import {
   casement,
   curtains,
@@ -11,7 +12,7 @@ import {
   WINDOW,
   wetPane,
 } from './parts';
-import { art, generatedFabric, pbrMaps, rain, sky, type TextureBin, weave } from './textures';
+import { art, framedPrint, pbrMaps, rain, sky, type TextureBin, weave } from './textures';
 
 /**
  * The four rooms.
@@ -32,15 +33,15 @@ import { art, generatedFabric, pbrMaps, rain, sky, type TextureBin, weave } from
  * most of what looks good in a still. So each of these is built to a value
  * structure rather than to a colour scheme:
  *
- *   夕暮れ  one hot source behind the subject, everything else in shadow.
- *           Rim-lights the silhouette, which is the most flattering thing that
- *           can happen to an avatar, and keeps the centre of frame dark.
- *   深夜    the subject is the brightest object in a dark frame, lit by a screen
- *           they are plausibly looking at. Highest contrast of the four.
- *   朝      almost no contrast anywhere. Nothing competes; the face carries the
- *           whole frame. The one to use when the talking matters.
- *   雨      cool everywhere except one warm lamp. The warm/cool split is what
- *           gives a low-saturation image somewhere to look.
+ *   dusk     one hot source behind the subject, everything else in shadow.
+ *            Rim-lights the silhouette, which is the most flattering thing that
+ *            can happen to an avatar, and keeps the centre of frame dark.
+ *   night    the subject is the brightest object in a dark frame, lit by a screen
+ *            they are plausibly looking at. Highest contrast of the four.
+ *   morning  almost no contrast anywhere. Nothing competes; the face carries the
+ *            whole frame. The one to use when the talking matters.
+ *   rain     cool everywhere except one warm lamp. The warm/cool split is what
+ *            gives a low-saturation image somewhere to look.
  *
  * ## The composition is fixed to the framing
  *
@@ -64,9 +65,9 @@ export interface BuiltBackdrop {
 
 export interface Pattern {
   id: string;
-  label: string;
+  label: Localized;
   /** One line, shown under the picker. */
-  note: string;
+  note: Localized;
   build: (bin: TextureBin) => BuiltBackdrop;
 }
 
@@ -223,6 +224,60 @@ function room(bin: TextureBin, finish: Finish, skyTexture: THREE.Texture | null)
   return group;
 }
 
+/** Decoration shared by every time-of-day view. The light and the view change;
+ * the room itself does not rearrange between presets. */
+function furnishRoom(bin: TextureBin): THREE.Group {
+  const group = new THREE.Group();
+
+  group.add(
+    curtains(
+      surfaceOf(weave(bin, 0xd6c0a6, 1201), 0xd6c0a6, 0.92, { side: THREE.DoubleSide }),
+      paint(0x6f5a45, 0.5),
+      { coverage: 0.3 },
+    ),
+  );
+
+  const frames = new THREE.Group();
+  const frameMaterial = paint(0x6b5744, 0.6);
+  const profilePrint = framedPrint(bin, '/textures/harmilia-profile.png');
+  for (const [x, y, w, h, tilt, seed] of [
+    [-1.86, 1.9, 0.34, 0.44, 0.012, 3],
+    [-1.86, 1.36, 0.26, 0.2, -0.02, 9],
+  ] as const) {
+    const hung = picture(
+      frameMaterial,
+      unlit(0xffffff, seed === 3 ? profilePrint : art(bin, [0xf0e4d2, 0xd98f6a, 0x7d5a6b], seed)),
+      { width: w, height: h, tilt },
+    );
+    hung.position.set(x, y, ROOM.backZ + 0.018);
+    frames.add(hung);
+  }
+  group.add(frames);
+
+  const pot = plant(paint(0xd6c3ae, 0.9), foliage(0x6f8f5e), {
+    leaves: 9,
+    height: 0.36,
+    seed: 31,
+  });
+  pot.position.set(WINDOW.centerX - 0.3, WINDOW.sillY, ROOM.backZ + 0.07);
+  group.add(pot);
+
+  const mat = rug(surfaceOf(weave(bin, 0xb5a08c, 88), 0xb5a08c, 1), { width: 2.2, depth: 1.5 });
+  mat.position.set(-0.2, 0.006, -0.5);
+  group.add(mat);
+
+  group.add(
+    garland(unlit(0xffcf8a), paint(0x2a2622, 0.8), {
+      from: new THREE.Vector3(-2.45, 2.12, ROOM.backZ + 0.08),
+      to: new THREE.Vector3(2.1, 2.18, ROOM.backZ + 0.08),
+      sag: 0.26,
+      bulbs: 26,
+    }),
+  );
+
+  return group;
+}
+
 /**
  * A directional light standing in for the sun, aimed through the window.
  *
@@ -305,12 +360,15 @@ function raking(
   return light;
 }
 
-// --- 夕暮れ -------------------------------------------------------------------
+// --- dusk --------------------------------------------------------------------
 
 const dusk: Pattern = {
   id: 'dusk',
-  label: '夕暮れ',
-  note: '西日が窓から入る。逆光でシルエットが縁取られ、中央は落ちる。',
+  label: { en: 'Dusk', ja: '夕暮れ' },
+  note: {
+    en: 'Late sun through the window. It rims the silhouette from behind and leaves the middle dark.',
+    ja: '西日が窓から入る。逆光でシルエットが縁取られ、中央は落ちる。',
+  },
   build(bin) {
     const root = new THREE.Group();
     // Darker than a real wall of this colour reads, and on purpose. The avatar
@@ -340,35 +398,8 @@ const dusk: Pattern = {
           seed: 1201,
         }),
       ),
+      furnishRoom(bin),
     );
-
-    root.add(
-      curtains(
-        surfaceOf(weave(bin, 0xd6c0a6, 1201), 0xd6c0a6, 0.92, { side: THREE.DoubleSide }),
-        paint(0x6f5a45, 0.5),
-        { coverage: 0.3 },
-      ),
-    );
-
-    const frames = new THREE.Group();
-    const frameMaterial = paint(0x6b5744, 0.6);
-    for (const [x, y, w, h, tilt, seed] of [
-      [-1.86, 1.9, 0.34, 0.44, 0.012, 3],
-      [-1.86, 1.36, 0.26, 0.2, -0.02, 9],
-    ] as const) {
-      const hung = picture(
-        frameMaterial,
-        unlit(0xffffff, art(bin, [0xf0e4d2, 0xd98f6a, 0x7d5a6b], seed)),
-        { width: w, height: h, tilt },
-      );
-      hung.position.set(x, y, ROOM.backZ + 0.018);
-      frames.add(hung);
-    }
-    root.add(frames);
-
-    const mat = rug(surfaceOf(weave(bin, 0xb5a08c, 88), 0xb5a08c, 1), { width: 2.2, depth: 1.5 });
-    mat.position.set(-0.2, 0.006, -0.5);
-    root.add(mat);
 
     // The key, and it does not come through the window that can be seen.
     //
@@ -419,12 +450,15 @@ const dusk: Pattern = {
   },
 };
 
-// --- 深夜 ---------------------------------------------------------------------
+// --- night -------------------------------------------------------------------
 
 const night: Pattern = {
   id: 'night',
-  label: '深夜',
-  note: 'モニタの光が主光源。寒色のキーに、机の電球が暖色で差す。',
+  label: { en: 'Late night', ja: '深夜' },
+  note: {
+    en: 'The monitor is the key light. Cold on the face, with a warm desk bulb cutting across it.',
+    ja: 'モニタの光が主光源。寒色のキーに、机の電球が暖色で差す。',
+  },
   build(bin) {
     const root = new THREE.Group();
     const finish: Finish = {
@@ -447,26 +481,7 @@ const night: Pattern = {
           seed: 903,
         }),
       ),
-    );
-
-    root.add(
-      curtains(
-        surfaceOf(weave(bin, 0x4a4f63, 903), 0x4a4f63, 0.94, { side: THREE.DoubleSide }),
-        paint(0x2e3038, 0.5),
-        { coverage: 0.42 },
-      ),
-    );
-
-    // Hung low enough to be in shot. At picture-rail height it was above the
-    // top of the bust framing entirely, which is the sort of thing that is
-    // obvious in the render and invisible in the source.
-    root.add(
-      garland(unlit(0xffcf8a), paint(0x2a2622, 0.8), {
-        from: new THREE.Vector3(-2.45, 2.12, ROOM.backZ + 0.08),
-        to: new THREE.Vector3(2.1, 2.18, ROOM.backZ + 0.08),
-        sag: 0.26,
-        bulbs: 26,
-      }),
+      furnishRoom(bin),
     );
 
     // The key, at the monitor and pointing back at the avatar. A spot rather
@@ -522,12 +537,15 @@ const night: Pattern = {
   },
 };
 
-// --- 朝 -----------------------------------------------------------------------
+// --- morning -----------------------------------------------------------------
 
 const morning: Pattern = {
   id: 'morning',
-  label: '朝',
-  note: '淡いピンクの寝室に曇天の拡散光。ぬいぐるみと灯りがやわらかく見える。',
+  label: { en: 'Morning', ja: '朝' },
+  note: {
+    en: 'A pale pink bedroom under flat overcast light. The soft toys and the lamp read gently.',
+    ja: '淡いピンクの寝室に曇天の拡散光。ぬいぐるみと灯りがやわらかく見える。',
+  },
   build(bin) {
     const root = new THREE.Group();
     const finish: Finish = {
@@ -554,64 +572,8 @@ const morning: Pattern = {
           seed: 640,
         }),
       ),
+      furnishRoom(bin),
     );
-
-    // Sheer, and drawn most of the way across. The curtain is the light source
-    // as far as the room is concerned — the point of this pattern is that
-    // nothing in it has an edge, and an open window would give it one.
-    root.add(
-      curtains(
-        new THREE.MeshStandardMaterial({
-          color: 0xfcfaf6,
-          roughness: 1,
-          transparent: true,
-          opacity: 0.62,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        }),
-        paint(0xd8d2c6, 0.5),
-        { coverage: 0.46, amplitude: 0.035 },
-      ),
-    );
-
-    // A cluster rather than a single frame, hung at slightly different heights.
-    // Three objects at one height is a shelf; three at three heights is a wall
-    // somebody arranged.
-    const frameMaterial = paint(0xf3bdc9, 0.58);
-    for (const [x, y, w, h, tilt, seed] of [
-      [-1.18, 1.72, 0.3, 0.4, 0.008, 21],
-      [-0.82, 1.55, 0.22, 0.26, -0.014, 22],
-      [-1.14, 1.28, 0.24, 0.2, 0.018, 23],
-    ] as const) {
-      const hung = picture(
-        frameMaterial,
-        unlit(0xffffff, art(bin, [0xfff8f4, 0xf1b7c3, 0xc6a6cf], seed)),
-        { width: w, height: h, tilt },
-      );
-      hung.position.set(x, y, ROOM.backZ + 0.018);
-      root.add(hung);
-    }
-
-    // On the sill, where the light is. The one saturated thing in a pattern
-    // that is otherwise entirely off-white, and it is there to give the eye a
-    // second place to land after the face.
-    const pot = plant(paint(0xd6c3ae, 0.9), foliage(0x6f8f5e), {
-      leaves: 9,
-      height: 0.36,
-      seed: 31,
-    });
-    pot.position.set(WINDOW.centerX - 0.3, WINDOW.sillY, ROOM.backZ + 0.07);
-    root.add(pot);
-
-    const mat = rug(
-      surfaceOf(generatedFabric(bin, '/textures/pink-quilt.png', 2, 2), 0xf1bdc8, 0.98),
-      {
-        width: 2.4,
-        depth: 1.6,
-      },
-    );
-    mat.position.set(0.1, 0.006, -0.3);
-    root.add(mat);
 
     // Soft, but still a direction.
     //
@@ -661,12 +623,15 @@ const morning: Pattern = {
   },
 };
 
-// --- 雨 -----------------------------------------------------------------------
+// --- rain --------------------------------------------------------------------
 
 const rainy: Pattern = {
   id: 'rain',
-  label: '雨',
-  note: '寒色に沈んだ室内を、電球ひとつだけが暖色で割る。窓は流れる。',
+  label: { en: 'Rain', ja: '雨' },
+  note: {
+    en: 'A room sunk into cold light, broken by one warm bulb. The window runs with water.',
+    ja: '寒色に沈んだ室内を、電球ひとつだけが暖色で割る。窓は流れる。',
+  },
   build(bin) {
     const root = new THREE.Group();
     const finish: Finish = {
@@ -689,6 +654,7 @@ const rainy: Pattern = {
           seed: 2088,
         }),
       ),
+      furnishRoom(bin),
     );
 
     // A shower never draws the same tracks twice.  Its seed is local to this
@@ -709,14 +675,6 @@ const rainy: Pattern = {
       }),
     );
     root.add(pane);
-
-    root.add(
-      curtains(
-        surfaceOf(weave(bin, 0x8f9299, 2088), 0x8f9299, 0.95, { side: THREE.DoubleSide }),
-        paint(0x4c4f55, 0.5),
-        { coverage: 0.26 },
-      ),
-    );
 
     // Cool, soft, and from the left like the others — rain has no sun, but it
     // still has a window, and light that arrives from nowhere in particular is

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Session } from '@/engine/session';
+import { useT } from '@/i18n';
 import { Demo, type DemoState } from '../demo';
 import styles from './DemoBar.module.css';
 
@@ -25,6 +26,7 @@ import styles from './DemoBar.module.css';
  */
 
 export function DemoBar({ session }: { session: Session | null }) {
+  const { t } = useT();
   const [state, setState] = useState<DemoState>({
     running: false,
     index: -1,
@@ -74,10 +76,10 @@ export function DemoBar({ session }: { session: Session | null }) {
         disabled={!session}
         onClick={() => (running ? demo.current?.stop() : demo.current?.start())}
       >
-        {running ? '中止' : '自動デモ'}
+        {running ? t('console.demo.stop') : t('console.demo.start')}
       </button>
-      <span className={styles.label} title={running ? state.label : '語彙を一通り実演します'}>
-        {running ? state.label : '語彙を一通り実演します'}
+      <span className={styles.label} title={running ? state.label : t('console.demo.note')}>
+        {running ? state.label : t('console.demo.note')}
       </span>
       {running ? (
         <span className={styles.count}>

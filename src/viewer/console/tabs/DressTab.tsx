@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useT } from '@/i18n';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { Field } from '@/ui/Field';
 import { Section } from '@/ui/Section';
@@ -12,6 +13,7 @@ import type { LoadedAvatar } from '../../scene/runtime';
  * empty tab rather than a broken one.
  */
 export function DressTab({ loaded }: { loaded: LoadedAvatar }) {
+  const { t, tx } = useT();
   const { wardrobe } = loaded;
   // The wardrobe writes visibility and morph influences directly rather than
   // holding React state, so the panel keeps its own counter to repaint after a
@@ -24,8 +26,8 @@ export function DressTab({ loaded }: { loaded: LoadedAvatar }) {
 
   if (!slots.length) {
     return (
-      <Section title="衣装">
-        <p>このアバターは着せ替えを持たない。</p>
+      <Section title={t('console.dress.title')}>
+        <p>{t('console.dress.empty')}</p>
       </Section>
     );
   }
@@ -33,12 +35,12 @@ export function DressTab({ loaded }: { loaded: LoadedAvatar }) {
   return (
     <>
       {presets.length ? (
-        <Section title="組み合わせ" meta={`${presets.length}`}>
+        <Section title={t('console.dress.presets')} meta={`${presets.length}`}>
           <ChipRow>
             {presets.map(([id, p]) => (
               <Chip
                 key={id}
-                label={p.label}
+                label={tx(p.label)}
                 title={id}
                 onClick={() => {
                   wardrobe.applyPreset(id);
@@ -51,17 +53,17 @@ export function DressTab({ loaded }: { loaded: LoadedAvatar }) {
       ) : null}
 
       <Section
-        title="パーツ"
-        meta={`${slots.length} スロット`}
-        note={wardrobe.note ? [wardrobe.note] : undefined}
+        title={t('console.dress.parts')}
+        meta={t('console.dress.slots', { count: slots.length })}
+        note={wardrobe.note ? [tx(wardrobe.note)] : undefined}
       >
         {slots.map(([slot, def]) => (
-          <Field key={slot} label={def.label}>
+          <Field key={slot} label={tx(def.label)}>
             <ChipRow>
               {def.items.map((item) => (
                 <Chip
                   key={item.id}
-                  label={item.label}
+                  label={tx(item.label)}
                   title={item.meshes.join(', ')}
                   state={wardrobe.state[slot] === item.id ? 'on' : 'off'}
                   onClick={() => {
@@ -71,7 +73,7 @@ export function DressTab({ loaded }: { loaded: LoadedAvatar }) {
                 />
               ))}
               <Chip
-                label="なし"
+                label={t('console.none')}
                 variant="action"
                 state={wardrobe.state[slot] === null ? 'on' : 'off'}
                 onClick={() => {
@@ -86,11 +88,9 @@ export function DressTab({ loaded }: { loaded: LoadedAvatar }) {
 
       {wardrobe.activeHides?.length ? (
         <Section
-          title="適用中の隠しシェイプ"
+          title={t('console.dress.hides')}
           meta={`${wardrobe.activeHides.length}`}
-          note={[
-            '衣装が素体を貫通しないように、覆われる部分のシェイプを上げている。VRChat 系は頂点を潰す *Hide、別の作者は手足を細める Shrink_* を使う — 役割は同じで呼び名と仕組みが違う。',
-          ]}
+          note={[t('console.dress.hides.note')]}
         >
           <ChipRow>
             {wardrobe.activeHides.map((h) => (

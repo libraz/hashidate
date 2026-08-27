@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { Director } from '@/engine/director';
 import { buildProfile } from '@/engine/profile';
 import { Session } from '@/engine/session';
+import { same } from '@/i18n/locale';
 import type { Command } from '@/protocol';
 import { ControlClient, type RendererControls } from '@/viewer/control-client';
 import { buildRig } from '../helpers/scene';
@@ -24,13 +25,18 @@ function build() {
   const session = new Session(new Director(profile));
 
   const loads: string[] = [];
+  /** Every readout switch that reached the page, in order. */
+  const readout: boolean[] = [];
   /** What the renderer is showing, so a redundant swap can answer false. */
   let standing = 'a';
   const renderer: RendererControls = {
     avatars: [
-      { id: 'a', label: 'あ' },
-      { id: 'b', label: 'い' },
+      { id: 'a', label: same('あ') },
+      { id: 'b', label: same('い') },
     ],
+    setDebug: (on) => {
+      readout.push(on);
+    },
     load: (id) => {
       if (!renderer.avatars.some((avatar) => avatar.id === id)) return false;
       if (id === standing) return false;
@@ -41,7 +47,7 @@ function build() {
   };
 
   const client = new ControlClient(session, { renderer });
-  return { client, session, renderer, loads };
+  return { client, session, renderer, loads, readout };
 }
 
 /** A second session, standing in for the one a swap would build. */
@@ -71,6 +77,80 @@ describe('ControlClient.apply', () => {
     // A newer caller talking to an older renderer should degrade, not crash the
     // stream. The cast is the point: this is a command from the future.
     expect(() => harness.client.apply({ cmd: 'teleport' } as unknown as Command)).not.toThrow();
+  });
+});
+
+/**
+ * A session with the two ports a renderer that composes a frame supplies.
+ *
+ * Both are absent everywhere else in this suite, which is the ordinary case: a
+ * renderer with no document layer answers `deck`, `slide` and `place` by doing
+ * nothing at all. Here they record, because what is worth pinning is that each
+ * of the three verbs is exactly one call — the moment one of them needs two,
+ * the session is missing something.
+ */
+function composed() {
+  const calls: string[] = [];
+  const rig = buildRig({ arkit: false });
+  const session = new Session(new Director(buildProfile(rig.root, rig.descriptor)), {
+    slides: {
+      setDeck: (id, page) => calls.push(`deck ${id} ${page}`),
+      setSlide: (page) => calls.push(`slide ${page}`),
+      turnSlide: (by) => calls.push(`turn ${by}`),
+      report: () => ({ deck: null, page: 0, pages: 0, ready: true, error: null }),
+    },
+    composition: {
+      setPlacement: (placement) => calls.push(JSON.stringify(placement)),
+      report: () => ({
+        avatar: { anchor: 'center', width: 1, height: 1, margin: 0 },
+        slide: { anchor: 'center', width: 1, height: 1, margin: 0, fit: 'contain' },
+      }),
+    },
+  });
+  return { client: new ControlClient(session), calls };
+}
+
+describe('the document behind the character', () => {
+  it('puts one up by id, and takes it down with no id at all', () => {
+    const { client, calls } = composed();
+    client.apply({ cmd: 'deck', id: 'intro', page: 3 });
+    client.apply({ cmd: 'deck' });
+    // Absent is the first page rather than the page the last document was on.
+    expect(calls).toEqual(['deck intro 3', 'deck null undefined']);
+  });
+
+  it('turns to an absolute page, and moves by one when told neither', () => {
+    const { client, calls } = composed();
+    client.apply({ cmd: 'slide', page: 4 });
+    client.apply({ cmd: 'slide', by: -2 });
+    // The bare command is "next", which is the one an operator sends all
+    // broadcast and the one a hotkey should not have to spell out.
+    client.apply({ cmd: 'slide' });
+    expect(calls).toEqual(['slide 4', 'turn -2', 'turn 1']);
+  });
+
+  it('prefers the page a script knows to the move an operator makes', () => {
+    const { client, calls } = composed();
+    client.apply({ cmd: 'slide', page: 2, by: 5 });
+    expect(calls).toEqual(['slide 2']);
+  });
+
+  it('lays out both layers in one call, because they are one decision', () => {
+    // Sent as two, the frame is briefly wrong in the way that shows most: the
+    // character over the document.
+    const { client, calls } = composed();
+    client.apply({ cmd: 'place', avatar: { anchor: 'bottom-right', width: 0.32 } });
+    expect(calls).toEqual([
+      JSON.stringify({ avatar: { anchor: 'bottom-right', width: 0.32 }, slide: undefined }),
+    ]);
+  });
+
+  it('does nothing on a renderer with no document layer, which is every test', () => {
+    expect(() => {
+      harness.client.apply({ cmd: 'deck', id: 'intro' });
+      harness.client.apply({ cmd: 'slide' });
+      harness.client.apply({ cmd: 'place', slide: { fit: 'cover' } });
+    }).not.toThrow();
   });
 });
 
@@ -166,5 +246,30 @@ describe('an avatar swap', () => {
     client.apply({ cmd: 'avatar', id: 'b' });
     client.apply({ cmd: 'say', id: 'turn-1', text: 'あ' });
     expect(session.queue).toHaveLength(1);
+  });
+});
+
+describe('the telemetry readout', () => {
+  it('reaches the page rather than the session, and defaults to on', () => {
+    harness.client.apply({ cmd: 'debug', on: true });
+    harness.client.apply({ cmd: 'debug', on: false });
+    harness.client.apply({ cmd: 'debug' });
+    expect(harness.readout).toEqual([true, false, true]);
+  });
+
+  it('is not held behind an avatar swap', () => {
+    // The one command that goes ahead of the hold. It touches nothing a swap
+    // replaces, and an operator raising the readout to watch a slow load would
+    // otherwise be given it once the load had finished.
+    harness.client.apply({ cmd: 'avatar', id: 'b' });
+    harness.client.apply({ cmd: 'debug', on: true });
+    expect(harness.readout).toEqual([true]);
+  });
+
+  it('is dropped on a renderer with no readout to draw', () => {
+    const rig = buildRig({ arkit: false });
+    const session = new Session(new Director(buildProfile(rig.root, rig.descriptor)));
+    const client = new ControlClient(session);
+    expect(() => client.apply({ cmd: 'debug', on: true })).not.toThrow();
   });
 });
