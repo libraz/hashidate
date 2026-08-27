@@ -1,10 +1,13 @@
 import { parseArgs } from 'node:util';
 import type { ZodType } from 'zod';
+import { getLocale, type Localized, pick } from '../i18n/locale';
 import {
   avatarCommandSchema,
   backdropCommandSchema,
   cameraCommandSchema,
   commandSchema,
+  debugCommandSchema,
+  deckCommandSchema,
   emotionCommandSchema,
   expressionCommandSchema,
   gestureCommandSchema,
@@ -13,9 +16,11 @@ import {
   lookCommandSchema,
   overlayCommandSchema,
   performCommandSchema,
+  placeCommandSchema,
   pointCommandSchema,
   roomCommandSchema,
   sayCommandSchema,
+  slideCommandSchema,
   tuneCommandSchema,
   type Vocabulary,
   wearCommandSchema,
@@ -23,7 +28,16 @@ import {
 import { ControlClient, DEFAULT_BASE, fail } from './client';
 
 /**
- * Command-line client for the AITuber control API.
+ * A two-language label, printed in one of them.
+ *
+ * The wire carries both. This is a terminal, and everything else it prints is
+ * English, so it takes the locale in force — which falls back to English when
+ * nothing has said otherwise.
+ */
+const localized = (text: Localized): string => pick(text, getLocale());
+
+/**
+ * Command-line client for the hashidate control API.
  *
  * For driving the avatar by hand and for checking the API without writing a
  * client. An orchestrator would post the same JSON directly.
@@ -75,7 +89,7 @@ function takeBase(argv: string[]): { base: string; rest: string[] } {
     const token = argv[i];
     if (token === '--base') {
       const value = argv[i + 1];
-      if (value === undefined) fail('--base には URL が必要');
+      if (value === undefined) fail('--base needs a URL');
       base = value;
       i += 1;
       continue;
@@ -153,7 +167,7 @@ function extractNumbers(
 function toNumber(raw: string | undefined, fallback: number, label: string): number {
   if (raw === undefined) return fallback;
   const value = Number.parseFloat(raw);
-  if (!Number.isFinite(value)) fail(`${label} には数値を指定する: ${raw}`);
+  if (!Number.isFinite(value)) fail(`${label} takes a number: ${raw}`);
   return value;
 }
 
@@ -183,7 +197,7 @@ function build<T>(schema: ZodType<T>, value: unknown): T {
     const detail = parsed.error.issues
       .map((issue) => `${issue.path.map(String).join('.') || 'command'}: ${issue.message}`)
       .join(', ');
-    fail(`引数が不正: ${detail}`);
+    fail(`Invalid arguments: ${detail}`);
   }
   return parsed.data;
 }
@@ -212,7 +226,7 @@ const say: Handler = async (client, args) => {
     allowPositionals: true,
   });
   const text = positionals[0];
-  if (text === undefined) fail('say には読み上げるテキストが必要');
+  if (text === undefined) fail('say needs the text to be read out');
   // The shot, if any of it was named. Built as a whole or not at all, because
   // an empty object is a staging instruction that stages nothing — harmless,
   // but it would put a `stage: {}` on every line the wire ever carried.
@@ -246,7 +260,7 @@ const say: Handler = async (client, args) => {
 
 const emotion: Handler = async (client, args) => {
   const { positionals } = parseArgs({ args, allowPositionals: true });
-  if (positionals.length === 0) fail('emotion には joy=0.8 のような組が必要');
+  if (positionals.length === 0) fail('emotion needs pairs such as joy=0.8');
   show(
     await client.command(
       build(emotionCommandSchema, {
@@ -280,7 +294,7 @@ const overlay: Handler = async (client, args) => {
     allowPositionals: true,
   });
   const id = positionals[0];
-  if (id === undefined) fail('overlay にはエフェクトの id が必要');
+  if (id === undefined) fail('overlay needs the id of an effect');
   show(
     await client.command(
       build(overlayCommandSchema, {
@@ -367,13 +381,28 @@ const point: Handler = async (client, args) => {
   );
 };
 
+/**
+ * `yarn ctl camera full --yaw 25 --zoom 1.3`, and any subset of that.
+ *
+ * The framing is a positional because it is what is nearly always meant; the
+ * three offsets are flags because they are the rarer half and because leaving
+ * one out has to mean "leave it alone" rather than "zero". See `Shot`.
+ */
 const camera: Handler = async (client, args) => {
-  const { positionals } = parseArgs({ args, allowPositionals: true });
+  const { positionals, values } = parseArgs({
+    args,
+    options: { yaw: { type: 'string' }, pitch: { type: 'string' }, zoom: { type: 'string' } },
+    allowPositionals: true,
+  });
+  const degrees = (raw: string | undefined) => (raw === undefined ? undefined : Number(raw));
   show(
     await client.command(
       build(cameraCommandSchema, {
         cmd: 'camera',
         frame: positionals[0],
+        yaw: degrees(values.yaw),
+        pitch: degrees(values.pitch),
+        zoom: degrees(values.zoom),
       }),
     ),
   );
@@ -390,6 +419,105 @@ const room: Handler = async (client, args) => {
       }),
     ),
   );
+};
+
+/**
+ * Which document is behind the character.
+ *
+ * The id is required and taking one down is the word `none`, which is where
+ * this differs from `room` and `backdrop` above. Those have an empty value that
+ * is also their resting state, so a bare command reads as "back to nothing". A
+ * document is put up deliberately and taken down deliberately in the middle of
+ * a segment, and a bare `deck` is far more likely to be a typed id that went
+ * missing than an instruction to clear the screen.
+ */
+const deck: Handler = async (client, args) => {
+  const { positionals, values } = parseArgs({
+    args,
+    options: { page: { type: 'string' } },
+    allowPositionals: true,
+  });
+  const id = positionals[0];
+  if (id === undefined) fail('deck needs the id of a document (to take one down, deck none)');
+  show(
+    await client.command(
+      build(deckCommandSchema, {
+        cmd: 'deck',
+        id: id === 'none' ? null : id,
+        page: values.page === undefined ? undefined : Number(values.page),
+      }),
+    ),
+  );
+};
+
+/**
+ * Turn a page: `next`, `prev`, or the page to go to.
+ *
+ * Bare is next, which is what the wire means by a `slide` with neither field —
+ * stated as `by: 1` here anyway, so the JSON that gets printed says what was
+ * actually done rather than leaving the reader to know the default.
+ */
+const slide: Handler = async (client, args) => {
+  const { positionals } = parseArgs({ args, allowPositionals: true });
+  const where = positionals[0];
+  show(await client.command(build(slideCommandSchema, { cmd: 'slide', ...move(where) })));
+};
+
+function move(where: string | undefined): { page?: number; by?: number } {
+  if (where === undefined || where === 'next') return { by: 1 };
+  if (where === 'prev') return { by: -1 };
+  if (NUMBER.test(where)) return { page: Number.parseInt(where, 10) };
+  fail(`slide takes next / prev / a page number: ${where}`);
+}
+
+/**
+ * Where the two layers sit in the broadcast frame.
+ *
+ * The layer is a positional and defaults to the character, which is the one
+ * that gets moved: a document is usually left filling the frame and the
+ * character is slid into a corner of it. Every field is optional and an absent
+ * one is left alone, so this moves what it names and nothing else.
+ */
+const place: Handler = async (client, args) => {
+  const { positionals, values } = parseArgs({
+    args,
+    options: {
+      anchor: { type: 'string' },
+      width: { type: 'string' },
+      height: { type: 'string' },
+      margin: { type: 'string' },
+      fit: { type: 'string' },
+    },
+    allowPositionals: true,
+  });
+  const layer = positionals[0] ?? 'avatar';
+  if (layer !== 'avatar' && layer !== 'slide') fail(`place takes avatar or slide: ${layer}`);
+  // `fit` is how a picture fills its rectangle, which the character's does not
+  // have — it is a render of a scene rather than an image with edges.
+  if (layer === 'avatar' && values.fit !== undefined) fail('--fit can only be given for slide');
+  const number = (raw: string | undefined) => (raw === undefined ? undefined : Number(raw));
+  const placement = {
+    anchor: values.anchor,
+    width: number(values.width),
+    height: number(values.height),
+    margin: number(values.margin),
+    ...(layer === 'slide' ? { fit: values.fit } : {}),
+  };
+  show(await client.command(build(placeCommandSchema, { cmd: 'place', [layer]: placement })));
+};
+
+/** What the server can see in the document directory. Not avatar data; see `deckSchema`. */
+const decks: Handler = async (client) => {
+  const { decks: found } = await client.decks();
+  if (found.length === 0) {
+    console.log('no documents (put a PDF in slides/)');
+    return;
+  }
+  for (const item of found) {
+    console.log(
+      `  ${item.id.padEnd(16)} ${String(item.pages).padStart(3)}p  ${localized(item.label)}`,
+    );
+  }
 };
 
 /** Same shape as `room` beside it, and the same rule: no id is the bare stage. */
@@ -453,7 +581,8 @@ const tune: Handler = async (client, args) => {
   for (const assignment of positionals) {
     const [path, raw] = splitOnce(assignment, '=');
     const [group, field] = splitOnce(path, '.');
-    if (raw === null || field === null) fail(`調律は group.field=値 の形で書く: ${assignment}`);
+    if (raw === null || field === null)
+      fail(`a tuning is written group.field=value: ${assignment}`);
     // Numbers stay numbers and the two words stay booleans; anything else is
     // left as written so the schema can say what is wrong with it.
     const value = raw === 'true' ? true : raw === 'false' ? false : Number(raw);
@@ -484,9 +613,23 @@ const idle: Handler = async (client, args) => {
   show(await client.command(build(idleCommandSchema, { cmd: 'idle', on: on === 'on' })));
 };
 
+/**
+ * The measurements over the frame, on every renderer attached.
+ *
+ * A bare `debug` turns it on, which is the way round it is nearly always
+ * wanted — the question arrives, the readout goes up, and `debug off` puts it
+ * away. Nothing remembers it, so a renderer that reloads comes back clean.
+ */
+const debug: Handler = async (client, args) => {
+  const { positionals } = parseArgs({ args, allowPositionals: true });
+  const on = positionals[0] ?? 'on';
+  if (on !== 'on' && on !== 'off') fail('debug [on|off]');
+  show(await client.command(build(debugCommandSchema, { cmd: 'debug', on: on === 'on' })));
+};
+
 const look: Handler = async (client, args) => {
   const { positionals } = parseArgs({ args, allowPositionals: true });
-  if (positionals[0] === undefined) fail('look には 0..1 の量が必要');
+  if (positionals[0] === undefined) fail('look needs an amount in 0..1');
   show(
     await client.command(
       build(lookCommandSchema, {
@@ -510,12 +653,14 @@ function bare(cmd: 'reset' | 'interrupt' | 'clear'): Handler {
 const vocab: Handler = async (client) => {
   const vocabulary = await client.vocabulary();
   if (Object.keys(vocabulary).length === 0) {
-    console.log('語彙なし（ビューアが未接続）');
+    console.log('no vocabulary (no viewer connected)');
     return;
   }
   // First, because the rest of the listing is this avatar's vocabulary and
   // means nothing without knowing which one is loaded.
-  console.log(`avatar: ${vocabulary.avatar?.label ?? '?'} (${vocabulary.avatar?.id ?? '?'})`);
+  console.log(
+    `avatar: ${vocabulary.avatar?.label ? localized(vocabulary.avatar.label) : '?'} (${vocabulary.avatar?.id ?? '?'})`,
+  );
   // Performances first: a caller reading this to decide what to send should see
   // the composed vocabulary before the parts it is composed from. What each one
   // is made of is printed alongside, so the listing also answers "and what does
@@ -523,44 +668,46 @@ const vocab: Handler = async (client) => {
   const performances: Vocabulary['performances'] = vocabulary.performances ?? [];
   console.log(`performances (${performances.length})`);
   for (const item of performances) {
-    const parts = [item.gesture, item.hop].filter(Boolean).join(' + ') || '表情のみ';
+    const parts = [item.gesture, item.hop].filter(Boolean).join(' + ') || 'expression only';
     const held = item.sustain ? ' *' : '';
-    console.log(`  ${item.id.padEnd(16)} ${item.label.padEnd(12)} [${item.group}] ${parts}${held}`);
+    console.log(
+      `  ${item.id.padEnd(16)} ${localized(item.label).padEnd(12)} [${item.group}] ${parts}${held}`,
+    );
   }
   for (const key of ['emotions', 'expressions', 'overlays', 'gestures'] as const) {
     const items = vocabulary[key] ?? [];
     console.log(`${key} (${items.length})`);
     for (const item of items) {
       const extra = 'group' in item ? `  [${item.group}]` : '';
-      console.log(`  ${item.id.padEnd(16)} ${item.label}${extra}`);
+      console.log(`  ${item.id.padEnd(16)} ${localized(item.label)}${extra}`);
     }
   }
   const hops: Vocabulary['hops'] = vocabulary.hops ?? [];
-  console.log(`hops: ${hops.map((h) => `${h.id} (${h.label})`).join(', ')}`);
+  console.log(`hops: ${hops.map((h) => `${h.id} (${localized(h.label)})`).join(', ')}`);
   const cameras: Vocabulary['cameras'] = vocabulary.cameras ?? [];
   console.log(`cameras: ${cameras.join(', ')}`);
   const rooms: Vocabulary['rooms'] = vocabulary.rooms ?? [];
   console.log(
-    `rooms: ${rooms.length === 0 ? '(音声なし)' : rooms.map((r) => `${r.id} (${r.label})`).join(', ')}`,
+    `rooms: ${rooms.length === 0 ? '(no audio)' : rooms.map((r) => `${r.id} (${localized(r.label)})`).join(', ')}`,
   );
   const wardrobe: Vocabulary['wardrobe'] = vocabulary.wardrobe ?? {};
   for (const [slot, entry] of Object.entries(wardrobe)) {
     console.log(
-      `wear ${slot.padEnd(8)} ${entry.label}: ${entry.items.map((i) => i.id).join(', ')}`,
+      `wear ${slot.padEnd(8)} ${localized(entry.label)}: ${entry.items.map((i) => i.id).join(', ')}`,
     );
   }
 };
 
 const state: Handler = async (client) => {
   const snapshot = await client.state();
-  if (!snapshot.connected) console.log('ビューア未接続');
+  if (!snapshot.connected) console.log('no viewer connected');
   show(snapshot.state);
 };
 
 /** Follow the event log. Useful to see how turns actually sequence. */
 const watch: Handler = async (client) => {
   let since = (await client.state()).seq;
-  console.log(`seq=${since} から追従（Ctrl-C で終了）`);
+  console.log(`following from seq=${since} (Ctrl-C to stop)`);
   for (;;) {
     const response = await client.events(since, WATCH_WAIT_SECONDS);
     since = response.seq;
@@ -587,11 +734,16 @@ const HANDLERS: Record<string, Handler> = {
   camera,
   room,
   backdrop,
+  deck,
+  slide,
+  place,
+  decks,
   wear,
   avatar,
   tune,
   idle,
   look,
+  debug,
   reset: bare('reset'),
   interrupt: bare('interrupt'),
   clear: bare('clear'),
@@ -603,8 +755,8 @@ const HANDLERS: Record<string, Handler> = {
 function usage(): never {
   fail(
     [
-      '使い方: yarn ctl [--base URL] <コマンド> [引数...]',
-      `コマンド: ${Object.keys(HANDLERS).join(', ')}`,
+      'usage: yarn ctl [--base URL] <command> [args...]',
+      `commands: ${Object.keys(HANDLERS).join(', ')}`,
       '',
       '  yarn ctl perform happy',
       '  yarn ctl say "こんばんは" --perform hello --wait',
@@ -612,8 +764,12 @@ function usage(): never {
       '  yarn ctl say "コメント3件ありがとう" --reading "コメントさんけんありがとう"',
       '  yarn ctl point 40 25 --extent 0.9',
       '  yarn ctl idle on',
+      '  yarn ctl debug        # overlay the measurements on every viewer (off clears them)',
       '  yarn ctl avatar manuka',
       '  yarn ctl tune sway.stiffness=2 idle.breathDepth=1.2',
+      '  yarn ctl deck intro --page 3',
+      '  yarn ctl slide next',
+      '  yarn ctl place avatar --anchor bottom-right --width 0.32 --height 0.6 --margin 0.02',
     ].join('\n'),
   );
 }
@@ -625,4 +781,7 @@ async function main(): Promise<void> {
   await HANDLERS[action](new ControlClient(base), rest.slice(1));
 }
 
-main().catch((error: unknown) => fail(String(error)));
+// The message alone, not the class in front of it: a transport failure here is
+// something the operator reads and acts on ("start the server"), and prefixing
+// it with `Error:` says nothing they did not already know from it being printed.
+main().catch((error: unknown) => fail(error instanceof Error ? error.message : String(error)));
