@@ -11,6 +11,23 @@
   background: var(--bg);
 }
 
+/*
+ * Stage mode: what OBS opens.
+ *
+ * The cursor is hidden because a browser source keeps whatever the pointer was
+ * doing when the page loaded, and a stray arrow parked on the character is the
+ * kind of thing nobody notices until it is in the recording. Orbit controls are
+ * still live — the pointer works, it is only invisible.
+ *
+ * `overflow: hidden` matters when a fixed `?size=` is larger than the window:
+ * the render stays at its configured size and the window clips it, rather than
+ * scrollbars appearing inside the captured area.
+ */
+.staged {
+  cursor: none;
+  overflow: hidden;
+}
+
 .stage canvas {
   display: block;
 }

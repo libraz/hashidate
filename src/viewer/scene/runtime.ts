@@ -6,7 +6,9 @@ import { buildProfile } from '@/engine/profile';
 import { type MaterialSet, setupMaterials, Wardrobe } from '@/engine/scene';
 import { Session } from '@/engine/session';
 import type { AvatarDescriptor, CameraFrame, Profile } from '@/engine/types';
+import { stageMode } from '../stage-mode';
 import { BrowserVoice } from '../voice';
+import { BackdropStage } from './backdrop';
 import { buildFramings, type Framings } from './framing';
 
 /**
@@ -67,6 +69,9 @@ export class AvatarRuntime {
 
   private readonly host: HTMLElement;
   private readonly loader = new GLTFLoader();
+  /** The three lights the viewer ships with, together so a room can hide them. */
+  private readonly defaultRig = new THREE.Group();
+  private readonly backdrop: BackdropStage;
   /**
    * `Timer` rather than `Clock`, which three deprecated in 0.185.
    *
@@ -87,8 +92,12 @@ export class AvatarRuntime {
    * document — building a fresh one on every avatar switch would run the tab out
    * of them, and would throw away the resume the operator's first click bought.
    * Which character is on screen has nothing to do with it either way.
+   *
+   * Muted when the page was opened as a monitor — the panel's preview is a
+   * second renderer of the same commands, and two of them speaking a fraction of
+   * a second apart is unusable. See `StageMode.muted`.
    */
-  private readonly voice = new BrowserVoice();
+  private readonly voice = new BrowserVoice({ muted: stageMode().muted });
 
   private framings: Framings | null = null;
   private frame: CameraFrame = 'bust';
@@ -135,13 +144,25 @@ export class AvatarRuntime {
     this.controls.dampingFactor = 0.08;
 
     // Toon materials blow out easily; these levels are tuned for MeshToonMaterial.
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x4a5160, 0.85));
+    //
+    // Held in a group so a backdrop can hide the whole rig with one flag. A room
+    // brings its own light — that is most of what distinguishes one room from
+    // another — and the alternative to switching this off is scaling it, which
+    // would mean these numbers being read and multiplied somewhere else.
+    this.defaultRig.add(new THREE.HemisphereLight(0xffffff, 0x4a5160, 0.85));
     const key = new THREE.DirectionalLight(0xffffff, 1.05);
     key.position.set(1, 1.6, 2.5);
-    this.scene.add(key);
+    this.defaultRig.add(key);
     const rim = new THREE.DirectionalLight(0xbcd2ff, 0.35);
     rim.position.set(-1.6, 0.8, -2);
-    this.scene.add(rim);
+    this.defaultRig.add(rim);
+    this.scene.add(this.defaultRig);
+
+    this.backdrop = new BackdropStage(this.scene, this.renderer, [this.defaultRig]);
+    // Read here rather than passed in, because the room is not something any
+    // caller of this class decides — it is on the URL the source was opened
+    // with, and the same reader that answers "is this a stage" answers it.
+    this.backdrop.setBackdrop(stageMode().backdrop);
 
     // The console is a fixed-width panel beside a flexible stage, so the canvas
     // resizes when the window does and also when the panel is shown or hidden.
@@ -211,6 +232,37 @@ export class AvatarRuntime {
     this.current?.materials.apply(on);
   }
 
+  get muted(): boolean {
+    return this.voice.isMuted;
+  }
+
+  /**
+   * Silence the voice, or let it through. See `BrowserVoice.setMuted`.
+   *
+   * On the runtime rather than on the session because it is a property of this
+   * *page* — whether this renderer is the one being listened to — and not of the
+   * performance. It survives an avatar swap for the same reason the voice does.
+   */
+  setMuted(muted: boolean): void {
+    this.voice.setMuted(muted);
+  }
+
+  get backdropId(): string | null {
+    return this.backdrop.current;
+  }
+
+  /**
+   * Put the avatar in a room, or take it out.
+   *
+   * Survives an avatar swap, because the room is a property of the stream and
+   * not of who is on it — rebuilding it on every switch would mean a visible
+   * rebuild of the geometry and a second of flat grey in the middle of what is
+   * otherwise a seamless change.
+   */
+  setBackdrop(id: string | null): void {
+    this.backdrop.setBackdrop(id);
+  }
+
   private resize(): void {
     const w = this.host.clientWidth;
     const h = this.host.clientHeight;
@@ -255,6 +307,16 @@ export class AvatarRuntime {
     const root = gltf.scene;
     this.scene.add(root);
 
+    // Casts, but does not receive. The shadow the avatar throws on the wall
+    // behind it is what puts it in the room rather than in front of a picture of
+    // one, and costs a second pass over geometry that is already skinned.
+    // Receiving is the other half and is deliberately left off: a skinned mesh
+    // self-shadowing at these bone counts stipples the face at exactly the
+    // framing the stream spends all its time at.
+    root.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.castShadow = true;
+    });
+
     const materials = setupMaterials(root, avatar);
     materials.apply(this.toon);
 
@@ -278,6 +340,11 @@ export class AvatarRuntime {
     const session = new Session(director, {
       wardrobe,
       camera: (frame) => this.goto(frame),
+      // The stage rather than the runtime, so a session cannot reach anything
+      // else here. A new session is built on every avatar swap and the room it
+      // is handed is the one already standing — the set does not change because
+      // the actor did.
+      scenery: this.backdrop,
       voice: this.voice,
     });
 
@@ -314,6 +381,7 @@ export class AvatarRuntime {
     this.resizeObserver.disconnect();
     this.timer.dispose();
     this.unmount();
+    this.backdrop.dispose();
     this.controls.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
@@ -331,6 +399,7 @@ export class AvatarRuntime {
     // throw the sway chains, which is a far more visible failure than lag.
     const dt = Math.min(this.timer.getDelta(), 0.05);
     this.controls.update();
+    this.backdrop.update(dt);
 
     this.fpsAcc += dt;
     this.fpsFrames++;
