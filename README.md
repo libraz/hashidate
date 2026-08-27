@@ -105,6 +105,8 @@ Speech is the one thing that crossed the line, and only as far as `tools/tts/`: 
 
 It is also deliberately loopback-only. There is no `--host` flag, no CORS header and no tunnel, because the avatars used for validation may not be republished: exposing the renderer would be a licensing decision before it was a code change.
 
+The model data does not leave that loop. The browser reads it from `127.0.0.1` and draws it; nothing in the runtime copies it, uploads it or learns from it.
+
 The engine is a runtime, not an editor. Rigging, weighting and garment authoring happen in Blender, and `tools/blender` is the seam between the two.
 
 ## Development
@@ -124,3 +126,5 @@ The numbers in `src/engine` were arrived at by watching two real avatars, and mo
 [Apache-2.0](LICENSE) — the code in this repository.
 
 Nothing under `public/models/` is covered by it. The avatars are purchased commercial models under their authors' own terms: a checkout gives you the runtime, not the characters it was built against.
+
+The wall and floor textures in `public/textures/` are CC0 1.0, from ambientCG (`WoodFloor001`, `Fabric019`).
