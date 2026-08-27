@@ -1,5 +1,5 @@
 import type { TurnRequest } from '../engine/types';
-import type { Command, QueueEntry } from '../protocol';
+import type { Command, HistoryEntry, QueueEntry } from '../protocol';
 
 /**
  * The queue of turns waiting to be said, and the only copy that counts.
@@ -34,10 +34,35 @@ import type { Command, QueueEntry } from '../protocol';
  * something typed by hand — and every scheme for merging them automatically has
  * to guess. A position in a list does not guess: `unshift` puts a comment next,
  * `move` puts it third, and both are decisions somebody made and can see.
+ *
+ * ## What was said is kept, and can be sent round again
+ *
+ * A finished turn moves into the history rather than being dropped. That is what
+ * makes the past addressable: a line that came out wrong, or one that was cut
+ * off, can be put back at the front of the queue and said again — and so can
+ * everything after it, which is the difference between repeating a line and
+ * rewinding a script. See `rewind`.
+ *
+ * The history is bounded and in memory, like everything else here. It is a
+ * broadcast aid, not a record: the point of it is the last few minutes, and a
+ * stream that ends takes it with it.
  */
 
 /** Where a new entry goes. */
 export type Placement = 'push' | 'unshift';
+
+/** What `rewind` was asked to bring back. See `queueRewindSchema`. */
+export type RewindMode = 'from' | 'one';
+
+/**
+ * How many spoken turns are kept.
+ *
+ * Enough to cover the stretch anybody would want back — at the pace a line is
+ * said, a hundred is most of an hour — and small enough that a stream left
+ * running overnight does not grow the process. Past it the oldest go, because
+ * the end of the list is the end nobody reaches for.
+ */
+export const HISTORY_MAX = 100;
 
 /** How the queue tells its owner that the renderer needs the new list. */
 export type Deliver = (turns: TurnRequest[]) => number;
@@ -53,6 +78,8 @@ const now = (): number => Date.now() / 1000;
 
 export class TurnQueue {
   private entries: QueueEntry[] = [];
+  /** What has been said, oldest first. Capped at `HISTORY_MAX`. */
+  private spoken: HistoryEntry[] = [];
   private seq = 0;
 
   /**
@@ -164,15 +191,71 @@ export class TurnQueue {
   }
 
   /**
-   * Forget the entries the renderer has finished with.
+   * Move an entry the renderer has finished with into the history.
    *
    * The renderer reports `turn.end` under the entry's own id, which is how this
-   * queue learns that a line it dispatched is done. Without it the list would
-   * grow for the length of the stream and the panel would show a hundred lines
-   * that were said an hour ago.
+   * queue learns that a line it dispatched is done. Out of the pending list it
+   * must go — otherwise the panel would show a hundred lines that were said an
+   * hour ago as though they were still to come — but not out of existence: it
+   * goes onto the end of the history, where it can be brought back.
+   *
+   * `interrupted` marks a line that was cut off rather than finished. It is kept
+   * on the same footing as a finished one, and is in practice the one most
+   * likely to be wanted back.
    */
-  complete(id: string): boolean {
-    return this.remove(id);
+  complete(id: string, { interrupted = false }: { interrupted?: boolean } = {}): boolean {
+    const index = this.entries.findIndex((entry) => entry.id === id);
+    if (index === -1) return false;
+    const [entry] = this.entries.splice(index, 1);
+    this.spoken.push({ ...entry, saidAt: now(), ...(interrupted ? { interrupted } : {}) });
+    if (this.spoken.length > HISTORY_MAX) {
+      this.spoken.splice(0, this.spoken.length - HISTORY_MAX);
+    }
+    return true;
+  }
+
+  /** What has been said, oldest first. A copy, on the same footing as `list`. */
+  history(): HistoryEntry[] {
+    return this.spoken.map((entry) => ({ ...entry }));
+  }
+
+  /** Forget everything that has been said. The pending list is untouched. */
+  forget(): void {
+    this.spoken.length = 0;
+  }
+
+  /**
+   * Put something already said back at the front of the queue.
+   *
+   * `from` moves the named line and everything said after it out of the history
+   * and into the front of the queue, in the order they were said: the script
+   * resumes from that point, and the history ends where the rewind began,
+   * because those lines are about to be said again and will be filed again when
+   * they are. `one` copies the named line alone and leaves the history whole —
+   * repeating a line is not rewinding past it.
+   *
+   * New ids either way. An entry that goes round again is a new pending turn:
+   * reusing the id would put a second `turn.end` under one that has already
+   * ended, and nothing correlating against the event log could tell the two
+   * apart. `source` and `note` survive, so a row still says where it came from.
+   *
+   * Returns the new entries, front of the queue first, or null for an id the
+   * history does not have — which is the ordinary outcome of clicking a row that
+   * aged off the end while the panel was open.
+   */
+  rewind(id: string, mode: RewindMode = 'from'): QueueEntry[] | null {
+    const index = this.spoken.findIndex((entry) => entry.id === id);
+    if (index === -1) return null;
+    const taken = mode === 'one' ? [this.spoken[index]] : this.spoken.splice(index);
+    const added = taken.map((entry) => this.requeue(entry));
+    this.entries.unshift(...added);
+    return added;
+  }
+
+  /** One spoken entry, as a pending one again. See `rewind`. */
+  private requeue(entry: HistoryEntry): QueueEntry {
+    const { id: _id, at: _at, saidAt: _saidAt, interrupted: _interrupted, ...turn } = entry;
+    return { ...turn, id: this.mint(), at: now() };
   }
 
   /**

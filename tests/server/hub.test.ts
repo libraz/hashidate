@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionEvent, SessionState, StreamMessage, Vocabulary } from '@/protocol';
-import { EVENT_LOG_MAX, Hub, STATE_STALE_SECONDS } from '@/server/hub';
+import { EVENT_LOG_MAX, EXPECTED_INTERRUPT_SECONDS, Hub, STATE_STALE_SECONDS } from '@/server/hub';
 
 /**
  * Fan-out, the sequenced event log and the waiting.
@@ -462,5 +462,197 @@ describe('the pending queue', () => {
     // a script with nothing connected — which is when it is most looked at.
     expect(snapshot.state).toEqual({});
     expect(snapshot.queue).toHaveLength(1);
+  });
+});
+
+/**
+ * The setup a renderer opened at the top of the broadcast has to be handed.
+ *
+ * `standing.ts` decides *what* is kept; this is about the hub actually keeping
+ * it and getting it to a viewer that was not there when it was chosen. That is
+ * the whole reason a control panel and a renderer can be two pages: the panel is
+ * where the show is set up, and the renderer is opened last.
+ */
+describe('the setup, replayed on connect', () => {
+  /** Attach a viewer and hand back the commands it was given on connect. */
+  const attach = (): StreamMessage['commands'] => {
+    const seen: StreamMessage[] = [];
+    hub.subscribe((message) => seen.push(message));
+    return seen.flatMap((message) => message.commands);
+  };
+
+  it('hands a late viewer the shot, the set and the costume', () => {
+    hub.send({
+      type: 'command',
+      commands: [
+        { cmd: 'camera', frame: 'full' },
+        { cmd: 'backdrop', id: 'night' },
+        { cmd: 'wear', slot: 'top', item: 'coat' },
+      ],
+    });
+    expect(attach()).toEqual([
+      { cmd: 'wear', slot: 'top', item: 'coat' },
+      { cmd: 'camera', frame: 'full' },
+      { cmd: 'backdrop', id: 'night' },
+    ]);
+  });
+
+  it('says nothing to a viewer attaching before anything has been set', () => {
+    expect(attach()).toEqual([]);
+  });
+
+  it('leaves out the commands that were a moment rather than a setting', () => {
+    hub.send({
+      type: 'command',
+      commands: [
+        { cmd: 'camera', frame: 'face' },
+        { cmd: 'gesture', id: 'wave' },
+        { cmd: 'say', text: 'あ' },
+        { cmd: 'perform', id: 'hello' },
+      ],
+    });
+    expect(attach()).toEqual([{ cmd: 'camera', frame: 'face' }]);
+  });
+
+  it('sends the setup and the queue in one frame, setup first', () => {
+    // Two frames would be wrong rather than merely untidy: a renderer told to
+    // load a different avatar holds everything behind it until that avatar is
+    // standing, and a queue arriving on its own after the hold had ended would
+    // be applied to the scene that was being replaced.
+    hub.send({ type: 'command', commands: [{ cmd: 'avatar', id: 'other' }] });
+    hub.queue.add([{ text: 'あ' }]);
+    const seen: StreamMessage[] = [];
+    hub.subscribe((message) => seen.push(message));
+    expect(seen).toHaveLength(1);
+    expect(seen[0].commands.map((c) => c.cmd)).toEqual(['avatar', 'queue']);
+  });
+
+  it('keeps the setup for every later viewer, not just the first', () => {
+    hub.send({ type: 'command', commands: [{ cmd: 'room', id: 'hall' }] });
+    expect(attach()).toEqual([{ cmd: 'room', id: 'hall' }]);
+    expect(attach()).toEqual([{ cmd: 'room', id: 'hall' }]);
+  });
+
+  it('does not record what it replays, so a reconnect cannot double an outfit', () => {
+    hub.send({ type: 'command', commands: [{ cmd: 'wear', slot: 'top', item: 'coat' }] });
+    attach();
+    expect(attach()).toEqual([{ cmd: 'wear', slot: 'top', item: 'coat' }]);
+  });
+
+  it('carries the newest value of a setting that was changed twice', () => {
+    hub.send({ type: 'command', commands: [{ cmd: 'camera', frame: 'face' }] });
+    hub.send({ type: 'command', commands: [{ cmd: 'camera', frame: 'bust' }] });
+    expect(attach()).toEqual([{ cmd: 'camera', frame: 'bust' }]);
+  });
+
+  it('is not disturbed by the queue frames the hub sends on its own', () => {
+    hub.send({ type: 'command', commands: [{ cmd: 'camera', frame: 'upper' }] });
+    hub.queue.add([{ text: 'あ' }]);
+    hub.publishQueue();
+    expect(attach().map((c) => c.cmd)).toEqual(['camera', 'queue']);
+  });
+});
+
+/**
+ * What the hub does with a turn that has ended, and with a rewind.
+ *
+ * The interesting case is the interaction between the two: a rewind that cuts
+ * the line on air produces the same `turn.interrupted` the kill switch does, and
+ * the hub has to tell them apart — one empties the pending list, the other must
+ * leave the list the rewind had just filled.
+ */
+describe('the history and rewinding', () => {
+  /** Queue one line and report it said, which is the whole round trip. */
+  const spoke = (text: string, type: SessionEvent['type'] = 'turn.end'): string => {
+    const [entry] = hub.queue.add([{ text }]);
+    hub.report({ events: [event(entry.id, type)] });
+    return entry.id;
+  };
+
+  it('files a finished turn instead of dropping it', () => {
+    const id = spoke('a');
+    expect(hub.queue.list()).toEqual([]);
+    expect(hub.queue.history().map((e) => e.id)).toEqual([id]);
+  });
+
+  it('files the line that was cut off, and drops the rest of the list', () => {
+    const running = spoke('running', 'turn.interrupted');
+    hub.queue.add([{ text: 'pending' }]);
+    hub.report({ events: [event(running, 'turn.interrupted')] });
+
+    // Everything pending goes: the operator killed the script. The line that was
+    // being said is kept, because it was said, if only partly.
+    expect(hub.queue.list()).toEqual([]);
+    expect(hub.queue.history().map((e) => e.interrupted)).toEqual([true]);
+  });
+
+  it('sends the interrupt and the rewound list in one frame', () => {
+    const frames: StreamMessage[] = [];
+    hub.subscribe((message) => frames.push(message));
+    const id = spoke('a');
+
+    hub.rewind(id, 'one', { interrupt: true });
+
+    const last = frames.at(-1);
+    const commands = last?.type === 'command' ? last.commands : [];
+    // Two frames would let a renderer apply the stop and then lose the
+    // connection holding a queue that had just been rewound out from under it.
+    expect(commands[0]).toEqual({ cmd: 'interrupt' });
+    expect(commands[1]).toMatchObject({ cmd: 'queue' });
+  });
+
+  it('publishes the list without an interrupt when the line may finish', () => {
+    const frames: StreamMessage[] = [];
+    hub.subscribe((message) => frames.push(message));
+    const id = spoke('a');
+
+    hub.rewind(id, 'one', { interrupt: false });
+
+    const last = frames.at(-1);
+    const commands = last?.type === 'command' ? last.commands : [];
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({ cmd: 'queue' });
+  });
+
+  it('does not empty the queue on the interrupt its own rewind caused', () => {
+    const first = spoke('a');
+    const second = spoke('b');
+    const running = hub.queue.add([{ text: 'on air' }])[0].id;
+
+    hub.rewind(first, 'from', { interrupt: true });
+    // The renderer answers the interrupt a moment later.
+    hub.report({ events: [event(running, 'turn.interrupted')] });
+
+    expect(hub.queue.list().map((e) => e.text)).toEqual(['a', 'b']);
+    expect(second).not.toBe(first);
+  });
+
+  it('expects one interrupt only, so the next genuine one still empties it', () => {
+    const id = spoke('a');
+    hub.rewind(id, 'one', { interrupt: true });
+    hub.report({ events: [event('on-air-1', 'turn.interrupted')] });
+    expect(hub.queue.list()).toHaveLength(1);
+
+    // The operator hits stop. Nothing about this one was asked for.
+    hub.report({ events: [event('on-air-2', 'turn.interrupted')] });
+    expect(hub.queue.list()).toEqual([]);
+  });
+
+  it('stops expecting an interrupt that never came', () => {
+    const id = spoke('a');
+    hub.rewind(id, 'one', { interrupt: true });
+    vi.advanceTimersByTime(EXPECTED_INTERRUPT_SECONDS * 1000);
+
+    hub.report({ events: [event('on-air', 'turn.interrupted')] });
+
+    // A renderer that never answered must not leave the kill switch disarmed.
+    expect(hub.queue.list()).toEqual([]);
+  });
+
+  it('answers null for an id the history does not have, and sends nothing', () => {
+    const frames: StreamMessage[] = [];
+    hub.subscribe((message) => frames.push(message));
+    expect(hub.rewind('nope', 'from', { interrupt: true })).toBeNull();
+    expect(frames).toEqual([]);
   });
 });

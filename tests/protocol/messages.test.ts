@@ -7,6 +7,8 @@ import type { WardrobeTable } from '@/engine/types';
 import {
   commandRequestSchema,
   eventsResponseSchema,
+  historyEntrySchema,
+  queueRewindSchema,
   reportBodySchema,
   sessionEventSchema,
   sessionStateSchema,
@@ -180,6 +182,54 @@ describe('reportBodySchema', () => {
   });
 });
 
+describe('queueRewindSchema', () => {
+  it('takes a bare id and rewinds from there, which is what the word means', () => {
+    expect(queueRewindSchema.safeParse({ id: 'q1' }).data).toEqual({ id: 'q1', mode: 'from' });
+  });
+
+  it('carries the other mode, and the choice about the line on air', () => {
+    const body = { id: 'q1', mode: 'one', interrupt: true };
+    expect(queueRewindSchema.safeParse(body).data).toEqual(body);
+  });
+
+  it('leaves interrupt absent rather than defaulting it', () => {
+    // Cutting a character off mid-word is never something to do by accident, so
+    // the schema must not decide it on the caller's behalf.
+    expect(queueRewindSchema.safeParse({ id: 'q1' }).data?.interrupt).toBeUndefined();
+  });
+
+  it('rejects a mode it does not have and a body with no id', () => {
+    expect(queueRewindSchema.safeParse({ id: 'q1', mode: 'backwards' }).success).toBe(false);
+    expect(queueRewindSchema.safeParse({ mode: 'one' }).success).toBe(false);
+  });
+});
+
+describe('historyEntrySchema', () => {
+  it('accepts a spoken line: the entry it was, plus how it ended', () => {
+    const entry = {
+      id: 'q1',
+      text: 'あい',
+      source: 'panel',
+      at: 1_800_000_000,
+      saidAt: 1_800_000_009,
+      interrupted: true,
+    };
+    const result = historyEntrySchema.safeParse(entry);
+    expect(result.error?.issues ?? []).toEqual([]);
+    expect(result.data).toEqual(entry);
+  });
+
+  it('leaves interrupted absent for a line that was said to the end', () => {
+    const parsed = historyEntrySchema.safeParse({ id: 'q1', text: 'あ', at: 1, saidAt: 2 });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.interrupted).toBeUndefined();
+  });
+
+  it('rejects one that never says when it was said', () => {
+    expect(historyEntrySchema.safeParse({ id: 'q1', text: 'あ', at: 1 }).success).toBe(false);
+  });
+});
+
 describe('commandRequestSchema', () => {
   it('accepts a single bare command', () => {
     expect(commandRequestSchema.safeParse({ cmd: 'say', text: 'あ' }).data).toEqual({
@@ -229,6 +279,8 @@ describe('snapshotSchema', () => {
       vocabulary: session.vocabulary(),
       events: session.takeEvents(),
       voice: null,
+      tuning: session.tuning(),
+      avatars: [{ id: 'sample', label: 'サンプル' }],
       queue: [],
     };
     const result = snapshotSchema.safeParse(snapshot);
@@ -245,6 +297,8 @@ describe('snapshotSchema', () => {
       vocabulary: {},
       events: [],
       voice: null,
+      tuning: null,
+      avatars: [],
       queue: [],
     });
     expect(result.error?.issues ?? []).toEqual([]);
@@ -259,6 +313,8 @@ describe('snapshotSchema', () => {
         state: { speaking: false },
         vocabulary: { cameras: ['face'] },
         voice: null,
+        tuning: null,
+        avatars: [],
         queue: [],
         events: [],
       }).success,

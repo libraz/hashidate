@@ -4,9 +4,11 @@ import {
   type CommandName,
   type CommandResponse,
   type EventsResponse,
+  type HistoryResponse,
   parseCommand,
   type QueueResponse,
   queueAddSchema,
+  queueRewindSchema,
   queueUpdateSchema,
   reportBodySchema,
 } from '../protocol';
@@ -40,12 +42,13 @@ const EVENTS_WAIT_SECONDS = 30;
 const QUIET = ['/api/stream', '/api/report', '/api/speech'];
 
 /**
- * The three commands that spend `id` on their own payload id rather than on a
+ * The commands that spend `id` on their own payload id rather than on a
  * correlation id. Stamping one of those would change which expression is shown,
- * which effect is raised, which gesture is played — so their correlation id is
- * reported back to the caller and never written onto the command.
+ * which effect is raised, which gesture is played, which avatar is loaded — so
+ * their correlation id is reported back to the caller and never written onto
+ * the command.
  */
-const PAYLOAD_ID_COMMANDS = new Set<CommandName>(['expression', 'overlay', 'gesture']);
+const PAYLOAD_ID_COMMANDS = new Set<CommandName>(['expression', 'overlay', 'gesture', 'avatar']);
 
 interface StampedCommand {
   command: Command;
@@ -151,6 +154,10 @@ function get(res: ServerResponse, hub: Hub, pathname: string, params: URLSearchP
       return;
     case '/api/queue':
       json(res, { queue: hub.queue.list(), viewers: hub.viewers } satisfies QueueResponse);
+      return;
+    // Read separately from the snapshot on purpose. See `historyResponseSchema`.
+    case '/api/history':
+      json(res, { history: hub.queue.history() } satisfies HistoryResponse);
       return;
     default:
       json(res, { error: 'unknown endpoint' }, 404);
@@ -261,6 +268,26 @@ function queue(res: ServerResponse, hub: Hub, pathname: string, body: unknown): 
       hub.queue.clear();
       done(true);
       return;
+    // Not routed through `done`: a rewind that cuts the line on air has to send
+    // the interrupt and the new list in one frame, which is `Hub.rewind`, and
+    // publishing a second time here would deliver the list twice.
+    case '/api/queue/rewind': {
+      const parsed = queueRewindSchema.safeParse(body);
+      if (!parsed.success) {
+        json(res, { error: 'invalid rewind', detail: parsed.error.issues }, 400);
+        return;
+      }
+      const added = hub.rewind(parsed.data.id, parsed.data.mode, {
+        interrupt: parsed.data.interrupt ?? false,
+      });
+      const payload: QueueResponse = { queue: hub.queue.list(), viewers: hub.viewers };
+      if (added === null) {
+        json(res, { ...payload, error: 'no such entry' }, 404);
+        return;
+      }
+      json(res, payload);
+      return;
+    }
     default:
       json(res, { error: 'unknown endpoint' }, 404);
   }

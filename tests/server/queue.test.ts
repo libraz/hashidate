@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { TurnQueue } from '@/server/queue';
+import { HISTORY_MAX, TurnQueue } from '@/server/queue';
 
 /**
  * The pending list, which is the only copy that counts.
@@ -131,5 +131,158 @@ describe('TurnQueue.command', () => {
     const command = queue.command();
     const turns = command.cmd === 'queue' ? command.turns : [];
     expect(turns[0].id).toBe(entry.id);
+  });
+});
+
+/**
+ * What has been said, and putting it back.
+ *
+ * The history exists so that the past is addressable during a broadcast: a line
+ * that came out wrong is not gone, it is a row with two buttons on it. These
+ * tests are mostly about the difference between those two buttons, because that
+ * difference — repeat one line, or rewind past it — is the whole feature.
+ */
+describe('TurnQueue history', () => {
+  it('moves a finished entry out of the pending list and into the history', () => {
+    const [a, b] = fill('a', 'b');
+    expect(queue.complete(a)).toBe(true);
+    expect(ids()).toEqual([b]);
+    expect(queue.history().map((e) => e.id)).toEqual([a]);
+  });
+
+  it('stamps when it was said and leaves a finished line unmarked', () => {
+    const [a] = fill('a');
+    queue.complete(a);
+    const [entry] = queue.history();
+    expect(entry.saidAt).toBeGreaterThan(0);
+    expect(entry.interrupted).toBeUndefined();
+  });
+
+  it('marks a line that was cut off, which is the one most likely to be wanted back', () => {
+    const [a] = fill('a');
+    queue.complete(a, { interrupted: true });
+    expect(queue.history()[0].interrupted).toBe(true);
+  });
+
+  it('answers false for an id it does not have, and files nothing', () => {
+    expect(queue.complete('nope')).toBe(false);
+    expect(queue.history()).toEqual([]);
+  });
+
+  it('keeps the newest HISTORY_MAX and drops from the old end', () => {
+    for (let i = 0; i < HISTORY_MAX + 20; i++) {
+      const [id] = fill(`line ${i}`);
+      queue.complete(id);
+    }
+    const history = queue.history();
+    expect(history).toHaveLength(HISTORY_MAX);
+    // The end of the list is the end nobody reaches for.
+    expect(history[0].text).toBe('line 20');
+    expect(history.at(-1)?.text).toBe(`line ${HISTORY_MAX + 19}`);
+  });
+
+  it('hands back a copy, so a caller cannot edit what was said', () => {
+    const [a] = fill('a');
+    queue.complete(a);
+    queue.history()[0].text = 'rewritten';
+    expect(queue.history()[0].text).toBe('a');
+  });
+
+  it('is not emptied by clearing the pending list', () => {
+    const [a] = fill('a');
+    queue.complete(a);
+    fill('b');
+    queue.clear();
+    expect(ids()).toEqual([]);
+    expect(queue.history()).toHaveLength(1);
+  });
+
+  it('forgets everything when asked, leaving the pending list alone', () => {
+    const [a] = fill('a');
+    queue.complete(a);
+    const [b] = fill('b');
+    queue.forget();
+    expect(queue.history()).toEqual([]);
+    expect(ids()).toEqual([b]);
+  });
+});
+
+describe('TurnQueue.rewind', () => {
+  /** Say `lines` in order, so the history has something with a shape. */
+  const said = (...lines: string[]): string[] =>
+    lines.map((text) => {
+      const [id] = fill(text);
+      queue.complete(id);
+      return id;
+    });
+
+  it('from: puts the line and everything said after it back, in order', () => {
+    const [, b] = said('a', 'b', 'c');
+    fill('pending');
+    const added = queue.rewind(b, 'from');
+    expect(added?.map((e) => e.text)).toEqual(['b', 'c']);
+    // At the front, so the show carries on from that point rather than after
+    // whatever was already waiting.
+    expect(texts()).toEqual(['b', 'c', 'pending']);
+  });
+
+  it('from: ends the history where the rewind began', () => {
+    const [, b] = said('a', 'b', 'c');
+    queue.rewind(b, 'from');
+    // Those lines are about to be said again, and will be filed again when they
+    // are. Leaving them would file each of them twice.
+    expect(queue.history().map((e) => e.text)).toEqual(['a']);
+  });
+
+  it('one: copies a single line and leaves the history whole', () => {
+    const [, b] = said('a', 'b', 'c');
+    const added = queue.rewind(b, 'one');
+    expect(added?.map((e) => e.text)).toEqual(['b']);
+    expect(texts()).toEqual(['b']);
+    // Repeating a line is not rewinding past it.
+    expect(queue.history().map((e) => e.text)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('mints a new id, so nothing ends twice under the same one', () => {
+    const [a] = said('a');
+    const added = queue.rewind(a, 'one');
+    expect(added?.[0].id).not.toBe(a);
+    expect(added?.[0].at).toBeGreaterThan(0);
+  });
+
+  it('carries source and note back with the line', () => {
+    const [entry] = queue.add([{ text: 'あ' }], { source: 'comment', note: '視聴者から' });
+    queue.complete(entry.id);
+    const added = queue.rewind(entry.id, 'one');
+    expect(added?.[0]).toMatchObject({ source: 'comment', note: '視聴者から' });
+  });
+
+  it('does not carry the end-of-line fields back into the queue', () => {
+    const [a] = said('a');
+    const added = queue.rewind(a, 'one');
+    expect(added?.[0]).not.toHaveProperty('saidAt');
+    expect(added?.[0]).not.toHaveProperty('interrupted');
+  });
+
+  it('brings an interrupted line back as an ordinary pending one', () => {
+    const [id] = fill('cut off');
+    queue.complete(id, { interrupted: true });
+    const added = queue.rewind(id, 'one');
+    expect(added?.[0].text).toBe('cut off');
+    expect(added?.[0]).not.toHaveProperty('interrupted');
+  });
+
+  it('answers null for an id that has aged off the end, and changes nothing', () => {
+    said('a');
+    fill('pending');
+    expect(queue.rewind('nope', 'from')).toBeNull();
+    expect(texts()).toEqual(['pending']);
+    expect(queue.history()).toHaveLength(1);
+  });
+
+  it('defaults to from, which is what a rewind means', () => {
+    const [, b] = said('a', 'b', 'c');
+    queue.rewind(b);
+    expect(texts()).toEqual(['b', 'c']);
   });
 });

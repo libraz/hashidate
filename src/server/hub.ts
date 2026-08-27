@@ -1,13 +1,18 @@
 import type {
+  Command,
+  LabelledId,
+  QueueEntry,
   ReportBody,
   SessionEvent,
   SessionState,
   Snapshot,
   StreamMessage,
+  Tuning,
   Vocabulary,
   VoiceReport,
 } from '../protocol';
-import { TurnQueue } from './queue';
+import { type RewindMode, TurnQueue } from './queue';
+import { Standing } from './standing';
 
 /**
  * Fan-out to connected viewers, plus the last state they reported.
@@ -32,6 +37,21 @@ export const EVENT_LOG_MAX = 512;
  * orchestrator the avatar is still mid-sentence forever.
  */
 export const STATE_STALE_SECONDS = 3.0;
+
+/**
+ * How long an interrupt this server sent stays expected.
+ *
+ * A rewind that cuts the line on air sends `interrupt` and the rewound list in
+ * the same breath, and the renderer answers with `turn.interrupted` a moment
+ * later. That event normally means the operator hit the kill switch, and this
+ * hub answers it by emptying the pending list — which, arriving just after a
+ * rewind, would empty the list the rewind had only just filled.
+ *
+ * So an interrupt this server caused is expected once and then forgotten. The
+ * window is long enough to cover a renderer that is a frame or two behind and
+ * short enough that it cannot swallow a genuine interrupt the operator meant.
+ */
+export const EXPECTED_INTERRUPT_SECONDS = 5.0;
 
 /** One connected viewer's down-channel. */
 export type ViewerListener = (message: StreamMessage) => void;
@@ -67,7 +87,11 @@ export class Hub {
   private state: Partial<SessionState> = {};
   private vocabulary: Partial<Vocabulary> = {};
   private voice: VoiceReport | null = null;
+  private tuning: Tuning | null = null;
+  private avatars: LabelledId[] = [];
   private stateAt = 0;
+  /** See `EXPECTED_INTERRUPT_SECONDS`. Epoch seconds, zero for none pending. */
+  private interruptExpectedUntil = 0;
 
   /**
    * The pending turns, and the authority on what they are. See `queue.ts`.
@@ -79,19 +103,34 @@ export class Hub {
    */
   readonly queue = new TurnQueue();
 
+  /**
+   * The setup, so a renderer opened at the top of the broadcast is not opened on
+   * defaults. See `standing.ts` for what counts as one and what does not.
+   */
+  private readonly standing = new Standing();
+
   // --- downstream (server -> viewer) ----------------------------------------
 
   /**
    * Attach a viewer. Returns the detach.
    *
-   * The pending queue goes down the new connection immediately. That is what
-   * makes a viewer reload survivable mid-stream: the renderer comes back with an
-   * empty queue and is handed the script back before it has said anything, so
-   * the only thing lost is the line that was in the air.
+   * The setup and the pending queue both go down the new connection
+   * immediately. That is what makes a viewer reload survivable mid-stream: the
+   * renderer comes back with nothing and is handed the avatar, the costume, the
+   * set and the script back before it has said anything, so the only thing lost
+   * is the line that was in the air.
+   *
+   * The setup goes first, in one frame with the queue. A renderer told to load a
+   * different avatar holds everything behind it until that avatar is standing —
+   * including the queue, which is why the two cannot be sent as two frames: the
+   * queue arriving on its own after the hold had ended would be applied to the
+   * old scene.
    */
   subscribe(listener: ViewerListener): () => void {
     this.clients.add(listener);
-    if (this.queue.length > 0) listener({ type: 'command', commands: [this.queue.command()] });
+    const commands = this.standing.commands();
+    if (this.queue.length > 0) commands.push(this.queue.command());
+    if (commands.length > 0) listener({ type: 'command', commands });
     return () => this.unsubscribe(listener);
   }
 
@@ -111,8 +150,51 @@ export class Hub {
     this.clients.delete(listener);
   }
 
-  /** Hand one message to every connected viewer. Returns the count. */
+  /**
+   * Send something already said round again, and push the result.
+   *
+   * Here rather than beside the routes because it is the one queue operation
+   * that also has to talk to the renderer about something other than the list:
+   * cutting the line on air is a command, and it has to travel in the same frame
+   * as the new list. Sent as two, a renderer that applied the interrupt and then
+   * lost the connection would be left holding a queue that had just been
+   * rewound out from under it.
+   *
+   * Returns the entries that went back, or null for an id the history no longer
+   * has.
+   */
+  rewind(id: string, mode: RewindMode, { interrupt = false } = {}): QueueEntry[] | null {
+    const added = this.queue.rewind(id, mode);
+    if (added === null) return null;
+    const commands: Command[] = [];
+    if (interrupt) {
+      // Before the send, not after: the report can come back inside the same
+      // tick as the write on loopback.
+      this.interruptExpectedUntil = now() + EXPECTED_INTERRUPT_SECONDS;
+      commands.push({ cmd: 'interrupt' });
+    }
+    commands.push(this.queue.command());
+    this.send({ type: 'command', commands });
+    return added;
+  }
+
+  /** Whether this interrupt is one we asked for. True at most once per rewind. */
+  private consumeExpectedInterrupt(): boolean {
+    const expected = now() < this.interruptExpectedUntil;
+    this.interruptExpectedUntil = 0;
+    return expected;
+  }
+
+  /**
+   * Hand one message to every connected viewer. Returns the count.
+   *
+   * Every command this server sends passes through here, which is why the setup
+   * is folded in here rather than beside the route that received it: the count
+   * this answers is how many viewers heard it, and a viewer that will only
+   * connect later has to be able to hear it too.
+   */
   send(message: StreamMessage): number {
+    for (const command of message.commands) this.standing.record(command);
     for (const listener of this.clients) listener(message);
     return this.clients.size;
   }
@@ -131,19 +213,28 @@ export class Hub {
     }
     if (body.vocabulary) this.vocabulary = body.vocabulary;
     if (body.voice !== undefined) this.voice = body.voice;
+    if (body.tuning !== undefined) this.tuning = body.tuning;
+    // Fixed for the life of a renderer, so it rides with the vocabulary rather
+    // than on the timer. Not cleared by a report that omits it.
+    if (body.avatars) this.avatars = body.avatars;
     for (const event of body.events ?? []) {
       this.seq += 1;
       this.events.push({ ...event, seq: this.seq, at: event.at ?? now() });
-      // A line the renderer has finished with stops being pending. Driven off
-      // the event rather than off the reported `queued` count, because the count
-      // says how many are left and not which one left — and the panel is looking
-      // at rows, not at a number.
+      // A line the renderer has finished with stops being pending and starts
+      // being history. Driven off the event rather than off the reported
+      // `queued` count, because the count says how many are left and not which
+      // one left — and the panel is looking at rows, not at a number.
       if (event.type === 'turn.end' && event.turn) this.queue.complete(event.turn);
       // An interrupt drops everything pending in the renderer. Mirroring it here
       // is what keeps the two lists the same: without it the queue would be
       // re-delivered on the next edit and the stream would resume a script the
-      // operator had just killed.
-      if (event.type === 'turn.interrupted') this.queue.clear();
+      // operator had just killed. The line that was cut off is filed rather than
+      // dropped — it was said, if only partly, and it is the one most likely to
+      // be wanted back.
+      if (event.type === 'turn.interrupted') {
+        if (event.turn) this.queue.complete(event.turn, { interrupted: true });
+        if (!this.consumeExpectedInterrupt()) this.queue.clear();
+      }
       if (event.type === 'queue.dropped') for (const id of event.turns ?? []) this.queue.remove(id);
     }
     if (this.events.length > EVENT_LOG_MAX) {
@@ -167,6 +258,10 @@ export class Hub {
       // settings and a script, and both are still true with nothing connected —
       // which is exactly when an operator is most likely to be looking at them.
       voice: this.voice,
+      // Settings too, and on the same footing: a fader is worth drawing at the
+      // value it will resume at.
+      tuning: this.tuning,
+      avatars: this.avatars,
       queue: this.queue.list(),
     };
   }
