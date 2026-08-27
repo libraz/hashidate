@@ -33,6 +33,7 @@ import type {
   EmotionVector,
   FingerName,
   GestureDef,
+  Scenery,
   SessionEvent,
   SessionEventType,
   SessionState,
@@ -41,6 +42,7 @@ import type {
   TurnRequest,
   Vocabulary,
   Voice,
+  VoiceChainRequest,
 } from './types';
 
 // A beat between turns. Lines that butt up against each other read as one long
@@ -68,6 +70,11 @@ const VOICE_WAIT = 5;
 export interface SessionOptions {
   wardrobe?: Wardrobe | null;
   camera?: ((frame: CameraFrame) => void) | null;
+  /**
+   * What the character is seen in front of. Absent means the renderer has no
+   * backdrops, and `backdrop` does nothing — which is what every test is.
+   */
+  scenery?: Scenery | null;
   idle?: boolean;
   /**
    * Where lines go to be spoken. Absent means the mouth runs on the text
@@ -106,6 +113,7 @@ export class Session {
   readonly wardrobe: Wardrobe | null;
   /** (frame) => void */
   readonly camera: ((frame: CameraFrame) => void) | null;
+  readonly scenery: Scenery | null;
   readonly voice: Voice | null;
 
   idleEnabled: boolean;
@@ -136,11 +144,18 @@ export class Session {
 
   constructor(
     director: Director,
-    { wardrobe = null, camera = null, idle = false, voice = null }: SessionOptions = {},
+    {
+      wardrobe = null,
+      camera = null,
+      scenery = null,
+      idle = false,
+      voice = null,
+    }: SessionOptions = {},
   ) {
     this.d = director;
     this.wardrobe = wardrobe;
     this.camera = camera;
+    this.scenery = scenery;
     this.voice = voice;
 
     // Off by default so opening the viewer gives a still character. An
@@ -202,7 +217,22 @@ export class Session {
    * can be planned against a length that is known before it opens, rather than
    * started on a guess and jerked into place when the audio turns up.
    */
-  say({
+  say(request: TurnRequest = {}): string {
+    const turn = this.build(request);
+    this.queue.push(turn);
+    this.emit('turn.queued', { turn: turn.id, queued: this.queue.length });
+    return turn.id;
+  }
+
+  /**
+   * Turn a request into a queued turn, and start its line being made.
+   *
+   * Shared by `say` and `replaceQueue` so the two cannot come to disagree about
+   * what queueing a line involves — the parse, the cue filter and the moment
+   * synthesis starts are all properties of *entering the queue*, not of the call
+   * that put it there.
+   */
+  private build({
     id,
     text = '',
     reading,
@@ -211,7 +241,7 @@ export class Session {
     gesture = null,
     perform = null,
     hold = false,
-  }: TurnRequest = {}): string {
+  }: TurnRequest): Turn {
     const line = parseLine(text);
     const turn: Turn = {
       id: id ?? this.nextId(),
@@ -233,9 +263,60 @@ export class Session {
       ...(this.voice && line.text ? {} : { take: null }),
     };
     if (this.voice && line.text) this.synthesise(turn, this.voice);
-    this.queue.push(turn);
-    this.emit('turn.queued', { turn: turn.id, queued: this.queue.length });
-    return turn.id;
+    return turn;
+  }
+
+  /**
+   * Replace everything pending with a new list, in order.
+   *
+   * The control API's queue lives in the server so that it survives a reload and
+   * can be reordered from a panel; this is how an edit to it lands here. The
+   * whole list travels rather than a diff, because a diff would have to be
+   * applied against whatever this queue happened to hold, and the two ends
+   * disagree constantly by nature — a turn starts here while an edit is in
+   * flight from there.
+   *
+   * **A line that has not changed keeps its take.** That is the entire reason
+   * this is not `clearQueue` followed by six `say` calls: the audio for a queued
+   * line is already made or already being made, and throwing it away would send
+   * the whole queue back to the sidecar on every reorder — which at a second per
+   * line means a stream that goes quiet every time the operator drags a row.
+   * Identity is `id` plus the words: an edited line is a different line and has
+   * to be spoken again, a moved one is the same line in a new place.
+   *
+   * The running turn is not touched. It is already being said, and a queue edit
+   * is about what comes next; stopping it is what `interrupt` is for.
+   */
+  replaceQueue(requests: TurnRequest[]): void {
+    const held = new Map(this.queue.map((turn) => [turn.id, turn]));
+    const next = requests.map((request) => {
+      const existing = request.id === undefined ? undefined : held.get(request.id);
+      if (existing && existing.text === parseLine(request.text ?? '').text) {
+        if (existing.reading === request.reading) {
+          held.delete(existing.id);
+          // Everything outside the line itself is applied at `start`, so it can
+          // be updated in place without costing the take.
+          return Object.assign(existing, {
+            emotion: request.emotion ?? null,
+            expression: request.expression ?? null,
+            gesture: request.gesture ?? null,
+            perform: request.perform ?? null,
+            hold: request.hold ?? false,
+          });
+        }
+      }
+      return this.build(request);
+    });
+
+    // Whatever the new list did not claim is gone. Its take has to be stopped
+    // even though it never played: a take still being synthesised arrives a
+    // second later and would start talking over the line that replaced it,
+    // which is the same failure `clear` during synthesis has.
+    for (const dropped of held.values()) dropped.take?.stop();
+
+    this.queue.length = 0;
+    this.queue.push(...next);
+    this.emit('queue.replaced', { queued: this.queue.length });
   }
 
   /**
@@ -373,6 +454,46 @@ export class Session {
 
   setCamera(frame: CameraFrame): void {
     this.camera?.(frame);
+  }
+
+  /**
+   * Put the voice in a named room, or take it out of one.
+   *
+   * Staging rather than performance, which is why it sits beside the camera and
+   * not beside the face: it says where the character is being heard, not what
+   * they are doing. It persists until it is changed, and it survives an avatar
+   * swap the way the camera does — the room is the set, not the actor.
+   *
+   * A renderer with no voice has no rooms and this does nothing, which is the
+   * same shape as `wear` on an avatar with no wardrobe.
+   */
+  setRoom(id: string | null): void {
+    this.voice?.setRoom(id);
+  }
+
+  /**
+   * Put the character in front of a named backdrop, or take it away.
+   *
+   * Staging, beside the camera and the room and for the same reason. It is
+   * deliberately *not* chained to `setRoom`: how a set looks and how a voice
+   * sits in a mix are chosen for different reasons and changed at different
+   * moments, and a renderer that quietly moved the reverb every time the
+   * backdrop changed would make every visual cut audible.
+   */
+  setBackdrop(id: string | null): void {
+    this.scenery?.setBackdrop(id);
+  }
+
+  /**
+   * Set how the voice is processed on its way out.
+   *
+   * Staging, like the room beside it, and passed straight through for the same
+   * reason: what a chain is belongs to whatever provides the voice. It takes
+   * effect from the next line synthesised rather than retroactively — a take
+   * already in the queue was made with the chain that was up when it was made.
+   */
+  setVoiceChain(request: VoiceChainRequest): void {
+    this.voice?.setChain(request);
   }
 
   wear({ slot, item, preset }: WearRequest): boolean {
@@ -591,6 +712,9 @@ export class Session {
         id,
         label: p.label,
       })),
+      rooms: this.voice?.rooms ?? [],
+      backdrops: this.scenery?.backdrops ?? [],
+      voicePresets: this.voice?.presets ?? [],
     };
   }
 

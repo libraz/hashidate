@@ -382,6 +382,16 @@ export interface DrawnShapeSpec {
 /** Finished whole-face drawings, plus which canonical emotion reaches each. */
 export interface PresetSpec extends DrawnShapeSpec {
   emotion?: Partial<Record<EmotionName, string>>;
+  /**
+   * The group holding the author's parking shapes — the `*Hide` family that
+   * moves a part out of view rather than deforming it.
+   *
+   * Stated so the engine can measure which drawings fold one in and are
+   * therefore whole or nothing; see `swap` in `face/presets.ts`. Naming the
+   * group is all that is needed, because what each shape parks does not matter,
+   * only that a drawing already contains the travel.
+   */
+  hideGroup?: string;
 }
 
 export interface MaterialRules {
@@ -619,6 +629,65 @@ export interface Take {
 }
 
 /**
+ * How the voice is processed on its way out, as the engine passes it along.
+ *
+ * `dsp` is deliberately opaque here. What a voice chain *is* — which processors,
+ * in what order, with what parameters — belongs to whatever implements `Voice`,
+ * on exactly the footing rooms and the wardrobe are already on: the engine names
+ * the thing and does not describe it. The real shape is stated once, in the
+ * protocol layer, and once more in the renderer that applies it.
+ */
+export interface VoiceChainRequest {
+  /** Base preset id. `null` bypasses the chain; absent keeps the current base. */
+  preset?: string | null;
+  /** Overrides applied on top of the base. */
+  dsp?: Record<string, unknown>;
+}
+
+/**
+ * What the voice can say about itself, for a control surface to display.
+ *
+ * The resolved configuration comes back rather than being assumed by whoever
+ * sent it, for the same reason `SessionState` is reported rather than inferred
+ * from the last command: a panel that draws its own sliders from what it last
+ * sent will keep drawing them after the renderer has refused, reloaded or
+ * resolved a preset differently.
+ */
+export interface VoiceReport {
+  /** The base preset in use, or null when the chain is bypassed. */
+  preset: string | null;
+  /** The complete resolved configuration, or null when nothing is applied. */
+  dsp: Record<string, unknown> | null;
+  /** The acoustic space, downstream of the chain. */
+  room: string | null;
+  /** Integrated loudness of the last take, LUFS. Null before anything is spoken. */
+  lufs: number | null;
+  /** True peak of the last take, dBTP. */
+  truePeakDb: number | null;
+}
+
+/**
+ * What the character is seen in front of.
+ *
+ * The visual counterpart to the `rooms` on `Voice`, and on exactly the same
+ * footing: the engine knows that backdrops have ids and labels and knows
+ * nothing whatever about what one is. A backdrop is geometry, lighting and
+ * tone mapping, all of which belong to the renderer — the engine's business is
+ * the character, and a `Scenery` that was any more specific than this would be
+ * the engine holding an opinion about a wall.
+ *
+ * Absent on a renderer that has no backdrops, which is the same shape as a
+ * renderer with no voice: `backdrop` then does nothing, and the empty list in
+ * the vocabulary is how a caller can tell without sending one and watching.
+ */
+export interface Scenery {
+  /** The rooms this renderer can show. Ids and labels only. */
+  readonly backdrops: LabelledId[];
+  /** Show one of them, or null for the flat background. Unknown ids are null. */
+  setBackdrop(id: string | null): void;
+}
+
+/**
  * Where a line goes to be spoken.
  *
  * One method, and it is deliberately the *whole* line at once rather than a
@@ -635,6 +704,29 @@ export interface Voice {
    * voice.
    */
   prepare(text: string, reading?: string): Promise<Take | null>;
+  /**
+   * The acoustic spaces this voice can be heard in, for the vocabulary.
+   *
+   * Ids and labels only. What a room *is* — its size, its walls, how much of it
+   * is in the mix — belongs to whatever implements this, on the same footing as
+   * the wardrobe: the engine names the thing and does not describe it.
+   */
+  readonly rooms: LabelledId[];
+  /** Put the voice in one of them, or null for none. An unknown id is none. */
+  setRoom(id: string | null): void;
+  /**
+   * The voice chains this voice can be put through, for the vocabulary. Ids and
+   * labels only, on the same footing as `rooms`.
+   */
+  readonly presets: LabelledId[];
+  /**
+   * Set the chain. Applies from the next line synthesised: a take already made
+   * was made with the chain that was up at the time, and re-making the queue on
+   * every parameter change would send all of it back to the synthesiser.
+   */
+  setChain(request: VoiceChainRequest): void;
+  /** What is currently applied, and what the last take measured. */
+  report(): VoiceReport;
 }
 
 /**
@@ -668,6 +760,7 @@ export type SessionEventType =
   | 'turn.end'
   | 'turn.interrupted'
   | 'queue.dropped'
+  | 'queue.replaced'
   | 'queue.empty';
 
 export interface SessionEvent {
@@ -769,4 +862,25 @@ export interface Vocabulary {
   };
   wardrobe: Record<string, { label: string; items: LabelledId[] }>;
   wardrobePresets: LabelledId[];
+  /**
+   * Where the voice is heard. Empty on a renderer with no voice at all, which
+   * is also the case where `room` does nothing — so a caller can tell the two
+   * apart from the vocabulary rather than by sending one and watching.
+   */
+  rooms: LabelledId[];
+  /**
+   * Where the character is seen. Empty on a renderer that has no backdrops,
+   * which is also the case where `backdrop` does nothing — the same tell the
+   * rooms above give.
+   *
+   * Separate from `rooms` because they are separate axes: one is the set, the
+   * other is the acoustic, and a stream changes them at different moments and
+   * for different reasons.
+   */
+  backdrops: LabelledId[];
+  /**
+   * The named voice chains, on the same footing as the rooms above: what a
+   * chain *does* is renderer data, and the wire carries only what it is called.
+   */
+  voicePresets: LabelledId[];
 }

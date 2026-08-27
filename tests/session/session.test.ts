@@ -5,7 +5,15 @@ import { textToVisemes } from '@/engine/face';
 import { buildProfile } from '@/engine/profile';
 import { Wardrobe } from '@/engine/scene';
 import { Session } from '@/engine/session';
-import type { SessionEvent, SessionEventType, Take, Voice, WardrobeTable } from '@/engine/types';
+import type {
+  SessionEvent,
+  SessionEventType,
+  Take,
+  Voice,
+  VoiceChainRequest,
+  VoiceReport,
+  WardrobeTable,
+} from '@/engine/types';
 import { buildRig } from '../helpers/scene';
 
 /**
@@ -601,6 +609,7 @@ describe('Session.vocabulary', () => {
     expect(Object.keys(vocabulary).sort()).toEqual(
       [
         'avatar',
+        'backdrops',
         'cameras',
         'cue',
         'emotions',
@@ -610,6 +619,8 @@ describe('Session.vocabulary', () => {
         'overlays',
         'performances',
         'pointing',
+        'rooms',
+        'voicePresets',
         'wardrobe',
         'wardrobePresets',
       ].sort(),
@@ -739,6 +750,40 @@ describe('direct control between turns', () => {
 
   it('setCamera is a no-op when no viewer is attached', () => {
     expect(() => harness.session.setCamera('full')).not.toThrow();
+  });
+
+  it('setBackdrop forwards the room to the scenery, null included', () => {
+    const rig = buildRig();
+    const director = new Director(buildProfile(rig.root, rig.descriptor));
+    const setBackdrop = vi.fn();
+    const session = new Session(director, { scenery: { backdrops: [], setBackdrop } });
+    session.setBackdrop('night');
+    expect(setBackdrop).toHaveBeenCalledWith('night');
+    // Null is the flat background and has to reach the renderer as itself. A
+    // default applied here would make "take the room away" unsayable.
+    session.setBackdrop(null);
+    expect(setBackdrop).toHaveBeenLastCalledWith(null);
+  });
+
+  it('setBackdrop is a no-op on a renderer with no backdrops', () => {
+    expect(() => harness.session.setBackdrop('night')).not.toThrow();
+  });
+
+  it('reports an empty backdrop list rather than omitting it', () => {
+    // The empty list is the tell that this renderer has no rooms at all, which
+    // is how a caller distinguishes "none available" from "none selected"
+    // without sending a command and watching for an effect.
+    expect(harness.session.vocabulary().backdrops).toEqual([]);
+  });
+
+  it('reports the backdrops the scenery advertises', () => {
+    const rig = buildRig();
+    const director = new Director(buildProfile(rig.root, rig.descriptor));
+    const backdrops = [{ id: 'dusk', label: '夕暮れ' }];
+    const session = new Session(director, {
+      scenery: { backdrops, setBackdrop: vi.fn() },
+    });
+    expect(session.vocabulary().backdrops).toEqual(backdrops);
   });
 
   it('lookAt is reported back through state', () => {
@@ -1201,6 +1246,37 @@ class FakeVoice implements Voice {
     this.pending.length = 0;
     return settle();
   }
+
+  readonly rooms = [
+    { id: 'booth', label: 'ブース' },
+    { id: 'hall', label: 'ホール' },
+  ];
+
+  /** Every room this was put in, so a test can see what the session forwarded. */
+  readonly roomsSet: Array<string | null> = [];
+
+  setRoom(id: string | null): void {
+    this.roomsSet.push(id);
+  }
+
+  readonly presets = [{ id: 'neutral-monitor', label: '素のまま' }];
+
+  /** Every chain this was set to, on the same footing as `roomsSet`. */
+  readonly chainsSet: VoiceChainRequest[] = [];
+
+  setChain(request: VoiceChainRequest): void {
+    this.chainsSet.push(request);
+  }
+
+  report(): VoiceReport {
+    return {
+      preset: this.chainsSet.at(-1)?.preset ?? 'neutral-monitor',
+      dsp: null,
+      room: this.roomsSet.at(-1) ?? null,
+      lufs: null,
+      truePeakDb: null,
+    };
+  }
 }
 
 /** Let the microtask chain in `synthesise` run to the end. */
@@ -1406,5 +1482,204 @@ describe('a turn with a voice', () => {
     // was never coming would stall the queue for `VOICE_WAIT` every time.
     expect((voice as unknown as FakeVoice).asked).toEqual([]);
     expect(session.turn?.perform).toBe('hello');
+  });
+});
+
+describe('the room the voice is heard in', () => {
+  it('forwards the room to the voice and keeps it there', () => {
+    let voice: FakeVoice | null = null;
+    const { session } = build({
+      voice: (now) => {
+        voice = new FakeVoice(now);
+        return voice;
+      },
+    });
+    session.setRoom('hall');
+    session.setRoom(null);
+    session.setRoom('booth');
+    // Verbatim, including the null: deciding what an unknown or absent id means
+    // is the voice's job, because the room table is its data and not the
+    // session's. The session only carries the name across.
+    expect((voice as unknown as FakeVoice).roomsSet).toEqual(['hall', null, 'booth']);
+  });
+
+  it('advertises the voice’s rooms in the vocabulary', () => {
+    const { session } = build({ voice: (now) => new FakeVoice(now) });
+    expect(session.vocabulary().rooms).toEqual([
+      { id: 'booth', label: 'ブース' },
+      { id: 'hall', label: 'ホール' },
+    ]);
+  });
+
+  it('has no rooms and does nothing without a voice', () => {
+    const { session } = build();
+    // The distinction a caller needs: an empty list says `room` will not do
+    // anything here, rather than leaving them to send one and watch for a
+    // change that never comes.
+    expect(session.vocabulary().rooms).toEqual([]);
+    expect(() => session.setRoom('hall')).not.toThrow();
+  });
+});
+
+describe('the voice chain', () => {
+  it('forwards the request verbatim, including an absent preset', () => {
+    let voice: FakeVoice | null = null;
+    const { session } = build({
+      voice: (now) => {
+        voice = new FakeVoice(now);
+        return voice;
+      },
+    });
+    session.setVoiceChain({ preset: 'bright-idol' });
+    session.setVoiceChain({ dsp: { retune: { semitones: 3 } } });
+    session.setVoiceChain({ preset: null });
+    // Absent and null are different answers — keep the base, versus bypass —
+    // and defaulting either of them here would take that distinction away from
+    // the only layer that can act on it.
+    expect((voice as unknown as FakeVoice).chainsSet).toEqual([
+      { preset: 'bright-idol', dsp: undefined },
+      { preset: undefined, dsp: { retune: { semitones: 3 } } },
+      { preset: null, dsp: undefined },
+    ]);
+  });
+
+  it('advertises the voice’s presets, and none without a voice', () => {
+    expect(build({ voice: (now) => new FakeVoice(now) }).session.vocabulary().voicePresets).toEqual(
+      [{ id: 'neutral-monitor', label: '素のまま' }],
+    );
+    const { session } = build();
+    expect(session.vocabulary().voicePresets).toEqual([]);
+    expect(() => session.setVoiceChain({ preset: 'bright-idol' })).not.toThrow();
+  });
+});
+
+describe('Session.replaceQueue', () => {
+  it('reorders without asking the voice for anything again', async () => {
+    let voice: FakeVoice | null = null;
+    const { session } = build({
+      voice: (now) => {
+        voice = new FakeVoice(now, { seconds: 1 });
+        return voice;
+      },
+    });
+    session.say({ id: 'a', text: 'ひとつめ' });
+    session.say({ id: 'b', text: 'ふたつめ' });
+    await settle();
+    const asked = (voice as unknown as FakeVoice).asked.length;
+    const takes = session.queue.map((turn) => turn.take);
+
+    session.replaceQueue([
+      { id: 'b', text: 'ふたつめ' },
+      { id: 'a', text: 'ひとつめ' },
+    ]);
+
+    expect(session.queue.map((turn) => turn.id)).toEqual(['b', 'a']);
+    // The whole point: a drag costs one message and no synthesis. Re-asking
+    // would take the stream quiet for a second per line, every reorder.
+    expect((voice as unknown as FakeVoice).asked).toHaveLength(asked);
+    expect(session.queue.map((turn) => turn.take)).toEqual([takes[1], takes[0]]);
+  });
+
+  it('re-synthesises a line whose words changed, and only that one', async () => {
+    let voice: FakeVoice | null = null;
+    const { session } = build({
+      voice: (now) => {
+        voice = new FakeVoice(now, { seconds: 1 });
+        return voice;
+      },
+    });
+    session.say({ id: 'a', text: 'そのまま' });
+    session.say({ id: 'b', text: 'まちがい' });
+    await settle();
+    const kept = session.queue[0].take;
+
+    session.replaceQueue([
+      { id: 'a', text: 'そのまま' },
+      { id: 'b', text: 'なおした' },
+    ]);
+    await settle();
+
+    expect((voice as unknown as FakeVoice).asked).toEqual([
+      'そのまま',
+      'まちがい',
+      // An edited line is a different line and has to be spoken again.
+      'なおした',
+    ]);
+    expect(session.queue[0].take).toBe(kept);
+  });
+
+  it('treats a changed reading as a changed line', async () => {
+    let voice: FakeVoice | null = null;
+    const { session } = build({
+      voice: (now) => {
+        voice = new FakeVoice(now, { seconds: 1 });
+        return voice;
+      },
+    });
+    session.say({ id: 'a', text: '三件', reading: 'さんけん' });
+    await settle();
+    session.replaceQueue([{ id: 'a', text: '三件', reading: 'みっけん' }]);
+    await settle();
+    // The words are identical and the sound is not. Matching on text alone
+    // would leave the corrected pronunciation unspoken.
+    expect((voice as unknown as FakeVoice).asked).toHaveLength(2);
+  });
+
+  it('updates the fields around the line in place, keeping the take', async () => {
+    const { session } = build({ voice: (now) => new FakeVoice(now, { seconds: 1 }) });
+    session.say({ id: 'a', text: 'あ', perform: 'hello' });
+    await settle();
+    const take = session.queue[0].take;
+
+    session.replaceQueue([{ id: 'a', text: 'あ', perform: null, emotion: { joy: 1 }, hold: true }]);
+
+    // Everything outside the line itself is applied when the turn starts, so it
+    // can be rewritten without costing the audio.
+    expect(session.queue[0]).toMatchObject({ perform: null, emotion: { joy: 1 }, hold: true });
+    expect(session.queue[0].take).toBe(take);
+  });
+
+  it('stops the take of a line the new list dropped', async () => {
+    const { session } = build({ voice: (now) => new FakeVoice(now, { seconds: 1 }) });
+    session.say({ id: 'a', text: 'のこる' });
+    session.say({ id: 'b', text: 'きえる' });
+    await settle();
+    const dropped = session.queue[1].take as FakeTake;
+
+    session.replaceQueue([{ id: 'a', text: 'のこる' }]);
+
+    // A take that is not stopped arrives a second later and starts talking over
+    // whatever replaced it — the same failure a `clear` mid-synthesis has.
+    expect(dropped.stopped).toBe(true);
+  });
+
+  it('does not touch the turn that is already being said', () => {
+    const { session, step } = build();
+    session.say({ id: 'running', text: 'いま' });
+    step(2);
+    expect(session.turn?.id).toBe('running');
+
+    session.replaceQueue([{ id: 'next', text: 'つぎ' }]);
+
+    // A queue edit is about what comes next. Stopping the line in the air is
+    // what `interrupt` is for, and doing it here would make every reorder cut
+    // the character off mid-word.
+    expect(session.turn?.id).toBe('running');
+    expect(session.queue.map((turn) => turn.id)).toEqual(['next']);
+  });
+
+  it('reports the resulting depth on queue.replaced', () => {
+    const { session } = build();
+    session.say({ id: 'a' });
+    session.takeEvents();
+    session.replaceQueue([{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+    expect(session.takeEvents()).toEqual([{ type: 'queue.replaced', queued: 3 }]);
+  });
+
+  it('empties the queue when given nothing', () => {
+    const { session } = build();
+    session.say({ id: 'a' });
+    session.replaceQueue([]);
+    expect(session.queue).toHaveLength(0);
   });
 });
