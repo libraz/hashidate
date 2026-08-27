@@ -26,6 +26,9 @@ describe('what counts as standing', () => {
     ['tune', { cmd: 'tune', idle: { breathDepth: 1 } }],
     ['wear', { cmd: 'wear', slot: 'top', item: 'shirt' }],
     ['camera', { cmd: 'camera', frame: 'full' }],
+    ['place', { cmd: 'place', avatar: { anchor: 'bottom-right' } }],
+    ['deck', { cmd: 'deck', id: 'intro' }],
+    ['slide', { cmd: 'slide', page: 4 }],
     ['backdrop', { cmd: 'backdrop', id: 'night' }],
     ['room', { cmd: 'room', id: 'hall' }],
     ['voice', { cmd: 'voice', preset: 'bright' }],
@@ -52,6 +55,16 @@ describe('what counts as standing', () => {
   ])('drops %s, which is a moment rather than a setup', (_verb, command) => {
     expect(standing.record(command)).toBe(false);
     expect(standing.commands()).toEqual([]);
+  });
+
+  it('never keeps the telemetry readout, however long it was left on', () => {
+    // The one exclusion that is a safety property rather than a taxonomy. A
+    // readout raised to answer a question during rehearsal must not come back
+    // by itself on the source OBS reloads at the top of the broadcast, so `off`
+    // is what a fresh renderer is handed no matter what was sent before it.
+    expect(standing.record({ cmd: 'debug', on: true })).toBe(false);
+    expect(standing.commands()).toEqual([]);
+    expect(standing.empty).toBe(true);
   });
 
   it('starts empty and says so', () => {
@@ -86,6 +99,17 @@ describe('the newest statement of a setting wins', () => {
     standing.record({ cmd: 'avatar', id: 'sample' });
     standing.record({ cmd: 'wear', slot: 'top', item: 'coat' });
     expect(verbs()).toEqual(['avatar', 'wear', 'camera']);
+  });
+
+  it('puts the document up before the page it is open at', () => {
+    // A `deck` states the page it opens on, so replayed the other way round it
+    // would undo the page the replay had just turned to.
+    standing.record({ cmd: 'slide', page: 7 });
+    standing.record({ cmd: 'backdrop', id: 'night' });
+    standing.record({ cmd: 'deck', id: 'intro', page: 7 });
+    standing.record({ cmd: 'place', slide: { fit: 'cover' } });
+    standing.record({ cmd: 'slide', page: 9 });
+    expect(verbs()).toEqual(['place', 'backdrop', 'deck', 'slide']);
   });
 });
 
@@ -166,6 +190,15 @@ describe('the two commands that merge rather than replace', () => {
     expect(standing.commands()).toEqual([{ cmd: 'tune', sway: { stiffness: 2 } }]);
   });
 
+  it('folds the framing and the offsets off it together', () => {
+    // They come from different places — a script names a shot, a drag on the
+    // preview moves it — and a renderer joining later needs both.
+    standing.record({ cmd: 'camera', frame: 'full' });
+    standing.record({ cmd: 'camera', yaw: 25, zoom: 1.3 });
+    standing.record({ cmd: 'camera', frame: 'bust' });
+    expect(standing.commands()).toEqual([{ cmd: 'camera', frame: 'bust', yaw: 25, zoom: 1.3 }]);
+  });
+
   it('folds the voice chain section by section', () => {
     standing.record({ cmd: 'voice', preset: 'bright', dsp: { retune: { semitones: 3 } } });
     standing.record({ cmd: 'voice', dsp: { eq: { airDb: 2 } } });
@@ -192,11 +225,114 @@ describe('the two commands that merge rather than replace', () => {
     expect(standing.commands()).toEqual([{ cmd: 'voice', preset: null }]);
   });
 
+  it('folds the two halves of the frame layout together', () => {
+    // A panel sends one slider at a time, so keeping only the last one would
+    // undo the width while the margin was still under the pointer.
+    standing.record({ cmd: 'place', avatar: { anchor: 'bottom-right', width: 0.4 } });
+    standing.record({ cmd: 'place', slide: { fit: 'contain' } });
+    standing.record({ cmd: 'place', avatar: { margin: 0.02 } });
+    expect(standing.commands()).toEqual([
+      {
+        cmd: 'place',
+        avatar: { anchor: 'bottom-right', width: 0.4, margin: 0.02 },
+        slide: { fit: 'contain' },
+      },
+    ]);
+  });
+
   it('drops the correlation id, which belonged to the request and not the state', () => {
     standing.record({ cmd: 'tune', id: 'c-1', idle: { blink: true } });
     standing.record({ cmd: 'voice', id: 'c-2', preset: 'bright' });
+    standing.record({ cmd: 'place', id: 'c-3', avatar: { width: 0.5 } });
     for (const command of standing.commands()) {
       expect(command).not.toHaveProperty('id');
     }
+  });
+});
+
+/**
+ * The page a document is open at, which is the one thing here that is counted
+ * rather than remembered.
+ *
+ * A relative turn means "the page after the one showing", and what is showing is
+ * an observation — the one kind of thing this file refuses to keep. So it is
+ * resolved from the commands that went out and stored absolute, and a renderer
+ * joining late clamps that number against the same document the live one did.
+ */
+describe('turning pages', () => {
+  /** The stored slide, which is always the absolute form. */
+  const slide = (): Command | undefined =>
+    standing.commands().find((command) => command.cmd === 'slide');
+
+  it('accumulates relative turns into an absolute page', () => {
+    standing.record({ cmd: 'deck', id: 'intro' });
+    standing.record({ cmd: 'slide', by: 1 });
+    standing.record({ cmd: 'slide', by: 1 });
+    standing.record({ cmd: 'slide', by: 3 });
+    expect(slide()).toEqual({ cmd: 'slide', page: 6 });
+  });
+
+  it('treats a bare slide as the next page', () => {
+    standing.record({ cmd: 'deck', id: 'intro' });
+    standing.record({ cmd: 'slide' });
+    standing.record({ cmd: 'slide' });
+    expect(slide()).toEqual({ cmd: 'slide', page: 3 });
+  });
+
+  it('lets an absolute page win and counts on from it', () => {
+    standing.record({ cmd: 'deck', id: 'intro' });
+    standing.record({ cmd: 'slide', page: 12, by: -5 });
+    standing.record({ cmd: 'slide', by: 1 });
+    expect(slide()).toEqual({ cmd: 'slide', page: 13 });
+  });
+
+  it('never stores the relative form, which a late renderer could not apply', () => {
+    standing.record({ cmd: 'deck', id: 'intro' });
+    standing.record({ cmd: 'slide', by: 4 });
+    // A renderer that was not there for the first turns would apply this one to
+    // page one and be four pages behind the stream for the rest of the segment.
+    expect(slide()).not.toHaveProperty('by');
+  });
+
+  it('opens a document at its own page and forgets the last one', () => {
+    standing.record({ cmd: 'deck', id: 'intro' });
+    standing.record({ cmd: 'slide', by: 8 });
+    standing.record({ cmd: 'deck', id: 'other', page: 3 });
+    expect(slide()).toBeUndefined();
+    standing.record({ cmd: 'slide', by: 1 });
+    expect(slide()).toEqual({ cmd: 'slide', page: 4 });
+  });
+
+  it('opens at the first page when the deck does not say which', () => {
+    standing.record({ cmd: 'deck', id: 'intro', page: 40 });
+    standing.record({ cmd: 'deck', id: 'other' });
+    standing.record({ cmd: 'slide', by: 1 });
+    expect(slide()).toEqual({ cmd: 'slide', page: 2 });
+  });
+
+  it('resets the counter when the document is taken down', () => {
+    standing.record({ cmd: 'deck', id: 'intro', page: 20 });
+    standing.record({ cmd: 'deck', id: null });
+    standing.record({ cmd: 'slide', by: 1 });
+    expect(slide()).toEqual({ cmd: 'slide', page: 2 });
+  });
+
+  it('stops at the first page rather than counting below it', () => {
+    standing.record({ cmd: 'deck', id: 'intro', page: 2 });
+    standing.record({ cmd: 'slide', by: -9 });
+    expect(slide()).toEqual({ cmd: 'slide', page: 1 });
+    // And counts forward from the clamp, exactly as the renderer does — which is
+    // what keeps the two ends on the same page.
+    standing.record({ cmd: 'slide', by: 1 });
+    expect(slide()).toEqual({ cmd: 'slide', page: 2 });
+  });
+
+  it('keeps the document across an avatar swap, unlike the wardrobe', () => {
+    // A document is a file on disk and the frame layout is about the broadcast
+    // frame. Neither one belonged to the body that was replaced.
+    standing.record({ cmd: 'deck', id: 'intro', page: 5 });
+    standing.record({ cmd: 'place', avatar: { width: 0.4 } });
+    standing.record({ cmd: 'avatar', id: 'other' });
+    expect(verbs()).toEqual(['avatar', 'place', 'deck']);
   });
 });

@@ -35,6 +35,29 @@ import type { Command } from '../protocol';
  * The emotion is the awkward one and is in: the command set states that a mood
  * persists because it does not end with the sentence, and a standing state that
  * disagreed with the protocol about a lifetime would be a second opinion.
+ *
+ * ## A relative page turn is resolved here, not looked up
+ *
+ * `slide { by: 1 }` says "the page after the one that is showing", which is a
+ * decision whose meaning depends on an observation — and observations are
+ * exactly what this file refuses to keep. Reading the page out of the renderer's
+ * report to resolve it would import the whole problem the section above rejects:
+ * a second renderer on a different page would turn the first one's.
+ *
+ * So it is resolved from the commands alone. A counter starts at the page a
+ * `deck` opened on and moves by every `slide` that passed through, and what is
+ * stored is always the absolute `{ cmd: 'slide', page: n }`. The counter never
+ * sees the document, so it does not know where the end is — but it does not need
+ * to: the renderer clamps a page past the end and a renderer joining late clamps
+ * the same replayed number against the same document, so the two land on the
+ * same page. Clamping is the only non-linearity between a run of turns and the
+ * page they arrive at, and it is applied by both ends rather than by one. The
+ * floor at 1 is here for the same reason, on the same argument.
+ *
+ * The tempting simplification is to store the last `slide` command as sent and
+ * let the renderer add up the relative ones. It does not work: a renderer that
+ * was not connected for the first fifteen turns would apply the sixteenth to
+ * page one.
  */
 
 /** A command whose effect is a standing state rather than a moment. */
@@ -46,7 +69,10 @@ type Persistent = Extract<
       | 'tune'
       | 'wear'
       | 'camera'
+      | 'place'
       | 'backdrop'
+      | 'deck'
+      | 'slide'
       | 'room'
       | 'voice'
       | 'idle'
@@ -64,19 +90,29 @@ type Of<K extends Persistent['cmd']> = Extract<Persistent, { cmd: K }>;
  * `wear` straight after it because a costume is the one thing that is meaningless
  * against the wrong body. The rest are independent of each other and are listed
  * roughly as an operator sets them: the character, then the set, then the sound.
+ *
+ * `deck` before `slide` because a `deck` states the page it opens on and would
+ * otherwise undo the page the replay had just turned to. `place` sits with the
+ * camera, being the other half of what the frame looks like.
  */
 const ORDER = [
   'avatar',
   'tune',
   'wear',
   'camera',
+  'place',
   'backdrop',
+  'deck',
+  'slide',
   'room',
   'voice',
   'idle',
   'look',
   'emotion',
 ] as const satisfies readonly Persistent['cmd'][];
+
+/** The page a document opens on, and the floor a page counter is clamped at. */
+const FIRST_PAGE = 1;
 
 /** Whether `value` is an object literal, for the merge below. Arrays are not. */
 function isPlain(value: unknown): value is Record<string, unknown> {
@@ -119,6 +155,15 @@ export class Standing {
   private wardrobe: Of<'wear'>[] = [];
 
   /**
+   * Which page of the document is up, counted rather than observed.
+   *
+   * See the module docstring: this is what makes a relative turn replayable, and
+   * it is fed only by the commands that went out. It is meaningless with no
+   * `deck` set and is not consulted then.
+   */
+  private page = FIRST_PAGE;
+
+  /**
    * Fold one command in. Answers whether it was one of the standing kind, which
    * is only of interest to a test.
    */
@@ -145,6 +190,39 @@ export class Standing {
         this.last.set('voice', { cmd: 'voice', ...fold(stripped(base), next) });
         return true;
       }
+      // The framing and the offsets off it are set from different places — a
+      // script names a shot, a drag on the preview moves it — and neither may
+      // wipe the other. See `cameraCommandSchema`.
+      case 'camera': {
+        const base = this.last.get('camera') as Of<'camera'> | undefined;
+        const { cmd: _cmd, id: _id, ...next } = command;
+        this.last.set('camera', { cmd: 'camera', ...fold(stripped(base), next) });
+        return true;
+      }
+      // Two halves of one layout, and a panel moves one slider at a time. Folded
+      // rather than replaced for exactly the reason `tune` is: keeping only the
+      // last one sent would undo the width while the margin was being dragged.
+      case 'place': {
+        const base = this.last.get('place') as Of<'place'> | undefined;
+        const { cmd: _cmd, id: _id, ...next } = command;
+        this.last.set('place', { cmd: 'place', ...fold(stripped(base), next) });
+        return true;
+      }
+      // A page counter belongs to the document it is counting through. `deck`
+      // states where it opens, so the page the one before it had reached is not
+      // a page of this one — and the stored `slide` goes with it rather than
+      // being replayed against a document it was never about.
+      case 'deck':
+        this.page = command.page ?? FIRST_PAGE;
+        this.last.delete('slide');
+        this.last.set('deck', command);
+        return true;
+      // Normalised to an absolute page here and never stored as a relative one.
+      // See the module docstring — this is the whole reason the counter exists.
+      case 'slide':
+        this.page = Math.max(FIRST_PAGE, command.page ?? this.page + (command.by ?? 1));
+        this.last.set('slide', { cmd: 'slide', page: this.page });
+        return true;
       // A different body: the slot names and the garments both belonged to the
       // avatar that is being replaced, so the outfit does not carry over. The
       // tuning does — it is scales and multipliers rather than model data.
@@ -155,7 +233,6 @@ export class Standing {
       // Spelled out rather than caught by a default, so that a verb added to
       // `ORDER` without a decision about how it folds is a compile error here
       // instead of a last-one-wins guess.
-      case 'camera':
       case 'backdrop':
       case 'room':
       case 'idle':

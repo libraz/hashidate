@@ -3,6 +3,7 @@ import {
   type Command,
   type CommandName,
   type CommandResponse,
+  type DecksResponse,
   type EventsResponse,
   type HistoryResponse,
   parseCommand,
@@ -12,6 +13,7 @@ import {
   queueUpdateSchema,
   reportBodySchema,
 } from '../protocol';
+import type { Decks } from './decks';
 import type { Hub } from './hub';
 import { handleSpeech } from './speech';
 
@@ -35,20 +37,27 @@ const COMMAND_WAIT_SECONDS = 120;
 const EVENTS_WAIT_SECONDS = 30;
 
 /**
- * Endpoints that are traffic rather than events: the SSE stream sits open, and
- * the report is a heartbeat every 700 ms. Logging them buries the commands,
- * which are the only lines worth reading.
+ * Endpoints that are traffic rather than events: the SSE stream sits open, the
+ * report is a heartbeat every 700 ms, and the panel re-reads the state twice a
+ * second for as long as it is open. Logging them buries the commands, which are
+ * the only lines worth reading.
  */
-const QUIET = ['/api/stream', '/api/report', '/api/speech'];
+const QUIET = ['/api/stream', '/api/report', '/api/speech', '/api/state'];
 
 /**
  * The commands that spend `id` on their own payload id rather than on a
  * correlation id. Stamping one of those would change which expression is shown,
- * which effect is raised, which gesture is played, which avatar is loaded — so
- * their correlation id is reported back to the caller and never written onto
- * the command.
+ * which effect is raised, which gesture is played, which avatar is loaded, which
+ * document is up — so their correlation id is reported back to the caller and
+ * never written onto the command.
  */
-const PAYLOAD_ID_COMMANDS = new Set<CommandName>(['expression', 'overlay', 'gesture', 'avatar']);
+const PAYLOAD_ID_COMMANDS = new Set<CommandName>([
+  'expression',
+  'overlay',
+  'gesture',
+  'avatar',
+  'deck',
+]);
 
 interface StampedCommand {
   command: Command;
@@ -64,12 +73,17 @@ let stampCounter = 0;
  * disk. Work that has to read a body or wait for the viewer continues after the
  * return — the boolean is about ownership, not about completion.
  */
-export function handleApi(req: IncomingMessage, res: ServerResponse, hub: Hub): boolean {
+export function handleApi(
+  req: IncomingMessage,
+  res: ServerResponse,
+  hub: Hub,
+  decks: Decks | null = null,
+): boolean {
   const { pathname, params } = split(req.url ?? '/');
   if (!pathname.startsWith('/api/')) return false;
   logRequest(req, res, pathname);
   if (req.method === 'GET' || req.method === 'HEAD') {
-    get(res, hub, pathname, params);
+    get(res, hub, decks, pathname, params);
     return true;
   }
   if (req.method === 'POST') {
@@ -138,7 +152,13 @@ function logRequest(req: IncomingMessage, res: ServerResponse, pathname: string)
 
 // --- routes -----------------------------------------------------------------
 
-function get(res: ServerResponse, hub: Hub, pathname: string, params: URLSearchParams): void {
+function get(
+  res: ServerResponse,
+  hub: Hub,
+  decks: Decks | null,
+  pathname: string,
+  params: URLSearchParams,
+): void {
   switch (pathname) {
     case '/api/stream':
       stream(res, hub);
@@ -159,9 +179,64 @@ function get(res: ServerResponse, hub: Hub, pathname: string, params: URLSearchP
     case '/api/history':
       json(res, { history: hub.queue.history() } satisfies HistoryResponse);
       return;
+    // The roster rides on the snapshot as well; this is the form that waits for
+    // a rescan rather than answering with the last one. See `Decks.list`.
+    case '/api/decks':
+      void listDecks(res, decks);
+      return;
     default:
+      // `/api/decks/<id>/text` is the one route here with a name in it, so it
+      // cannot be a case above. Nothing else under `/api/` is patterned.
+      if (pathname.startsWith('/api/decks/')) {
+        void deckText(res, decks, pathname, params);
+        return;
+      }
       json(res, { error: 'unknown endpoint' }, 404);
   }
+}
+
+/**
+ * The documents on disk. Empty rather than absent on a server started without a
+ * document directory, which is the same answer the snapshot gives.
+ */
+async function listDecks(res: ServerResponse, decks: Decks | null): Promise<void> {
+  const listed = decks === null ? [] : await decks.list();
+  json(res, { decks: listed } satisfies DecksResponse);
+}
+
+/**
+ * What a document says, page by page.
+ *
+ * `?from=` and `?to=` are both 1 based and inclusive, and the whole document is
+ * the default — a caller that means "the deck" writes nothing. The span is
+ * clamped to the document and capped at `DECK_TEXT_MAX_PAGES`; see there for
+ * why one request may not return a novel.
+ *
+ * An id with no file behind it is a 404 rather than an empty reply. A document
+ * is a file an operator dropped in a directory, so telling a caller that the
+ * name it asked about is not there is the useful answer.
+ */
+async function deckText(
+  res: ServerResponse,
+  decks: Decks | null,
+  pathname: string,
+  params: URLSearchParams,
+): Promise<void> {
+  const parts = pathname.split('/');
+  if (parts.length !== 5 || parts[4] !== 'text')
+    return json(res, { error: 'unknown endpoint' }, 404);
+  // Decoded here and nowhere else in this file: this is the only route with a
+  // name in its path, and a document may be called 資料.pdf — which arrives
+  // percent-encoded and matches nothing on disk if it is read raw.
+  let id: string;
+  try {
+    id = decodeURIComponent(parts[3]);
+  } catch {
+    return json(res, { error: 'no such deck' }, 404);
+  }
+  const found = await decks?.text(id, toInt(params.get('from')), toInt(params.get('to')));
+  if (!found) return json(res, { error: 'no such deck' }, 404);
+  return json(res, found);
 }
 
 async function post(

@@ -1,12 +1,16 @@
 import { createServer } from 'node:http';
-import { resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import type { SpeechState } from '../protocol';
+import { Decks } from './decks';
 import { Hub } from './hub';
 import { handleApi } from './routes';
+import { SIDECAR, SpeechWatch } from './speech';
 import { serveStatic } from './static';
 
 /**
- * Local control API for the AITuber runtime.
+ * Local control API for the hashidate runtime.
  *
  * Serves the viewer and carries commands to it, so an orchestrator running in
  * another process can drive the avatar.
@@ -24,18 +28,71 @@ import { serveStatic } from './static';
  * CORS header either — the viewer is same-origin, so allowing another origin
  * would only ever serve a page that is not ours.
  *
- * usage: yarn start [--port 8765] [--root dist]
+ * usage: yarn start [--port 8765] [--root dist] [--slides slides]
  */
 
 const BIND = '127.0.0.1'; // do not change; see the module docstring
 const DEFAULT_PORT = 8765;
 const DEFAULT_ROOT = 'dist';
 
+/**
+ * Where the documents are, and the URL they are reached at.
+ *
+ * A second root rather than a directory inside the document root, because the
+ * document root is a build output: `vite build` writes it, and anything an
+ * operator dropped in there would last until the next build. The directory is
+ * optional and a missing one is simply no documents — see `decks.ts`.
+ *
+ * The bytes are served from `/slides/` and deliberately not from under `/api/`.
+ * It is a file read, answered with a file's content type and streamed; the API
+ * answers JSON and only JSON, and a route that broke that rule would have to be
+ * excepted in every caller that trusts it.
+ */
+const DEFAULT_SLIDES = 'slides';
+const SLIDES_PREFIX = '/slides';
+
+/**
+ * The two data directories pdf.js needs to draw a document it was not given the
+ * fonts for.
+ *
+ * A PDF may name a font instead of carrying it, and for Japanese it usually
+ * does: 游ゴシック and MS 明朝 are on the machine that made the deck, so nothing
+ * embeds them. Reading those pages needs the character-map tables in `cmaps/`,
+ * and the fourteen standard PostScript faces need the outlines in
+ * `standard_fonts/`. Without them pdf.js draws the page with the text missing —
+ * not an error, not a warning anybody sees, just a slide that has lost its
+ * words, which is the one failure this whole feature exists to avoid.
+ *
+ * Served out of the installed package rather than copied into the build. They
+ * are 2.4 MB of somebody else's data files that change when the library does,
+ * and this project is only ever run from its own checkout — the document root
+ * is `dist` next to the `node_modules` this resolves.
+ */
+const PDFJS_PREFIX = '/pdfjs';
+const PDFJS_DIRS = ['cmaps', 'standard_fonts'] as const;
+
+/**
+ * Where pdf.js is installed, or null if it is not.
+ *
+ * Resolved through the package's own entry rather than assembled out of
+ * `node_modules`, so a hoisted install, a workspace and a linked checkout all
+ * answer correctly — and so this says nothing about how packages happen to be
+ * laid out today.
+ */
+function pdfjsRoot(): string | null {
+  try {
+    return dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'));
+  } catch {
+    return null;
+  }
+}
+
 function main(): void {
   const { values } = parseArgs({
     options: {
       port: { type: 'string' },
       root: { type: 'string' },
+      slides: { type: 'string' },
     },
   });
 
@@ -45,11 +102,32 @@ function main(): void {
     process.exit(2);
   }
   const root = resolve(values.root ?? DEFAULT_ROOT);
+  const slides = resolve(values.slides ?? DEFAULT_SLIDES);
 
-  const hub = new Hub();
+  const decks = new Decks(slides);
+  const speech = new SpeechWatch();
+  const hub = new Hub(decks, speech);
+  // Null on an install without the library, which is not a reason to refuse to
+  // start: a document whose fonts are all embedded — most of them — draws
+  // perfectly without either directory.
+  const pdfjs = pdfjsRoot();
   const server = createServer((req, res) => {
-    if (handleApi(req, res, hub)) return;
+    if (handleApi(req, res, hub, decks)) return;
     if (req.method === 'GET' || req.method === 'HEAD') {
+      // Same guard, same refusal to cache — the only difference is which root
+      // the path is resolved against. See `serveStatic`.
+      const url = req.url ?? '/';
+      if (url.startsWith(`${SLIDES_PREFIX}/`)) {
+        serveStatic(req, res, slides, SLIDES_PREFIX);
+        return;
+      }
+      // One mount per directory rather than one over the package, so what is
+      // reachable is the two sets of data files and not the library's source.
+      const data = PDFJS_DIRS.find((dir) => url.startsWith(`${PDFJS_PREFIX}/${dir}/`));
+      if (data && pdfjs !== null) {
+        serveStatic(req, res, join(pdfjs, data), `${PDFJS_PREFIX}/${data}`);
+        return;
+      }
       serveStatic(req, res, root);
       return;
     }
@@ -75,7 +153,27 @@ function main(): void {
   server.listen(port, BIND, () => {
     console.log(`viewer   http://${BIND}:${port}/`);
     console.log(`control  http://${BIND}:${port}/api/`);
+    // Printed whether or not the directory exists: the line an operator needs
+    // is where to put a document, and that is most useful before there is one.
+    console.log(`slides   ${slides}`);
+    // And whether or not there is a voice, for the same reason. A sidecar that
+    // was meant to be running and is not looks exactly like one that was never
+    // installed until somebody says which of the two this is, and the moment to
+    // say it is before the first line rather than after it went out silent.
+    void speech.start().then((state) => console.log(`speech   ${BANNER[state]}`));
   });
 }
+
+/**
+ * The startup line for each state. `down` cannot appear here — nothing has
+ * answered yet at first probe — but the map is total so that adding a state
+ * cannot leave the banner silent about it.
+ */
+const BANNER: Record<SpeechState, string> = {
+  absent: `none at ${SIDECAR}; lines will be mouthed in silence (make tts)`,
+  loading: `${SIDECAR} (loading its model)`,
+  ready: SIDECAR,
+  down: `${SIDECAR} (not answering)`,
+};
 
 main();

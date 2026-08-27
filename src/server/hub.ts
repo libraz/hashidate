@@ -1,17 +1,22 @@
 import type {
   Command,
   LabelledId,
+  PlacementReport,
   QueueEntry,
   ReportBody,
   SessionEvent,
   SessionState,
+  SlideReport,
   Snapshot,
+  SpeechState,
   StreamMessage,
   Tuning,
   Vocabulary,
   VoiceReport,
 } from '../protocol';
+import type { DeckSource } from './decks';
 import { type RewindMode, TurnQueue } from './queue';
+import type { SpeechSource } from './speech';
 import { Standing } from './standing';
 
 /**
@@ -88,6 +93,8 @@ export class Hub {
   private vocabulary: Partial<Vocabulary> = {};
   private voice: VoiceReport | null = null;
   private tuning: Tuning | null = null;
+  private slides: SlideReport | null = null;
+  private placement: PlacementReport | null = null;
   private avatars: LabelledId[] = [];
   private stateAt = 0;
   /** See `EXPECTED_INTERRUPT_SECONDS`. Epoch seconds, zero for none pending. */
@@ -108,6 +115,23 @@ export class Hub {
    * defaults. See `standing.ts` for what counts as one and what does not.
    */
   private readonly standing = new Standing();
+
+  /**
+   * The documents on disk, or nothing when the server was started without any.
+   *
+   * Handed in rather than reached for, because it is the one thing here that
+   * touches the filesystem: a hub built with none is a server with no document
+   * directory and says so with an empty roster, and a test can point one at a
+   * directory it made itself. See `decks.ts`.
+   *
+   * The speech watch arrives the same way and for the same reason: it is the
+   * server's own observation of another process rather than anything a viewer
+   * reported, and a hub built without one is a hub that was never told to look.
+   */
+  constructor(
+    private readonly decks: DeckSource | null = null,
+    private readonly speech: SpeechSource | null = null,
+  ) {}
 
   // --- downstream (server -> viewer) ----------------------------------------
 
@@ -214,6 +238,8 @@ export class Hub {
     if (body.vocabulary) this.vocabulary = body.vocabulary;
     if (body.voice !== undefined) this.voice = body.voice;
     if (body.tuning !== undefined) this.tuning = body.tuning;
+    if (body.slides !== undefined) this.slides = body.slides;
+    if (body.placement !== undefined) this.placement = body.placement;
     // Fixed for the life of a renderer, so it rides with the vocabulary rather
     // than on the timer. Not cleared by a report that omits it.
     if (body.avatars) this.avatars = body.avatars;
@@ -261,7 +287,21 @@ export class Hub {
       // Settings too, and on the same footing: a fader is worth drawing at the
       // value it will resume at.
       tuning: this.tuning,
+      // And the layout, for the same reason again — with nothing connected it
+      // is the last shape the frame had, which is the shape it will come back
+      // in when the source is reopened.
+      placement: this.placement,
       avatars: this.avatars,
+      // The roster the store last read, not one read here: the snapshot is
+      // assembled in one turn and the directory is on disk. See `Decks.current`
+      // for who pays for the rescan and why the answer may be a poll behind.
+      decks: this.decks?.current ?? [],
+      // A renderer with no document layer never reports one, which is how a
+      // panel tells "no such layer" from "nothing up".
+      slides: this.slides,
+      // A hub with nothing watching says `absent`, which is the truthful answer
+      // to "is the voice up" from a server that is not looking at it.
+      speech: this.speech?.current ?? ('absent' satisfies SpeechState),
       queue: this.queue.list(),
     };
   }

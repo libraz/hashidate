@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionEvent, SessionState, StreamMessage, Vocabulary } from '@/protocol';
+import { same } from '@/i18n/locale';
+import type {
+  Deck,
+  PlacementReport,
+  SessionEvent,
+  SessionState,
+  SlideReport,
+  StreamMessage,
+  Vocabulary,
+} from '@/protocol';
 import { EVENT_LOG_MAX, EXPECTED_INTERRUPT_SECONDS, Hub, STATE_STALE_SECONDS } from '@/server/hub';
 
 /**
@@ -46,14 +55,14 @@ const state = (over: Partial<SessionState> = {}): SessionState => ({
 
 /** A complete vocabulary, since a report carries the whole thing or none of it. */
 const vocabulary = (): Vocabulary => ({
-  avatar: { id: 'synthetic', label: '合成リグ' },
-  emotions: [{ id: 'joy', label: '喜' }],
-  expressions: [{ id: 'F_DOYA', label: 'F_DOYA' }],
+  avatar: { id: 'synthetic', label: same('合成リグ') },
+  emotions: [{ id: 'joy', label: same('喜') }],
+  expressions: [{ id: 'F_DOYA', label: same('F_DOYA') }],
   overlays: [],
   performances: [
     {
       id: 'hello',
-      label: 'あいさつ',
+      label: same('あいさつ'),
       group: 'greeting',
       emotion: { joy: 0.85 },
       gesture: 'wave',
@@ -61,9 +70,9 @@ const vocabulary = (): Vocabulary => ({
       sustain: false,
     },
   ],
-  gestures: [{ id: 'wave', label: '手を振る', group: 'greeting', sustain: false }],
-  hops: [{ id: 'hop', label: 'ぴょん' }],
-  cue: { syntax: '[performance]', note: '' },
+  gestures: [{ id: 'wave', label: same('手を振る'), group: 'greeting', sustain: false }],
+  hops: [{ id: 'hop', label: same('ぴょん') }],
+  cue: { syntax: '[performance]', note: same('') },
   cameras: ['bust', 'upper', 'face', 'full'],
   pointing: {
     side: ['L', 'R'],
@@ -71,13 +80,39 @@ const vocabulary = (): Vocabulary => ({
     elevation: [-70, 110],
     extent: [0.1, 1],
     finger: ['thumb', 'index', 'middle', 'ring', 'little'],
-    note: '',
+    note: same(''),
   },
   wardrobe: {},
   wardrobePresets: [],
   rooms: [],
   backdrops: [],
   voicePresets: [],
+});
+
+/** One document, as a store would have found it on disk. */
+const deck = (id: string): Deck => ({
+  id,
+  label: same(`${id}.pdf`),
+  pages: 12,
+  bytes: 4096,
+  at: 1,
+});
+
+/** What a renderer with a document layer says about it. */
+const slides = (over: Partial<SlideReport> = {}): SlideReport => ({
+  deck: 'intro',
+  page: 3,
+  pages: 12,
+  ready: true,
+  error: null,
+  ...over,
+});
+
+/** And how it is laying the frame out: both rectangles, resolved. */
+const placement = (over: Partial<PlacementReport> = {}): PlacementReport => ({
+  avatar: { anchor: 'bottom-right', width: 0.32, height: 0.6, margin: 0.04 },
+  slide: { anchor: 'center', width: 1, height: 1, margin: 0, fit: 'contain' },
+  ...over,
 });
 
 let hub: Hub;
@@ -462,6 +497,97 @@ describe('the pending queue', () => {
     // a script with nothing connected — which is when it is most looked at.
     expect(snapshot.state).toEqual({});
     expect(snapshot.queue).toHaveLength(1);
+  });
+});
+
+/**
+ * The document half of the snapshot: what is on disk, and what is up.
+ *
+ * The two come from opposite directions and are on the snapshot together because
+ * a panel needs both to draw one control — the roster is a directory only this
+ * process can see, and the page is a readout only the renderer can give.
+ */
+describe('documents', () => {
+  it('reports no documents on a server started without a directory', () => {
+    // Not an error and not an absent field: the feature is optional, and a hub
+    // with no store must answer exactly as one with an empty directory does.
+    expect(hub.snapshot().decks).toEqual([]);
+  });
+
+  it('reports the roster the store last read', () => {
+    const withDecks = new Hub({ current: [deck('intro'), deck('closing')] });
+    expect(withDecks.snapshot().decks.map((found) => found.id)).toEqual(['intro', 'closing']);
+  });
+
+  it('reads the roster on each snapshot, since the directory changes underneath', () => {
+    const store = { current: [deck('intro')] };
+    const withDecks = new Hub(store);
+    store.current = [deck('intro'), deck('late')];
+    // An operator saving a file three minutes into a broadcast is the ordinary
+    // case, not an unusual one.
+    expect(withDecks.snapshot().decks).toHaveLength(2);
+  });
+
+  it('says nothing about the document layer until a renderer with one reports', () => {
+    // Null is how a panel tells a renderer that has no document layer from one
+    // that simply has nothing up.
+    expect(hub.snapshot().slides).toBeNull();
+    hub.report({ state: state() });
+    expect(hub.snapshot().slides).toBeNull();
+  });
+
+  it('keeps the last slide report a renderer sent', () => {
+    hub.report({ slides: slides() });
+    expect(hub.snapshot().slides).toEqual(slides());
+    hub.report({ slides: slides({ page: 4, ready: false }) });
+    expect(hub.snapshot().slides).toMatchObject({ page: 4, ready: false });
+  });
+
+  it('leaves the slide report alone for a report that omits it', () => {
+    hub.report({ slides: slides() });
+    hub.report({ state: state() });
+    expect(hub.snapshot().slides).toEqual(slides());
+  });
+
+  it('says nothing about the frame until a renderer that composes one reports', () => {
+    // Null is how a panel tells a renderer that lays the frame out from one
+    // that draws only one way, exactly as it does for the document layer.
+    expect(hub.snapshot().placement).toBeNull();
+    hub.report({ state: state() });
+    expect(hub.snapshot().placement).toBeNull();
+  });
+
+  it('serves the layout a renderer reported, so a control is drawn at what is in force', () => {
+    hub.report({ placement: placement() });
+    expect(hub.snapshot().placement).toEqual(placement());
+    // A layout nothing sent as a command: the source was opened on it.
+    const moved = placement({ avatar: { anchor: 'left', width: 0.5, height: 0.5, margin: 0 } });
+    hub.report({ placement: moved });
+    expect(hub.snapshot().placement).toEqual(moved);
+  });
+
+  it('leaves the layout alone for a report that omits it', () => {
+    hub.report({ placement: placement() });
+    hub.report({ state: state() });
+    expect(hub.snapshot().placement).toEqual(placement());
+  });
+
+  it('keeps serving both while the state is stale', () => {
+    hub.subscribe(() => {});
+    const withDecks = new Hub({ current: [deck('intro')] });
+    withDecks.subscribe(() => {});
+    withDecks.report({ state: state(), slides: slides(), placement: placement() });
+    vi.advanceTimersByTime((STATE_STALE_SECONDS + 1) * 1000);
+
+    const snapshot = withDecks.snapshot();
+    // A stale state is a lie about what the avatar is doing right now. What is
+    // in the directory, which page was reached and what shape the frame was in
+    // are still true, and are what an operator with nothing connected is most
+    // likely to be looking at.
+    expect(snapshot.state).toEqual({});
+    expect(snapshot.decks).toHaveLength(1);
+    expect(snapshot.slides).toEqual(slides());
+    expect(snapshot.placement).toEqual(placement());
   });
 });
 

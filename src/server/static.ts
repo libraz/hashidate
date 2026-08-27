@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, join, resolve, sep } from 'node:path';
 
 /**
- * File serving for the document root, and nothing else.
+ * File serving for the document root, and for the slide directory beside it.
  *
  * **Never let the browser cache anything served from here.** Everything under
  * the document root is regenerated during development — the GLB most of all.
@@ -12,7 +12,13 @@ import { extname, join, resolve, sep } from 'node:path';
  * cache produces a failure that looks exactly like a bug in the runtime: shapes
  * the profile expects are simply not there. Chased that once already.
  *
- * The only cost is re-reading a few megabytes over loopback.
+ * The only cost is re-reading a few megabytes over loopback. It is also exactly
+ * what a slide directory wants: an operator who fixes a typo and saves over a
+ * document expects the next page turn to show the fix.
+ *
+ * A second root is reached by naming a URL prefix rather than by a second
+ * function, so the path guard below is the only one there is. Two of them is how
+ * one of them comes to be the one that was not fixed.
  */
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -30,6 +36,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.mjs': 'text/javascript; charset=utf-8',
   '.mp3': 'audio/mpeg',
   '.ogg': 'audio/ogg',
+  '.pdf': 'application/pdf',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
   '.txt': 'text/plain; charset=utf-8',
@@ -40,18 +47,40 @@ const CONTENT_TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
 };
 
-/** Serve one GET or HEAD out of `root`. */
-export function serveStatic(req: IncomingMessage, res: ServerResponse, root: string): void {
-  void send(req, res, root);
+/**
+ * Serve one GET or HEAD out of `root`.
+ *
+ * `prefix` is the part of the URL that names the root rather than the file
+ * inside it, and is stripped before anything is joined. Empty for the document
+ * root, `/slides` for the documents; see the module docstring.
+ */
+export function serveStatic(
+  req: IncomingMessage,
+  res: ServerResponse,
+  root: string,
+  prefix = '',
+): void {
+  void send(req, res, root, prefix);
 }
 
-async function send(req: IncomingMessage, res: ServerResponse, root: string): Promise<void> {
+async function send(
+  req: IncomingMessage,
+  res: ServerResponse,
+  root: string,
+  prefix: string,
+): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
   let pathname: string;
   try {
     pathname = decodeURIComponent(url.pathname);
   } catch {
     return plain(res, 400, 'bad request');
+  }
+  // Stripped after decoding, so that a prefix spelled with an escape still
+  // names the root it was meant to name rather than a file called `%73lides`.
+  if (prefix !== '') {
+    if (!pathname.startsWith(prefix)) return plain(res, 404, 'not found');
+    pathname = pathname.slice(prefix.length);
   }
 
   // `resolve` normalises the `..` away, so anything that climbs out of the root
@@ -64,7 +93,10 @@ async function send(req: IncomingMessage, res: ServerResponse, root: string): Pr
     // A relative import inside index.html resolves against the directory, so
     // the trailing slash has to be there before the page loads.
     if (!pathname.endsWith('/')) {
-      res.writeHead(301, { Location: `${pathname}/${url.search}`, 'Cache-Control': 'no-store' });
+      res.writeHead(301, {
+        Location: `${prefix}${pathname}/${url.search}`,
+        'Cache-Control': 'no-store',
+      });
       res.end();
       return;
     }

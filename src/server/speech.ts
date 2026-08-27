@@ -1,4 +1,5 @@
 import type { ServerResponse } from 'node:http';
+import type { SpeechState } from '../protocol';
 
 /**
  * The speech sidecar, reached from the browser through this server.
@@ -27,7 +28,7 @@ import type { ServerResponse } from 'node:http';
  * the environment variable is for running a second one beside it while
  * comparing voices.
  */
-const SIDECAR = `http://127.0.0.1:${process.env.AITUBER_TTS_PORT ?? 8770}`;
+export const SIDECAR = `http://127.0.0.1:${process.env.HASHIDATE_TTS_PORT ?? 8770}`;
 
 /**
  * Long enough for the slowest line the model will accept.
@@ -104,4 +105,121 @@ export async function handleSpeech(res: ServerResponse, body: unknown): Promise<
     'Cache-Control': 'no-store',
   });
   res.end(audio);
+}
+
+// --- watching ---------------------------------------------------------------
+
+/**
+ * How often the sidecar is asked whether it is still there, and how long it
+ * gets to answer.
+ *
+ * `/health` stays answerable while a line is being made — `tools/tts/server.py`
+ * serialises the GPU under a lock rather than a single worker for exactly that
+ * reason — so a probe that times out means gone or wedged, never busy.
+ *
+ * Five seconds is chosen against the operator rather than the machine. A voice
+ * that dies on air is worth naming before the next line is written, and the
+ * cost of asking is a loopback round trip to a port that is doing nothing.
+ */
+const HEALTH_INTERVAL_MS = 5_000;
+const HEALTH_TIMEOUT_MS = 2_000;
+
+/** What the hub reads off the watch. See `SpeechWatch`. */
+export interface SpeechSource {
+  readonly current: SpeechState;
+}
+
+/**
+ * Ask the sidecar how it is. `null` means it did not answer, for any reason.
+ *
+ * A reply that is not `/health`'s counts as no answer rather than as a fault of
+ * its own: something else is on the port, and the one thing worth reporting
+ * about that is the same thing — there is no voice here.
+ */
+async function ask(): Promise<'ready' | 'loading' | null> {
+  try {
+    const res = await fetch(`${SIDECAR}/health`, {
+      signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { ready?: unknown };
+    // `ready` is false for the sixteen seconds the model takes to load, which
+    // is a real state and not a failure: a line sent during it comes back 503.
+    return body.ready === true ? 'ready' : 'loading';
+  } catch {
+    return null;
+  }
+}
+
+const ANNOUNCE: Record<SpeechState, string> = {
+  absent: `speech sidecar not running at ${SIDECAR}`,
+  loading: 'speech sidecar loading its model',
+  ready: `speech sidecar answering at ${SIDECAR}`,
+  down: `speech sidecar stopped answering at ${SIDECAR}; lines will be mouthed in silence`,
+};
+
+/**
+ * Whether the voice is up, kept current so that its absence is something the
+ * server knows rather than something an operator infers from silence.
+ *
+ * The sidecar is optional and its being missing is the normal case, so this
+ * distinguishes never-answered from stopped-answering and only the second one
+ * is a warning. See `speechStateSchema` for why that difference is on the wire.
+ *
+ * Polled rather than inferred from `/api/speech`. A voice is checked before a
+ * broadcast, which is precisely when nothing is being said — a server that only
+ * learned about the sidecar by failing to reach it would stay quiet until the
+ * first line went out silently, which is the one moment it is too late.
+ */
+export class SpeechWatch implements SpeechSource {
+  private state: SpeechState = 'absent';
+  /** Whether anything ever answered. What separates `absent` from `down`. */
+  private seen = false;
+  private timer: ReturnType<typeof setInterval> | null = null;
+
+  get current(): SpeechState {
+    return this.state;
+  }
+
+  /**
+   * Probe now, then keep probing. Settles with the first answer, which is what
+   * the startup banner prints.
+   *
+   * The first answer is deliberately not announced: it would say "not running"
+   * on every machine without a voice, every start, one line under a banner that
+   * has already said so.
+   */
+  async start(): Promise<SpeechState> {
+    this.state = await this.look();
+    if (this.timer === null) {
+      this.timer = setInterval(() => void this.check(), HEALTH_INTERVAL_MS);
+      // Nothing here should hold the process open: a server whose last socket
+      // closed is finished, and a five-second timer would keep it running.
+      this.timer.unref?.();
+    }
+    return this.state;
+  }
+
+  stop(): void {
+    if (this.timer !== null) clearInterval(this.timer);
+    this.timer = null;
+  }
+
+  /** One probe, folded in, announcing a change and only a change. */
+  async check(): Promise<SpeechState> {
+    const next = await this.look();
+    if (next !== this.state) {
+      this.state = next;
+      const line = `${new Date().toISOString()} ${ANNOUNCE[next]}`;
+      if (next === 'down') console.warn(line);
+      else console.log(line);
+    }
+    return next;
+  }
+
+  private async look(): Promise<SpeechState> {
+    const answer = await ask();
+    if (answer !== null) this.seen = true;
+    return answer ?? (this.seen ? 'down' : 'absent');
+  }
 }
