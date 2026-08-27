@@ -1,0 +1,55 @@
+/*
+ * Language switch.
+ *
+ * Sized to a header rather than to a form: it is set once and then wanted out
+ * of the way, so it is shorter than a control row and the two options are equal
+ * width like the segmented picker's, even though "English" is three times the
+ * ink of "日本語". Equal width also keeps the header from reflowing when the
+ * switch is thrown, which is the one moment the operator is looking at it.
+ */
+
+.track {
+  display: inline-flex;
+  /* `fieldset` brings a margin, a padding and a `min-inline-size: min-content`
+     that no other element has; all three have to go before it lays out like the
+     rest of the controls. */
+  margin: 0;
+  min-inline-size: auto;
+  padding: 2px;
+  gap: 2px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+}
+
+.option {
+  min-width: 4.5rem;
+  height: calc(var(--control-height) - 6px);
+  padding: 0 var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.option:hover:not(.on) {
+  color: var(--fg);
+  background: var(--surface-hover);
+}
+
+.option.on {
+  background: var(--accent-tint);
+  border-color: var(--accent-edge);
+  color: var(--accent);
+  font-weight: 500;
+}

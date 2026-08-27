@@ -1,0 +1,808 @@
+/**
+ * The broadcast panel's own chrome.
+ *
+ * Only the text the panel writes itself. Anything the panel merely displays —
+ * a wardrobe slot, a performance name, a backdrop note — arrives from the
+ * control server as a `Localized` pair and is resolved with `tx`, because those
+ * names are avatar data and change when the avatar does.
+ */
+export const panelEn = {
+  'panel.documentTitle': 'hashidate panel',
+  'panel.title': 'Broadcast panel',
+  'panel.tabs.aria': 'Panel',
+  'panel.tabs.queue': 'Queue',
+  'panel.tabs.perform': 'Perform',
+  'panel.tabs.voice': 'Voice',
+  'panel.tabs.slides': 'Slides',
+  'panel.tabs.dress': 'Dress',
+  'panel.tabs.tune': 'Tune',
+  'panel.tabs.inspect': 'Inspect',
+  'panel.status.connected': 'Connected {viewers}',
+  'panel.status.disconnected': 'Renderer not connected',
+  'panel.drop': 'Drop the rest',
+  'panel.drop.title': 'Finish the line being spoken, then discard the rest',
+  'panel.stop': 'Stop',
+  'panel.stop.title': 'Cut the line being spoken and discard the queue with it',
+  'panel.speech.loading':
+    'The speech sidecar is loading its model. Nothing will be heard until it is ready.',
+  'panel.speech.down':
+    'The speech sidecar is not answering. Until it is, the mouth moves in silence.',
+
+  // --- the preview beside the controls ---------------------------------------
+  'panel.preview.title': 'Preview',
+  'panel.preview.readout.on': 'Measure on',
+  'panel.preview.readout.off': 'Measure off',
+  'panel.preview.readout.hideTitle': 'Take the measurements off the picture',
+  'panel.preview.readout.showTitle':
+    'Print breathing, gaze, frame rate and the document state on every viewer attached, including the one going to air',
+  'panel.preview.audio.on': 'Audio on',
+  'panel.preview.audio.off': 'Audio off',
+  'panel.preview.audio.muteTitle':
+    'Silence this window. With OBS monitoring on you are hearing every line twice.',
+  'panel.preview.audio.unmuteTitle':
+    'Play the sound here. If OBS is not monitoring the source, this is the only way to hear it.',
+  'panel.preview.hide': 'Stop',
+  'panel.preview.show': 'Show',
+  'panel.preview.hideTitle': 'Stop the preview and give the GPU back',
+  'panel.preview.showTitle': 'Show the preview',
+  'panel.preview.frameTitle': 'Avatar preview',
+  'panel.preview.stopped':
+    'Preview stopped. No second WebGL context is open, so the renderer going to air has more to work with.',
+  'panel.preview.blocked':
+    'Audio is blocked. Click the viewer window once and the next line will be heard.',
+  'panel.preview.avatarAria': 'Avatar',
+  'panel.preview.cameraAria': 'Camera',
+  'panel.preview.backdropAria': 'Backdrop',
+  'panel.preview.backdropNone': 'None',
+  'panel.preview.backdropNone.title': 'The plain background',
+  'panel.preview.straightOn': 'Straight on',
+  'panel.preview.straightOnFrom': 'Straight on  {offset}',
+  'panel.preview.straightOn.title':
+    'Keep the framing and put the camera back to the front at its reference distance',
+  'panel.preview.shot.right': 'R',
+  'panel.preview.shot.left': 'L',
+  'panel.preview.shot.up': 'U',
+  'panel.preview.shot.down': 'D',
+  'panel.preview.idle': 'Autopilot (idle)',
+
+  // --- the queue -------------------------------------------------------------
+  'panel.queue.waiting': 'Waiting',
+  'panel.queue.remaining': 'Left {time}',
+  'panel.queue.warnings': 'To check {count}',
+  'panel.queue.dropFirst': 'Drop the first',
+  'panel.queue.dropFirst.title': 'Take the first line off the queue and throw it away',
+  'panel.queue.dropLast': 'Drop the last',
+  'panel.queue.dropLast.title': 'Take the last line off the queue and throw it away',
+  'panel.queue.clear': 'Clear all',
+  'panel.queue.clear.title': 'Empty the queue. The line being spoken finishes as it is.',
+  // Two halves, because the endpoint between them is drawn as code and the two
+  // languages want it in different places in the sentence.
+  'panel.queue.empty.before': 'The queue is empty. Write one below, or send lines to',
+  'panel.queue.empty.after': 'from an orchestrator.',
+  'panel.queue.addLine': '+ Add a line',
+  'panel.queue.push': 'Add to the end',
+  'panel.queue.interject': 'Interject next',
+  'panel.queue.save': 'Save',
+  'panel.queue.onAir': 'On air',
+  'panel.queue.standingBy': 'Standing by',
+
+  // --- one pending row -------------------------------------------------------
+  'panel.row.reading': 'reading',
+  'panel.row.reading.title': 'Reading: {reading}',
+  'panel.row.hold.title': 'Keep the face after this line',
+  'panel.row.silent': '(nothing to say)',
+  'panel.row.perform.title': 'Performance for this line',
+  'panel.row.gesture.title': 'Gesture for this line',
+  'panel.row.expression.title': 'Expression for this line',
+  'panel.row.cue.title': '{percent}% of the way in',
+  'panel.row.promote': 'To the front',
+  'panel.row.edit': 'Edit',
+  'panel.row.remove': 'Delete',
+
+  // --- writing or fixing one line --------------------------------------------
+  'panel.editor.text': 'Line',
+  'panel.editor.reading': 'Reading',
+  'panel.editor.reading.placeholder': 'In kana. Counts, dates and proper nouns are enough',
+  'panel.editor.acting': 'Acting',
+  'panel.editor.estimate': 'about {seconds}s',
+  'panel.editor.cueCount': 'cues {count}',
+  'panel.editor.hold': 'Keep the face',
+  'panel.editor.palette.before': 'Click to insert',
+  'panel.editor.palette.after': 'at the caret. The brackets are not spoken.',
+  'panel.editor.insertCue': 'Insert [{id}]',
+  'panel.editor.wholeLine': 'Whole line',
+  'panel.editor.none': 'None',
+  'panel.editor.cancel': 'Cancel',
+
+  // --- what has already been said --------------------------------------------
+  'panel.history.title': 'History',
+  'panel.history.hint.open': 'Newest first, up to 100',
+  'panel.history.hint.closed': 'Lines already spoken',
+  'panel.history.rewindLabel': 'When rewinding',
+  'panel.history.cutAria': 'What happens to the line on air when something is rewound',
+  'panel.history.cut.finish': 'After it finishes',
+  'panel.history.cut.finish.title':
+    'The line on air is spoken to the end, and the rewound lines start after it',
+  'panel.history.cut.cut': 'Cut and switch',
+  'panel.history.cut.cut.title': 'Cut the line on air where it is and switch to the rewound lines',
+  'panel.history.empty': 'Nothing has been spoken yet.',
+  'panel.history.interrupted': 'Cut',
+  'panel.history.fromHere': 'From here',
+  'panel.history.fromHere.title':
+    'Put this line and everything spoken after it back at the front of the queue',
+  'panel.history.thisOne': 'This line only',
+  'panel.history.thisOne.title': 'Put just this line at the front of the queue and say it again',
+
+  // --- what the panel notices about a line before it is said -----------------
+  'panel.lint.unknownCue': '[{id}] is not in the performance table',
+  'panel.lint.strayBrackets':
+    '{count} square brackets cannot be read as a cue (they are left out of the speech)',
+  'panel.lint.readingBrackets': 'A reading cannot contain square brackets',
+  'panel.lint.unknownPerform': 'perform: {id} is not in the performance table',
+  'panel.lint.unknownGesture': 'gesture: {id} does not exist',
+  'panel.lint.unknownExpression': 'expression: {id} does not exist',
+  'panel.lint.emptyTurn': 'An empty turn, with neither a line nor a performance',
+  'panel.lint.tooLong': '{seconds}s. A long line cannot be interrupted cleanly.',
+  'panel.lint.cuesCrowded': '[{first}] and [{second}] land too close together',
+
+  // --- the live surface ------------------------------------------------------
+  'panel.perform.presets': 'Presets',
+  'panel.perform.presets.note1':
+    'A face and a movement kept as one. Emotion and Gestures below are its parts, for combinations that have no name.',
+  'panel.perform.presets.note2':
+    'The emotion outlives the preset. Anything held — a stance, lowered eyes — is marked with a *, and returns on the next preset or on Clear.',
+  'panel.perform.faceOnly': 'face only',
+  'panel.perform.release': 'Clear',
+  'panel.perform.releaseAll': 'Clear all',
+  'panel.perform.emotion': 'Emotion',
+  'panel.perform.emotion.note1':
+    'These are continuous, so mixing several gives a face between them. A chip sets one on its own; Blend opens the proportions.',
+  'panel.perform.emotion.note2': 'It outlives the line — a mood does not end when a sentence does.',
+  'panel.perform.mix': 'Blend',
+  'panel.perform.expressions': 'Drawn expressions',
+  'panel.perform.expressions.note1':
+    'Finished faces that ship with the model. They hold eye and mouth shapes that blending cannot make, so they are kept apart from the emotions.',
+  'panel.perform.expressions.note2':
+    'A filled chip is the operator’s own choice; an outlined one was chosen by the emotion channel or the autopilot, and cannot be cleared from here.',
+  'panel.perform.overlays': 'Overlays',
+  'panel.perform.overlays.note':
+    'These lie over the face rather than replacing it, so several can be up at once.',
+  'panel.perform.gestures': 'Gestures',
+  'panel.perform.gestures.note1':
+    'The body’s own vocabulary, with no face attached. Speed, amplitude and side vary from play to play, and one crossfades into the next.',
+  'panel.perform.gestures.note2':
+    'A pose is held until it is cleared; everything else ends on its own. A hop runs apart from the arms, so it can play at the same time.',
+  'panel.perform.hops': 'Hops',
+  'panel.perform.stop': 'Stop',
+  'panel.perform.pointing': 'Pointing',
+  'panel.perform.strain': 'Strain {value}',
+  'panel.perform.pointing.note':
+    'A command past the joint limits does not fail — the arm reaches as far as it can and stops. How hard it worked shows up as Strain.',
+  'panel.perform.hand': 'Hand',
+  'panel.perform.hand.aria': 'Which hand',
+  'panel.perform.side.right': 'Right hand',
+  'panel.perform.side.left': 'Left hand',
+  'panel.perform.finger': 'Finger',
+  'panel.perform.finger.aria': 'Which finger',
+  'panel.perform.finger.thumb': 'Thumb',
+  'panel.perform.finger.index': 'Index',
+  'panel.perform.finger.middle': 'Middle',
+  'panel.perform.finger.ring': 'Ring',
+  'panel.perform.finger.little': 'Little',
+  'panel.perform.azimuth': 'Azimuth',
+  'panel.perform.elevation': 'Elevation',
+  'panel.perform.extent': 'Reach',
+  'panel.perform.point': 'Point',
+  'panel.perform.lookAt': 'Eye contact',
+  'panel.perform.lookAt.note':
+    'How much the gaze follows the camera. 0 keeps facing front, 1 looks into the lens all the time.',
+
+  // --- the wardrobe ----------------------------------------------------------
+  'panel.dress.title': 'Wardrobe',
+  'panel.dress.none': 'This avatar has nothing to change into.',
+  'panel.dress.presets': 'Outfits',
+  'panel.dress.presets.note':
+    'Dress a whole set at once. Every slot below moves to this outfit the moment it is pressed.',
+  'panel.dress.slots': 'Pieces',
+  'panel.dress.slotCount': '{count} slots',
+  'panel.dress.slots.note':
+    'One garment per slot. The shapes under a covered area are taken in as the garment goes on, so nothing pokes through it.',
+  'panel.dress.bare': 'None',
+
+  // --- the document layer ----------------------------------------------------
+  'panel.slides.title': 'Documents',
+  'panel.slides.none': 'None',
+  'panel.slides.none.title': 'Take the document down and go back to the backdrop',
+  'panel.slides.title.note1':
+    'PDFs dropped into slides/ show up as they are. A file exported mid-broadcast joins the list once Rescan is pressed.',
+  'panel.slides.title.note2':
+    'A document appears behind the character, where the backdrop is. The backdrop steps aside while it is up.',
+  'panel.slides.rescan': 'Rescan',
+  'panel.slides.rescan.title': 'Read the document directory again',
+  'panel.slides.empty': 'No documents. Put a PDF in slides/ and press Rescan.',
+  'panel.slides.page': 'Page',
+  'panel.slides.page.note1': '← and → turn pages too. They stand down while a field has focus.',
+  'panel.slides.page.note2': 'It stops at both ends. Turning past the last page goes nowhere.',
+  'panel.slides.page.note3':
+    'A page number can also be written into the script. Put it on a line and the pages follow the order they are spoken in.',
+  'panel.slides.noReport': 'The renderer has not reported a document layer yet.',
+  'panel.slides.prev': 'Previous page (←)',
+  'panel.slides.next': 'Next page (→)',
+  'panel.slides.drawing': 'Drawing',
+  'panel.slides.jump.placeholder': 'Pg',
+  'panel.slides.jump.aria': 'Jump to a page number',
+  'panel.slides.layout': 'Layout',
+  'panel.slides.layout.note1':
+    'The camera does not move. What moves is where the character’s picture sits in the frame and how large it is; the framing and the performance come out as they were shot.',
+  'panel.slides.layout.note2':
+    'At a size of 1.00 the picture fills the frame, so the position has nowhere to move it. Bring the size down first.',
+  'panel.slides.stand': 'Position',
+  'panel.slides.stand.aria': 'Where the character stands',
+  'panel.slides.size': 'Size',
+  'panel.slides.margin': 'Margin from the edge',
+  'panel.slides.docPosition': 'Document position',
+  'panel.slides.fit': 'Fit',
+  'panel.slides.fit.aria': 'How the document is fitted',
+  'panel.slides.fit.contain': 'Whole page',
+  'panel.slides.fit.contain.title': 'Fit the whole page in. There will be margins.',
+  'panel.slides.fit.cover': 'Fill',
+  'panel.slides.fit.cover.title': 'Fill the frame. The edges are cropped.',
+  'panel.slides.docSize': 'Document size',
+  'panel.slides.anchor.topLeft': 'Top left',
+  'panel.slides.anchor.top': 'Top',
+  'panel.slides.anchor.topRight': 'Top right',
+  'panel.slides.anchor.left': 'Left',
+  'panel.slides.anchor.center': 'Centre',
+  'panel.slides.anchor.right': 'Right',
+  'panel.slides.anchor.bottomLeft': 'Bottom left',
+  'panel.slides.anchor.bottom': 'Bottom',
+  'panel.slides.anchor.bottomRight': 'Bottom right',
+  'panel.slides.ago.now': 'just now',
+  'panel.slides.ago.minutes': '{count} min ago',
+  'panel.slides.ago.hours': '{count} h ago',
+  'panel.slides.ago.days': '{count} d ago',
+
+  // --- the set-once layer ----------------------------------------------------
+  'panel.tune.title': 'Tuning',
+  'panel.tune.empty':
+    'The renderer has not reported anything yet. Open a viewer and the values arrive.',
+  'panel.tune.idle': 'Idle',
+  'panel.tune.idle.note1':
+    'Breathing and weight shift keep running through a gesture. A character whose breathing stops the moment a hand goes up reads as a doll.',
+  'panel.tune.idle.note2':
+    'Blinks are drawn toward gaze changes. The eyes are held to the range that keeps the whites out of sight, which leaves most of the turning to the head.',
+  'panel.tune.breathDepth': 'Breath depth',
+  'panel.tune.breathPeriod': 'Breath period',
+  'panel.tune.idleAmount': 'Head micro-movement',
+  'panel.tune.weightShift': 'Weight shift',
+  'panel.tune.gazeAmount': 'Gaze drift',
+  'panel.tune.eyeLimit': 'Eye range limit',
+  'panel.tune.blink': 'Automatic blinking',
+  'panel.tune.sway': 'Sway',
+  'panel.tune.sway.note1':
+    'Hair, clothing, ribbons — bones that are not driven and only trail their parent. The multipliers are against the values written into the model.',
+  'panel.tune.sway.note2':
+    'Solved on a fixed step, so how far things swing does not change with the frame rate.',
+  'panel.tune.swayEnabled': 'Enable sway',
+  'panel.tune.stiffness': 'Stiffness',
+  'panel.tune.inertia': 'How long it keeps swinging',
+  'panel.tune.gravity': 'Gravity',
+  'panel.tune.settle': 'Settle',
+  'panel.tune.hop': 'Hop',
+  'panel.tune.hop.note1':
+    'A movement for checking whether the sway is tuned. The landing shows in an instant what breathing never will.',
+  'panel.tune.hop.note2':
+    'Height and gravity decide the arc between them. Lower the gravity and the same height floats at the top.',
+  'panel.tune.hop.note3':
+    'The legs are not in the rig, so watch this framed at the bust or the upper body.',
+  'panel.tune.hopHeight': 'Hop height',
+  'panel.tune.tail': 'Tail',
+  'panel.tune.tail.note':
+    'A tail only hangs from the hips, so left to the sway layer it looks dead. The swing is taken from the emotion and driven at the root; everything past it follows on the sway layer.',
+  'panel.tune.tailAmount': 'Swing amount',
+  'panel.tune.render': 'Render',
+  'panel.tune.render.note1':
+    'Turn toon off and the materials the GLB arrived with are used as they are. For telling a bad model apart from a bad shader.',
+  'panel.tune.render.note2':
+    'Turn ARKit blending off and the face falls back to the VRM presets. A preset sculpts the whole face, so only one can be up at a time — for checking the degraded path.',
+  'panel.tune.toon': 'Toon shading',
+  'panel.tune.arkit': 'Drive the face with ARKit blending',
+
+  // --- the voice chain -------------------------------------------------------
+  'panel.voice.room': 'Room',
+  'panel.voice.dry': 'Dry',
+  'panel.voice.room.note1':
+    'The synthesised voice carries no reverb at all. The recordings it was trained on had theirs taken out, which is right for the material and sounds like a voice in a vacuum if it goes out untouched.',
+  'panel.voice.room.note2':
+    'What is chosen here is a room, not a decay time. An impulse response is built from its dimensions and its wall absorption, and convolved with the take. It sits after the whole chain, so the mouth follows the voice rather than the reverb.',
+  'panel.voice.changer': 'Voice changer',
+  'panel.voice.bypass': 'Bypass',
+  'panel.voice.changer.note1':
+    'The knobs below ride on the preset as a delta. The panel holds no complete configuration: it sends the one field it moved, the renderer merges it onto the preset, and the values shown are that result read back.',
+  'panel.voice.changer.note2':
+    'Pitch and formant move independently. Pitch on its own sounds sped up; move the formant with it and it becomes a different person.',
+  'panel.voice.changer.note3':
+    'Bypass is no processing at all: the synthesised take plays as it is, and the knob deltas are dropped.',
+  'panel.voice.bypassed': 'Playing unprocessed. Choose a preset to use the knobs.',
+  'panel.voice.tone': 'Tone',
+  'panel.voice.pitch': 'Pitch',
+  'panel.voice.semitones': 'st',
+  'panel.voice.pitchAmount': 'Pitch amount',
+  'panel.voice.formant': 'Formant',
+  'panel.voice.formantAmount': 'Formant amount',
+  'panel.voice.thickness': 'Thickness',
+  'panel.voice.brightness': 'Brightness',
+  'panel.voice.nasal': 'Nasality',
+  'panel.voice.eq': 'Equaliser',
+  'panel.voice.highpass': 'Low cut',
+  'panel.voice.eqBody': 'Body',
+  'panel.voice.presence': 'Presence',
+  'panel.voice.air': 'Air',
+  'panel.voice.gate': 'Gate',
+  'panel.voice.gate.note':
+    'There is no room noise in a synthesised take, so this is for cutting breaths and the tail of a phrase. Raise the threshold too far and word endings go with it.',
+  'panel.voice.threshold': 'Threshold',
+  'panel.voice.release': 'Release',
+  'panel.voice.range': 'Range',
+  'panel.voice.compressor': 'Compressor',
+  'panel.voice.compressor.note':
+    'Holds the level steady from line to line. A viewer’s volume control stays where they put it, so 6 dB between two lines makes them reach for it.',
+  'panel.voice.ratio': 'Ratio',
+  'panel.voice.attack': 'Attack',
+  'panel.voice.makeup': 'Make-up gain',
+  'panel.voice.deesser': 'De-esser',
+  'panel.voice.frequency': 'Frequency',
+  'panel.voice.reverb': 'Chain reverb',
+  'panel.voice.reverb.meta': 'not with the room above',
+  'panel.voice.reverb.note':
+    'This adds reverb to the voice itself and is not the room above. The room is built from a physical shape and sounds better, so this normally stays at 0. Raise both and it sounds like two rooms.',
+  'panel.voice.reverbMix': 'Amount',
+  'panel.voice.reverbTime': 'Length',
+  'panel.voice.damping': 'Damping',
+  'panel.voice.output': 'Output',
+  'panel.voice.output.note':
+    'The limiter is the last thing between the voice and the stream. The true-peak ceiling sits at −1 dBTP because a platform’s lossy re-encode lifts the peaks between samples; at 0 it clips there.',
+  'panel.voice.outputGain': 'Output gain',
+  'panel.voice.wet': 'Processed amount',
+  'panel.voice.ceiling': 'Limiter ceiling',
+
+  // --- what the last line measured -------------------------------------------
+  'panel.meters.loudness': 'Loudness',
+  'panel.meters.target': 'Target {value} LUFS',
+  'panel.meters.truePeak': 'True peak',
+  'panel.meters.ceiling': 'Ceiling {value} dBTP',
+
+  // --- what is actually true right now ---------------------------------------
+  'panel.inspect.link': 'Connection',
+  'panel.inspect.link.none': 'Not connected',
+  'panel.inspect.link.note1':
+    'How many renderers are attached. The preview in this panel counts as one of them.',
+  'panel.inspect.link.note2':
+    '“Not connected” means either nobody is there or the reports stopped a few seconds ago. Closing the viewer tab looks like this.',
+  'panel.inspect.viewers': 'Viewers',
+  'panel.inspect.avatar': 'Avatar',
+  'panel.inspect.loadable': 'Can be loaded',
+  'panel.inspect.queue': 'Queue',
+  'panel.inspect.seq': 'Event sequence',
+  'panel.inspect.strain': 'Joint strain',
+  'panel.inspect.strain.note1':
+    'How hard the arm worked on the last point. 0 is a comfortable range; past 1 it is reaching for something out of reach.',
+  'panel.inspect.strain.note2':
+    'A command past the joint limits does not fail — the arm stops where it can reach. This number is the only thing that says whether the pose asked for was the pose taken.',
+  'panel.inspect.strain.note3':
+    'The per-joint breakdown is in the renderer’s own console — it is re-measured many times a second and does not belong on this wire.',
+  'panel.inspect.rightArm': 'Right arm',
+  'panel.inspect.leftArm': 'Left arm',
+  'panel.inspect.voice': 'Voice',
+  'panel.inspect.voice.bypass': 'Straight through',
+  'panel.inspect.voice.note1':
+    'Measured over the last line. Loudness is against the broadcast target; true peak distorts above 0.',
+  'panel.inspect.voice.note2':
+    '“Blocked” means the browser has not let the audio device start yet, and nothing here can fix it — the viewer window has to be clicked once.',
+  'panel.inspect.chain': 'Chain',
+  'panel.inspect.room': 'Room',
+  'panel.inspect.dry': 'Dry',
+  'panel.inspect.loudness': 'Loudness',
+  'panel.inspect.truePeak': 'True peak',
+  'panel.inspect.blocked': 'Blocked',
+  'panel.inspect.yes': 'Yes',
+  'panel.inspect.no': 'No',
+  'panel.inspect.voice.empty': 'No viewer with a voice has reported yet.',
+  'panel.inspect.events': 'Events',
+  'panel.inspect.events.note':
+    'The turn boundaries the renderer reports. This is what an orchestrator waits on before sending the next line, and it is what the control API hands out.',
+  'panel.inspect.events.empty': 'Nothing has happened yet.',
+  'panel.inspect.vocabulary': 'Vocabulary',
+  'panel.inspect.vocabulary.note1':
+    'Everything this avatar can be asked for. Discovered rather than declared: the expressions come from the model’s own shape keys and the wardrobe from its meshes, so swapping the avatar changes the list.',
+  'panel.inspect.vocabulary.note2': 'This is the object to paste into an LLM’s system prompt.',
+} as const;
+
+export const panelJa: Record<keyof typeof panelEn, string> = {
+  'panel.documentTitle': 'hashidate 配信パネル',
+  'panel.title': '配信パネル',
+  'panel.tabs.aria': 'パネル',
+  'panel.tabs.queue': 'キュー',
+  'panel.tabs.perform': '演じる',
+  'panel.tabs.voice': '音声',
+  'panel.tabs.slides': '資料',
+  'panel.tabs.dress': '装う',
+  'panel.tabs.tune': '調律',
+  'panel.tabs.inspect': '診る',
+  'panel.status.connected': '接続 {viewers}',
+  'panel.status.disconnected': 'レンダラー未接続',
+  'panel.drop': '以降を破棄',
+  'panel.drop.title': 'いま言っている行は終わらせて、以降を破棄します',
+  'panel.stop': '停止',
+  'panel.stop.title': 'いま言っている行を途中で切り、待ち行列も破棄します',
+  'panel.speech.loading': '音声サイドカーがモデルを読み込み中です。準備できるまで声は出ません。',
+  'panel.speech.down': '音声サイドカーが応答しません。このままでは声が出ず、口だけが動きます。',
+
+  'panel.preview.title': 'プレビュー',
+  'panel.preview.readout.on': '計測 入',
+  'panel.preview.readout.off': '計測 切',
+  'panel.preview.readout.hideTitle': '計測値の表示を消す',
+  'panel.preview.readout.showTitle':
+    '呼吸・視線・フレームレート・資料の状態を、接続中のすべてのビューアに表示する（配信に出る画面にも出ます）',
+  'panel.preview.audio.on': '音声 入',
+  'panel.preview.audio.off': '音声 切',
+  'panel.preview.audio.muteTitle':
+    'この画面の音を止める。OBS のモニタリングを使っているなら二重に聞こえます',
+  'panel.preview.audio.unmuteTitle':
+    'この画面の音を出す。OBS 側でモニタリングしていない場合はここが唯一の確認手段です',
+  'panel.preview.hide': '停止',
+  'panel.preview.show': '表示',
+  'panel.preview.hideTitle': 'プレビューを止めて GPU を返す',
+  'panel.preview.showTitle': 'プレビューを表示する',
+  'panel.preview.frameTitle': 'アバターのプレビュー',
+  'panel.preview.stopped':
+    'プレビュー停止中。二つ目の WebGL コンテキストを開かないので、配信側の描画が軽くなります。',
+  'panel.preview.blocked':
+    '音声ブロック中。ビューアの画面を一度クリックすると次の行から声が出ます。',
+  'panel.preview.avatarAria': 'アバター',
+  'panel.preview.cameraAria': 'カメラ',
+  'panel.preview.backdropAria': '背景',
+  'panel.preview.backdropNone': 'なし',
+  'panel.preview.backdropNone.title': '素の背景',
+  'panel.preview.straightOn': '正面',
+  'panel.preview.straightOnFrom': '正面へ  {offset}',
+  'panel.preview.straightOn.title': '画角はそのままに、カメラを正面・基準距離へ戻す',
+  'panel.preview.shot.right': '右',
+  'panel.preview.shot.left': '左',
+  'panel.preview.shot.up': '上',
+  'panel.preview.shot.down': '下',
+  'panel.preview.idle': '自動モード（アイドル）',
+
+  'panel.queue.waiting': '待ち',
+  'panel.queue.remaining': '残り {time}',
+  'panel.queue.warnings': '要確認 {count}',
+  'panel.queue.dropFirst': '先頭を捨てる',
+  'panel.queue.dropFirst.title': '先頭を取り出して捨てる',
+  'panel.queue.dropLast': '末尾を捨てる',
+  'panel.queue.dropLast.title': '末尾を取り出して捨てる',
+  'panel.queue.clear': '全消去',
+  'panel.queue.clear.title': '待ち行列を空にする。いま言っている行はそのまま終わります',
+  'panel.queue.empty.before': '待ち行列は空です。下で書くか、',
+  'panel.queue.empty.after': 'で投入されます。',
+  'panel.queue.addLine': '+ 行を追加',
+  'panel.queue.push': '末尾に追加',
+  'panel.queue.interject': '次に割り込む',
+  'panel.queue.save': '保存',
+  'panel.queue.onAir': '発話中',
+  'panel.queue.standingBy': '待機',
+
+  'panel.row.reading': '読み',
+  'panel.row.reading.title': '読み: {reading}',
+  'panel.row.hold.title': 'この行のあと表情を保持します',
+  'panel.row.silent': '(台詞なし)',
+  'panel.row.perform.title': 'この行のあいだ演技',
+  'panel.row.gesture.title': 'この行のあいだ動作',
+  'panel.row.expression.title': 'この行のあいだ表情',
+  'panel.row.cue.title': '{percent}% の位置',
+  'panel.row.promote': '先頭へ',
+  'panel.row.edit': '編集',
+  'panel.row.remove': '削除',
+
+  'panel.editor.text': '台詞',
+  'panel.editor.reading': '読み',
+  'panel.editor.reading.placeholder': 'かなで。数え方・日付・固有名詞だけで十分',
+  'panel.editor.acting': '演技',
+  'panel.editor.estimate': 'およそ {seconds} 秒',
+  'panel.editor.cueCount': 'キュー {count}',
+  'panel.editor.hold': '表情を保持',
+  'panel.editor.palette.before': 'クリックでカーソル位置に',
+  'panel.editor.palette.after': 'を挿入。角括弧は読み上げられません。',
+  'panel.editor.insertCue': '[{id}] を挿入',
+  'panel.editor.wholeLine': '行全体',
+  'panel.editor.none': 'なし',
+  'panel.editor.cancel': '取消',
+
+  'panel.history.title': '履歴',
+  'panel.history.hint.open': '新しい順・最大100件',
+  'panel.history.hint.closed': '話し終えた行',
+  'panel.history.rewindLabel': '巻き戻すとき',
+  'panel.history.cutAria': '巻き戻したときに再生中の行をどうするか',
+  'panel.history.cut.finish': '言い終わってから',
+  'panel.history.cut.finish.title':
+    'いま言っている行は最後まで喋り、その次から巻き戻し先に入ります',
+  'panel.history.cut.cut': '中断して切替',
+  'panel.history.cut.cut.title': 'いま言っている行をその場で止めて、巻き戻し先に切り替えます',
+  'panel.history.empty': 'まだ話し終えた行はありません。',
+  'panel.history.interrupted': '中断',
+  'panel.history.fromHere': 'ここから',
+  'panel.history.fromHere.title': 'この行と、これより後に話した行をまとめてキューの先頭に戻す',
+  'panel.history.thisOne': 'この行だけ',
+  'panel.history.thisOne.title': 'この行だけをキューの先頭に入れて、もう一度言わせる',
+
+  'panel.lint.unknownCue': '[{id}] は演技表にありません',
+  'panel.lint.strayBrackets':
+    'キューとして読めない角括弧が {count} 箇所あります(読み上げからは除かれます)',
+  'panel.lint.readingBrackets': '読みに角括弧は書けません',
+  'panel.lint.unknownPerform': 'perform: {id} は演技表にありません',
+  'panel.lint.unknownGesture': 'gesture: {id} はありません',
+  'panel.lint.unknownExpression': 'expression: {id} はありません',
+  'panel.lint.emptyTurn': '台詞も演技もない空のターンです',
+  'panel.lint.tooLong': '{seconds} 秒。長い行は割り込みが効きません',
+  'panel.lint.cuesCrowded': '[{first}] と [{second}] が近すぎます',
+
+  'panel.perform.presets': 'プリセット',
+  'panel.perform.presets.note1':
+    '表情とモーションをひと組にしたもの。下の「感情」「ジェスチャ」はその部品で、名前のない組み合わせを作るときに使う。',
+  'panel.perform.presets.note2':
+    '感情はプリセットを抜けても残る。姿勢や伏し目のように保持されるものは * 印つきで、次のプリセットか「解除」で戻る。',
+  'panel.perform.faceOnly': '表情のみ',
+  'panel.perform.release': '解除',
+  'panel.perform.releaseAll': '全解除',
+  'panel.perform.emotion': '感情',
+  'panel.perform.emotion.note1':
+    '連続値なので複数を混ぜると中間表情になる。チップは単独指定、「配合」を開くと比率を作れる。',
+  'panel.perform.emotion.note2': '台詞が終わっても残る — 気分は文の長さでは終わらない。',
+  'panel.perform.mix': '配合',
+  'panel.perform.expressions': '描き起こし表情',
+  'panel.perform.expressions.note1':
+    'モデル同梱の完成形の表情。合成では作れない目や口の形が入るため、感情とは別系統で持つ。',
+  'panel.perform.expressions.note2':
+    '塗りつぶしが操作者の選択、枠線だけのものは感情か自動モードが選んだもの。後者は解除できない。',
+  'panel.perform.overlays': '重ねる効果',
+  'panel.perform.overlays.note': '表情を置き換えず上に重なるので、複数を同時に出せる。',
+  'panel.perform.gestures': 'ジェスチャ',
+  'panel.perform.gestures.note1':
+    '表情を伴わない体だけの語彙。再生ごとに速さ・振幅・左右が変わり、切り替えはクロスフェードで送る。',
+  'panel.perform.gestures.note2':
+    'ポーズ群は解除するまで保持する。それ以外は自分で終わる。跳躍は腕とは別に走るので同時に出せる。',
+  'panel.perform.hops': '跳躍',
+  'panel.perform.stop': '停止',
+  'panel.perform.pointing': '指さし',
+  'panel.perform.strain': '負担 {value}',
+  'panel.perform.pointing.note':
+    '可動域を超える指示は失敗せず、届く範囲まで伸ばして止まる。どれだけ無理をしたかは「負担」に出る。',
+  'panel.perform.hand': '手',
+  'panel.perform.hand.aria': 'どちらの手',
+  'panel.perform.side.right': '右手',
+  'panel.perform.side.left': '左手',
+  'panel.perform.finger': '指',
+  'panel.perform.finger.aria': 'どの指',
+  'panel.perform.finger.thumb': '親',
+  'panel.perform.finger.index': '人差',
+  'panel.perform.finger.middle': '中',
+  'panel.perform.finger.ring': '薬',
+  'panel.perform.finger.little': '小',
+  'panel.perform.azimuth': '方位  azimuth',
+  'panel.perform.elevation': '仰角  elevation',
+  'panel.perform.extent': '伸ばし  extent',
+  'panel.perform.point': '指す',
+  'panel.perform.lookAt': 'カメラ目線',
+  'panel.perform.lookAt.note':
+    '視線がカメラを追う度合い。0 は正面を向いたまま、1 は常にレンズを見る。',
+
+  'panel.dress.title': '衣装',
+  'panel.dress.none': 'このアバターは着せ替えを持たない。',
+  'panel.dress.presets': '組み合わせ',
+  'panel.dress.presets.note':
+    'ひと揃いを一度に着せる。押した時点で、下のスロットはすべてこの組み合わせのものになる。',
+  'panel.dress.slots': 'パーツ',
+  'panel.dress.slotCount': '{count} スロット',
+  'panel.dress.slots.note':
+    'スロットひとつにつき一着。衣装が素体を貫通しないように、覆われる部分のシェイプは着替えと同時に自動で上がる。',
+  'panel.dress.bare': 'なし',
+
+  'panel.slides.title': '資料',
+  'panel.slides.none': 'なし',
+  'panel.slides.none.title': '資料を下ろして背景に戻す',
+  'panel.slides.title.note1':
+    'slides/ に置かれた PDF がそのまま出てきます。配信中に書き出したファイルも、再読込を押せば一覧に並びます。',
+  'panel.slides.title.note2':
+    '資料はキャラクターの背後、背景と同じ場所に出ます。出している間、背景は自動的に引っ込みます。',
+  'panel.slides.rescan': '再読込',
+  'panel.slides.rescan.title': '資料ディレクトリを読み直す',
+  'panel.slides.empty': '資料がありません。slides/ に PDF を置いてから再読込を押してください。',
+  'panel.slides.page': 'ページ',
+  'panel.slides.page.note1': '← → でもページが送れます。文字を入力している間は効きません。',
+  'panel.slides.page.note2': '両端で止まります。最後のページで送っても、その先には行きません。',
+  'panel.slides.page.note3':
+    'ページ番号は台本側にも書けます。行に書いておくと、喋る順にページが付いてきます。',
+  'panel.slides.noReport': 'レンダラーがまだ資料レイヤーを報告していません。',
+  'panel.slides.prev': '前のページ（←）',
+  'panel.slides.next': '次のページ（→）',
+  'panel.slides.drawing': '描画中',
+  'panel.slides.jump.placeholder': '頁',
+  'panel.slides.jump.aria': 'ページ番号へ飛ぶ',
+  'panel.slides.layout': '配置',
+  'panel.slides.layout.note1':
+    'カメラは動きません。動かしているのは画面の中でキャラクターの絵が占める場所と大きさで、画角も演技も撮られたときのまま出ます。',
+  'panel.slides.layout.note2':
+    '大きさが 1.00 のままだと絵は画面いっぱいなので、立ち位置には動く先がありません。先に大きさを下げてください。',
+  'panel.slides.stand': '立ち位置',
+  'panel.slides.stand.aria': 'キャラクターの位置',
+  'panel.slides.size': '大きさ',
+  'panel.slides.margin': '端からの余白',
+  'panel.slides.docPosition': '資料の位置',
+  'panel.slides.fit': '収め方',
+  'panel.slides.fit.aria': '資料の収め方',
+  'panel.slides.fit.contain': '全体',
+  'panel.slides.fit.contain.title': 'ページ全体を入れる。余白が出る',
+  'panel.slides.fit.cover': '埋める',
+  'panel.slides.fit.cover.title': '枠を埋める。端が切れる',
+  'panel.slides.docSize': '資料の大きさ',
+  'panel.slides.anchor.topLeft': '左上',
+  'panel.slides.anchor.top': '上',
+  'panel.slides.anchor.topRight': '右上',
+  'panel.slides.anchor.left': '左',
+  'panel.slides.anchor.center': '中央',
+  'panel.slides.anchor.right': '右',
+  'panel.slides.anchor.bottomLeft': '左下',
+  'panel.slides.anchor.bottom': '下',
+  'panel.slides.anchor.bottomRight': '右下',
+  'panel.slides.ago.now': 'たった今',
+  'panel.slides.ago.minutes': '{count} 分前',
+  'panel.slides.ago.hours': '{count} 時間前',
+  'panel.slides.ago.days': '{count} 日前',
+
+  'panel.tune.title': '調律',
+  'panel.tune.empty': 'レンダラーがまだ何も報告していない。ビューアを開くと値が入る。',
+  'panel.tune.idle': 'アイドル',
+  'panel.tune.idle.note1':
+    '呼吸と重心移動はジェスチャ中も止まらない。手を上げた瞬間に呼吸が止まるキャラクターは人形に見える。',
+  'panel.tune.idle.note2':
+    'まばたきは視線移動に引き寄せられる。目の可動域は白目が出ない範囲に絞ってあり、向きを変えるのはほぼ頭の仕事になる。',
+  'panel.tune.breathDepth': '呼吸の深さ',
+  'panel.tune.breathPeriod': '呼吸の周期',
+  'panel.tune.idleAmount': '頭のマイクロムーブ',
+  'panel.tune.weightShift': '重心移動',
+  'panel.tune.gazeAmount': '視線のゆらぎ',
+  'panel.tune.eyeLimit': '目の可動限界',
+  'panel.tune.blink': '自動まばたき',
+  'panel.tune.sway': '揺れもの',
+  'panel.tune.sway.note1':
+    '髪・衣装・リボンなど、駆動されず親に遅れて揺れるだけのボーン。倍率はモデルに書かれた値に対するもの。',
+  'panel.tune.sway.note2':
+    '固定ステップで解いているので、フレームレートが変わっても揺れ幅は変わらない。',
+  'panel.tune.swayEnabled': '揺れを有効にする',
+  'panel.tune.stiffness': '硬さ',
+  'panel.tune.inertia': '揺れの持続',
+  'panel.tune.gravity': '重力',
+  'panel.tune.settle': '静止させる',
+  'panel.tune.hop': '跳躍',
+  'panel.tune.hop.note1':
+    '揺れものが正しく調整されているか見るための動き。呼吸では分からないことが着地の一瞬で分かる。',
+  'panel.tune.hop.note2': '高さと重力だけで弧が決まる。重力を下げると同じ高さのまま頂点で浮く。',
+  'panel.tune.hop.note3': '脚はリグに含まれないので、バストアップか上半身の画角で見ること。',
+  'panel.tune.hopHeight': '跳ぶ高さ',
+  'panel.tune.tail': '尻尾',
+  'panel.tune.tail.note':
+    '尻尾は腰にぶら下がっているだけなので、揺れもの層に任せると止まって見える。感情から振りを決めて根元を能動的に振り、その先は揺れもの層が追う。',
+  'panel.tune.tailAmount': '振りの大きさ',
+  'panel.tune.render': '描画',
+  'panel.tune.render.note1':
+    'トゥーンを切ると、GLB が持ってきたマテリアルそのままになる。モデルがおかしいのかシェーダーがおかしいのかを切り分けるためのもの。',
+  'panel.tune.render.note2':
+    'ARKit 合成を切ると VRM プリセットに落ちる。プリセットは顔全体の彫刻なので同時にひとつしか出せない — 縮退動作の確認用。',
+  'panel.tune.toon': 'トゥーン表示',
+  'panel.tune.arkit': '表情を ARKit 合成で駆動',
+
+  'panel.voice.room': '部屋',
+  'panel.voice.dry': 'ドライ',
+  'panel.voice.room.note1':
+    '合成された声には残響がまったく乗っていません。学習に使った録音から残響を取り除いてあるためで、素材としては正しく、そのまま流すと真空の中の声に聞こえます。',
+  'panel.voice.room.note2':
+    'ここで選ぶのは減衰時間ではなく部屋そのものです。寸法と壁の吸音率からインパルス応答を作り、畳み込みで鳴らします。チェーン全体より後段にあるので、口の動きは残響ではなく声そのものに追従します。',
+  'panel.voice.changer': 'ボイスチェンジャー',
+  'panel.voice.bypass': 'バイパス',
+  'panel.voice.changer.note1':
+    'プリセットを土台に、下のつまみが差分として乗ります。パネルは完全な設定を持たず、ずらした一項目だけを送り、レンダラー側でプリセットに重ねます。表示されている値はその合成結果の読み戻しです。',
+  'panel.voice.changer.note2':
+    'ピッチとフォルマントは独立に動きます。ピッチだけ上げると早回しに聞こえ、フォルマントを一緒に動かすと別人の声になります。',
+  'panel.voice.changer.note3':
+    '「バイパス」は加工なし。合成された音をそのまま再生し、つまみの差分も破棄します。',
+  'panel.voice.bypassed': '加工なしで再生しています。つまみを使うにはプリセットを選んでください。',
+  'panel.voice.tone': '声質',
+  'panel.voice.pitch': 'ピッチ',
+  'panel.voice.semitones': '半音',
+  'panel.voice.pitchAmount': 'ピッチ適用量',
+  'panel.voice.formant': 'フォルマント',
+  'panel.voice.formantAmount': 'フォルマント適用量',
+  'panel.voice.thickness': '太さ',
+  'panel.voice.brightness': '明るさ',
+  'panel.voice.nasal': '鼻にかかり',
+  'panel.voice.eq': 'イコライザ',
+  'panel.voice.highpass': 'ローカット',
+  'panel.voice.eqBody': 'ボディ',
+  'panel.voice.presence': 'プレゼンス',
+  'panel.voice.air': 'エア',
+  'panel.voice.gate': 'ゲート',
+  'panel.voice.gate.note':
+    '合成音には環境ノイズがないので、ここは息継ぎや語尾の余韻を切るためのものです。しきい値を上げすぎると語尾が欠けます。',
+  'panel.voice.threshold': 'しきい値',
+  'panel.voice.release': 'リリース',
+  'panel.voice.range': '減衰量',
+  'panel.voice.compressor': 'コンプレッサー',
+  'panel.voice.compressor.note':
+    '行ごとに音量が揺れるのを抑えます。配信では視聴者の音量つまみが固定なので、行間で 6 dB 動くと聞き手が操作を強いられます。',
+  'panel.voice.ratio': 'レシオ',
+  'panel.voice.attack': 'アタック',
+  'panel.voice.makeup': 'メイクアップ',
+  'panel.voice.deesser': 'ディエッサー',
+  'panel.voice.frequency': '周波数',
+  'panel.voice.reverb': 'チェーンの残響',
+  'panel.voice.reverb.meta': '上の「部屋」と併用しない',
+  'panel.voice.reverb.note':
+    'これは声そのものに足す残響で、上の「部屋」とは別物です。部屋のほうが物理形状から作られていて質が良いので、通常はこちらを 0 のままにします。両方上げると部屋が二つあるように聞こえます。',
+  'panel.voice.reverbMix': '量',
+  'panel.voice.reverbTime': '長さ',
+  'panel.voice.damping': '減衰',
+  'panel.voice.output': '出力',
+  'panel.voice.output.note':
+    'リミッターは配信に出る最後の砦です。true peak の天井を −1 dBTP に置くのは、配信プラットフォーム側のロッシー変換でサンプル間ピークが持ち上がるためで、0 に置くとそこで割れます。',
+  'panel.voice.outputGain': '出力ゲイン',
+  'panel.voice.wet': '加工量',
+  'panel.voice.ceiling': 'リミッター天井',
+
+  'panel.meters.loudness': 'ラウドネス',
+  'panel.meters.target': '目安 {value} LUFS',
+  'panel.meters.truePeak': 'トゥルーピーク',
+  'panel.meters.ceiling': '天井 {value} dBTP',
+
+  'panel.inspect.link': '接続',
+  'panel.inspect.link.none': '未接続',
+  'panel.inspect.link.note1':
+    'レンダラーが何面つながっているか。パネルのプレビューも一面として数える。',
+  'panel.inspect.link.note2':
+    '「未接続」は誰もいないか、報告が途絶えて数秒たった状態。ビューアのタブを閉じるとこうなる。',
+  'panel.inspect.viewers': 'ビューア',
+  'panel.inspect.avatar': 'アバター',
+  'panel.inspect.loadable': '読み込める',
+  'panel.inspect.queue': '待ち行列',
+  'panel.inspect.seq': 'イベント通番',
+  'panel.inspect.strain': '関節の負担',
+  'panel.inspect.strain.note1':
+    '直近の指さしで腕がどれだけ無理をしたか。0 は楽な範囲、1 を超えると届かないところへ手を伸ばしている。',
+  'panel.inspect.strain.note2':
+    '可動域を超える指示は失敗せず、届く範囲で止まる。この数字だけが、要求どおりの姿勢になったかどうかを教える。',
+  'panel.inspect.strain.note3':
+    '関節ごとの内訳はレンダラー側のコンソールにある — 毎秒何度も測り直すもので、この線に載せるものではない。',
+  'panel.inspect.rightArm': '右腕',
+  'panel.inspect.leftArm': '左腕',
+  'panel.inspect.voice': '音声',
+  'panel.inspect.voice.bypass': '素通し',
+  'panel.inspect.voice.note1':
+    '直近の一行の測定値。ラウドネスは配信の基準に対して、真のピークは 0 を超えると歪む。',
+  'panel.inspect.voice.note2':
+    '「ブロック」はブラウザがまだ音声デバイスを許していない状態で、ここからは直せない — ビューアの画面を一度クリックする必要がある。',
+  'panel.inspect.chain': 'チェイン',
+  'panel.inspect.room': '部屋',
+  'panel.inspect.dry': 'ドライ',
+  'panel.inspect.loudness': 'ラウドネス',
+  'panel.inspect.truePeak': '真のピーク',
+  'panel.inspect.blocked': 'ブロック',
+  'panel.inspect.yes': 'あり',
+  'panel.inspect.no': 'なし',
+  'panel.inspect.voice.empty': '声を持つビューアがまだ報告していない。',
+  'panel.inspect.events': 'イベント',
+  'panel.inspect.events.note':
+    'レンダラーが返すターン境界。オーケストレータが次の行を送るのを待つのもこれで、外部の制御 API が受け取るのと同じもの。',
+  'panel.inspect.events.empty': 'まだ何も起きていない。',
+  'panel.inspect.vocabulary': '語彙',
+  'panel.inspect.vocabulary.note1':
+    'このアバターに何を頼めるかの一覧。宣言ではなく発見されたもので、表情はモデル自身のシェイプ群から、衣装はメッシュから引いている。差し替えると中身が変わる。',
+  'panel.inspect.vocabulary.note2': 'LLM のシステムプロンプトに貼るのはこのオブジェクト。',
+};

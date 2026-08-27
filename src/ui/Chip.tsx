@@ -14,7 +14,7 @@ interface Props {
   label: ReactNode;
   onClick: () => void;
   state?: ChipState;
-  /** An action rather than a state: 停止, 解除, 台本を再生. */
+  /** An action rather than a state: 停止 (stop), 解除 (clear), 台本を再生 (play the script). */
   variant?: 'default' | 'action' | 'primary';
   tag?: string;
   title?: string;

@@ -4,7 +4,8 @@
  * Every segment is `flex: 1 1 0` and the track is full width, so the segments
  * are equal regardless of label length. Width that varies with the label reads
  * as unpolished next to the platform controls this sits beside, and it is worst
- * exactly here — "顔" against "バストアップ" differ by a factor of four.
+ * exactly here — "顔" (face) against "バストアップ" (bust-up) differ by a factor
+ * of four.
  */
 
 .track {

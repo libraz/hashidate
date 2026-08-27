@@ -56,7 +56,7 @@
   cursor: default;
 }
 
-/* An action rather than a state — 停止, 解除, 再生. Never carries `on`. */
+/* An action rather than a state — 停止 (stop), 解除 (clear), 再生 (play). Never carries `on`. */
 .chip.action {
   color: var(--fg-dim);
   background: transparent;

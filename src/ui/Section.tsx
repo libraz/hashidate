@@ -1,4 +1,5 @@
 import { type ReactNode, useId, useState } from 'react';
+import { useT } from '@/i18n';
 import styles from './Section.module.css';
 
 interface Props {
@@ -20,6 +21,7 @@ interface Props {
 export function Section({ title, meta, note, children }: Props) {
   const [open, setOpen] = useState(false);
   const noteId = useId();
+  const { t } = useT();
 
   return (
     <section className={styles.section}>
@@ -32,7 +34,7 @@ export function Section({ title, meta, note, children }: Props) {
             className={`${styles.info} ${open ? styles.open : ''}`}
             aria-expanded={open}
             aria-controls={noteId}
-            aria-label={`${title}の説明`}
+            aria-label={t('section.explain', { title })}
             onClick={() => setOpen((v) => !v)}
           >
             ?
