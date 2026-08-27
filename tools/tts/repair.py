@@ -1,9 +1,9 @@
 """Making a take what the renderer expects: no room, no dead air.
 
-Two problems, three functions. The first two remove noise from opposite ends of
-the model; the third cleans up after them.
+Three problems, three functions. The first two remove noise from opposite ends
+of the model; the third cleans up after them.
 
-## The noise has two sources and needs two treatments
+## The noise has three sources and needs three treatments
 
 **The references carry a room.** `calm-01` and `calm-02` sit on a steady bed at
 -43.1 and -44.3 dBFS that varies by only 2 dB frame to frame — a constant, an
@@ -23,6 +23,15 @@ output. Pause bed and speech-to-noise on the same line, measured four ways:
     references cleaned   -62.7 dBFS   50.3 dB
     take cleaned         -60.0 dBFS   46.9 dB
     both                 -62.9 dBFS   50.4 dB
+
+**And the room made sounds.** Both passes above estimate a *steady* noise and
+subtract it, so neither one touches a door closing or a chair moving. Those
+survive the cleaning intact while the bed that was covering them drops 20-25 dB,
+which leaves them more audible in the finished voice than they were in the
+recording — the one thing here that made the problem worse before it made it
+better. A highpass on the reference removes the class of them that carries no
+speech-band energy; the numbers, and what it does not reach, are at
+`REFERENCE_HPF_HZ`.
 
 ## Cleaning the references makes the model pause differently
 
@@ -52,7 +61,11 @@ works: clean, trim, then mark.
 
 import numpy as np
 
-from libsonare import mastering_repair_denoise_classical, mastering_repair_trim_silence
+from libsonare import (
+    StreamingEqualizer,
+    mastering_repair_denoise_classical,
+    mastering_repair_trim_silence,
+)
 
 # STFT geometry, shared by both denoising passes.
 #
@@ -84,6 +97,66 @@ TRIM_GATE_LUFS = -60.0
 TRIM_WINDOW_MS = 200.0
 TRIM_PADDING_MS = 30.0
 
+# Where the reference stops being the speaker and starts being the room.
+#
+# The denoiser above removes a *steady* bed and nothing else, which is what it
+# is for and also its limit. Measured across the four clips, cleaning drops the
+# median level of a pause by 20-25 dB and moves the loudest frame in that same
+# pause by at most 1.4 dB:
+#
+#     bright-01  70-100 Hz   pause median -17.5 -> -37.9   pause max -7.9 -> -7.9
+#     calm-01    70-100 Hz   pause median -19.6 -> -44.2   pause max -14.2 -> -12.8
+#
+# What does not move is what is not steady — a door, a chair, a footstep. So
+# cleaning alone leaves those 20-25 dB further above their surroundings than
+# they were in the recording, and the model clones the result: generated lines
+# carried isolated bursts 200-400 ms clear of any speech with essentially all
+# their energy under 120 Hz, at -33 to -40 dBFS.
+#
+# A level gate cannot separate them, which was tried: at -30 dBFS they sit in
+# the same range as a quiet syllable. Frequency can. The set's medians span
+# 295-392 Hz, so nothing below 120 Hz is the speaker at all, and removing it
+# took those bursts to -50 to -80 dBFS while the 250 Hz - 4 kHz level of the
+# speech itself moved by +1 to +4 dB — up, not down.
+#
+# Two biquads at the Butterworth Q pair — 24 dB/octave — run forward and then
+# backward, which doubles that to 48 and cancels the phase shift: -0.0 dB at
+# 250 Hz, -0.4 at 180, -6.0 at the corner, -27.5 at 80. It removes a class of
+# noise rather than all of it — bursts with energy in the speech band are still
+# there and still need somebody to listen for them, which is the same gap
+# `vet.py` describes.
+REFERENCE_HPF_HZ = 120.0
+REFERENCE_HPF_Q = (0.5412, 1.3066)
+_HPF_BLOCK = 4096
+
+
+def _highpass_once(samples: np.ndarray, sample_rate: int) -> np.ndarray:
+    """One pass of the cascade, in block-sized pieces because the EQ is streaming."""
+    eq = StreamingEqualizer(sample_rate, _HPF_BLOCK)
+    for index, q in enumerate(REFERENCE_HPF_Q):
+        # Every key here is load-bearing: `set_band` accepts a dictionary it does
+        # not recognise without complaining and leaves the band at its defaults,
+        # so a misspelling is a filter that silently passes everything. Checked
+        # by measuring the response rather than by the call not raising.
+        eq.set_band(
+            index,
+            {"type": "highPass", "frequencyHz": REFERENCE_HPF_HZ, "q": q, "enabled": True},
+        )
+    blocks = [
+        np.asarray(
+            eq.process_mono(np.ascontiguousarray(samples[i : i + _HPF_BLOCK], dtype=np.float32)),
+            dtype=np.float32,
+        )
+        for i in range(0, len(samples), _HPF_BLOCK)
+    ]
+    return np.concatenate(blocks) if blocks else samples
+
+
+def _highpass(samples: np.ndarray, sample_rate: int) -> np.ndarray:
+    """Take everything below the speaker off, without moving anything in time."""
+    forward = _highpass_once(samples, sample_rate)
+    return np.ascontiguousarray(_highpass_once(forward[::-1].copy(), sample_rate)[::-1])
+
 
 def clean_reference(samples: np.ndarray, sample_rate: int) -> np.ndarray:
     """Take the room off a reference clip, before it is encoded to a latent.
@@ -101,8 +174,15 @@ def clean_reference(samples: np.ndarray, sample_rate: int) -> np.ndarray:
     material and this is a derivation, on the same footing as the latent it
     feeds, so a clip on disk stays the recording it was and rerunning `refs.py`
     reproduces the cleaning from scratch.
+
+    Two passes, and the order is the one that was measured. The denoiser runs
+    first, on the recording as it stands: `N_FFT` is what it is because the low
+    rumble dominates the bed and a shorter window reads it as signal, so taking
+    that rumble away beforehand would undermine the reason the window is 2048.
+    The highpass then removes what a steady-noise estimator cannot — see
+    `REFERENCE_HPF_HZ`.
     """
-    return mastering_repair_denoise_classical(
+    denoised = mastering_repair_denoise_classical(
         np.ascontiguousarray(samples, dtype=np.float32),
         sample_rate,
         mode="logMmse",
@@ -110,6 +190,7 @@ def clean_reference(samples: np.ndarray, sample_rate: int) -> np.ndarray:
         n_fft=N_FFT,
         hop_length=HOP_LENGTH,
     )
+    return _highpass(denoised, sample_rate)
 
 
 def clean_take(samples: np.ndarray, sample_rate: int) -> np.ndarray:
