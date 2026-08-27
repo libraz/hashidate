@@ -284,7 +284,7 @@ export function buildRig(opts: RigOptions = {}): SyntheticRig {
 
   const descriptor: AvatarDescriptor = {
     id: 'synthetic',
-    label: '合成リグ',
+    label: { en: 'Synthetic rig', ja: '合成リグ' },
     url: '/models/synthetic.glb',
     ...(opts.separator === 'asterisk' ? { separator: /^\*{3,}(.+?)\*{3,}$/ } : {}),
   };

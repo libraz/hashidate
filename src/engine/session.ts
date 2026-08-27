@@ -29,18 +29,22 @@ import { holdsUntilReleased, PERFORMANCE_IDS, PERFORMANCE_TABLE } from './perfor
 import type { Wardrobe } from './scene';
 import type { Tuning, TuningPatch } from './tuning';
 import type {
-  CameraFrame,
+  Composition,
   EmotionName,
   EmotionVector,
   FingerName,
   GazeLimits,
   GestureDef,
+  Placement,
   Scenery,
   SessionEvent,
   SessionEventType,
   SessionState,
   Shading,
+  Shot,
   Side,
+  SlidePlacement,
+  Slides,
   Turn,
   TurnRequest,
   Vocabulary,
@@ -72,7 +76,11 @@ const VOICE_WAIT = 5;
 
 export interface SessionOptions {
   wardrobe?: Wardrobe | null;
-  camera?: ((frame: CameraFrame) => void) | null;
+  /**
+   * Where the camera stands. Absent means the renderer has no camera to move,
+   * which is what every test is.
+   */
+  camera?: ((shot: Shot) => void) | null;
   /**
    * What the character is seen in front of. Absent means the renderer has no
    * backdrops, and `backdrop` does nothing — which is what every test is.
@@ -90,6 +98,16 @@ export interface SessionOptions {
    * one way, and the `render.toon` half of a tuning patch does nothing.
    */
   shading?: Shading | null;
+  /**
+   * The document the character presents from. Absent means the renderer has no
+   * document layer, and `deck` and `slide` do nothing — which is every test.
+   */
+  slides?: Slides | null;
+  /**
+   * How the output frame is laid out. Absent means the renderer draws one way
+   * and `place` does nothing, on the same footing as `shading`.
+   */
+  composition?: Composition | null;
 }
 
 /**
@@ -120,10 +138,12 @@ export class Session {
   readonly d: Director;
   readonly wardrobe: Wardrobe | null;
   /** (frame) => void */
-  readonly camera: ((frame: CameraFrame) => void) | null;
+  readonly camera: ((shot: Shot) => void) | null;
   readonly scenery: Scenery | null;
   readonly voice: Voice | null;
   readonly shading: Shading | null;
+  readonly slides: Slides | null;
+  readonly composition: Composition | null;
 
   idleEnabled: boolean;
   readonly queue: Turn[] = [];
@@ -172,6 +192,8 @@ export class Session {
       idle = false,
       voice = null,
       shading = null,
+      slides = null,
+      composition = null,
     }: SessionOptions = {},
   ) {
     this.d = director;
@@ -180,6 +202,8 @@ export class Session {
     this.scenery = scenery;
     this.voice = voice;
     this.shading = shading;
+    this.slides = slides;
+    this.composition = composition;
     this._baseGaze = { ...director.p.gaze };
 
     // Off by default so opening the viewer gives a still character. An
@@ -479,8 +503,19 @@ export class Session {
     this.idleEnabled = !!on;
   }
 
-  setCamera(frame: CameraFrame): void {
-    this.camera?.(frame);
+  /**
+   * Move the camera: a framing, an offset off it, or both.
+   *
+   * Staging, beside the room and the backdrop — where the stream is, not what
+   * the character is doing — and passed straight through for the same reason:
+   * what a framing means in metres is the renderer's business and differs per
+   * avatar. See `Shot` for why the offsets are relative.
+   *
+   * An absent field is left where it was, which is what lets a drag on a
+   * preview send a yaw and a pitch and nothing else.
+   */
+  setCamera(shot: Shot): void {
+    this.camera?.(shot);
   }
 
   /**
@@ -509,6 +544,56 @@ export class Session {
    */
   setBackdrop(id: string | null): void {
     this.scenery?.setBackdrop(id);
+  }
+
+  /**
+   * Put a document up behind the character, or take it down.
+   *
+   * Staging, beside the backdrop, and it is a **separate axis from one** for
+   * the same reason the backdrop is separate from the room: they are chosen at
+   * different moments and for different reasons. What they are not is separate
+   * *places* — a document and a room both go behind the character, and a
+   * renderer showing both has to decide which one is seen. That decision is the
+   * renderer's and is stated where it is made; the engine says what was asked
+   * for and nothing more.
+   *
+   * `page` is where to open it, defaulting to the first — not to the page that
+   * was showing, which belonged to the document being replaced.
+   */
+  setDeck(id: string | null, page?: number): void {
+    this.slides?.setDeck(id, page);
+  }
+
+  /** Go to a page of the document that is up, 1 based. Out of range clamps. */
+  setSlide(page: number): void {
+    this.slides?.setSlide(page);
+  }
+
+  /**
+   * Turn pages, forward or back.
+   *
+   * Distinct from `setSlide` because the caller genuinely does not know which
+   * page is up — an operator with a hand on an arrow key, or a hotkey on a
+   * control surface. A caller that does know says the number.
+   */
+  turnSlide(by: number): void {
+    this.slides?.turnSlide(by);
+  }
+
+  /**
+   * Lay out the output frame: where the character stands in it, and where the
+   * document sits behind them.
+   *
+   * Staging, and it is neither the camera nor the backdrop. See `Placement` —
+   * the character does not move, the picture of them is put somewhere else in
+   * the frame, so every gesture authored against a framing still plays exactly
+   * as it did.
+   *
+   * Both halves merge onto what is already set rather than replacing it, so a
+   * panel with one slider under the pointer sends one number.
+   */
+  setPlacement(placement: { avatar?: Placement; slide?: SlidePlacement }): void {
+    this.composition?.setPlacement(placement);
   }
 
   /**
@@ -698,10 +783,24 @@ export class Session {
     // bearing — an axis the caller left out keeps what it had, an axis set to
     // null is emptied. `??` here would quietly turn the first into the second.
     if (turn.stage) {
-      const { camera, backdrop, room } = turn.stage;
-      if (camera !== undefined) this.setCamera(camera);
+      const { camera, backdrop, room, deck, slide } = turn.stage;
+      // The framing only: a line names how much of the character is in shot,
+      // and where the operator is standing is not a property of a sentence.
+      if (camera !== undefined) this.setCamera({ frame: camera });
       if (backdrop !== undefined) this.setBackdrop(backdrop);
       if (room !== undefined) this.setRoom(room);
+      // The page goes *into* the document change rather than after it, and the
+      // order is not incidental: a line that moves to another document and
+      // names a page means that document's page. Doing it the other way round
+      // turns to a page of the one being replaced and then opens the new one at
+      // its first, which is neither of the two things the line said.
+      //
+      // `else if`, so a line carrying both is one instruction. Sending the page
+      // again afterwards would be harmless here and is exactly the kind of
+      // duplicate a renderer eventually acts on twice — a crossfade started, cut
+      // and started again on the same page.
+      if (deck !== undefined) this.setDeck(deck, slide);
+      else if (slide !== undefined) this.setSlide(slide);
     }
     // The autopilot has to be off before anything goes in. Its own timer would
     // otherwise cut the gesture short on the very next frame, and switching it
@@ -826,7 +925,10 @@ export class Session {
       hops: HOP_IDS.map((id) => ({ id, label: HOPS[id].label })),
       cue: {
         syntax: '[performance]',
-        note: 'say の text に直接書く。書いた位置でその performance が始まる。[] の中身は読み上げられない — 角括弧は予約されていて台詞には書けない。例: [hello]こんばんは。[explain]今日はこの話をします。',
+        note: {
+          en: "Write it straight into say's text. The performance starts at the point it is written. What is inside the brackets is never spoken — square brackets are reserved and cannot appear in a line. Example: [hello]Good evening. [explain]Here is what we are looking at today.",
+          ja: 'say の text に直接書く。書いた位置でその performance が始まる。[] の中身は読み上げられない — 角括弧は予約されていて台詞には書けない。例: [hello]こんばんは。[explain]今日はこの話をします。',
+        },
       },
       cameras: ['bust', 'upper', 'face', 'full'],
       // Continuous, so it is stated as ranges rather than as a list of ids.
@@ -838,7 +940,10 @@ export class Session {
         elevation: [-70, 110],
         extent: [0.1, 1],
         finger: ['thumb', 'index', 'middle', 'ring', 'little'],
-        note: 'azimuth 0 = 正面、+ がキャラクターから見て右。elevation 0 = 肩の高さ。extent は腕の全長に対する割合',
+        note: {
+          en: "azimuth 0 is straight ahead, positive toward the character's own right. elevation 0 is shoulder height. extent is a fraction of the arm's full reach.",
+          ja: 'azimuth 0 = 正面、+ がキャラクターから見て右。elevation 0 = 肩の高さ。extent は腕の全長に対する割合',
+        },
       },
       // Read off the loaded wardrobe rather than a module-level table: the slot
       // names themselves are avatar data, so an orchestrator that cached this

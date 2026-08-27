@@ -12,6 +12,7 @@ import {
   zoneOf,
 } from '@/engine/anatomy/strain';
 import type { JointDof, JointSpec } from '@/engine/types';
+import { same } from '@/i18n/locale';
 
 /**
  * The strain functions, in degrees.
@@ -21,7 +22,7 @@ import type { JointDof, JointSpec } from '@/engine/types';
  * once — and compare in radians. `deg` is only for reading a result back out.
  */
 const dof = (freeLo: number, freeHi: number, maxLo: number, maxHi: number): JointDof => ({
-  label: 'test',
+  label: same('test'),
   free: [freeLo * D, freeHi * D],
   max: [maxLo * D, maxHi * D],
 });
@@ -352,7 +353,7 @@ describe('fingerCurl', () => {
   });
 
   it('returns zero for a joint spec that names no segment at all', () => {
-    const boneless: JointSpec = { label: 'none', dofs: {} };
+    const boneless: JointSpec = { label: same('none'), dofs: {} };
     expect(fingerCurl(boneless, 0, 1)).toBe(0);
     expect(fingerCurl(boneless, 2, 1)).toBe(0);
   });

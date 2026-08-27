@@ -10,6 +10,8 @@
  * name a height in metres to ask for a jump.
  */
 
+import type { Localized } from '../../i18n/locale';
+
 /**
  * Countermovement, seconds — the dip taken before pushing off.
  *
@@ -178,7 +180,7 @@ export interface HopSpec {
 }
 
 export interface HopDef extends HopSpec {
-  label: string;
+  label: Localized;
 }
 
 /**
@@ -191,12 +193,12 @@ export interface HopDef extends HopSpec {
  * small and a leap hangs because it is tall.
  */
 export const HOPS = {
-  hop: { label: 'ぴょん', height: 0.07, count: 1 },
+  hop: { label: { en: 'Hop', ja: 'ぴょん' }, height: 0.07, count: 1 },
   // Three, small and quick, with no standing up in between: this is the shape
   // of being pleased about something, and it lives or dies on the cadence.
   // Landing straight into the next crouch puts it near 3.5 Hz on its own.
-  bounce: { label: 'ぴょんぴょん', height: 0.045, count: 3 },
-  leap: { label: 'おおきく跳ぶ', height: 0.16, count: 1 },
+  bounce: { label: { en: 'Bounce', ja: 'ぴょんぴょん' }, height: 0.045, count: 3 },
+  leap: { label: { en: 'Big leap', ja: 'おおきく跳ぶ' }, height: 0.16, count: 1 },
 } satisfies Record<string, HopDef>;
 
 export type HopId = keyof typeof HOPS;

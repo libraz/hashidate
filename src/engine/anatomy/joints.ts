@@ -1,3 +1,4 @@
+import type { Localized } from '../../i18n/locale';
 import type { ElevationRow, JointDof, JointTable, StrainZone } from '../types';
 
 /**
@@ -13,10 +14,10 @@ import type { ElevationRow, JointDof, JointTable, StrainZone } from '../types';
  * This module states the joint properly. Every degree of freedom carries two
  * bands rather than one bound:
  *
- *   自然 (free)      the range daily movement actually uses. Free of charge.
- *   無理 (strained)  anatomically available, but effortful and held briefly.
- *                    Reachable, at a rising cost.
- *   不可能           beyond the hard stop. Never produced, at any cost.
+ *   自然 (free)         the range daily movement actually uses. Free of charge.
+ *   無理 (strained)     anatomically available, but effortful and held briefly.
+ *                       Reachable, at a rising cost.
+ *   不可能 (impossible)  beyond the hard stop. Never produced, at any cost.
  *
  * Two bands and not one because a solver needs somewhere to prefer. A single
  * limit gives a pass/fail test and no way to choose between two poses that both
@@ -45,7 +46,7 @@ export const D = Math.PI / 180;
  * out — the table is read by people and the runtime is not.
  */
 const dof = (
-  label: string,
+  label: Localized,
   freeLo: number,
   freeHi: number,
   maxLo: number,
@@ -95,19 +96,19 @@ export const ELEVATION: ElevationRow[] = [
  */
 export const JOINTS: JointTable = {
   shoulder: {
-    label: '肩',
+    label: { en: 'Shoulder', ja: '肩' },
     elevation: ELEVATION,
     dofs: {
       // Humeral rotation, measured by where the elbow points. Neutral is the
       // forearm swinging forward; positive is outward. Clinically 70-90 each
       // way, and the upper figure is the one to take: reaching your own face
       // needs most of it, and at 70 every hand-to-face gesture sat pinned.
-      rotation: dof('上腕の回旋', -55, 60, -90, 90),
+      rotation: dof({ en: 'Humeral rotation', ja: '上腕の回旋' }, -55, 60, -90, 90),
     },
   },
 
   elbow: {
-    label: '肘',
+    label: { en: 'Elbow', ja: '肘' },
     dofs: {
       // Unsigned: which *way* the elbow bends is the shoulder's rotation, not
       // the elbow's. That split is what catches a backwards-folding elbow —
@@ -123,23 +124,23 @@ export const JOINTS: JointTable = {
       // 145, so a limit set there leaves every hand-to-face gesture resting
       // exactly on it, which is both a pose that cannot quite arrive and a
       // reading that says "at the limit" when the truth is "near it".
-      flexion: dof('屈曲', 0, 130, 0, 150),
+      flexion: dof({ en: 'Flexion', ja: '屈曲' }, 0, 130, 0, 150),
       // Pronation/supination happens along the forearm, not at a joint a rig
       // has a bone for; the rig layer splits it between the wrist and the
       // forearm.
-      rotation: dof('回内・回外', -55, 55, -80, 80),
+      rotation: dof({ en: 'Pronation and supination', ja: '回内・回外' }, -55, 55, -80, 80),
     },
   },
 
   wrist: {
-    label: '手首',
+    label: { en: 'Wrist', ja: '手首' },
     dofs: {
       // Positive toward the palm.
-      flexion: dof('掌屈・背屈', -40, 40, -70, 80),
+      flexion: dof({ en: 'Flexion and extension', ja: '掌屈・背屈' }, -40, 40, -70, 80),
       // Positive toward the thumb. Deeply asymmetric, and the asymmetry is
       // visible: a hand cocked 20 degrees toward the thumb already looks
       // strained, the same 20 toward the little finger looks like nothing.
-      deviation: dof('橈屈・尺屈', -20, 10, -30, 20),
+      deviation: dof({ en: 'Radial and ulnar deviation', ja: '橈屈・尺屈' }, -20, 10, -30, 20),
     },
   },
 
@@ -147,20 +148,20 @@ export const JOINTS: JointTable = {
   // knuckle hyperextends and the middle joint does not, the middle joint has
   // the most flexion of the three and the tip has the least.
   finger: {
-    label: '指',
+    label: { en: 'Finger', ja: '指' },
     dofs: {
-      proximal: dof('MP 関節', 0, 90, -30, 100),
-      intermediate: dof('PIP 関節', 0, 100, 0, 115),
-      distal: dof('DIP 関節', 0, 70, -10, 90),
+      proximal: dof({ en: 'MCP joint', ja: 'MP 関節' }, 0, 90, -30, 100),
+      intermediate: dof({ en: 'PIP joint', ja: 'PIP 関節' }, 0, 100, 0, 115),
+      distal: dof({ en: 'DIP joint', ja: 'DIP 関節' }, 0, 70, -10, 90),
     },
   },
 
   thumb: {
-    label: '親指',
+    label: { en: 'Thumb', ja: '親指' },
     dofs: {
-      proximal: dof('CM 関節', 0, 45, -15, 55),
-      intermediate: dof('MP 関節', 0, 50, -10, 60),
-      distal: dof('IP 関節', 0, 70, -15, 85),
+      proximal: dof({ en: 'CMC joint', ja: 'CM 関節' }, 0, 45, -15, 55),
+      intermediate: dof({ en: 'MCP joint', ja: 'MP 関節' }, 0, 50, -10, 60),
+      distal: dof({ en: 'IP joint', ja: 'IP 関節' }, 0, 70, -15, 85),
     },
   },
 
@@ -169,28 +170,34 @@ export const JOINTS: JointTable = {
   // bust shot runs out of room long before a neck does. Applied as a second
   // ceiling so the anatomical stop exists even if a framing limit is widened.
   neck: {
-    label: '首',
+    label: { en: 'Neck', ja: '首' },
     dofs: {
-      pitch: dof('前後屈', -60, 50, -70, 60),
-      yaw: dof('回旋', -80, 80, -90, 90),
-      roll: dof('側屈', -40, 40, -45, 45),
+      pitch: dof({ en: 'Flexion and extension', ja: '前後屈' }, -60, 50, -70, 60),
+      yaw: dof({ en: 'Rotation', ja: '回旋' }, -80, 80, -90, 90),
+      roll: dof({ en: 'Lateral flexion', ja: '側屈' }, -40, 40, -45, 45),
     },
   },
 
   spine: {
-    label: '体幹',
+    label: { en: 'Trunk', ja: '体幹' },
     dofs: {
-      pitch: dof('前後屈', -20, 60, -25, 80),
-      yaw: dof('回旋', -35, 35, -45, 45),
-      roll: dof('側屈', -25, 25, -35, 35),
+      pitch: dof({ en: 'Flexion and extension', ja: '前後屈' }, -20, 60, -25, 80),
+      yaw: dof({ en: 'Rotation', ja: '回旋' }, -35, 35, -45, 45),
+      roll: dof({ en: 'Lateral flexion', ja: '側屈' }, -25, 25, -35, 35),
     },
   },
 };
 
-export const ZONES: Record<StrainZone, string> = {
-  natural: '自然',
-  strained: '無理',
-  limit: '限界',
+/**
+ * What each band is called where a joint reading is shown.
+ *
+ * The three bands are the ones described at the top of this file: inside the
+ * free range, above it and paying for it, and stopped at the hard limit.
+ */
+export const ZONES: Record<StrainZone, Localized> = {
+  natural: { en: 'Natural', ja: '自然' },
+  strained: { en: 'Strained', ja: '無理' },
+  limit: { en: 'At the limit', ja: '限界' },
 };
 
 /**

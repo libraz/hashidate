@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildOverlays, buildPresets } from '@/engine/face';
 import { buildProfile } from '@/engine/profile';
 import type { AvatarDescriptor, PresetSpec, Profile } from '@/engine/types';
+import { same } from '@/i18n/locale';
 import { buildRig } from '../helpers/scene';
 
 /**
@@ -87,7 +88,8 @@ describe('buildPresets', () => {
 
   it('falls back to the raw id when the avatar supplies no label', () => {
     const { profile, descriptor } = setup({ presets: { group: FACE_GROUP } });
-    for (const preset of buildPresets(profile, descriptor)) expect(preset.label).toBe(preset.id);
+    for (const preset of buildPresets(profile, descriptor))
+      expect(preset.label).toEqual(same(preset.id));
   });
 
   it('applies the avatar label function to every id', () => {
@@ -95,10 +97,10 @@ describe('buildPresets', () => {
       presets: { group: FACE_GROUP, label: (id) => id.replace(/^F_/, '').toLowerCase() },
     });
     expect(buildPresets(profile, descriptor).map((p) => p.label)).toEqual([
-      'suyasuya',
-      'doya',
-      'jito',
-      'niko',
+      same('suyasuya'),
+      same('doya'),
+      same('jito'),
+      same('niko'),
     ]);
   });
 
@@ -170,7 +172,7 @@ describe('buildPresets / lid closure', () => {
     };
     const profile = buildProfile(rig.root, descriptor);
     expect(buildPresets(profile, descriptor)).toEqual([
-      { id: 'B_HAZUKASHII', label: 'B_HAZUKASHII', lid: { L: 0, R: 0 }, swap: 0 },
+      { id: 'B_HAZUKASHII', label: same('B_HAZUKASHII'), lid: { L: 0, R: 0 }, swap: 0 },
     ]);
   });
 
@@ -278,7 +280,7 @@ describe('buildOverlays', () => {
       overlays: { group: FACE_GROUP, label: (id) => `overlay:${id}` },
     });
     expect(buildOverlays(profile, descriptor)).toEqual(
-      FACE_IDS.map((id) => ({ id, label: `overlay:${id}` })),
+      FACE_IDS.map((id) => ({ id, label: same(`overlay:${id}`) })),
     );
   });
 
@@ -287,8 +289,8 @@ describe('buildOverlays', () => {
       overlays: { group: FACE_GROUP, exclude: ['F_SUYASUYA', 'F_NIKO'] },
     });
     expect(buildOverlays(profile, descriptor)).toEqual([
-      { id: 'F_DOYA', label: 'F_DOYA' },
-      { id: 'F_JITO', label: 'F_JITO' },
+      { id: 'F_DOYA', label: same('F_DOYA') },
+      { id: 'F_JITO', label: same('F_JITO') },
     ]);
   });
 

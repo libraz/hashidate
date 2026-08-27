@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildProfile } from '@/engine/profile';
 import { Wardrobe } from '@/engine/scene/wardrobe';
 import type { Profile, WardrobeTable } from '@/engine/types';
+import { same } from '@/i18n/locale';
 import { buildRig, type SyntheticRig } from '../helpers/scene';
 
 function must<T>(value: T | undefined, what: string): T {
@@ -27,21 +28,27 @@ function dressedRig(): SyntheticRig {
 const TABLE: WardrobeTable = {
   slots: {
     top: {
-      label: 'Tops',
+      label: same('Tops'),
       items: [
-        { id: 'camisole', label: 'Camisole', meshes: ['Tops'], hide: ['NeckHide'] },
-        { id: 'blouse', label: 'Blouse', meshes: ['Cardigan'], hide: ['BustHide'] },
+        { id: 'camisole', label: same('Camisole'), meshes: ['Tops'], hide: ['NeckHide'] },
+        { id: 'blouse', label: same('Blouse'), meshes: ['Cardigan'], hide: ['BustHide'] },
       ],
     },
-    bottom: { label: 'Bottoms', items: [{ id: 'skirt', label: 'Skirt', meshes: ['Skirt'] }] },
-    prop: { label: 'Prop', items: [{ id: 'pillow', label: 'Pillow', meshes: ['Pillow'] }] },
+    bottom: {
+      label: same('Bottoms'),
+      items: [{ id: 'skirt', label: same('Skirt'), meshes: ['Skirt'] }],
+    },
+    prop: {
+      label: same('Prop'),
+      items: [{ id: 'pillow', label: same('Pillow'), meshes: ['Pillow'] }],
+    },
   },
   presets: {
-    default: { label: 'Default', set: { top: 'camisole', bottom: 'skirt' } },
-    bare: { label: 'Bare', set: { top: null, bottom: null, prop: null } },
-    lounging: { label: 'Lounging', set: { top: 'blouse', bottom: null, prop: 'pillow' } },
+    default: { label: same('Default'), set: { top: 'camisole', bottom: 'skirt' } },
+    bare: { label: same('Bare'), set: { top: null, bottom: null, prop: null } },
+    lounging: { label: same('Lounging'), set: { top: 'blouse', bottom: null, prop: 'pillow' } },
   },
-  note: 'synthetic',
+  note: same('synthetic'),
 };
 
 interface Fixture {
@@ -190,14 +197,14 @@ describe('wardrobe name mangling', () => {
     const table: WardrobeTable = {
       slots: {
         top: {
-          label: 'Tops',
+          label: same('Tops'),
           items: [
-            { id: 'camisole', label: 'Camisole', meshes: ['Tops', 'Apron'] },
-            { id: 'blouse', label: 'Blouse', meshes: ['Cardigan'] },
+            { id: 'camisole', label: same('Camisole'), meshes: ['Tops', 'Apron'] },
+            { id: 'blouse', label: same('Blouse'), meshes: ['Cardigan'] },
           ],
         },
       },
-      presets: { default: { label: 'Default', set: { top: 'camisole' } } },
+      presets: { default: { label: same('Default'), set: { top: 'camisole' } } },
     };
 
     const { wardrobe, mesh } = dress(table);
@@ -264,11 +271,11 @@ describe('wardrobe hide shapes', () => {
       slots: {
         top: TABLE.slots.top,
         prop: {
-          label: 'Prop',
-          items: [{ id: 'pillow', label: 'Pillow', meshes: ['Pillow'], hide: ['NeckHide'] }],
+          label: same('Prop'),
+          items: [{ id: 'pillow', label: same('Pillow'), meshes: ['Pillow'], hide: ['NeckHide'] }],
         },
       },
-      presets: { default: { label: 'Default', set: { top: 'camisole', prop: 'pillow' } } },
+      presets: { default: { label: same('Default'), set: { top: 'camisole', prop: 'pillow' } } },
     };
     const { wardrobe, influence } = dress(table);
 
@@ -284,11 +291,13 @@ describe('wardrobe hide shapes', () => {
     const table: WardrobeTable = {
       slots: {
         top: {
-          label: 'Tops',
-          items: [{ id: 'camisole', label: 'Camisole', meshes: ['Tops'], hide: ['ThighHide'] }],
+          label: same('Tops'),
+          items: [
+            { id: 'camisole', label: same('Camisole'), meshes: ['Tops'], hide: ['ThighHide'] },
+          ],
         },
       },
-      presets: { default: { label: 'Default', set: { top: 'camisole' } } },
+      presets: { default: { label: same('Default'), set: { top: 'camisole' } } },
     };
 
     const { wardrobe, influence, profile } = dress(table);

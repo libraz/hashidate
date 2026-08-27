@@ -12,6 +12,7 @@
  */
 
 import type * as THREE from 'three';
+import { same } from '../../i18n/locale';
 import { buildBodyFrame } from '../anatomy';
 import type { AvatarDescriptor, BlinkShapes, Profile, VisemeName, VrmEmotionName } from '../types';
 import {
@@ -122,7 +123,7 @@ export function buildProfile(
     // `Profile.avatar` is a full descriptor, but auto-detection has to run for a
     // model nobody has written one for. The identity fields are filled with
     // empty strings rather than loosening the type every consumer reads.
-    avatar: { id: '', label: '', url: '', ...avatar },
+    avatar: { id: '', label: same(''), url: '', ...avatar },
     bones,
     fingerBones,
     morphTargets,

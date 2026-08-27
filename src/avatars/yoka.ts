@@ -1,5 +1,7 @@
 /**
- * Avatar data — 旅枕ヨカ.
+ * Avatar data — Tabimakura Yoka.
+ *
+ * The model itself: https://booth.pm/en/items/8217336
  *
  * Everything in this file is a property of this particular model: what its
  * author called things, how its garments are built, how far its eyes can turn.
@@ -12,8 +14,8 @@ import type { AvatarDescriptor } from '../engine/types';
 
 export default {
   id: 'yoka',
-  label: '旅枕ヨカ',
-  author: 'コトブキヤ',
+  label: { en: 'Tabimakura Yoka', ja: '旅枕ヨカ' },
+  author: { en: 'Kotobukiya', ja: 'コトブキヤ' },
   url: '/models/yoka.glb',
 
   // Shape groups are delimited by dummy shapes named ___GROUP___.
@@ -153,20 +155,24 @@ export default {
   wardrobe: {
     slots: {
       outer: {
-        label: 'アウター',
-        items: [{ id: 'cardigan', label: 'カーディガン', meshes: ['Outer'] }],
+        label: { en: 'Outerwear', ja: 'アウター' },
+        items: [
+          { id: 'cardigan', label: { en: 'Cardigan', ja: 'カーディガン' }, meshes: ['Outer'] },
+        ],
       },
       top: {
-        label: 'トップス',
-        items: [{ id: 'camisole', label: 'キャミソール', meshes: ['Tops'] }],
+        label: { en: 'Top', ja: 'トップス' },
+        items: [
+          { id: 'camisole', label: { en: 'Camisole', ja: 'キャミソール' }, meshes: ['Tops'] },
+        ],
       },
       bottom: {
-        label: 'ボトムス',
+        label: { en: 'Bottoms', ja: 'ボトムス' },
         items: [
-          { id: 'short', label: 'ショートパンツ', meshes: ['Bottoms'] },
+          { id: 'short', label: { en: 'Shorts', ja: 'ショートパンツ' }, meshes: ['Bottoms'] },
           {
             id: 'long',
-            label: 'ロングパンツ',
+            label: { en: 'Long trousers', ja: 'ロングパンツ' },
             meshes: ['Bottoms_Long'],
             // Covers the legs entirely, so the leg mesh underneath is collapsed.
             hide: [
@@ -183,29 +189,33 @@ export default {
         ],
       },
       inner: {
-        label: 'インナー',
-        items: [{ id: 'lingerie', label: '下着', meshes: ['Lingerie'] }],
+        label: { en: 'Underwear', ja: 'インナー' },
+        items: [{ id: 'lingerie', label: { en: 'Underwear', ja: '下着' }, meshes: ['Lingerie'] }],
       },
       shoes: {
-        label: '靴',
-        items: [{ id: 'slippers', label: 'スリッパ', meshes: ['Slippers'] }],
+        label: { en: 'Shoes', ja: '靴' },
+        items: [
+          { id: 'slippers', label: { en: 'Slippers', ja: 'スリッパ' }, meshes: ['Slippers'] },
+        ],
       },
       head: {
-        label: '頭',
-        items: [{ id: 'eyemask', label: 'アイマスク', meshes: ['Eyemask'] }],
+        label: { en: 'Head', ja: '頭' },
+        items: [
+          { id: 'eyemask', label: { en: 'Eye mask', ja: 'アイマスク' }, meshes: ['Eyemask'] },
+        ],
       },
       neck: {
-        label: '首',
-        items: [{ id: 'choker', label: 'チョーカー', meshes: ['Choker'] }],
+        label: { en: 'Neck', ja: '首' },
+        items: [{ id: 'choker', label: { en: 'Choker', ja: 'チョーカー' }, meshes: ['Choker'] }],
       },
       prop: {
-        label: '小物',
-        items: [{ id: 'pillow', label: '枕', meshes: ['Pillow'] }],
+        label: { en: 'Accessory', ja: '小物' },
+        items: [{ id: 'pillow', label: { en: 'Pillow', ja: '枕' }, meshes: ['Pillow'] }],
       },
     },
     presets: {
       default: {
-        label: '標準',
+        label: { en: 'Standard', ja: '標準' },
         set: {
           outer: 'cardigan',
           top: 'camisole',
@@ -218,7 +228,7 @@ export default {
         },
       },
       stream: {
-        label: '配信用',
+        label: { en: 'On stream', ja: '配信用' },
         set: {
           outer: 'cardigan',
           top: 'camisole',
@@ -231,7 +241,7 @@ export default {
         },
       },
       roomwear: {
-        label: '部屋着',
+        label: { en: 'At home', ja: '部屋着' },
         set: {
           outer: null,
           top: 'camisole',
@@ -244,13 +254,18 @@ export default {
         },
       },
     },
-    note: 'パーツ単位で着脱する。ロングパンツは脚のHideシェイプを併用して素体の貫通を防ぐ。',
+    note: {
+      en:
+        'Worn a piece at a time. The trousers also raise the legs’ Hide shapes so the ' +
+        'body does not poke through them.',
+      ja: 'パーツ単位で着脱する。ロングパンツは脚のHideシェイプを併用して素体の貫通を防ぐ。',
+    },
   },
 
   /**
    * Secondary motion.
    *
-   * The counterpart to マヌカ's block, and the reason it is worth comparing the
+   * The counterpart to Manuka's block, and the reason it is worth comparing the
    * two. That avatar ships a VRM, the VRM carries the author's spring settings,
    * and every figure there is transcribed. This one ships no VRM. Its sway is
    * authored as VRChat `PhysBone` and Unity `DynamicBone` components, both of
@@ -296,7 +311,7 @@ export default {
       // is most of what makes hair read as hair.
       {
         id: 'hairFront',
-        label: '前髪',
+        label: { en: 'Fringe', ja: '前髪' },
         stiffness: 2.2,
         drag: 0.94,
         radius: 0.012,
@@ -305,7 +320,7 @@ export default {
       },
       {
         id: 'hairAhoge',
-        label: 'アホ毛',
+        label: { en: 'Cowlick', ja: 'アホ毛' },
         stiffness: 0.7,
         drag: 0.8,
         radius: 0.006,
@@ -313,7 +328,7 @@ export default {
       },
       {
         id: 'hairSide',
-        label: 'サイドの髪',
+        label: { en: 'Side hair', ja: 'サイドの髪' },
         stiffness: 0.95,
         drag: 0.9,
         gravity: 0.05,
@@ -323,7 +338,7 @@ export default {
       },
       {
         id: 'hairSideUp',
-        label: 'サイドの結び',
+        label: { en: 'Side ties', ja: 'サイドの結び' },
         stiffness: 1.4,
         drag: 0.92,
         radius: 0.015,
@@ -334,7 +349,7 @@ export default {
       // the most inertia and the only meaningful gravity in the hair.
       {
         id: 'hairBack',
-        label: '後ろ髪',
+        label: { en: 'Back hair', ja: '後ろ髪' },
         stiffness: 1.15,
         drag: 0.945,
         gravity: 0.14,
@@ -354,7 +369,7 @@ export default {
       // --- body ---------------------------------------------------------
       {
         id: 'ear',
-        label: '耳',
+        label: { en: 'Ears', ja: '耳' },
         stiffness: 0.45,
         drag: 0.45,
         radius: 0.014,
@@ -362,7 +377,7 @@ export default {
       },
       {
         id: 'tail',
-        label: '尻尾',
+        label: { en: 'Tail', ja: '尻尾' },
         stiffness: 0.6,
         drag: 0.35,
         radius: 0.035,
@@ -370,7 +385,7 @@ export default {
       },
       {
         id: 'breast',
-        label: '胸',
+        label: { en: 'Chest', ja: '胸' },
         stiffness: 0.7,
         drag: 0.18,
         radius: 0.02,
@@ -383,7 +398,7 @@ export default {
       // so the descriptor names the hub and the strands come off the rig.
       {
         id: 'topsFrill',
-        label: 'トップスのフリル',
+        label: { en: 'Top frill', ja: 'トップスのフリル' },
         stiffness: 3.0,
         drag: 0.93,
         gravity: 0.1,
@@ -393,7 +408,7 @@ export default {
       },
       {
         id: 'outerHem',
-        label: 'アウターの裾',
+        label: { en: 'Outer hem', ja: 'アウターの裾' },
         stiffness: 2.6,
         drag: 0.92,
         gravity: 0.15,
@@ -403,7 +418,7 @@ export default {
       },
       {
         id: 'bottomsHem',
-        label: 'ロングパンツの裾',
+        label: { en: 'Trouser hems', ja: 'ロングパンツの裾' },
         stiffness: 2.4,
         drag: 0.92,
         gravity: 0.1,
@@ -419,7 +434,7 @@ export default {
       // sells a shot as live rather than as a still.
       {
         id: 'ribbonChest',
-        label: '胸元のリボン',
+        label: { en: 'Chest ribbon', ja: '胸元のリボン' },
         stiffness: 0.55,
         drag: 0.86,
         gravity: 0.05,
@@ -429,7 +444,7 @@ export default {
       },
       {
         id: 'ribbonBreast',
-        label: '肩のリボン',
+        label: { en: 'Shoulder ribbons', ja: '肩のリボン' },
         stiffness: 0.55,
         drag: 0.86,
         gravity: 0.05,
@@ -439,7 +454,7 @@ export default {
       },
       {
         id: 'ribbonHips',
-        label: '腰のリボン',
+        label: { en: 'Waist ribbons', ja: '腰のリボン' },
         stiffness: 0.5,
         drag: 0.87,
         gravity: 0.08,
@@ -449,7 +464,7 @@ export default {
       },
       {
         id: 'ribbonSide',
-        label: '腿のリボン',
+        label: { en: 'Thigh ribbons', ja: '腿のリボン' },
         stiffness: 0.5,
         drag: 0.87,
         gravity: 0.08,
@@ -459,7 +474,7 @@ export default {
       },
       {
         id: 'ribbonShin',
-        label: '脚のリボン',
+        label: { en: 'Leg ribbons', ja: '脚のリボン' },
         stiffness: 0.5,
         drag: 0.87,
         gravity: 0.08,
@@ -469,7 +484,7 @@ export default {
       },
       {
         id: 'ribbonWrist',
-        label: '手首のリボン',
+        label: { en: 'Wrist ribbons', ja: '手首のリボン' },
         stiffness: 0.45,
         drag: 0.86,
         gravity: 0.06,
@@ -483,7 +498,7 @@ export default {
       // its own ribbon.
       {
         id: 'pillow',
-        label: '枕',
+        label: { en: 'Pillow', ja: '枕' },
         stiffness: 0.9,
         drag: 0.45,
         gravity: 0.1,

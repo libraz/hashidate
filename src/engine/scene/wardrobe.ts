@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { Localized } from '../../i18n/locale';
 import type { MorphTarget, Profile, WardrobePreset, WardrobeSlot, WardrobeTable } from '../types';
 
 /**
@@ -22,13 +23,13 @@ import type { MorphTarget, Profile, WardrobePreset, WardrobeSlot, WardrobeTable 
  * a plain visibility change.
  */
 
-const EMPTY: WardrobeTable = { slots: {}, presets: {}, note: '' };
+const EMPTY: WardrobeTable = { slots: {}, presets: {} };
 
 export class Wardrobe {
   readonly profile: Profile;
   readonly slots: Record<string, WardrobeSlot>;
   readonly presetDefs: Record<string, WardrobePreset>;
-  readonly note: string;
+  readonly note: Localized | null;
   readonly all: THREE.Mesh[] = [];
   /** Which item is worn in each slot, or null for none. */
   readonly state: Record<string, string | null> = {};
@@ -48,7 +49,7 @@ export class Wardrobe {
     this.profile = profile;
     this.slots = table?.slots ?? {};
     this.presetDefs = table?.presets ?? {};
-    this.note = table?.note ?? '';
+    this.note = table?.note ?? null;
     root.traverse((o) => {
       if (o instanceof THREE.Mesh) this.all.push(o);
     });

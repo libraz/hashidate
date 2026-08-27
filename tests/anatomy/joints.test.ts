@@ -29,7 +29,8 @@ describe('JOINTS band structure', () => {
 
   it.each(ALL_DOFS)('$joint.$axis has somewhere to move and a label', ({ dof }) => {
     expect(dof.max[1]).toBeGreaterThan(dof.max[0]);
-    expect(dof.label.length).toBeGreaterThan(0);
+    expect(dof.label.en.length).toBeGreaterThan(0);
+    expect(dof.label.ja.length).toBeGreaterThan(0);
   });
 
   it.each(ALL_DOFS)('$joint.$axis stays inside a half turn either way', ({ dof }) => {
@@ -176,7 +177,10 @@ describe('ELEVATION', () => {
 describe('ZONES', () => {
   it('labels exactly the three strain zones', () => {
     expect(Object.keys(ZONES).sort()).toEqual(['limit', 'natural', 'strained']);
-    for (const label of Object.values(ZONES)) expect(label.length).toBeGreaterThan(0);
+    for (const label of Object.values(ZONES)) {
+      expect(label.en.length).toBeGreaterThan(0);
+      expect(label.ja.length).toBeGreaterThan(0);
+    }
   });
 
   it('has a label for every zone zoneOf can return', () => {

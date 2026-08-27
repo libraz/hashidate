@@ -6,16 +6,23 @@ import { buildProfile } from '@/engine/profile';
 import { Wardrobe } from '@/engine/scene';
 import { Session } from '@/engine/session';
 import type {
-  CameraFrame,
+  Composition,
   LabelledId,
+  Placement,
+  PlacementReport,
   SessionEvent,
   SessionEventType,
+  Shot,
+  SlidePlacement,
+  SlideReport,
+  Slides,
   Take,
   Voice,
   VoiceChainRequest,
   VoiceReport,
   WardrobeTable,
 } from '@/engine/types';
+import { same } from '@/i18n/locale';
 import { buildRig } from '../helpers/scene';
 
 /**
@@ -43,11 +50,11 @@ const EFFECTS = ['FX_BLUSH', 'FX_TEARS'];
 const WARDROBE: WardrobeTable = {
   slots: {
     top: {
-      label: 'トップス',
-      items: [{ id: 'shirt', label: 'シャツ', meshes: ['Shirt'] }],
+      label: same('トップス'),
+      items: [{ id: 'shirt', label: same('シャツ'), meshes: ['Shirt'] }],
     },
   },
-  presets: { bare: { label: '素', set: { top: null } } },
+  presets: { bare: { label: same('素'), set: { top: null } } },
 };
 
 interface Harness {
@@ -67,14 +74,19 @@ function build({
   voice,
   camera,
   scenery,
+  slides,
+  composition,
 }: {
   wardrobe?: boolean;
   idle?: boolean;
   /** Handed the harness's own clock, so a fake take can run on simulated time. */
   voice?: (now: () => number) => Voice;
   /** The staging hooks a renderer supplies, for the turns that carry a shot. */
-  camera?: (frame: CameraFrame) => void;
+  camera?: (shot: Shot) => void;
   scenery?: { backdrops: LabelledId[]; setBackdrop: (id: string | null) => void };
+  /** The document layer, absent on every renderer that has none. */
+  slides?: Slides;
+  composition?: Composition;
 } = {}) {
   const rig = buildRig({
     groups: [
@@ -97,6 +109,8 @@ function build({
     voice: voice?.(() => clock),
     camera,
     scenery,
+    slides,
+    composition,
   });
 
   const step = (frames: number): void => {
@@ -634,7 +648,10 @@ describe('Session.vocabulary', () => {
         'wardrobePresets',
       ].sort(),
     );
-    expect(vocabulary.avatar).toEqual({ id: 'synthetic', label: '合成リグ' });
+    expect(vocabulary.avatar).toEqual({
+      id: 'synthetic',
+      label: { en: 'Synthetic rig', ja: '合成リグ' },
+    });
     expect(vocabulary.cameras).toEqual(['bust', 'upper', 'face', 'full']);
     expect(vocabulary.pointing).toMatchObject({
       side: ['L', 'R'],
@@ -667,9 +684,9 @@ describe('Session.vocabulary', () => {
     const { session } = build({ wardrobe: true });
     const vocabulary = session.vocabulary();
     expect(vocabulary.wardrobe).toEqual({
-      top: { label: 'トップス', items: [{ id: 'shirt', label: 'シャツ' }] },
+      top: { label: same('トップス'), items: [{ id: 'shirt', label: same('シャツ') }] },
     });
-    expect(vocabulary.wardrobePresets).toEqual([{ id: 'bare', label: '素' }]);
+    expect(vocabulary.wardrobePresets).toEqual([{ id: 'bare', label: same('素') }]);
   });
 });
 
@@ -748,17 +765,27 @@ describe('direct control between turns', () => {
     expect(bare.session.wear({ slot: 'top', item: 'shirt' })).toBe(false);
   });
 
-  it('setCamera forwards the framing to the viewer callback', () => {
+  it('setCamera forwards the shot to the viewer callback', () => {
     const rig = buildRig();
     const director = new Director(buildProfile(rig.root, rig.descriptor));
     const camera = vi.fn();
     const session = new Session(director, { camera });
-    session.setCamera('face');
-    expect(camera).toHaveBeenCalledWith('face');
+    session.setCamera({ frame: 'face' });
+    expect(camera).toHaveBeenCalledWith({ frame: 'face' });
+  });
+
+  it('setCamera passes an offset through without a framing', () => {
+    // What a drag on the panel's preview sends: two angles and nothing else.
+    // An absent framing means "leave it", which is the renderer's business.
+    const rig = buildRig();
+    const director = new Director(buildProfile(rig.root, rig.descriptor));
+    const camera = vi.fn();
+    new Session(director, { camera }).setCamera({ yaw: 18, zoom: 1.4 });
+    expect(camera).toHaveBeenCalledWith({ yaw: 18, zoom: 1.4 });
   });
 
   it('setCamera is a no-op when no viewer is attached', () => {
-    expect(() => harness.session.setCamera('full')).not.toThrow();
+    expect(() => harness.session.setCamera({ frame: 'full' })).not.toThrow();
   });
 
   it('setBackdrop forwards the room to the scenery, null included', () => {
@@ -797,12 +824,12 @@ describe('direct control between turns', () => {
 
     runUntil(() => session.turn?.text === 'いち');
     expect(camera).toHaveBeenCalledTimes(1);
-    expect(camera).toHaveBeenLastCalledWith('face');
+    expect(camera).toHaveBeenLastCalledWith({ frame: 'face' });
     // The second line's backdrop is still waiting for the second line.
     expect(setBackdrop).not.toHaveBeenCalled();
 
     runUntil(() => session.turn?.text === 'に');
-    expect(camera).toHaveBeenLastCalledWith('full');
+    expect(camera).toHaveBeenLastCalledWith({ frame: 'full' });
     expect(setBackdrop).toHaveBeenCalledWith('night');
     step(1);
   });
@@ -850,7 +877,7 @@ describe('direct control between turns', () => {
     // updated with everything else that is applied at `start`.
     session.replaceQueue([{ id: 'second', text: 'に', stage: { camera: 'full' } }]);
     runUntil(() => session.turn?.text === 'に');
-    expect(camera).toHaveBeenLastCalledWith('full');
+    expect(camera).toHaveBeenLastCalledWith({ frame: 'full' });
   });
 
   it('reports an empty backdrop list rather than omitting it', () => {
@@ -863,7 +890,7 @@ describe('direct control between turns', () => {
   it('reports the backdrops the scenery advertises', () => {
     const rig = buildRig();
     const director = new Director(buildProfile(rig.root, rig.descriptor));
-    const backdrops = [{ id: 'dusk', label: '夕暮れ' }];
+    const backdrops = [{ id: 'dusk', label: same('夕暮れ') }];
     const session = new Session(director, {
       scenery: { backdrops, setBackdrop: vi.fn() },
     });
@@ -1332,8 +1359,8 @@ class FakeVoice implements Voice {
   }
 
   readonly rooms = [
-    { id: 'booth', label: 'ブース' },
-    { id: 'hall', label: 'ホール' },
+    { id: 'booth', label: same('ブース') },
+    { id: 'hall', label: same('ホール') },
   ];
 
   /** Every room this was put in, so a test can see what the session forwarded. */
@@ -1343,7 +1370,7 @@ class FakeVoice implements Voice {
     this.roomsSet.push(id);
   }
 
-  readonly presets = [{ id: 'neutral-monitor', label: '素のまま' }];
+  readonly presets = [{ id: 'neutral-monitor', label: same('素のまま') }];
 
   /** Every chain this was set to, on the same footing as `roomsSet`. */
   readonly chainsSet: VoiceChainRequest[] = [];
@@ -1591,8 +1618,8 @@ describe('the room the voice is heard in', () => {
   it('advertises the voice’s rooms in the vocabulary', () => {
     const { session } = build({ voice: (now) => new FakeVoice(now) });
     expect(session.vocabulary().rooms).toEqual([
-      { id: 'booth', label: 'ブース' },
-      { id: 'hall', label: 'ホール' },
+      { id: 'booth', label: same('ブース') },
+      { id: 'hall', label: same('ホール') },
     ]);
   });
 
@@ -1630,11 +1657,246 @@ describe('the voice chain', () => {
 
   it('advertises the voice’s presets, and none without a voice', () => {
     expect(build({ voice: (now) => new FakeVoice(now) }).session.vocabulary().voicePresets).toEqual(
-      [{ id: 'neutral-monitor', label: '素のまま' }],
+      [{ id: 'neutral-monitor', label: same('素のまま') }],
     );
     const { session } = build();
     expect(session.vocabulary().voicePresets).toEqual([]);
     expect(() => session.setVoiceChain({ preset: 'bright-idol' })).not.toThrow();
+  });
+});
+
+/**
+ * A document layer that keeps every call it was handed, in order.
+ *
+ * The order is the thing being tested and a stub that only kept the resulting
+ * state could not show it: a line naming a document *and* a page in it has to
+ * open the document first, and doing it the other way round turns to a page of
+ * the one being replaced before opening the new one at its first.
+ *
+ * It never opens anything, so `pages` stays 0 — that is what the report says
+ * for a document that has not been read, and nothing here depends on the count.
+ */
+class FakeSlides implements Slides {
+  readonly calls: Array<
+    | { call: 'setDeck'; id: string | null; page?: number }
+    | { call: 'setSlide'; page: number }
+    | { call: 'turnSlide'; by: number }
+  > = [];
+
+  private deck: string | null = null;
+  private page = 0;
+
+  setDeck(id: string | null, page?: number): void {
+    this.calls.push({ call: 'setDeck', id, page });
+    this.deck = id;
+    this.page = id === null ? 0 : (page ?? 1);
+  }
+
+  setSlide(page: number): void {
+    this.calls.push({ call: 'setSlide', page });
+    this.page = page;
+  }
+
+  turnSlide(by: number): void {
+    this.calls.push({ call: 'turnSlide', by });
+    this.page += by;
+  }
+
+  report(): SlideReport {
+    return { deck: this.deck, page: this.page, pages: 0, ready: true, error: null };
+  }
+}
+
+/** A frame layout that keeps every patch it was handed, on the same footing. */
+class FakeComposition implements Composition {
+  readonly placements: Array<{ avatar?: Placement; slide?: SlidePlacement }> = [];
+  /** Where both layers are, merged as a renderer would merge them. */
+  private readonly current: PlacementReport = {
+    avatar: { anchor: 'center', width: 1, height: 1, margin: 0 },
+    slide: { anchor: 'center', width: 1, height: 1, margin: 0, fit: 'contain' },
+  };
+
+  setPlacement(placement: { avatar?: Placement; slide?: SlidePlacement }): void {
+    this.placements.push(placement);
+    Object.assign(this.current.avatar, placement.avatar);
+    Object.assign(this.current.slide, placement.slide);
+  }
+
+  report(): PlacementReport {
+    return { avatar: { ...this.current.avatar }, slide: { ...this.current.slide } };
+  }
+}
+
+describe('the document behind the character', () => {
+  it('forwards the document and the page it opens on, null included', () => {
+    const slides = new FakeSlides();
+    const { session } = build({ slides });
+    session.setDeck('intro', 4);
+    session.setDeck('outro');
+    // Null takes it down and has to arrive as itself, exactly as the backdrop's
+    // does: a default applied on the way would make "put it away" unsayable.
+    session.setDeck(null);
+    expect(slides.calls).toEqual([
+      { call: 'setDeck', id: 'intro', page: 4 },
+      { call: 'setDeck', id: 'outro', page: undefined },
+      { call: 'setDeck', id: null, page: undefined },
+    ]);
+  });
+
+  it('leaves the page absent when the caller named none, rather than sending the first', () => {
+    // Which page an unqualified `deck` opens on is the renderer's answer, and
+    // the session must not decide it here — the port can tell "open it as you
+    // would" from "open it at page one" only if the absence survives.
+    const slides = new FakeSlides();
+    build({ slides }).session.setDeck('intro');
+    expect(slides.calls[0]).not.toHaveProperty('page', 1);
+    expect(slides.report()).toEqual({
+      deck: 'intro',
+      page: 1,
+      pages: 0,
+      ready: true,
+      error: null,
+    });
+  });
+
+  it('forwards an absolute page and a relative move as the two different calls they are', () => {
+    const slides = new FakeSlides();
+    const { session } = build({ slides });
+    session.setSlide(7);
+    session.turnSlide(1);
+    session.turnSlide(-3);
+    // "The next one" is not a page number, and a signed `setSlide` would make
+    // the caller that does not know which page is up say that it does.
+    expect(slides.calls).toEqual([
+      { call: 'setSlide', page: 7 },
+      { call: 'turnSlide', by: 1 },
+      { call: 'turnSlide', by: -3 },
+    ]);
+  });
+
+  it('does nothing on a renderer with no document layer, which is most of them', () => {
+    // The same shape `setBackdrop` has without scenery and `wear` has without a
+    // wardrobe: a renderer that cannot show a document is not a broken one.
+    const { session } = build();
+    expect(session.slides).toBeNull();
+    expect(() => {
+      session.setDeck('intro', 2);
+      session.setDeck(null);
+      session.setSlide(3);
+      session.turnSlide(1);
+    }).not.toThrow();
+  });
+
+  it('forwards a layout patch verbatim, both halves at once', () => {
+    const composition = new FakeComposition();
+    const { session } = build({ composition });
+    const patch = {
+      avatar: { anchor: 'bottom-right' as const, width: 0.3 },
+      slide: { anchor: 'center' as const, width: 1, fit: 'contain' as const },
+    };
+    session.setPlacement(patch);
+    // One call, because they are one decision: sent as two, the frame is
+    // briefly wrong in the most visible direction — two layers overlapping.
+    expect(composition.placements).toEqual([patch]);
+  });
+
+  it('forwards one number on its own, which is what a slider under the pointer sends', () => {
+    const composition = new FakeComposition();
+    build({ composition }).session.setPlacement({ avatar: { width: 0.5 } });
+    // Merging is the renderer's, and it can only merge what it is given: absent
+    // has to stay absent all the way down or every drag resets the other three.
+    expect(composition.placements).toEqual([{ avatar: { width: 0.5 } }]);
+  });
+
+  it('setPlacement is a no-op on a renderer that draws one way', () => {
+    const { session } = build();
+    expect(session.composition).toBeNull();
+    expect(() => session.setPlacement({ avatar: { width: 0.5 } })).not.toThrow();
+  });
+});
+
+describe('a turn that stages a document', () => {
+  it('opens the document before the page, so the page is the new document’s', () => {
+    const slides = new FakeSlides();
+    const { session, runUntil } = build({ slides });
+    session.setDeck('outro', 9);
+    slides.calls.length = 0;
+
+    session.say({ text: 'いち', stage: { deck: 'intro', slide: 4 } });
+    runUntil(() => session.turn?.text === 'いち');
+
+    // The other order turns to page 4 of the document being replaced and then
+    // opens the new one at its first, which is neither of the two things the
+    // line said. One call and not two: the page rides on the document change,
+    // so nothing downstream sees the same page asked for twice.
+    expect(slides.calls).toEqual([{ call: 'setDeck', id: 'intro', page: 4 }]);
+    expect(slides.report()).toMatchObject({ deck: 'intro', page: 4 });
+  });
+
+  it('turns a page of the document already up when the line names only a page', () => {
+    const slides = new FakeSlides();
+    const { session, runUntil } = build({ slides });
+    session.setDeck('intro', 1);
+    slides.calls.length = 0;
+
+    session.say({ text: 'いち', stage: { slide: 3 } });
+    runUntil(() => session.turn?.text === 'いち');
+
+    expect(slides.calls).toEqual([{ call: 'setSlide', page: 3 }]);
+    expect(slides.report()).toMatchObject({ deck: 'intro', page: 3 });
+  });
+
+  it('takes the document down on a null deck', () => {
+    const slides = new FakeSlides();
+    const { session, runUntil } = build({ slides });
+    session.setDeck('intro', 2);
+    slides.calls.length = 0;
+
+    session.say({ text: 'いち', stage: { deck: null } });
+    runUntil(() => session.turn?.text === 'いち');
+
+    expect(slides.calls).toEqual([{ call: 'setDeck', id: null, page: undefined }]);
+    expect(slides.report()).toMatchObject({ deck: null, page: 0 });
+  });
+
+  // Absent is not null, the same rule the backdrop follows: a staging that says
+  // nothing about the document is a staging that leaves it exactly where it is.
+  it('leaves the document alone when the staging names neither field', () => {
+    const slides = new FakeSlides();
+    const camera = vi.fn();
+    const { session, runUntil } = build({ slides, camera });
+    session.setDeck('intro', 5);
+    slides.calls.length = 0;
+
+    session.say({ text: 'いち', stage: { camera: 'full' } });
+    runUntil(() => session.turn?.text === 'いち');
+
+    expect(camera).toHaveBeenCalledWith({ frame: 'full' });
+    expect(slides.calls).toEqual([]);
+    expect(slides.report()).toMatchObject({ deck: 'intro', page: 5 });
+  });
+
+  it('says a line with no staging at all without touching the document', () => {
+    const slides = new FakeSlides();
+    const { session, runUntil } = build({ slides });
+    session.say({ text: 'いち' });
+    runUntil(() => session.turn?.text === 'いち');
+    expect(slides.calls).toEqual([]);
+  });
+
+  it('leaves the document up after the turn ends, like the camera and the backdrop', () => {
+    const slides = new FakeSlides();
+    const { session, runUntil } = build({ slides });
+    session.say({ text: 'いち', stage: { deck: 'intro', slide: 2 } });
+    runUntil(() => session.turn?.text === 'いち');
+    const applied = [...slides.calls];
+
+    runUntil(() => !session.busy);
+
+    // A document is where the stream is, not a property of a sentence. A turn
+    // that put its own away would leave the next line on a blank layer.
+    expect(slides.calls).toEqual(applied);
+    expect(slides.report()).toMatchObject({ deck: 'intro', page: 2 });
   });
 });
 

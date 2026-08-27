@@ -1,4 +1,5 @@
 import type * as THREE from 'three';
+import type { Localized } from '../i18n/locale';
 
 /**
  * Shared vocabulary for the runtime.
@@ -9,7 +10,8 @@ import type * as THREE from 'three';
  * plus the shape of the two objects the layers hand each other: the avatar
  * descriptor going in, and the resolved profile coming out.
  *
- * Nothing here imports from anywhere but three. It is the one module every
+ * Nothing here imports from anywhere but three and the `Localized` type, which
+ * is what every display string in the vocabulary is. It is the one module every
  * other one is allowed to depend on.
  */
 
@@ -83,7 +85,7 @@ export type CameraFrame = 'face' | 'bust' | 'upper' | 'full';
  * strained band a solver may spend at a rising cost. See `anatomy/joints.ts`.
  */
 export interface JointDof {
-  label: string;
+  label: Localized;
   free: [number, number];
   max: [number, number];
 }
@@ -92,7 +94,7 @@ export interface JointDof {
 export type ElevationRow = [number, number, number];
 
 export interface JointSpec {
-  label: string;
+  label: Localized;
   dofs: Record<string, JointDof>;
   /** Only the shoulder has one: how far it lifts depends on which way it lifts. */
   elevation?: ElevationRow[];
@@ -120,7 +122,7 @@ export type StrainZone = 'natural' | 'strained' | 'limit';
 /** One row of the joint readout. */
 export interface JointReading {
   id: string;
-  label: string;
+  label: Localized;
   /** Degrees, or a percentage where `unit` says so. */
   deg: number;
   unit?: string;
@@ -352,7 +354,7 @@ export type PerformanceGroup =
   | 'pose';
 
 export interface GestureDef {
-  label: string;
+  label: Localized;
   group: GestureGroup;
   /** Seconds of entrance. A floor — the real lead scales with how far the arms travel. */
   lead: number;
@@ -376,6 +378,12 @@ export interface DrawnShapeSpec {
   group: string;
   /** Shapes in that group that are not expressions — fitting shapes and the like. */
   exclude?: string[];
+  /**
+   * Tidy up a shape name for display — strip the author's prefix, swap the
+   * underscores. Plain string in and out, because what comes back is still the
+   * author's own name for a drawing and reads the same in either language; the
+   * caller wraps the result with `same()` on the way into the vocabulary.
+   */
   label?: (id: string) => string;
 }
 
@@ -403,26 +411,27 @@ export interface MaterialRules {
 
 export interface WardrobeItem {
   id: string;
-  label: string;
+  label: Localized;
   meshes: string[];
   /** Shapes this item raises while worn — VRChat `*Hide`, or a `Shrink_*` family. */
   hide?: string[];
 }
 
 export interface WardrobeSlot {
-  label: string;
+  label: Localized;
   items: WardrobeItem[];
 }
 
 export interface WardrobePreset {
-  label: string;
+  label: Localized;
   set: Record<string, string | null>;
 }
 
 export interface WardrobeTable {
   slots: Record<string, WardrobeSlot>;
   presets?: Record<string, WardrobePreset>;
-  note?: string;
+  /** Shown above the slots in the renderer's own wardrobe tab, so both languages. */
+  note?: Localized;
 }
 
 /** A sphere, or a capsule when `tail` is given. Metres along the bone's own axes. */
@@ -437,7 +446,8 @@ export interface ColliderSpec {
 
 export interface SwayGroupSpec {
   id: string;
-  label?: string;
+  /** Shown in the renderer's own tuning readout, so both languages. */
+  label?: Localized;
   /** Restoring force toward the rest direction. */
   stiffness?: number;
   /** Fraction of velocity lost per step, 0..1. */
@@ -478,8 +488,8 @@ export interface TailDrive {
  */
 export interface AvatarDescriptor {
   id: string;
-  label: string;
-  author?: string;
+  label: Localized;
+  author?: Localized;
   /** GLB path, served from `public/`. */
   url: string;
   /** Matches this author's shape-group delimiter, capturing the group name. */
@@ -528,7 +538,172 @@ export interface Staging {
   camera?: CameraFrame;
   backdrop?: string | null;
   room?: string | null;
+  /**
+   * Which document is up. Usually set once at the top of a segment rather than
+   * per line, but it is here for the run that moves between two of them.
+   */
+  deck?: string | null;
+  /**
+   * Which page of it, 1 based. **Absolute, and there is deliberately no
+   * relative form here.** A queued line may be dropped, reordered or sent round
+   * again, and a "next page" written into one of those means a different page
+   * every time the script is touched — the whole deck slips by one and nothing
+   * says why. An operator turning a page live is reacting and says `by`; a
+   * script describing a line it has not reached yet knows the number.
+   *
+   * No null, unlike the two axes above: a page has no empty value. Taking the
+   * document away is `deck: null`.
+   */
+  slide?: number;
 }
+
+/**
+ * Where the camera stands: a named framing, and how far it has been moved off it.
+ *
+ * ## Why the framing is not enough on its own
+ *
+ * The four framings answer "how much of the character is in shot" and are the
+ * right unit for a script: a line is delivered in a bust shot, and what that
+ * means in metres is the renderer's problem and differs per avatar. What they
+ * cannot say is "from slightly to the left, a little closer" — which is most of
+ * what an operator does to a shot while watching it, and all of what a drag on
+ * a preview produces.
+ *
+ * ## Relative, so it survives a swap
+ *
+ * The offsets are stated against the framing rather than in world space. An
+ * absolute camera position measured on one avatar puts the next one's head out
+ * of frame, because the two differ in height and in where the bones sit; a
+ * quarter-turn and a 1.3× dolly mean the same thing on both.
+ *
+ * Every field is optional and an absent one is left where it was, so a drag
+ * sends two numbers and a framing change sends one.
+ */
+export interface Shot {
+  frame?: CameraFrame;
+  /** Degrees around the framing's target. 0 is straight on, positive to the right. */
+  yaw?: number;
+  /** Degrees above it. 0 is level with the framing, positive looking down. */
+  pitch?: number;
+  /** Multiplier on the framing's distance. 1 is the framing, higher is closer. */
+  zoom?: number;
+}
+
+/**
+ * How far a shot may travel, in the same units `Shot` states.
+ *
+ * Read by the wire schema, which refuses a value outside them, and by the
+ * renderer, which stops the pointer at them. Both, and from one place: a drag
+ * that could push the camera past what the schema accepts would produce a
+ * command that is silently dropped, and the picture being dragged would be the
+ * only one that moved.
+ *
+ * A guard rather than a taste. At the pole there is no bearing left to speak
+ * of, and a zoom outside these puts the camera inside the character's head or
+ * far enough away that there is nothing to see.
+ */
+export const SHOT_LIMITS = {
+  yaw: { min: -180, max: 180 },
+  pitch: { min: -85, max: 85 },
+  zoom: { min: 0.25, max: 4 },
+} as const;
+
+/** Where in the output frame a layer sits. Nine positions, as a grid. */
+export type Anchor =
+  | 'center'
+  | 'top-left'
+  | 'top'
+  | 'top-right'
+  | 'left'
+  | 'right'
+  | 'bottom-left'
+  | 'bottom'
+  | 'bottom-right';
+
+/**
+ * A rectangle of the output frame, as a layer occupies it.
+ *
+ * ## Not the same question as `Shot`, and joining them would be wrong
+ *
+ * A shot is where the camera stands: a bearing and a distance in the world the
+ * character is in. This is where the resulting *picture* is put in the frame
+ * that goes to air. Both change how big the character looks and that is the
+ * whole of what they have in common — a document behind the character has a
+ * placement and no shot at all, and moving the camera to make room for one
+ * would mean re-framing every line of a segment.
+ *
+ * ## Two fractions rather than a size and an aspect
+ *
+ * `width` and `height` are independent fractions of the stage. Stating it as
+ * one size plus an aspect reads better and has a hole in it: at full size there
+ * is no aspect to apply — the layer is the frame — so the aspect would have to
+ * be ignored at exactly one value and honoured everywhere else, and a slider
+ * dragged down from 1 would jump the moment it left the top. A surface that
+ * wants one knob moves both from one, which is a surface's business.
+ *
+ * ## The rectangle is an area, and it does not decide the shot
+ *
+ * A framing is stated as a world-space top and bottom edge, so pointing it at a
+ * rectangle of some other shape has to give something up — and both obvious
+ * answers are wrong. Filling the rectangle keeps the vertical and cuts the arms
+ * off both sides, which is where a raised hand and most of the hair are.
+ * Standing the camera back until the width fits crops nothing and grows the
+ * vertical by the same factor, so an upper-body shot quietly becomes a
+ * full-body one.
+ *
+ * So the renderer draws the *frame's own shape*, scaled to fit inside whatever
+ * area this names: the picture the whole frame would have shown, smaller and
+ * off to one side. Nothing is cropped, nothing is reframed, and a framing goes
+ * on meaning exactly what it says. What the area does not cover is left
+ * transparent, so what shows through it is the document.
+ *
+ * What lands on the anchor is the **character**, not that picture. A framing is
+ * a wide picture with a narrow figure in the middle of it, so putting the
+ * picture's edge on the frame's edge leaves the character a quarter of a frame
+ * short of it, in front of a large piece of nothing. The empty side is pushed
+ * out past the edge instead and clipped there, which is what an overlay hanging
+ * off the side of a shot looks like anyway.
+ *
+ * A consequence worth knowing: only the tighter of the two fractions decides
+ * anything for the character, and at `1` there is nowhere for an anchor to move
+ * to. The document is the layer the pair is really for — see `fit`.
+ */
+export interface Placement {
+  anchor?: Anchor;
+  /** Fraction of the stage width. 1 is the full frame. */
+  width?: number;
+  /** Fraction of the stage height. */
+  height?: number;
+  /**
+   * Gap from the edges the anchor pulls the layer to, as a fraction of the
+   * stage **height** on both axes — a margin measured per axis on a 16:9 frame
+   * puts a wider gap at the side than at the bottom for the same number, and
+   * the two are read as one inset by everyone who looks at them.
+   *
+   * Nothing for a centred layer, which touches no edge.
+   */
+  margin?: number;
+}
+
+/** A `Placement` with the one extra question a picture asks: how it fills it. */
+export interface SlidePlacement extends Placement {
+  /** `contain` shows the whole page and letterboxes; `cover` fills and crops. */
+  fit?: 'contain' | 'cover';
+}
+
+/**
+ * How far a placement may go, in the same units it states.
+ *
+ * Read by the wire schema and by whatever draws it, from one place, for the
+ * reason `SHOT_LIMITS` is. The floor is a guard rather than a taste: below a
+ * tenth of the frame the character is a smudge and the layer is more likely to
+ * be a typo in a query string than an instruction.
+ */
+export const PLACEMENT_LIMITS = {
+  width: { min: 0.1, max: 1 },
+  height: { min: 0.1, max: 1 },
+  margin: { min: 0, max: 0.2 },
+} as const;
 
 /**
  * One turn: a line of dialogue delivered with a face and a gesture.
@@ -729,6 +904,104 @@ export interface Scenery {
 }
 
 /**
+ * The document the character is presenting from.
+ *
+ * On the same footing as `Scenery`: the engine knows that a document has an id
+ * and pages, and knows nothing at all about what one is. A page is an image on
+ * a layer somewhere behind the character, and everything about how it gets
+ * there — reading a file, rasterising it, deciding how sharp it needs to be —
+ * belongs to the renderer.
+ *
+ * **There is no list here, unlike `Scenery.backdrops`.** What backdrops exist
+ * is renderer data, decided in the source it ships with. What documents exist
+ * is whatever the operator dropped in a directory five minutes ago, which only
+ * the process with a filesystem can answer — so the roster comes back from the
+ * control server, and this port is asked to show one rather than to enumerate
+ * them. A renderer handed an id it cannot open says so in its report and keeps
+ * drawing, because a broken file is not a reason for a stream to stop.
+ *
+ * Absent on a renderer with no document layer at all, which is every test.
+ */
+export interface Slides {
+  /**
+   * Put a document up, or take the one that is up down.
+   *
+   * `page` is where to open it. Absent is the first page — not "keep the page
+   * we were on", which would be a page number from another document.
+   */
+  setDeck(id: string | null, page?: number): void;
+  /** Go to a page, 1 based. Past either end is clamped, not an error. */
+  setSlide(page: number): void;
+  /**
+   * Move by a number of pages. Its own call rather than a signed `setSlide`,
+   * because "the next one" is not a page number — the caller that says it does
+   * not know which page is up, and one that did would say so.
+   */
+  turnSlide(by: number): void;
+  /** What is actually on screen, which is not always what was asked for. */
+  report(): SlideReport;
+}
+
+/**
+ * What the document layer is doing, so a control surface can draw it.
+ *
+ * Reported for the reason `VoiceReport` is: the answer is only known where the
+ * work happens. How many pages a document has is discovered by opening it, and
+ * a panel that counted on the number it was told would be showing `4 / 0` until
+ * somebody turned a page.
+ */
+export interface SlideReport {
+  /** What was asked for, null when nothing is up. */
+  deck: string | null;
+  /** The page showing, 1 based. 0 when there is no document. */
+  page: number;
+  /** How many it has. 0 until it is open. */
+  pages: number;
+  /** Whether the page showing is the page asked for. False while one is drawn. */
+  ready: boolean;
+  /** Why a document is not up, for the operator. Null when nothing is wrong. */
+  error: string | null;
+}
+
+/**
+ * How the frame is laid out right now, so a control surface can draw it.
+ *
+ * Reported for the reason `VoiceReport` and `SlideReport` are: a panel that
+ * draws its sliders from what it last sent is wrong from the moment it opens,
+ * because a source opened on `?place=bottom-right:0.32x0.6` was never told to
+ * be there by anything the panel saw — and it is wrong again after every
+ * `place` an orchestrator sends.
+ *
+ * Both halves are **resolved**, never partial. What is in force is the whole
+ * question here; a partial answer would be the last patch somebody sent, which
+ * is exactly what the surface asking cannot rely on.
+ */
+export interface PlacementReport {
+  avatar: Required<Placement>;
+  slide: Required<SlidePlacement>;
+}
+
+/**
+ * How the output frame is laid out: where the character is in it, and where the
+ * document behind them sits.
+ *
+ * A renderer's question rather than a performance's, which is why it is a port
+ * of its own beside `Shading` instead of a field on anything the director
+ * holds. The character does not move — the picture of them is put somewhere
+ * else in the frame — and the difference matters the moment a gesture is
+ * authored against a framing: it still plays exactly as it did.
+ *
+ * Both halves are partials that land on top of what is already set, on the same
+ * rule as a tuning patch: a surface with one slider under the pointer sends one
+ * number, and absent means "leave it" rather than "reset it".
+ */
+export interface Composition {
+  setPlacement(placement: { avatar?: Placement; slide?: SlidePlacement }): void;
+  /** What the merging produced, and what is actually being drawn. */
+  report(): PlacementReport;
+}
+
+/**
  * How the avatar's own materials are drawn.
  *
  * One switch, and it is here rather than on the director because the answer is
@@ -855,9 +1128,17 @@ export interface SessionState {
   wardrobe: Record<string, string | null> | null;
 }
 
+/**
+ * An id, and what to call it on screen.
+ *
+ * The label is both languages at once rather than one of them. Whoever renders
+ * it picks — see `src/i18n/locale.ts` — because the surfaces that draw these
+ * lists learn the vocabulary from the control server rather than from the avatar
+ * tables, and the server has no way to know which language is being read.
+ */
 export interface LabelledId {
   id: string;
-  label: string;
+  label: Localized;
 }
 
 /**
@@ -868,7 +1149,7 @@ export interface LabelledId {
  * what the orchestrator is offered.
  */
 export interface Vocabulary {
-  avatar: { id: string | null; label: string | null };
+  avatar: { id: string | null; label: Localized | null };
   emotions: LabelledId[];
   expressions: LabelledId[];
   overlays: LabelledId[];
@@ -901,7 +1182,7 @@ export interface Vocabulary {
    * pasted into a system prompt, and a syntax the caller is never told about is
    * a syntax nobody uses.
    */
-  cue: { syntax: string; note: string };
+  cue: { syntax: string; note: Localized };
   cameras: CameraFrame[];
   /**
    * Continuous, so it is stated as ranges rather than as a list of ids.
@@ -916,9 +1197,9 @@ export interface Vocabulary {
     elevation: [number, number];
     extent: [number, number];
     finger: FingerName[];
-    note: string;
+    note: Localized;
   };
-  wardrobe: Record<string, { label: string; items: LabelledId[] }>;
+  wardrobe: Record<string, { label: Localized; items: LabelledId[] }>;
   wardrobePresets: LabelledId[];
   /**
    * Where the voice is heard. Empty on a renderer with no voice at all, which

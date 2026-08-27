@@ -83,7 +83,8 @@ describe('gesture table', () => {
 
   each(IDS)('%s has a label and a usable timing', (id) => {
     const g = TABLE[id];
-    expect(g.label.length).toBeGreaterThan(0);
+    expect(g.label.en.length).toBeGreaterThan(0);
+    expect(g.label.ja.length).toBeGreaterThan(0);
     expect(g.lead).toBeGreaterThanOrEqual(0);
     expect(g.hold).toBeGreaterThan(0);
     expect(Number.isFinite(g.lead)).toBe(true);

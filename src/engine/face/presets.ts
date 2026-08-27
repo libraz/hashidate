@@ -28,6 +28,7 @@
  */
 
 import type * as THREE from 'three';
+import { type Localized, same } from '../../i18n/locale';
 import type { AvatarDescriptor, DrawnShapeSpec, LabelledId, MorphTarget, Profile } from '../types';
 
 /** A morph's vertex deltas, however the geometry happens to store them. */
@@ -42,7 +43,7 @@ export interface LidClosure {
 /** One authored whole face, with the lid travel it already supplies measured out. */
 export interface ExpressionPreset {
   id: string;
-  label: string;
+  label: Localized;
   lid: LidClosure;
   /** How much of the author's own "park this out of view" travel it carries, 0..1. */
   swap: number;
@@ -184,7 +185,10 @@ export function buildPresets(profile: Profile, avatar?: AvatarDescriptor): Expre
   const hideIds = (spec?.hideGroup ? profile.groups?.get(spec.hideGroup) : null) ?? [];
   return idsInGroup(profile, spec).map((id) => ({
     id,
-    label: label(id),
+    // `same`, because what comes back is the avatar author's own name for a
+    // drawing. There is nothing to translate: a shape key is whatever was typed
+    // into Blender, and it reads identically in either language.
+    label: same(label(id)),
     lid: lidClosure(profile, id),
     swap: artSwap(profile, id, hideIds),
   }));
@@ -197,5 +201,5 @@ export function buildPresets(profile: Profile, avatar?: AvatarDescriptor): Expre
 export function buildOverlays(profile: Profile, avatar?: AvatarDescriptor): LabelledId[] {
   const spec = avatar?.overlays;
   const label = spec?.label ?? ((id: string) => id);
-  return idsInGroup(profile, spec).map((id) => ({ id, label: label(id) }));
+  return idsInGroup(profile, spec).map((id) => ({ id, label: same(label(id)) }));
 }

@@ -15,8 +15,8 @@
  *
  * That is what this module is for, and it is a safety property rather than a
  * feature. The caller is a language model, everything it writes is read out
- * loud, and a mouth that says 「かくかっこ ハロー かくかっことじ」 is the exact
- * failure being prevented.
+ * loud, and a mouth that says 「かくかっこ ハロー かくかっことじ」 (open
+ * bracket, hello, close bracket) is the exact failure being prevented.
  *
  * It is guaranteed structurally, not by remembering to be careful:
  *

@@ -1,5 +1,7 @@
 /**
- * Avatar data — マヌカ.
+ * Avatar data — Manuka.
+ *
+ * The model itself: https://booth.pm/en/items/5058077
  *
  * The counterweight to `yoka.ts`, and the reason the engine has a profile layer
  * at all. Where the first avatar implements ARKit 51/52 under the standard
@@ -17,8 +19,8 @@ import type { AvatarDescriptor } from '../engine/types';
 
 export default {
   id: 'manuka',
-  label: 'マヌカ',
-  author: 'ジンゴ',
+  label: { en: 'Manuka', ja: 'マヌカ' },
+  author: { en: 'Jingo', ja: 'ジンゴ' },
   url: '/models/manuka.glb',
 
   // Shape groups are delimited by dummy shapes named **********GROUP**********.
@@ -177,82 +179,92 @@ export default {
   wardrobe: {
     slots: {
       top: {
-        label: 'トップス',
-        items: [{ id: 'shirt', label: 'シャツ', meshes: ['Manuka_costume_shirt'] }],
+        label: { en: 'Top', ja: 'トップス' },
+        items: [
+          { id: 'shirt', label: { en: 'Shirt', ja: 'シャツ' }, meshes: ['Manuka_costume_shirt'] },
+        ],
       },
       bottom: {
-        label: 'ボトムス',
-        items: [{ id: 'shorts', label: 'ショートパンツ', meshes: ['Manuka_costume_shorts'] }],
+        label: { en: 'Bottoms', ja: 'ボトムス' },
+        items: [
+          {
+            id: 'shorts',
+            label: { en: 'Shorts', ja: 'ショートパンツ' },
+            meshes: ['Manuka_costume_shorts'],
+          },
+        ],
       },
       apron: {
-        label: 'エプロン',
+        label: { en: 'Apron', ja: 'エプロン' },
         items: [
           {
             id: 'apron',
-            label: 'エプロン',
+            label: { en: 'Apron', ja: 'エプロン' },
             meshes: ['Manuka_costume_apron', 'Manuka_costume_apron_nameplate'],
           },
         ],
       },
       neck: {
-        label: '首',
+        label: { en: 'Neck', ja: '首' },
         items: [
           {
             id: 'tie',
-            label: 'タイ',
+            label: { en: 'Tie', ja: 'タイ' },
             meshes: ['Manuka_costume_tie'],
             hide: ['Shrink_tie (default)'],
           },
         ],
       },
       legs: {
-        label: '脚',
+        label: { en: 'Legs', ja: '脚' },
         items: [
           {
             id: 'stocking',
-            label: 'ストッキング',
+            label: { en: 'Stockings', ja: 'ストッキング' },
             meshes: ['Manuka_underwear_stocking'],
             hide: ['Shrink_stocking (default)'],
           },
         ],
       },
       shoes: {
-        label: '靴',
-        items: [{ id: 'shoes', label: '靴', meshes: ['Manuka_costume_shoes'] }],
+        label: { en: 'Shoes', ja: '靴' },
+        items: [
+          { id: 'shoes', label: { en: 'Shoes', ja: '靴' }, meshes: ['Manuka_costume_shoes'] },
+        ],
       },
       inner: {
-        label: 'インナー',
+        label: { en: 'Underwear', ja: 'インナー' },
         items: [
           {
             id: 'underwear',
-            label: '下着',
+            label: { en: 'Underwear', ja: '下着' },
             meshes: ['Manuka_underwear_bra', 'Manuka_underwear_panty'],
           },
         ],
       },
       hair: {
-        label: '髪',
+        label: { en: 'Hair', ja: '髪' },
         items: [
-          { id: 'bun', label: 'お団子', meshes: ['Manuka_hair_bun'] },
-          { id: 'twin', label: 'ツイン', meshes: ['Manuka_hair_twin'] },
+          { id: 'bun', label: { en: 'Bun', ja: 'お団子' }, meshes: ['Manuka_hair_bun'] },
+          { id: 'twin', label: { en: 'Twin tails', ja: 'ツイン' }, meshes: ['Manuka_hair_twin'] },
         ],
       },
       ears: {
-        label: '獣耳',
+        label: { en: 'Animal ears', ja: '獣耳' },
         items: [
           {
             id: 'kemono',
-            label: '耳と尻尾',
+            label: { en: 'Ears and tail', ja: '耳と尻尾' },
             meshes: ['Manuka_kemono_ear', 'Manuka_kemono_tail'],
           },
         ],
       },
       accessory: {
-        label: '小物',
+        label: { en: 'Accessory', ja: '小物' },
         items: [
           {
             id: 'set',
-            label: 'リボン・髪飾り・腕輪',
+            label: { en: 'Ribbon, hairpin and bracelet', ja: 'リボン・髪飾り・腕輪' },
             meshes: ['Manuka_hair_ribbon', 'Manuka_hairpin', 'Manuka_costume_bracelet'],
           },
         ],
@@ -260,7 +272,7 @@ export default {
     },
     presets: {
       default: {
-        label: '標準',
+        label: { en: 'Standard', ja: '標準' },
         set: {
           top: 'shirt',
           bottom: 'shorts',
@@ -275,7 +287,7 @@ export default {
         },
       },
       stream: {
-        label: '配信用',
+        label: { en: 'On stream', ja: '配信用' },
         set: {
           top: 'shirt',
           bottom: 'shorts',
@@ -290,7 +302,7 @@ export default {
         },
       },
       roomwear: {
-        label: '部屋着',
+        label: { en: 'At home', ja: '部屋着' },
         set: {
           top: 'shirt',
           bottom: 'shorts',
@@ -305,9 +317,15 @@ export default {
         },
       },
     },
-    note:
-      'パーツ単位で着脱する。ストッキングとタイは素体側の Shrink シェイプを併用して' +
-      '貫通を防ぐ（このモデルは Hide ではなく縮小方式）。',
+    note: {
+      en:
+        'Worn a piece at a time. The stockings and the tie also raise the body’s own ' +
+        'Shrink shapes so nothing pokes through — this model narrows the body rather ' +
+        'than hiding it.',
+      ja:
+        'パーツ単位で着脱する。ストッキングとタイは素体側の Shrink シェイプを併用して' +
+        '貫通を防ぐ（このモデルは Hide ではなく縮小方式）。',
+    },
   },
 
   /**
@@ -394,7 +412,7 @@ export default {
       // --- hair ---------------------------------------------------------
       {
         id: 'hairFront',
-        label: '前髪',
+        label: { en: 'Fringe', ja: '前髪' },
         stiffness: 2.31,
         drag: 0.945,
         radius: 0.012,
@@ -408,7 +426,7 @@ export default {
       },
       {
         id: 'hairAhoge',
-        label: 'アホ毛',
+        label: { en: 'Cowlick', ja: 'アホ毛' },
         stiffness: 0.67,
         drag: 0.779,
         radius: 0.004,
@@ -416,7 +434,7 @@ export default {
       },
       {
         id: 'hairSide',
-        label: 'サイドの髪',
+        label: { en: 'Side hair', ja: 'サイドの髪' },
         stiffness: 0.39,
         drag: 0.831,
         radius: 0.019,
@@ -425,7 +443,7 @@ export default {
       },
       {
         id: 'hairBun',
-        label: 'お団子',
+        label: { en: 'Buns', ja: 'お団子' },
         stiffness: 1.57,
         drag: 0.926,
         radius: 0.037,
@@ -433,7 +451,7 @@ export default {
       },
       {
         id: 'hairTwin',
-        label: 'ツインテール',
+        label: { en: 'Twin tails', ja: 'ツインテール' },
         stiffness: 1.56,
         drag: 0.942,
         gravity: 0.1,
@@ -443,7 +461,7 @@ export default {
       },
       {
         id: 'hairRibbon',
-        label: '髪リボン',
+        label: { en: 'Hair ribbons', ja: '髪リボン' },
         stiffness: 0.59,
         drag: 0.853,
         radius: 0.02,
@@ -462,7 +480,7 @@ export default {
       // --- body ---------------------------------------------------------
       {
         id: 'ear',
-        label: '獣耳',
+        label: { en: 'Animal ears', ja: '獣耳' },
         stiffness: 0.08,
         drag: 0.138,
         radius: 0.02,
@@ -470,7 +488,7 @@ export default {
       },
       {
         id: 'tail',
-        label: '尻尾',
+        label: { en: 'Tail', ja: '尻尾' },
         stiffness: 0.47,
         drag: 0.286,
         radius: 0.091,
@@ -479,7 +497,7 @@ export default {
       },
       {
         id: 'breast',
-        label: '胸',
+        label: { en: 'Chest', ja: '胸' },
         stiffness: 0.68,
         drag: 0.167,
         radius: 0.02,
@@ -487,7 +505,7 @@ export default {
       },
       {
         id: 'butt',
-        label: '腰まわり',
+        label: { en: 'Hips', ja: '腰まわり' },
         stiffness: 0.41,
         drag: 0.265,
         radius: 0.048,
@@ -497,7 +515,7 @@ export default {
       // --- clothing -----------------------------------------------------
       {
         id: 'shirt',
-        label: 'シャツの裾',
+        label: { en: 'Shirt hem', ja: 'シャツの裾' },
         stiffness: 3.46,
         drag: 0.934,
         radius: 0.02,
@@ -514,7 +532,7 @@ export default {
       },
       {
         id: 'apron',
-        label: 'エプロン',
+        label: { en: 'Apron', ja: 'エプロン' },
         stiffness: 2.1,
         drag: 0.819,
         radius: 0.028,
@@ -523,7 +541,7 @@ export default {
       },
       {
         id: 'apronRibbon',
-        label: 'エプロンの紐',
+        label: { en: 'Apron strings', ja: 'エプロンの紐' },
         stiffness: 0.41,
         drag: 0.432,
         radius: 0.009,
@@ -537,7 +555,7 @@ export default {
       },
       {
         id: 'nameplate',
-        label: 'ネームプレート',
+        label: { en: 'Name plate', ja: 'ネームプレート' },
         stiffness: 0.8,
         drag: 0.34,
         radius: 0.009,
@@ -545,7 +563,7 @@ export default {
       },
       {
         id: 'smallRibbon',
-        label: '小リボン',
+        label: { en: 'Small ribbons', ja: '小リボン' },
         stiffness: 0.21,
         drag: 0.905,
         radius: 0.009,

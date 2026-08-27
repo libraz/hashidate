@@ -9,6 +9,7 @@
  * the same vertices the way named presets do.
  */
 
+import type { Localized } from '../../i18n/locale';
 import type { EmotionName, EmotionVector, ShapeWeights } from '../types';
 
 export const EMOTIONS: Record<EmotionName, ShapeWeights> = {
@@ -104,15 +105,15 @@ export const EMOTIONS: Record<EmotionName, ShapeWeights> = {
   },
 };
 
-export const EMOTION_LABELS: Record<EmotionName, string> = {
-  neutral: '平常',
-  joy: '喜',
-  anger: '怒',
-  sadness: '哀',
-  surprise: '驚',
-  relaxed: '安',
-  thinking: '思案',
-  shy: '照',
+export const EMOTION_LABELS: Record<EmotionName, Localized> = {
+  neutral: { en: 'Neutral', ja: '平常' },
+  joy: { en: 'Joy', ja: '喜' },
+  anger: { en: 'Anger', ja: '怒' },
+  sadness: { en: 'Sadness', ja: '哀' },
+  surprise: { en: 'Surprise', ja: '驚' },
+  relaxed: { en: 'Calm', ja: '安' },
+  thinking: { en: 'Thinking', ja: '思案' },
+  shy: { en: 'Shy', ja: '照' },
 };
 
 /** Shapes the mouth layer owns outright; the expression layer yields them. */

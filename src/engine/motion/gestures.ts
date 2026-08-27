@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { Localized } from '../../i18n/locale';
 import type {
   ArmDirections,
   ArmSlot,
@@ -176,13 +177,13 @@ const CLASP_HAND: Record<FingerName, number> = {
   little: 0.66,
 };
 
-export const GESTURE_GROUPS: Record<GestureGroup, string> = {
-  reaction: '相槌',
-  greeting: '挨拶',
-  explain: '説明',
-  emote: '感情',
-  cute: '仕草',
-  pose: 'ポーズ',
+export const GESTURE_GROUPS: Record<GestureGroup, Localized> = {
+  reaction: { en: 'Reaction', ja: '相槌' },
+  greeting: { en: 'Greeting', ja: '挨拶' },
+  explain: { en: 'Explaining', ja: '説明' },
+  emote: { en: 'Feeling', ja: '感情' },
+  cute: { en: 'Mannerism', ja: '仕草' },
+  pose: { en: 'Pose', ja: 'ポーズ' },
 };
 
 /** Pick the acting hand. Single-handed gestures that read fine either way. */
@@ -291,7 +292,7 @@ const reachBoth = (spec: ReachSpec, fingers: FingerSpec, spine?: SpineOffsets): 
 export const GESTURES = {
   // --- reaction -----------------------------------------------------------
   nod: {
-    label: 'うなずく',
+    label: { en: 'Nod', ja: 'うなずく' },
     group: 'reaction',
     lead: 0.12,
     hold: 0.55,
@@ -306,7 +307,7 @@ export const GESTURES = {
   },
 
   tilt: {
-    label: '首をかしげる',
+    label: { en: 'Tilt the head', ja: '首をかしげる' },
     group: 'reaction',
     lead: 0.42,
     hold: 1.7,
@@ -317,7 +318,7 @@ export const GESTURES = {
   },
 
   lean: {
-    label: '身を乗り出す',
+    label: { en: 'Lean in', ja: '身を乗り出す' },
     group: 'reaction',
     lead: 0.55,
     hold: 2.6,
@@ -337,7 +338,7 @@ export const GESTURES = {
   },
 
   think: {
-    label: '考える',
+    label: { en: 'Think', ja: '考える' },
     group: 'reaction',
     lead: 0.5,
     hold: 3.0,
@@ -370,7 +371,7 @@ export const GESTURES = {
   },
 
   shrug: {
-    label: '肩をすくめる',
+    label: { en: 'Shrug', ja: '肩をすくめる' },
     group: 'reaction',
     lead: 0.34,
     hold: 1.8,
@@ -391,7 +392,7 @@ export const GESTURES = {
 
   // --- greeting -----------------------------------------------------------
   wave: {
-    label: '手を振る',
+    label: { en: 'Wave', ja: '手を振る' },
     group: 'greeting',
     lead: 0.3,
     hold: 2.6,
@@ -417,7 +418,7 @@ export const GESTURES = {
   },
 
   comeHere: {
-    label: 'おいで',
+    label: { en: 'Beckon', ja: 'おいで' },
     group: 'greeting',
     lead: 0.4,
     hold: 2.6,
@@ -443,7 +444,7 @@ export const GESTURES = {
   },
 
   bow: {
-    label: 'ぺこり',
+    label: { en: 'Bow', ja: 'ぺこり' },
     group: 'greeting',
     // Short, because the speed is the gesture. The release ramp is `lead × 1.25`,
     // so this is down in a fifth of a second, a beat at the bottom, and back up
@@ -486,7 +487,7 @@ export const GESTURES = {
 
   // --- explain ------------------------------------------------------------
   explain: {
-    label: '説明する',
+    label: { en: 'Explain', ja: '説明する' },
     group: 'explain',
     lead: 0.35,
     hold: 3.4,
@@ -511,7 +512,7 @@ export const GESTURES = {
   },
 
   present: {
-    label: '両手で示す',
+    label: { en: 'Present with both hands', ja: '両手で示す' },
     group: 'explain',
     lead: 0.42,
     hold: 2.8,
@@ -530,7 +531,7 @@ export const GESTURES = {
   },
 
   pointUp: {
-    label: '指を立てる',
+    label: { en: 'Raise a finger', ja: '指を立てる' },
     group: 'explain',
     lead: 0.28,
     hold: 2.2,
@@ -552,7 +553,7 @@ export const GESTURES = {
 
   // --- emote --------------------------------------------------------------
   peace: {
-    label: 'ピース',
+    label: { en: 'Peace sign', ja: 'ピース' },
     group: 'emote',
     lead: 0.3,
     hold: 2.4,
@@ -573,7 +574,7 @@ export const GESTURES = {
   },
 
   clap: {
-    label: '拍手',
+    label: { en: 'Applaud', ja: '拍手' },
     group: 'emote',
     lead: 0.2,
     hold: 2.2,
@@ -602,7 +603,7 @@ export const GESTURES = {
   },
 
   cheer: {
-    label: '喜ぶ',
+    label: { en: 'Cheer', ja: '喜ぶ' },
     group: 'emote',
     lead: 0.26,
     hold: 1.9,
@@ -624,7 +625,7 @@ export const GESTURES = {
   },
 
   cover: {
-    label: '口元を隠す',
+    label: { en: 'Cover the mouth', ja: '口元を隠す' },
     group: 'emote',
     lead: 0.42,
     hold: 2.4,
@@ -653,7 +654,7 @@ export const GESTURES = {
   },
 
   deny: {
-    label: '手を横に振る',
+    label: { en: 'Wave it off', ja: '手を横に振る' },
     group: 'emote',
     lead: 0.22,
     hold: 1.5,
@@ -674,7 +675,7 @@ export const GESTURES = {
   },
 
   pout: {
-    label: 'ぷんすか',
+    label: { en: 'Fume', ja: 'ぷんすか' },
     group: 'emote',
     lead: 0.24,
     hold: 1.6,
@@ -697,7 +698,7 @@ export const GESTURES = {
 
   // --- cute ---------------------------------------------------------------
   cheekPoke: {
-    label: '頬に指',
+    label: { en: 'Finger to the cheek', ja: '頬に指' },
     group: 'cute',
     lead: 0.45,
     hold: 2.6,
@@ -724,7 +725,7 @@ export const GESTURES = {
   },
 
   catPaw: {
-    label: '猫の手',
+    label: { en: 'Cat paws', ja: '猫の手' },
     group: 'cute',
     lead: 0.34,
     hold: 2.4,
@@ -754,7 +755,7 @@ export const GESTURES = {
   },
 
   sparkle: {
-    label: 'キラキラ',
+    label: { en: 'Sparkle', ja: 'キラキラ' },
     group: 'cute',
     lead: 0.3,
     hold: 2.2,
@@ -776,7 +777,7 @@ export const GESTURES = {
   },
 
   beg: {
-    label: 'お願い',
+    label: { en: 'Beg', ja: 'お願い' },
     group: 'cute',
     lead: 0.38,
     hold: 2.6,
@@ -799,7 +800,7 @@ export const GESTURES = {
   },
 
   whisper: {
-    label: '内緒話',
+    label: { en: 'Whisper', ja: '内緒話' },
     group: 'cute',
     lead: 0.4,
     hold: 2.6,
@@ -826,7 +827,7 @@ export const GESTURES = {
   },
 
   yawn: {
-    label: 'あくび',
+    label: { en: 'Yawn', ja: 'あくび' },
     group: 'cute',
     lead: 0.5,
     hold: 1.8,
@@ -854,7 +855,7 @@ export const GESTURES = {
   },
 
   stretch: {
-    label: '伸び',
+    label: { en: 'Stretch', ja: '伸び' },
     group: 'cute',
     lead: 0.6,
     hold: 2.0,
@@ -881,7 +882,7 @@ export const GESTURES = {
   // Held until released rather than for a fixed beat. `sustain` is what makes
   // these usable as a standing attitude for a whole segment of a stream.
   armCross: {
-    label: '腕組み',
+    label: { en: 'Fold the arms', ja: '腕組み' },
     group: 'pose',
     sustain: true,
     lead: 0.5,
@@ -907,7 +908,7 @@ export const GESTURES = {
   },
 
   handsClasp: {
-    label: '手を組む',
+    label: { en: 'Clasp the hands', ja: '手を組む' },
     group: 'pose',
     sustain: true,
     lead: 0.45,
@@ -930,7 +931,7 @@ export const GESTURES = {
   },
 
   chin: {
-    label: '頬杖',
+    label: { en: 'Chin on hand', ja: '頬杖' },
     group: 'pose',
     sustain: true,
     lead: 0.55,
@@ -957,7 +958,7 @@ export const GESTURES = {
   },
 
   thumbsUp: {
-    label: 'サムズアップ',
+    label: { en: 'Thumbs up', ja: 'サムズアップ' },
     group: 'pose',
     sustain: true,
     lead: 0.3,
@@ -994,7 +995,7 @@ export const GESTURES = {
   },
 
   fingerHeart: {
-    label: '指ハート',
+    label: { en: 'Finger heart', ja: '指ハート' },
     group: 'pose',
     sustain: true,
     lead: 0.34,
@@ -1015,7 +1016,7 @@ export const GESTURES = {
   },
 
   bothPeace: {
-    label: '両手ピース',
+    label: { en: 'Double peace sign', ja: '両手ピース' },
     group: 'pose',
     sustain: true,
     lead: 0.32,
@@ -1035,7 +1036,7 @@ export const GESTURES = {
   },
 
   gun: {
-    label: '指鉄砲',
+    label: { en: 'Finger gun', ja: '指鉄砲' },
     group: 'pose',
     sustain: true,
     lead: 0.28,
@@ -1056,7 +1057,7 @@ export const GESTURES = {
   },
 
   promise: {
-    label: 'ゆびきり',
+    label: { en: 'Pinky promise', ja: 'ゆびきり' },
     group: 'pose',
     sustain: true,
     lead: 0.4,
@@ -1099,7 +1100,7 @@ export const GESTURES = {
   },
 
   doze: {
-    label: 'こっくり',
+    label: { en: 'Nod off', ja: 'こっくり' },
     group: 'pose',
     sustain: true,
     // Slow in, because falling asleep is the one entrance in this table that
@@ -1138,7 +1139,7 @@ export const GESTURES = {
   },
 
   listen: {
-    label: '手を耳に',
+    label: { en: 'Hand to the ear', ja: '手を耳に' },
     group: 'pose',
     sustain: true,
     lead: 0.4,
@@ -1170,13 +1171,13 @@ export type GestureId = keyof typeof GESTURES;
 /** One group, with the ids that belong to it. */
 export interface GestureGroupEntry {
   key: GestureGroup;
-  label: string;
+  label: Localized;
   ids: GestureId[];
 }
 
 /** Gesture ids grouped, for the UI and for the auto-gesture pool. */
 export const GESTURES_BY_GROUP: GestureGroupEntry[] = (
-  Object.entries(GESTURE_GROUPS) as Array<[GestureGroup, string]>
+  Object.entries(GESTURE_GROUPS) as Array<[GestureGroup, Localized]>
 ).map(([key, label]) => ({
   key,
   label,

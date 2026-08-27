@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { Localized } from '../../i18n/locale';
 import type { BodyFrame, BoneSlot, JointReading, JointTable, Profile, Side } from '../types';
 import {
   BODY_DEPTH,
@@ -881,7 +882,7 @@ export class ArmAnatomy {
     // one. Showing a zone for those would be reporting noise as a judgement.
     const row = (
       id: string,
-      label: string,
+      label: Localized,
       value: number,
       strain: number,
       range: [number, number],
@@ -898,25 +899,52 @@ export class ArmAnatomy {
     const L = this.limits;
     const deg = (r: [number, number]): [number, number] => [r[0] / D, r[1] / D];
     return [
-      row('elevation', '肩 挙上', m.elevation, s.elevation, [0, ceil.max / D]),
-      row('plane', '肩 挙上面', m.plane, 0, [-180, 180], false),
+      row('elevation', { en: 'Shoulder elevation', ja: '肩 挙上' }, m.elevation, s.elevation, [
+        0,
+        ceil.max / D,
+      ]),
+      row('plane', { en: 'Shoulder plane', ja: '肩 挙上面' }, m.plane, 0, [-180, 180], false),
       row(
         'rotation',
-        '肩 回旋',
+        { en: 'Shoulder rotation', ja: '肩 回旋' },
         m.rotation,
         s.rotation,
         deg(L.shoulder.dofs.rotation.max),
         m.rotationRead > 0.01,
       ),
-      row('elbow', '肘 屈曲', m.elbow, s.elbow, deg(L.elbow.dofs.flexion.max)),
-      row('forearm', '前腕 回内外', m.forearm, s.forearm, deg(L.elbow.dofs.rotation.max)),
-      row('wristFlex', '手首 掌背屈', m.wristFlex, s.wristFlex, deg(L.wrist.dofs.flexion.max)),
-      row('wristDev', '手首 橈尺屈', m.wristDev, s.wristDev, deg(L.wrist.dofs.deviation.max)),
+      row(
+        'elbow',
+        { en: 'Elbow flexion', ja: '肘 屈曲' },
+        m.elbow,
+        s.elbow,
+        deg(L.elbow.dofs.flexion.max),
+      ),
+      row(
+        'forearm',
+        { en: 'Forearm rotation', ja: '前腕 回内外' },
+        m.forearm,
+        s.forearm,
+        deg(L.elbow.dofs.rotation.max),
+      ),
+      row(
+        'wristFlex',
+        { en: 'Wrist flexion', ja: '手首 掌背屈' },
+        m.wristFlex,
+        s.wristFlex,
+        deg(L.wrist.dofs.flexion.max),
+      ),
+      row(
+        'wristDev',
+        { en: 'Wrist deviation', ja: '手首 橈尺屈' },
+        m.wristDev,
+        s.wristDev,
+        deg(L.wrist.dofs.deviation.max),
+      ),
       // Reported as a percentage of the trunk radius rather than an angle,
       // because it is not one.
       {
         id: 'torso',
-        label: '腕の身体貫通',
+        label: { en: 'Arm inside the body', ja: '腕の身体貫通' },
         deg: m.torso * 100,
         unit: '%',
         strain: s.torso,
@@ -929,7 +957,7 @@ export class ArmAnatomy {
       // guarded, this is usually the number that says why.
       {
         id: 'inboard',
-        label: '肘の内寄り',
+        label: { en: 'Elbow tucked in', ja: '肘の内寄り' },
         deg: m.inboard * 100,
         unit: '%',
         strain: 0,

@@ -38,7 +38,8 @@ describe('the performance table', () => {
 
   each(PERFORMANCE_IDS)('%s has a label and a usable mood', (id) => {
     const def = PERFORMANCE_TABLE[id];
-    expect(def.label.length).toBeGreaterThan(0);
+    expect(def.label.en.length).toBeGreaterThan(0);
+    expect(def.label.ja.length).toBeGreaterThan(0);
     const weights = Object.entries(def.emotion);
     expect(weights.length).toBeGreaterThan(0);
     for (const [name, weight] of weights) {

@@ -8,9 +8,9 @@
  * none of them is the shape a *caller* thinks in.
  *
  * Nobody asks for "joy 0.9 with the cheer gesture and three hops of 45mm". They
- * ask for 「うれしい」. This table is that vocabulary, and it is the one an
- * orchestrator, the control API and the idle autopilot all speak — so the
- * character does the same thing whichever of the three is driving.
+ * ask for 「うれしい」 (happy). This table is that vocabulary, and it is the
+ * one an orchestrator, the control API and the idle autopilot all speak — so
+ * the character does the same thing whichever of the three is driving.
  *
  * ## Written in canonical terms only
  *
@@ -19,7 +19,7 @@
  * model's shape groups. So a performance names the first three and never the
  * fourth — the drawn face arrives on its own, because `AvatarDescriptor.presets`
  * maps each canonical emotion to whichever finished drawing that model ships for
- * it. `happy` therefore lands on ヨカ's `F_NIKONIKO`, on マヌカ's composed
+ * it. `happy` therefore lands on Yoka's `F_NIKONIKO`, on Manuka's composed
  * `eye_joy + brow_joy + mouth_smile`, and on a model with neither as a plain
  * ARKit smile, without this file knowing that any of them exist.
  *
@@ -34,21 +34,22 @@
  * does not end with the sentence that carried it.
  */
 
+import type { Localized } from '../i18n/locale';
 import { GESTURES, type GestureId, type HopId } from './motion';
 import type { EmotionVector, GestureDef, PerformanceGroup } from './types';
 
-export const PERFORMANCE_GROUPS: Record<PerformanceGroup, string> = {
-  mood: '気分',
-  reaction: '相槌',
-  greeting: '挨拶',
-  explain: '説明',
-  emote: '感情',
-  cute: '仕草',
-  pose: 'ポーズ',
+export const PERFORMANCE_GROUPS: Record<PerformanceGroup, Localized> = {
+  mood: { en: 'Mood', ja: '気分' },
+  reaction: { en: 'Reaction', ja: '相槌' },
+  greeting: { en: 'Greeting', ja: '挨拶' },
+  explain: { en: 'Explaining', ja: '説明' },
+  emote: { en: 'Feeling', ja: '感情' },
+  cute: { en: 'Mannerism', ja: '仕草' },
+  pose: { en: 'Pose', ja: 'ポーズ' },
 };
 
 export interface PerformanceDef {
-  label: string;
+  label: Localized;
   group: PerformanceGroup;
   /**
    * The mood. Persists after the performance ends, like any emotion, and is
@@ -84,12 +85,24 @@ export const PERFORMANCES = {
   // Face only, and the reason the autopilot does not gesture constantly. A
   // character who changes what they are feeling and then simply stands there is
   // most of what watching one actually looks like.
-  calm: { label: 'おだやか', group: 'mood', emotion: { relaxed: 0.85 } },
-  blank: { label: 'ふつう', group: 'mood', emotion: { neutral: 1 } },
-  wonder: { label: 'ふしぎ', group: 'mood', emotion: { thinking: 0.6, surprise: 0.25 } },
-  gloomy: { label: 'しょんぼり', group: 'mood', emotion: { sadness: 0.75 } },
-  startled: { label: 'びっくり', group: 'mood', emotion: { surprise: 0.9 } },
-  bashful: { label: 'もじもじ', group: 'mood', emotion: { shy: 0.8 } },
+  calm: { label: { en: 'Calm', ja: 'おだやか' }, group: 'mood', emotion: { relaxed: 0.85 } },
+  blank: { label: { en: 'Neutral', ja: 'ふつう' }, group: 'mood', emotion: { neutral: 1 } },
+  wonder: {
+    label: { en: 'Puzzled', ja: 'ふしぎ' },
+    group: 'mood',
+    emotion: { thinking: 0.6, surprise: 0.25 },
+  },
+  gloomy: {
+    label: { en: 'Downcast', ja: 'しょんぼり' },
+    group: 'mood',
+    emotion: { sadness: 0.75 },
+  },
+  startled: {
+    label: { en: 'Startled', ja: 'びっくり' },
+    group: 'mood',
+    emotion: { surprise: 0.9 },
+  },
+  bashful: { label: { en: 'Bashful', ja: 'もじもじ' }, group: 'mood', emotion: { shy: 0.8 } },
 
   /**
    * Falling asleep.
@@ -102,7 +115,7 @@ export const PERFORMANCES = {
    * keeps being pulled back up to it, and the pose visibly fights the tracking.
    */
   doze: {
-    label: 'ねおち',
+    label: { en: 'Dozing off', ja: 'ねおち' },
     group: 'mood',
     emotion: { relaxed: 0.9 },
     gesture: 'doze',
@@ -112,41 +125,51 @@ export const PERFORMANCES = {
 
   // --- reaction -----------------------------------------------------------
   agree: {
-    label: 'うなずく',
+    label: { en: 'Nodding', ja: 'うなずく' },
     group: 'reaction',
     emotion: { neutral: 0.6, joy: 0.35 },
     gesture: 'nod',
   },
   curious: {
-    label: 'きになる',
+    label: { en: 'Curious', ja: 'きになる' },
     group: 'reaction',
     emotion: { thinking: 0.55, surprise: 0.3 },
     gesture: 'tilt',
   },
   interested: {
-    label: 'みいる',
+    label: { en: 'Absorbed', ja: 'みいる' },
     group: 'reaction',
     emotion: { joy: 0.45, surprise: 0.4 },
     gesture: 'lean',
   },
-  ponder: { label: 'かんがえる', group: 'reaction', emotion: { thinking: 0.9 }, gesture: 'think' },
+  ponder: {
+    label: { en: 'Thinking', ja: 'かんがえる' },
+    group: 'reaction',
+    emotion: { thinking: 0.9 },
+    gesture: 'think',
+  },
   dunno: {
-    label: 'さあ？',
+    label: { en: 'No idea', ja: 'さあ？' },
     group: 'reaction',
     emotion: { thinking: 0.4, sadness: 0.25 },
     gesture: 'shrug',
   },
 
   // --- greeting -----------------------------------------------------------
-  hello: { label: 'あいさつ', group: 'greeting', emotion: { joy: 0.85 }, gesture: 'wave' },
+  hello: {
+    label: { en: 'Greeting', ja: 'あいさつ' },
+    group: 'greeting',
+    emotion: { joy: 0.85 },
+    gesture: 'wave',
+  },
   invite: {
-    label: 'おいでおいで',
+    label: { en: 'Come over', ja: 'おいでおいで' },
     group: 'greeting',
     emotion: { joy: 0.5, relaxed: 0.4 },
     gesture: 'comeHere',
   },
   thanks: {
-    label: 'ありがとう',
+    label: { en: 'Thank you', ja: 'ありがとう' },
     group: 'greeting',
     emotion: { joy: 0.55, shy: 0.3 },
     gesture: 'bow',
@@ -154,19 +177,19 @@ export const PERFORMANCES = {
 
   // --- explain ------------------------------------------------------------
   explain: {
-    label: 'せつめい',
+    label: { en: 'Explaining', ja: 'せつめい' },
     group: 'explain',
     emotion: { neutral: 0.65, thinking: 0.3 },
     gesture: 'explain',
   },
   present: {
-    label: 'こちらです',
+    label: { en: 'This way', ja: 'こちらです' },
     group: 'explain',
     emotion: { joy: 0.45, neutral: 0.45 },
     gesture: 'present',
   },
   notice: {
-    label: 'ここ！',
+    label: { en: 'Right here', ja: 'ここ！' },
     group: 'explain',
     emotion: { joy: 0.4, surprise: 0.35 },
     gesture: 'pointUp',
@@ -182,45 +205,70 @@ export const PERFORMANCES = {
    * bust framing, and the cadence of a short repeated bounce is the whole tell.
    */
   happy: {
-    label: 'うれしい',
+    label: { en: 'Delighted', ja: 'うれしい' },
     group: 'emote',
     emotion: { joy: 1 },
     gesture: 'cheer',
     hop: 'bounce',
   },
   applause: {
-    label: 'はくしゅ',
+    label: { en: 'Applause', ja: 'はくしゅ' },
     group: 'emote',
     emotion: { joy: 0.8, surprise: 0.2 },
     gesture: 'clap',
   },
-  peace: { label: 'ピース', group: 'emote', emotion: { joy: 0.75 }, gesture: 'peace' },
-  giggle: { label: 'くすくす', group: 'emote', emotion: { joy: 0.5, shy: 0.45 }, gesture: 'cover' },
+  peace: {
+    label: { en: 'Peace sign', ja: 'ピース' },
+    group: 'emote',
+    emotion: { joy: 0.75 },
+    gesture: 'peace',
+  },
+  giggle: {
+    label: { en: 'Giggling', ja: 'くすくす' },
+    group: 'emote',
+    emotion: { joy: 0.5, shy: 0.45 },
+    gesture: 'cover',
+  },
   nope: {
-    label: 'ちがうよ',
+    label: { en: 'Not quite', ja: 'ちがうよ' },
     group: 'emote',
     emotion: { surprise: 0.4, sadness: 0.3 },
     gesture: 'deny',
   },
-  sulk: { label: 'ぷんすか', group: 'emote', emotion: { anger: 0.85 }, gesture: 'pout' },
+  sulk: {
+    label: { en: 'Cross', ja: 'ぷんすか' },
+    group: 'emote',
+    emotion: { anger: 0.85 },
+    gesture: 'pout',
+  },
 
   // --- cute ---------------------------------------------------------------
-  shy: { label: 'てれる', group: 'cute', emotion: { shy: 0.9 }, gesture: 'cheekPoke' },
-  catPaw: { label: 'にゃー', group: 'cute', emotion: { joy: 0.6, shy: 0.3 }, gesture: 'catPaw' },
+  shy: {
+    label: { en: 'Shy', ja: 'てれる' },
+    group: 'cute',
+    emotion: { shy: 0.9 },
+    gesture: 'cheekPoke',
+  },
+  catPaw: {
+    label: { en: 'Meow', ja: 'にゃー' },
+    group: 'cute',
+    emotion: { joy: 0.6, shy: 0.3 },
+    gesture: 'catPaw',
+  },
   sparkle: {
-    label: 'きらきら',
+    label: { en: 'Sparkling', ja: 'きらきら' },
     group: 'cute',
     emotion: { joy: 0.7, surprise: 0.3 },
     gesture: 'sparkle',
   },
   plead: {
-    label: 'おねがい',
+    label: { en: 'Please', ja: 'おねがい' },
     group: 'cute',
     emotion: { shy: 0.5, sadness: 0.35 },
     gesture: 'beg',
   },
   secret: {
-    label: 'ないしょ',
+    label: { en: 'A secret', ja: 'ないしょ' },
     group: 'cute',
     emotion: { shy: 0.55, joy: 0.35 },
     gesture: 'whisper',
@@ -228,15 +276,20 @@ export const PERFORMANCES = {
   // Not `doze`. This is the yawn a character gets away with mid-stream — the
   // lids come down a little and go back up, and the mood is still awake.
   sleepy: {
-    label: 'ねむい',
+    label: { en: 'Sleepy', ja: 'ねむい' },
     group: 'cute',
     emotion: { relaxed: 0.8 },
     gesture: 'yawn',
     droop: 0.3,
   },
-  refresh: { label: 'のび', group: 'cute', emotion: { relaxed: 0.9 }, gesture: 'stretch' },
+  refresh: {
+    label: { en: 'Stretching', ja: 'のび' },
+    group: 'cute',
+    emotion: { relaxed: 0.9 },
+    gesture: 'stretch',
+  },
   bouncy: {
-    label: 'ごきげん',
+    label: { en: 'In good spirits', ja: 'ごきげん' },
     group: 'cute',
     emotion: { joy: 0.7, relaxed: 0.25 },
     gesture: 'sparkle',
@@ -247,40 +300,55 @@ export const PERFORMANCES = {
   // Held until something else is asked for. That is a property of the gesture
   // rather than of this table — see `holdsUntilReleased`.
   guarded: {
-    label: 'うでぐみ',
+    label: { en: 'Arms folded', ja: 'うでぐみ' },
     group: 'pose',
     emotion: { thinking: 0.5, anger: 0.25 },
     gesture: 'armCross',
   },
   polite: {
-    label: 'おすまし',
+    label: { en: 'Prim', ja: 'おすまし' },
     group: 'pose',
     emotion: { neutral: 0.7, relaxed: 0.3 },
     gesture: 'handsClasp',
   },
   bored: {
-    label: 'ほおづえ',
+    label: { en: 'Chin on hand', ja: 'ほおづえ' },
     group: 'pose',
     emotion: { relaxed: 0.5, thinking: 0.4 },
     gesture: 'chin',
   },
-  nice: { label: 'いいね', group: 'pose', emotion: { joy: 0.9 }, gesture: 'thumbsUp' },
-  love: { label: 'すき', group: 'pose', emotion: { joy: 0.6, shy: 0.4 }, gesture: 'fingerHeart' },
+  nice: {
+    label: { en: 'Nice', ja: 'いいね' },
+    group: 'pose',
+    emotion: { joy: 0.9 },
+    gesture: 'thumbsUp',
+  },
+  love: {
+    label: { en: 'Love it', ja: 'すき' },
+    group: 'pose',
+    emotion: { joy: 0.6, shy: 0.4 },
+    gesture: 'fingerHeart',
+  },
   doublePeace: {
-    label: 'ダブルピース',
+    label: { en: 'Double peace sign', ja: 'ダブルピース' },
     group: 'pose',
     emotion: { joy: 1 },
     gesture: 'bothPeace',
   },
-  bang: { label: 'ばーん', group: 'pose', emotion: { joy: 0.5, surprise: 0.35 }, gesture: 'gun' },
+  bang: {
+    label: { en: 'Bang', ja: 'ばーん' },
+    group: 'pose',
+    emotion: { joy: 0.5, surprise: 0.35 },
+    gesture: 'gun',
+  },
   promise: {
-    label: 'やくそく',
+    label: { en: 'Promise', ja: 'やくそく' },
     group: 'pose',
     emotion: { joy: 0.5, shy: 0.4 },
     gesture: 'promise',
   },
   listening: {
-    label: 'きいてる',
+    label: { en: 'Listening', ja: 'きいてる' },
     group: 'pose',
     emotion: { thinking: 0.5, neutral: 0.4 },
     gesture: 'listen',
@@ -326,13 +394,13 @@ export const holdsUntilReleased = (def: PerformanceDef): boolean =>
 /** One group, with the ids that belong to it. */
 export interface PerformanceGroupEntry {
   key: PerformanceGroup;
-  label: string;
+  label: Localized;
   ids: PerformanceId[];
 }
 
 /** Grouped, for the UI and for the autopilot's pool. */
 export const PERFORMANCES_BY_GROUP: PerformanceGroupEntry[] = (
-  Object.entries(PERFORMANCE_GROUPS) as Array<[PerformanceGroup, string]>
+  Object.entries(PERFORMANCE_GROUPS) as Array<[PerformanceGroup, Localized]>
 ).map(([key, label]) => ({
   key,
   label,

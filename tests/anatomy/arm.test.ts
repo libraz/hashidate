@@ -419,7 +419,8 @@ describe('ArmAnatomy.report', () => {
         expect(row.strain, `${label}/${row.id} strain`).toBeGreaterThanOrEqual(0);
         expect(row.strain, `${label}/${row.id} strain`).toBeLessThanOrEqual(1);
         expect(Number.isFinite(row.deg), `${label}/${row.id} deg`).toBe(true);
-        expect(row.label.length).toBeGreaterThan(0);
+        expect(row.label.en.length).toBeGreaterThan(0);
+        expect(row.label.ja.length).toBeGreaterThan(0);
         expect(row.range[1]).toBeGreaterThan(row.range[0]);
       }
     }

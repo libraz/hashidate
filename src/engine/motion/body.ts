@@ -900,7 +900,7 @@ export class Body {
     const turn = az * 0.22 * extent;
     const lean = -Math.max(0, el) * 0.1 * extent;
     const def: GestureDef = {
-      label: '指し示す',
+      label: { en: 'Pointing', ja: '指し示す' },
       group: 'explain',
       lead: 0.3,
       hold: 1.6,

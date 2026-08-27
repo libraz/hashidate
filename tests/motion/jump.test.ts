@@ -313,7 +313,8 @@ describe('the hop vocabulary', () => {
     expect(new Set(HOP_IDS).size).toBe(HOP_IDS.length);
     for (const id of HOP_IDS) {
       const def = HOPS[id];
-      expect(def.label.length).toBeGreaterThan(0);
+      expect(def.label.en.length).toBeGreaterThan(0);
+      expect(def.label.ja.length).toBeGreaterThan(0);
       expect(def.height).toBeGreaterThan(0);
       expect(Number.isInteger(def.count)).toBe(true);
       expect(def.count).toBeGreaterThanOrEqual(1);

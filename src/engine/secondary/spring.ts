@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { type Localized, same } from '../../i18n/locale';
 import type { AvatarDescriptor, ColliderSpec, Profile } from '../types';
 
 /**
@@ -267,7 +268,7 @@ interface RunLink {
 /** One simulated chain, with the descriptor's figures resolved onto it. */
 export interface SpringGroup {
   id: string;
-  label: string;
+  label: Localized;
   enabled: boolean;
   joints: Joint[];
   rootJoints: Joint[];
@@ -386,7 +387,7 @@ export class Spring {
           continue;
         }
         const kids = boneChildren(hub);
-        if (!kids.length) this.missing.push(`sway:${name} (子ボーンなし)`);
+        if (!kids.length) this.missing.push(`sway:${name} (no child bones)`);
         roots.push(...kids);
       }
 
@@ -411,7 +412,7 @@ export class Spring {
       const rootBones = new Set<THREE.Bone>(roots);
       this.groups.push({
         id: g.id,
-        label: g.label ?? g.id,
+        label: g.label ?? same(g.id),
         enabled: true,
         joints,
         // The joints an external drive is allowed to reach. Only the tops of
