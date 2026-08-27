@@ -55,6 +55,19 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
 
   const emotion: EmotionVector = state?.emotion ?? {};
 
+  /**
+   * What every 解除 in this tab does, including the one under the presets.
+   *
+   * Not `perform(null)`, which is the *turn's* release and puts back only what a
+   * performance is holding — a pose, closed lids, a dropped gaze. Three quarters
+   * of the table hold none of those: their gesture has already ended by the time
+   * anyone reaches for the button and the mood is kept on purpose, so releasing
+   * one used to clear an internal flag and change nothing on screen. A control
+   * labelled 解除 that leaves the face it was pressed on is broken however
+   * correct the release underneath it is.
+   */
+  const rest = () => session.resetExpression();
+
   const setMood = (name: EmotionName) => session.setEmotion({ [name]: 1 });
   const mix = (name: EmotionName, value: number) => {
     const next: EmotionVector = { ...emotion, [name]: value };
@@ -88,7 +101,8 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
         meta={state?.performance ?? ''}
         note={[
           '表情とモーションをひと組にしたもの。ここから下の「感情」「ジェスチャ」はその部品で、プリセットに名前のない組み合わせを作るときに使う。',
-          '感情はプリセットを抜けても残る — 気分は台詞と一緒には終わらない。姿勢・伏し目・視線のように保持されるものは、次のプリセットを押すか「解除」で戻る（* 印つき）。',
+          '台詞に添えたプリセットは行の終わりで自分から抜けるが、気分だけは残る — 気分は台詞と一緒には終わらない。ここの「解除」はそれとは別で、気分も重ねた効果も含めて素の顔に戻す。',
+          '* 印は自分では終わらないもの。姿勢・伏し目・視線は、次のプリセットを押すか解除するまで保持する。',
           '自動モードもこの表から選ぶので、パネルで押せるものと自動で出るものは同じ語彙になる。',
         ]}
       >
@@ -104,7 +118,7 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
                     label={held ? `${def.label} *` : def.label}
                     title={`${id}  ${[def.gesture, def.hop].filter(Boolean).join(' + ') || '表情のみ'}`}
                     state={state?.performance === id ? 'on' : 'off'}
-                    onClick={() => session.perform(state?.performance === id ? null : id)}
+                    onClick={() => (state?.performance === id ? rest() : session.perform(id))}
                   />
                 );
               })}
@@ -112,7 +126,7 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
           </Field>
         ))}
         <ChipRow>
-          <Chip label="解除" variant="action" onClick={() => session.perform(null)} />
+          <Chip label="解除" variant="action" onClick={rest} />
         </ChipRow>
       </Section>
 
@@ -138,7 +152,7 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
               onClick={() => setMood(name)}
             />
           ))}
-          <Chip label="解除" variant="action" onClick={() => session.resetExpression()} />
+          <Chip label="解除" variant="action" onClick={rest} />
           <Chip label="配合" state={mixing ? 'on' : 'off'} onClick={() => setMixing((v) => !v)} />
         </ChipRow>
         {mixing
@@ -180,7 +194,7 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
                 }
               />
             ))}
-            <Chip label="解除" variant="action" onClick={() => session.resetExpression()} />
+            <Chip label="解除" variant="action" onClick={rest} />
           </ChipRow>
         </Section>
       ) : null}
@@ -203,7 +217,7 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
                 onClick={() => session.setOverlay(o.id, (state?.overlays?.[o.id] ?? 0) > 0 ? 0 : 1)}
               />
             ))}
-            <Chip label="全解除" variant="action" onClick={() => session.resetExpression()} />
+            <Chip label="全解除" variant="action" onClick={rest} />
           </ChipRow>
         </Section>
       ) : null}
