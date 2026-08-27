@@ -8,6 +8,7 @@ import {
   reportBodySchema,
 } from '../protocol';
 import type { Hub } from './hub';
+import { handleSpeech } from './speech';
 
 /**
  * The `/api/` surface: commands down, state and events back up.
@@ -33,7 +34,7 @@ const EVENTS_WAIT_SECONDS = 30;
  * the report is a heartbeat every 700 ms. Logging them buries the commands,
  * which are the only lines worth reading.
  */
-const QUIET = ['/api/stream', '/api/report'];
+const QUIET = ['/api/stream', '/api/report', '/api/speech'];
 
 /**
  * The three commands that spend `id` on their own payload id rather than on a
@@ -161,6 +162,7 @@ async function post(
   if (body === null) return json(res, { error: 'invalid json' }, 400);
   if (pathname === '/api/command') return command(res, hub, body.value, params);
   if (pathname === '/api/report') return report(res, hub, body.value);
+  if (pathname === '/api/speech') return handleSpeech(res, body.value);
   return json(res, { error: 'unknown endpoint' }, 404);
 }
 

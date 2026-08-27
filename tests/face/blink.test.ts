@@ -361,3 +361,61 @@ describe('Blink / context', () => {
     expect(countBlinks(blink, 10, IDLE)).toBeGreaterThan(0);
   });
 });
+
+describe('Blink / droop', () => {
+  it('holds the lids at the droop between blinks', () => {
+    const blink = new Blink({ random: mulberry32(5) });
+    blink.droop = 0.4;
+    for (const w of run(blink, 20, IDLE)) expect(w).toBeGreaterThanOrEqual(0.4);
+  });
+
+  it('still blinks under a light droop, and closes past it', () => {
+    // Heavy lids that blink, which is what drowsiness looks like before sleep.
+    const blink = new Blink({ random: mulberry32(5) });
+    blink.droop = 0.4;
+    const weights = run(blink, 40, IDLE);
+    expect(Math.max(...weights)).toBeGreaterThan(0.9);
+    expect(Math.min(...weights)).toBe(0.4);
+  });
+
+  it('never lets a blink open the eyes further than the droop', () => {
+    // The failure this guards is the ugly one: a heavy lid snapping wide open
+    // to blink and settling back.
+    const blink = new Blink({ random: mulberry32(7) });
+    blink.droop = 0.75;
+    warm(blink);
+    blink.trigger();
+    for (const w of run(blink, 2, IDLE)) expect(w).toBeGreaterThanOrEqual(0.75);
+  });
+
+  it('outranks suppression, which is the director guessing rather than being told', () => {
+    const blink = new Blink({ random: mulberry32(5) });
+    blink.droop = 0.9;
+    expect(blink.update(DT, SUPPRESSED)).toBe(0.9);
+  });
+
+  it('does not outrank the layer being switched off', () => {
+    const blink = new Blink({ random: mulberry32(5) });
+    blink.droop = 1;
+    blink.enabled = false;
+    expect(blink.update(DT, IDLE)).toBe(0);
+  });
+
+  it('is clamped rather than trusted', () => {
+    const blink = new Blink({ random: mulberry32(5) });
+    blink.droop = 4;
+    expect(blink.update(DT, IDLE)).toBe(1);
+    blink.droop = -2;
+    expect(blink.update(DT, IDLE)).toBe(0);
+  });
+
+  it('goes back to an ordinary rhythm when it is cleared', () => {
+    const blink = new Blink({ random: mulberry32(5) });
+    blink.droop = 0.6;
+    run(blink, 10, IDLE);
+    blink.droop = 0;
+    const weights = run(blink, 20, IDLE);
+    expect(Math.min(...weights)).toBe(0);
+    expect(countBlinks(new Blink({ random: mulberry32(5) }), 30, IDLE)).toBeGreaterThan(0);
+  });
+});

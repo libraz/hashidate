@@ -25,6 +25,17 @@ const EXACT = 1e-9;
  */
 const HELD_DRIFT = 0.02;
 
+/**
+ * Frames to run before an elbow is asked to hold still.
+ *
+ * The search moves a fixed fraction of the way to its answer each frame, so a
+ * cold start takes a couple of dozen of them however near the answer already
+ * is; from the far side of the circle it is about 26. Comfortably past that,
+ * because a test that measures a settled pose from a not-quite-settled one
+ * fails intermittently and blames the solver.
+ */
+const SETTLE_FRAMES = 60;
+
 interface Arm {
   profile: Profile;
   rig: Rig;
@@ -76,6 +87,13 @@ const elbowOf = (arm: Arm, out: ArmSolution): THREE.Vector3 =>
 
 const solve = (arm: Arm, spec: PointRequest, out: ArmSolution) =>
   arm.rig.solvePoint(arm.side, spec, out);
+
+/** Hold one target until the elbow stops moving, and return the pose it reached. */
+const settleAt = (arm: Arm, spec: PointRequest): ArmSolution => {
+  const out = solution();
+  for (let i = 0; i < SETTLE_FRAMES; i++) solve(arm, spec, out);
+  return out;
+};
 
 describe('solvePoint bearing', () => {
   it('reads the bearing in the body frame, not in world axes', () => {
@@ -292,29 +310,54 @@ describe('solvePoint output ownership', () => {
 });
 
 describe('solvePoint elbow search', () => {
-  it('holds the elbow still while a pose is merely held', () => {
+  it('brings the elbow to rest on a target that is merely held', () => {
     const arm = buildArm();
     const out = solution();
     const spec = { azimuth: 0.2, elevation: 0.35, extent: 0.75 };
 
-    solve(arm, spec, out);
-    solve(arm, spec, out);
-    let previous = elbowOf(arm, out);
-    for (let i = 0; i < 12; i++) {
+    // The search tracks a fraction of the remaining distance each frame, so a
+    // cold start converges rather than arriving. What matters is that it does
+    // converge — and *stops*, rather than closing the last of the gap forever.
+    let previous = new THREE.Vector3(Number.NaN, 0, 0);
+    let stillFrom = -1;
+    for (let i = 0; i < SETTLE_FRAMES; i++) {
       solve(arm, spec, out);
       const elbow = elbowOf(arm, out);
-      expect(elbow.distanceTo(previous)).toBeLessThan(EXACT);
+      if (stillFrom < 0 && elbow.distanceTo(previous) < EXACT) stillFrom = i;
       previous = elbow;
     }
+    expect(stillFrom).toBeGreaterThanOrEqual(0);
+
+    // And once still, exactly still. A pose left alone must not drift.
+    const settled = elbowOf(arm, out);
+    for (let i = 0; i < 12; i++) {
+      solve(arm, spec, out);
+      expect(elbowOf(arm, out).distanceTo(settled)).toBeLessThan(EXACT);
+    }
+  });
+
+  it('puts the elbow where the target says, not where it came from', () => {
+    // The property the anatomical prior exists for. Reaching one target by way
+    // of another used to leave the elbow wherever the route had put it, because
+    // the search preferred to stay put and the two candidate elbows for most
+    // targets score nearly the same. An arm posture is a function of where the
+    // hand is; arriving from the far side must not change it.
+    const spec = { azimuth: 0.2, elevation: 0.35, extent: 0.75 };
+    const straight = buildArm();
+    const direct = elbowOf(straight, settleAt(straight, spec));
+
+    const viaOther = buildArm();
+    settleAt(viaOther, { azimuth: -1.1, elevation: -0.5, extent: 0.9 });
+    const round = elbowOf(viaOther, settleAt(viaOther, spec));
+
+    expect(round.distanceTo(direct)).toBeLessThan(viaOther.upperLen * HELD_DRIFT);
   });
 
   it('barely moves the elbow for a target nudged by a hair', () => {
     const arm = buildArm();
     const out = solution();
     const spec = { azimuth: 0.2, elevation: 0.35, extent: 0.75 };
-
-    for (let i = 0; i < 4; i++) solve(arm, spec, out);
-    const settled = elbowOf(arm, out);
+    const settled = elbowOf(arm, settleAt(arm, spec));
 
     solve(arm, { ...spec, elevation: spec.elevation + 0.002 }, out);
     expect(elbowOf(arm, out).distanceTo(settled)).toBeLessThan(arm.upperLen * HELD_DRIFT);
@@ -323,13 +366,36 @@ describe('solvePoint elbow search', () => {
   it('still moves the elbow for a genuine change of intent', () => {
     const arm = buildArm();
     const out = solution();
-    const spec = { azimuth: 0.2, elevation: 0.35, extent: 0.75 };
-
-    for (let i = 0; i < 4; i++) solve(arm, spec, out);
-    const settled = elbowOf(arm, out);
+    const settled = elbowOf(arm, settleAt(arm, { azimuth: 0.2, elevation: 0.35, extent: 0.75 }));
 
     solve(arm, { azimuth: -1.2, elevation: -0.6, extent: 0.9 }, out);
     expect(elbowOf(arm, out).distanceTo(settled)).toBeGreaterThan(arm.upperLen * 0.5);
+  });
+
+  it('hangs the elbow below the shoulder for a hand held out in front', () => {
+    // The prior's first claim, and the one a strain score gets wrong on its own:
+    // both elbows are comfortable for a hand at chest height, and only one of
+    // them is a pose a person adopts.
+    const arm = buildArm();
+    const elbow = elbowOf(arm, settleAt(arm, { azimuth: 0.1, elevation: 0, extent: 0.7 }));
+    expect(elbow.y).toBeLessThan(arm.shoulder.y);
+  });
+
+  it('raises the elbow less than the hand it is carrying', () => {
+    // The elevation regression: the elbow follows the hand up at less than its
+    // rate, so it neither stays pinned to the ribs nor cocks above the wrist.
+    const arm = buildArm();
+    const low = settleAt(arm, { azimuth: 0.2, elevation: -0.2, extent: 0.7 });
+    const lowElbow = elbowOf(arm, low);
+    const lowWrist = wristOf(arm, low);
+
+    const high = settleAt(arm, { azimuth: 0.2, elevation: 0.8, extent: 0.7 });
+    const elbowRise = elbowOf(arm, high).y - lowElbow.y;
+    const wristRise = wristOf(arm, high).y - lowWrist.y;
+
+    expect(wristRise).toBeGreaterThan(0);
+    expect(elbowRise).toBeGreaterThan(0);
+    expect(elbowRise).toBeLessThan(wristRise);
   });
 });
 

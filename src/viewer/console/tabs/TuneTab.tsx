@@ -1,4 +1,5 @@
 import { type Dispatch, type SetStateAction, useRef, useState } from 'react';
+import { HOP_IDS, HOPS } from '@/engine/motion';
 import type { GazeLimits } from '@/engine/types';
 import type { AvatarRuntime, LoadedAvatar } from '../../scene/runtime';
 import { Chip, ChipRow } from '../../ui/Chip';
@@ -209,6 +210,7 @@ export function TuneTab({
         note={[
           '揺れものが正しく調整されているかを見るための機能。呼吸は胸を数ミリ動かすだけで、チェーンが生きているかは分かっても、よく調整されているかは分からない。着地の一瞬がそれを決める。',
           '高さと重力だけで弧が決まる（v₀=√(2gh)、滞空=2v₀/g）。質量は自由飛行では打ち消し合うので要らない。重力を下げると同じ高さのまま頂点で浮く。',
+          '連続で跳ぶときは着地の沈み込みがそのまま次の踏み切りの沈み込みになる — どちらも「沈みきって静止」で終わるので、速度が途切れない。間隔という設定値がないのはそのため。',
           '脚はリグに含まれないので、沈み込みで足が床に潜り滞空中は浮く。バストアップか上半身の画角で見ること。',
         ]}
       >
@@ -237,7 +239,15 @@ export function TuneTab({
           })}
         />
         <ChipRow>
-          <Chip label="小さく跳ぶ" variant="primary" onClick={() => director.jump()} />
+          {HOP_IDS.map((id) => (
+            <Chip key={id} label={HOPS[id].label} title={id} onClick={() => director.hop(id)} />
+          ))}
+          <Chip
+            label="この高さで"
+            variant="primary"
+            onClick={() => director.body.hop()}
+            title="上のスライダーの高さで 1 回"
+          />
         </ChipRow>
       </Section>
 

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { hasCueMarkup, isWellFormed } from '../engine/cues';
 import type { CameraFrame, EmotionName, FingerName, Side, TurnRequest } from '../engine/types';
 
 /**
@@ -97,10 +98,52 @@ export const sayCommandSchema = z.object({
   cmd: z.literal('say'),
   /** Doubles as the turn id: `turn.start` and `turn.end` come back under it. */
   id: correlationId,
-  text: z.string().optional(),
+  /**
+   * The line, with its cues in it: `[hello]こんばんは。[explain]今日は…`.
+   *
+   * A bracketed performance id starts that performance where it is written,
+   * which is the only place a caller can put one inside a sentence — a second
+   * turn would break the clause in half, and a separate `perform` command
+   * cannot know when the first half has been said.
+   *
+   * **Brackets are reserved and are never spoken.** A line whose markup does
+   * not parse fails this schema, and a failed command is dropped: the character
+   * stays quiet and the caller is told, rather than being read a stray bracket
+   * out loud. That is the one accident this field exists to prevent, so it is
+   * checked here as well as being stripped in the engine — the caller is a
+   * language model and everything it writes goes to the mouth.
+   *
+   * The ids themselves are not checked, exactly as `perform` below is not: the
+   * performance table is engine data and the wire carries ids as plain strings.
+   * One the table does not have is dropped when the line is played.
+   */
+  text: z.string().refine(isWellFormed, { error: 'malformed cue markup' }).optional(),
+  /**
+   * The reading of `text`, in kana, for the places where the writing does not
+   * determine it — counters, dates, acronyms, names, and every homograph.
+   *
+   * Not a display string: `text` is what the line *is*, this is only how it
+   * sounds. Both the mouth and the voice read it, so a caller spells a
+   * pronunciation out once and gets a correct viseme track along with it.
+   *
+   * It carries no cues, and a bracket anywhere in it fails the command rather
+   * than being quietly removed. Cues are positions in the line and belong with
+   * the line; one written here would be silently doing nothing, which is worse
+   * than being refused.
+   */
+  reading: z
+    .string()
+    .refine((value) => !hasCueMarkup(value), { error: 'cue markup does not belong in a reading' })
+    .optional(),
   emotion: emotionVectorSchema.nullable().optional(),
   expression: z.string().nullable().optional(),
   gesture: z.string().nullable().optional(),
+  /**
+   * A named face-and-movement, applied before the three fields above so a turn
+   * can name one and then override a single part of it. Released with the turn
+   * unless `hold`; its mood persists either way.
+   */
+  perform: z.string().nullable().optional(),
   hold: z.boolean().optional(),
 });
 
@@ -179,6 +222,21 @@ export const resetCommandSchema = z.object({
 // --- body -------------------------------------------------------------------
 
 /**
+ * Play a named performance — a face and a movement together — or release the
+ * one that is up.
+ *
+ * The command to reach for first. `gesture`, `emotion` and `hop` below are its
+ * parts, and are for what the performance table has no name for.
+ *
+ * No `id` means *release*, on the same rule as `gesture`. `id` is the
+ * performance's id, not the correlation id.
+ */
+export const performCommandSchema = z.object({
+  cmd: z.literal('perform'),
+  id: z.string().nullable().optional(),
+});
+
+/**
  * Play a gesture, or stop the one that is running.
  *
  * No `id` means *stop*, not an error: the release is not a second verb the
@@ -187,6 +245,20 @@ export const resetCommandSchema = z.object({
 export const gestureCommandSchema = z.object({
   cmd: z.literal('gesture'),
   id: z.string().optional(),
+});
+
+/**
+ * A run of hops, by name from the hop table.
+ *
+ * Its own command rather than a gesture because it translates the whole
+ * skeleton instead of posing it, and runs alongside whatever the arms are
+ * doing — a character can hop while waving. Absent `id` is the default single
+ * hop.
+ */
+export const hopCommandSchema = z.object({
+  cmd: z.literal('hop'),
+  id: correlationId,
+  hop: z.string().optional(),
 });
 
 /**
@@ -278,7 +350,9 @@ export const commandSchema = z.discriminatedUnion('cmd', [
   expressionCommandSchema,
   overlayCommandSchema,
   resetCommandSchema,
+  performCommandSchema,
   gestureCommandSchema,
+  hopCommandSchema,
   pointCommandSchema,
   lookCommandSchema,
   idleCommandSchema,

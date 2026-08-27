@@ -1,6 +1,12 @@
 import { useState } from 'react';
 import { EMOTION_LABELS, EMOTIONS } from '@/engine/face';
-import { GESTURE_GROUPS, GESTURES, GESTURES_BY_GROUP } from '@/engine/motion';
+import { GESTURE_GROUPS, GESTURES, GESTURES_BY_GROUP, HOP_IDS, HOPS } from '@/engine/motion';
+import {
+  holdsUntilReleased,
+  PERFORMANCE_GROUPS,
+  PERFORMANCE_TABLE,
+  PERFORMANCES_BY_GROUP,
+} from '@/engine/performance';
 import type {
   CameraFrame,
   EmotionName,
@@ -77,6 +83,39 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
 
   return (
     <>
+      <Section
+        title="プリセット"
+        meta={state?.performance ?? ''}
+        note={[
+          '表情とモーションをひと組にしたもの。ここから下の「感情」「ジェスチャ」はその部品で、プリセットに名前のない組み合わせを作るときに使う。',
+          '感情はプリセットを抜けても残る — 気分は台詞と一緒には終わらない。姿勢・伏し目・視線のように保持されるものは、次のプリセットを押すか「解除」で戻る（* 印つき）。',
+          '自動モードもこの表から選ぶので、パネルで押せるものと自動で出るものは同じ語彙になる。',
+        ]}
+      >
+        {PERFORMANCES_BY_GROUP.map((g) => (
+          <Field key={g.key} label={PERFORMANCE_GROUPS[g.key] ?? g.label}>
+            <ChipRow>
+              {g.ids.map((id) => {
+                const def = PERFORMANCE_TABLE[id];
+                const held = holdsUntilReleased(def);
+                return (
+                  <Chip
+                    key={id}
+                    label={held ? `${def.label} *` : def.label}
+                    title={`${id}  ${[def.gesture, def.hop].filter(Boolean).join(' + ') || '表情のみ'}`}
+                    state={state?.performance === id ? 'on' : 'off'}
+                    onClick={() => session.perform(state?.performance === id ? null : id)}
+                  />
+                );
+              })}
+            </ChipRow>
+          </Field>
+        ))}
+        <ChipRow>
+          <Chip label="解除" variant="action" onClick={() => session.perform(null)} />
+        </ChipRow>
+      </Section>
+
       <Section
         title="感情"
         meta={composition}
@@ -173,8 +212,10 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
         title="ジェスチャ"
         meta={state?.gesture ?? ''}
         note={[
+          '表情を伴わない、体だけの語彙。ふだんはプリセット側から呼ばれる。',
           '再生ごとに速さ・振幅・左右が変わる。切り替えは前の動作をクロスフェードで送る。',
           'ポーズ群は解除するまで保持する。それ以外は自分で終わる。',
+          '跳躍は骨格全体を動かすので、腕のジェスチャと同時に走る。',
         ]}
       >
         {GESTURES_BY_GROUP.map((g) => (
@@ -192,6 +233,13 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
             </ChipRow>
           </Field>
         ))}
+        <Field label="跳躍">
+          <ChipRow>
+            {HOP_IDS.map((id) => (
+              <Chip key={id} label={HOPS[id].label} title={id} onClick={() => session.hop(id)} />
+            ))}
+          </ChipRow>
+        </Field>
         <ChipRow>
           <Chip label="停止" variant="action" onClick={() => session.stopGesture()} />
         </ChipRow>

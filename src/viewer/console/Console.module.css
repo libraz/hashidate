@@ -147,6 +147,17 @@
   color: var(--fg-faint);
 }
 
+/* The reading, when the writing does not give one. Shares the box above but
+   stays one line: it is needed on a minority of lines and should not compete
+   with the text for height. */
+.reading {
+  composes: input;
+  min-height: 0;
+  margin-top: var(--space-2);
+  font-family: var(--font-mono);
+  resize: none;
+}
+
 .composerRow {
   display: flex;
   align-items: center;
@@ -159,6 +170,13 @@
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--fg-faint);
+}
+
+/* The same slot, when what is in the box would not go on the wire. Faint is
+   right for a keyboard hint and wrong for the reason the button went dead. */
+.hintBad {
+  composes: hint;
+  color: var(--bad);
 }
 
 .empty {

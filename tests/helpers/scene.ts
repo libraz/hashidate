@@ -46,12 +46,26 @@ export interface RigOptions {
   garments?: string[];
 }
 
-/** Segment lengths in metres, roughly a stylised adult figure. */
+/**
+ * Segment lengths in metres.
+ *
+ * A stylised figure of the kind this runtime is actually pointed at, and the
+ * neck is the part that matters. These avatars have large heads on short necks,
+ * so the mouth sits about three tenths of a full arm's reach from the shoulder;
+ * an adult's is nearer six. Every hand-to-face pose lives or dies on that ratio
+ * — at three tenths the elbow has to fold almost to its stop to arrive, and the
+ * wrist has almost no angle left to spend, which is where the poses that read
+ * as broken come from.
+ *
+ * Built with an adult's neck, the fixture could not reproduce any of it: poses
+ * that put the wrist a hundred degrees past its stop on both validation avatars
+ * measured comfortable here, because the face was twice as far away.
+ */
 const SEGMENTS = {
   hipsToSpine: 0.09,
   spineToChest: 0.13,
-  chestToNeck: 0.16,
-  neckToHead: 0.07,
+  chestToNeck: 0.09,
+  neckToHead: 0.04,
   headToCrown: 0.13,
   shoulderOut: 0.05,
   clavicleOut: 0.11,

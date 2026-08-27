@@ -4,6 +4,7 @@ import type {
   SessionState as EngineSessionState,
   Vocabulary as EngineVocabulary,
   GestureGroup,
+  PerformanceGroup,
   SessionEventType,
 } from '../engine/types';
 import {
@@ -78,7 +79,9 @@ export const sessionStateSchema = z.object({
   expression: z.string().nullable(),
   pickedExpression: z.string().nullable(),
   overlays: z.record(z.string(), z.number()),
+  performance: z.string().nullable(),
   gesture: z.string().nullable(),
+  hopping: z.boolean(),
   /** Joint strain from the last fingertip solve, per arm. */
   strain: z.record(sideSchema, z.number()),
   lookAt: z.number(),
@@ -96,6 +99,19 @@ export const labelledIdSchema = z.object({
 const gestureGroupSchema = z.enum(['reaction', 'greeting', 'explain', 'emote', 'cute', 'pose']);
 type _GestureGroupsMatchEngine = Expect<Equals<z.infer<typeof gestureGroupSchema>, GestureGroup>>;
 
+const performanceGroupSchema = z.enum([
+  'mood',
+  'reaction',
+  'greeting',
+  'explain',
+  'emote',
+  'cute',
+  'pose',
+]);
+type _PerformanceGroupsMatchEngine = Expect<
+  Equals<z.infer<typeof performanceGroupSchema>, PerformanceGroup>
+>;
+
 /**
  * What this avatar can be asked to do.
  *
@@ -111,7 +127,20 @@ export const vocabularySchema = z.object({
   emotions: z.array(labelledIdSchema),
   expressions: z.array(labelledIdSchema),
   overlays: z.array(labelledIdSchema),
+  /** Faces and movements named together; the two lists after it are its parts. */
+  performances: z.array(
+    labelledIdSchema.extend({
+      group: performanceGroupSchema,
+      emotion: emotionVectorSchema,
+      gesture: z.string().nullable(),
+      hop: z.string().nullable(),
+      sustain: z.boolean(),
+    }),
+  ),
   gestures: z.array(labelledIdSchema.extend({ group: gestureGroupSchema, sustain: z.boolean() })),
+  hops: z.array(labelledIdSchema),
+  /** How to write a performance into a line. Stated, not discovered. */
+  cue: z.object({ syntax: z.string(), note: z.string() }),
   cameras: z.array(cameraFrameSchema),
   /**
    * Pointing is continuous, so it is advertised as ranges rather than as a list

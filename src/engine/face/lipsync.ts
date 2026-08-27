@@ -1,9 +1,21 @@
 /**
  * Mouth layer.
  *
- * Text goes in, a timed viseme track comes out. Kept deliberately independent
- * of any audio source: when TTS arrives it supplies durations and an amplitude
- * envelope, and only `schedule()` and `setAmplitude()` change.
+ * Text goes in, a timed viseme track comes out, and `schedule()` will take a
+ * track from anywhere. The estimate this file builds is the fallback; when
+ * there is speech, the track is stretched to the length the audio turned out
+ * to be, the clock is the audio's own, and the travel is scaled by its
+ * envelope — three separate corrections, and none of them is a rewrite.
+ *
+ * Why a stretch is the right correction and not a patch: `mora` and `pause`
+ * below are only ever used to work out *proportions*. Normalise the whole
+ * track to a measured length and the constants cancel — which is what makes
+ * the estimate survive a voice that speaks faster than the one it was written
+ * against, and a voice retrained tomorrow that speaks faster again. What does
+ * not cancel is their ratio, which is about the shape of a sentence rather
+ * than its speed: a voice that leans harder on its commas shifts where the
+ * middle of the line falls, and that is a per-voice measurement rather than
+ * something this file can know.
  */
 
 import type { VisemeName } from '../types';
@@ -191,6 +203,32 @@ export function textToVisemes(
   return { events: out, duration: t };
 }
 
+/**
+ * Stretch a track to a measured length, keeping its shape.
+ *
+ * One factor over the whole line rather than a per-mora correction, because a
+ * single number is all the audio gives back: the take is one waveform and
+ * nothing in it says where the third mora ended. So this fixes the ends
+ * exactly and the middle approximately, and the approximation is the
+ * estimate's own idea of how a sentence is distributed.
+ *
+ * That is worth more than it sounds. The error it leaves is proportional and
+ * bounded by the line, where the error it removes accumulated down the queue —
+ * a mouth that finishes early on every turn is a mouth that is visibly not
+ * saying the words.
+ */
+export function scaleTrack(track: VisemeTrack, seconds: number): VisemeTrack {
+  // A line with no morae in it — punctuation, or nothing at all — has no shape
+  // to stretch. It gets the measured length and an empty track, which is a
+  // mouth that stays shut for exactly as long as the audio lasts.
+  if (!(track.duration > 0 && seconds > 0)) return { events: [], duration: seconds };
+  const k = seconds / track.duration;
+  return {
+    events: track.events.map((ev) => ({ v: ev.v, t: ev.t * k, dur: ev.dur * k })),
+    duration: seconds,
+  };
+}
+
 export class Mouth {
   track: VisemeTrack | null;
   time: number;
@@ -208,14 +246,42 @@ export class Mouth {
     this.amplitude = 1;
   }
 
-  speak(text: string, opts?: VisemeOptions): number {
-    this.track = textToVisemes(text, opts);
+  /**
+   * Start on a finished track, whatever built it.
+   *
+   * The seam the whole layer is arranged around: an estimate from `text`, that
+   * estimate stretched to a measured take, or one day a track aligned mora by
+   * mora against the audio. All three arrive here and nothing below this line
+   * can tell which it got.
+   */
+  schedule(track: VisemeTrack): number {
+    this.track = track;
     this.time = 0;
-    return this.track.duration;
+    return track.duration;
+  }
+
+  speak(text: string, opts?: VisemeOptions): number {
+    return this.schedule(textToVisemes(text, opts));
   }
 
   stop(): void {
     this.track = null;
+  }
+
+  /**
+   * Put the track's clock where the audio actually is.
+   *
+   * Frames drop and audio does not. Left to accumulate `dt`, the mouth drifts
+   * against the take by however much the renderer stalled, and it drifts one
+   * way — a frame is never delivered early. Cues ride this same clock, so they
+   * are corrected by the same call.
+   *
+   * `update` still adds the frame's own `dt` on top, which puts the mouth where
+   * the audio will be when the frame is *shown* rather than where it was when
+   * the frame was built. That is the wanted half-frame, not an off-by-one.
+   */
+  sync(seconds: number): void {
+    this.time = seconds;
   }
 
   /** External audio envelope, 0..1. Scales mouth travel when driving from TTS. */

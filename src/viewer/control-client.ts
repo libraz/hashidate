@@ -105,8 +105,24 @@ export class ControlClient {
     this.onStatus(s);
   }
 
+  /**
+   * Open the command stream, if one is not open already.
+   *
+   * Both guards below are load-bearing, and the failure they prevent is one
+   * stream per server restart rather than one stream. `onerror` fires more than
+   * once for a single dropped connection, so a reconnect scheduled without
+   * cancelling the last one lands twice, and each landing built another
+   * `EventSource` over the top of the previous — which stayed subscribed,
+   * because only the reference was replaced. Nothing looked wrong from the
+   * viewer: the commands still arrived, they just arrived on every stream at
+   * once, and the server's viewer count climbed with every restart.
+   */
   private connect(): void {
-    if (this.stopped) return;
+    if (this.stopped || this.source) return;
+    if (this.retry !== null) {
+      clearTimeout(this.retry);
+      this.retry = null;
+    }
     const src = new EventSource(`${this.base}/stream`);
     this.source = src;
 
@@ -133,9 +149,16 @@ export class ControlClient {
     };
 
     src.onerror = () => {
+      // Only the stream that is actually current may tear itself down. A late
+      // error from one already replaced would otherwise drop the live one.
+      if (this.source !== src) {
+        src.close();
+        return;
+      }
       this.setStatus('offline');
       src.close();
       this.source = null;
+      if (this.retry !== null) clearTimeout(this.retry);
       this.retry = setTimeout(() => this.connect(), RETRY_DELAY);
     };
   }
@@ -192,9 +215,11 @@ export class ControlClient {
         s.say({
           id: c.id,
           text: c.text,
+          reading: c.reading,
           emotion: c.emotion,
           expression: c.expression,
           gesture: c.gesture,
+          perform: c.perform,
           hold: c.hold,
         });
         return;
@@ -218,9 +243,16 @@ export class ControlClient {
       case 'reset':
         s.resetExpression();
         return;
+      // No id means release, on the same rule as `gesture` below.
+      case 'perform':
+        s.perform(c.id ?? null);
+        return;
       case 'gesture':
         if (c.id) s.gesture(c.id);
         else s.stopGesture();
+        return;
+      case 'hop':
+        s.hop(c.hop);
         return;
       // No bearing means "stop pointing", for the same reason `gesture` with no
       // id means "stop": one command, and the release is not a second verb the

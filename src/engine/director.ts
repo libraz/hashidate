@@ -19,15 +19,22 @@ import {
   composeNative,
   dominantEmotion,
   Mouth,
+  scaleTrack,
+  textToVisemes,
 } from './face';
-import { Body, type PointCommand } from './motion';
+import { Body, HOPS, type HopDef, type PointCommand } from './motion';
+import {
+  holdsUntilReleased,
+  type PerformanceDef,
+  type PerformanceId,
+  performanceDef,
+} from './performance';
 import { Rig } from './rig';
 import { Spring, Tail } from './secondary';
 import type {
   AvatarDescriptor,
   EmotionName,
   EmotionVector,
-  GestureGroup,
   LabelledId,
   Profile,
   Side,
@@ -46,31 +53,31 @@ export interface DirectorContext {
 const pickOne = <T>(xs: T[]): T => xs[Math.floor(Math.random() * xs.length)];
 
 /**
- * Moods the autopilot draws from. Weighted by repetition rather than by a
- * number: an idle stream is mostly calm, and drawing uniformly from the whole
- * emotion table gives a character who cycles through rage and shock every
- * fifteen seconds.
+ * What the autopilot draws from, weighted by repetition rather than by a number:
+ * the rows show the weighting, which a table of probabilities does not.
+ *
+ * Performances rather than moods and gestures picked separately. Choosing the
+ * two independently is what produced the tell this replaced — a character whose
+ * face and hands were reliably about different things, waving cheerfully while
+ * looking thoughtful, because nothing ever related the two choices.
+ *
+ * Mostly quiet, on purpose. An idle stream is a character standing there being
+ * in some mood, punctuated by something; the `mood` rows are that standing, and
+ * they outnumber everything else three to one. Poses are in the pool and sulking
+ * and startlement are not — a held pose is fine because the next pick releases
+ * it, whereas a character who is periodically furious at nothing is not.
  */
 // biome-ignore format: the repetition is the weighting, and the rows show it
-const AUTO_MOODS: EmotionName[] = [
-  'neutral', 'neutral', 'neutral',
-  'relaxed', 'relaxed', 'relaxed',
-  'joy', 'joy',
-  'thinking', 'thinking',
-  'shy', 'surprise', 'sadness', 'anger',
+const AUTO_ACTS: PerformanceId[] = [
+  'calm', 'calm', 'calm', 'calm',
+  'blank', 'blank', 'blank',
+  'wonder', 'wonder',
+  'bashful', 'gloomy',
+  'agree', 'agree', 'curious', 'curious', 'ponder', 'dunno', 'interested',
+  'giggle', 'peace', 'applause',
+  'shy', 'catPaw', 'sparkle', 'secret', 'sleepy', 'refresh', 'bouncy', 'plead',
+  'polite', 'bored', 'guarded', 'nice', 'love', 'listening',
 ];
-
-/** Which gesture groups suit a mood. Falls back to the neutral row. */
-const MOOD_GESTURES: Record<EmotionName, GestureGroup[]> = {
-  neutral: ['reaction', 'cute', 'greeting'],
-  relaxed: ['cute', 'reaction'],
-  joy: ['emote', 'greeting', 'cute'],
-  thinking: ['reaction'],
-  shy: ['cute', 'reaction'],
-  surprise: ['emote', 'reaction'],
-  sadness: ['reaction', 'cute'],
-  anger: ['emote', 'reaction'],
-};
 
 /** What the current state asks the authored-face channel for, and how strongly. */
 interface WantedPreset {
@@ -91,8 +98,6 @@ export class Director {
   target: EmotionVector;
   emotionRate: number;
 
-  /** autopilot: mood, expression and gesture */
-  auto: boolean;
   useArkit: boolean;
 
   readonly presets: ExpressionPreset[];
@@ -125,6 +130,14 @@ export class Director {
   private _faceTimer = 0;
   private _autoTimer = 4;
 
+  /** autopilot: performances, and the avatar's own faces between them */
+  private _auto = false;
+
+  /** The performance in flight, and what it will have to put back. */
+  private _act: string | null = null;
+  private _actOverlays: string[] = [];
+  private _lookBefore: number | null = null;
+
   /** mesh -> Map<index, value> for this frame */
   private _morphs = new Map<THREE.Mesh, Map<number, number>>();
   /** mesh -> Set<index> written last frame */
@@ -153,7 +166,6 @@ export class Director {
     this.target = { neutral: 1 };
     this.emotionRate = 3.5;
 
-    this.auto = false;
     this.useArkit = profile.arkit.supported;
 
     // The avatar's own finished expressions, if it ships any. Discovered from
@@ -175,6 +187,26 @@ export class Director {
     // from here directly.
     const mapped = new Set(Object.values(this._emotionPreset));
     this._extraFaces = this.presets.map((x) => x.id).filter((id) => !mapped.has(id));
+  }
+
+  /**
+   * The idle autopilot.
+   *
+   * Turning it off releases whatever it was holding. It picks sustained
+   * performances — a character who folds their arms for a while is exactly what
+   * an idle stream looks like — and those hold until something replaces them,
+   * so switching the autopilot off has to be the thing that replaces the last
+   * one. Without this a turn that starts while the autopilot happens to be
+   * mid-pose delivers its whole line with the arms still folded.
+   */
+  get auto(): boolean {
+    return this._auto;
+  }
+
+  set auto(on: boolean) {
+    if (on === this._auto) return;
+    this._auto = on;
+    if (!on) this.releaseAct();
   }
 
   /** Current blink weight, 0..1. Read by the HUD. */
@@ -249,6 +281,10 @@ export class Director {
    * whoever is watching, and clearing part of it leaves a face on screen.
    */
   resetExpression(): void {
+    // Including whatever a performance is holding — closed lids and a dropped
+    // gaze are part of "the expression" to whoever is watching, and a reset
+    // that leaves the eyes shut is not one.
+    this.releaseAct();
     this._manualPreset = null;
     this._autoPreset = null;
     this._overlay.clear();
@@ -258,8 +294,20 @@ export class Director {
     this._faceTimer = 3 + Math.random() * 3;
   }
 
-  speak(text: string): number {
-    return this.mouth.speak(text);
+  /**
+   * Start the mouth on a line. `reading` is the kana pronunciation and wins
+   * when given — the viseme track is built from sound, not from spelling, and
+   * only the caller knows how "3件" is meant to be said.
+   *
+   * `seconds` is how long the line *actually* lasts, when that is known because
+   * it has already been synthesised. Given, it replaces the estimate rather
+   * than correcting it: the track keeps the shape the text implies and is
+   * stretched onto the real length, which is what makes the mouth stop when the
+   * voice does instead of a quarter-second early on every turn.
+   */
+  speak(text: string, reading?: string, seconds?: number): number {
+    const track = textToVisemes(reading ?? text);
+    return this.mouth.schedule(seconds === undefined ? track : scaleTrack(track, seconds));
   }
 
   gesture(id: string): void {
@@ -267,11 +315,86 @@ export class Director {
   }
 
   /**
-   * A small hop. Distinct from a gesture — it moves the whole skeleton rather
+   * A run of hops. Distinct from a gesture — it moves the whole skeleton rather
    * than posing it, and runs alongside whatever the arms are doing.
+   *
+   * No id is the plain single hop; an id the table does not have is ignored,
+   * rather than falling back to that hop. The two are different requests, and a
+   * caller naming a pattern that no longer exists wants to see nothing happen.
    */
-  jump(height?: number): void {
-    this.body.jump(height);
+  hop(id?: string): void {
+    if (id === undefined) {
+      this.body.hop();
+      return;
+    }
+    if (!Object.hasOwn(HOPS, id)) return;
+    this.body.hop((HOPS as Record<string, HopDef>)[id]);
+  }
+
+  /**
+   * Play a named performance: a face and a movement together. `null` releases
+   * the current one.
+   *
+   * This is the API an orchestrator is meant to use, and the one the autopilot
+   * uses. The pieces underneath it stay reachable — an orchestrator that wants
+   * an emotion this table has no name for still sets the vector directly — but
+   * everything a character routinely does has a name here.
+   */
+  perform(id: string | null): void {
+    this.releaseAct();
+    if (!id) return;
+    const def = performanceDef(id);
+    if (!def) return;
+    this._act = id;
+
+    this.setEmotion(def.emotion);
+    // An explicit pick is what the caller asked for and outranks a mood, so a
+    // performance has to clear one or the face it names never appears.
+    this._manualPreset = null;
+    this._autoPreset = null;
+
+    for (const overlay of def.overlay ?? []) {
+      if (!this.overlayIds.has(overlay)) continue;
+      this.setOverlay(overlay, 1);
+      this._actOverlays.push(overlay);
+    }
+    if (def.droop !== undefined) this.#blink.droop = def.droop;
+    if (def.look !== undefined) {
+      this._lookBefore = this.body.lookAt;
+      this.body.lookAt = def.look;
+    }
+    if (def.gesture) this.body.play(def.gesture);
+    if (def.hop) this.hop(def.hop);
+  }
+
+  /** Which performance is up, or null. Cleared as soon as one is released. */
+  get performance(): string | null {
+    return this._act;
+  }
+
+  /**
+   * Put back what the current performance changed, leaving the mood.
+   *
+   * Only the things it explicitly took: a gesture that ends on its own is left
+   * alone rather than cut short, because releasing a performance is not a stop
+   * button — `interrupt` is. What is undone here is the state a performance
+   * would otherwise leave behind forever.
+   */
+  private releaseAct(): void {
+    if (!this._act) return;
+    const def: PerformanceDef | null = performanceDef(this._act);
+    this._act = null;
+    for (const overlay of this._actOverlays) this.setOverlay(overlay, 0);
+    this._actOverlays = [];
+    if (!def) return;
+    if (def.droop !== undefined) this.#blink.droop = 0;
+    if (this._lookBefore !== null) {
+      this.body.lookAt = this._lookBefore;
+      this._lookBefore = null;
+    }
+    if (holdsUntilReleased(def) && def.gesture && this.body.gesture?.id === def.gesture) {
+      this.body.stopGesture();
+    }
   }
 
   /**
@@ -353,58 +476,64 @@ export class Director {
   // only show up when it is left running.
 
   private autopilot(dt: number): void {
-    if (!this.auto) return;
+    if (!this._auto) return;
+    this.autoAct(dt);
     this.autoFace(dt);
-    this.autoGesture(dt);
   }
 
+  /**
+   * One channel, one pick.
+   *
+   * Face and body used to be chosen on two independent timers, which is what
+   * made the idle read as two unrelated animations sharing a body. A
+   * performance decides both at once, so whatever the character does, they are
+   * plausibly feeling it.
+   */
+  private autoAct(dt: number): void {
+    this._autoTimer -= dt;
+    if (this._autoTimer > 0) return;
+    // Nothing is cut short: a pick waits for a running gesture to finish rather
+    // than crossfading out of it.
+    //
+    // Only for one that *will* finish, though. A sustained pose ends when
+    // something releases it and never otherwise, so waiting on one is waiting
+    // for good — and this is the thing that would eventually have released it.
+    // Asking the running gesture rather than asking whether the *performance*
+    // holds is what makes that true whoever started it: an operator pressing a
+    // pose on the panel, or a `gesture` command off the wire, leaves a held
+    // pose behind that no performance owns, and the autopilot has to be able to
+    // move on from that too.
+    const running = this.body.gesture;
+    if (running && !running.def.sustain && !running.released) {
+      this._autoTimer = 1.2;
+      return;
+    }
+    this.perform(pickOne(AUTO_ACTS));
+    // Long enough that a pose is a pose rather than a flicker, uneven enough
+    // that the rotation does not become a beat the viewer can count along with.
+    this._autoTimer = 5.5 + Math.random() * 7;
+  }
+
+  /**
+   * The avatar's own extra vocabulary: authored faces that no canonical emotion
+   * maps to, so a performance cannot reach them and nothing else will.
+   *
+   * A second channel and a slower one. It only ever puts a face on top of
+   * whatever the body is already doing, which is why it can run beside the
+   * performance channel without the two disagreeing.
+   */
   private autoFace(dt: number): void {
     // An explicit pick outranks the autopilot and holds until it is cleared.
-    if (this._manualPreset) return;
+    if (this._manualPreset || !this._extraFaces.length) return;
     this._faceTimer -= dt;
     if (this._faceTimer > 0) return;
-    // Held long enough to be read, varied enough not to look scheduled. Faces
-    // that read as a reaction wear out faster than a resting mood, so the
-    // stronger the pick the shorter it is held.
-    const roll = Math.random();
-
-    if (roll < 0.28 && this._extraFaces.length) {
-      // The avatar's extra vocabulary: authored faces no canonical emotion maps
-      // to. Unreachable through setEmotion, so the autopilot reaches them here
-      // or they never appear at all.
+    if (Math.random() < 0.45) {
       this._autoPreset = pickOne(this._extraFaces);
-      this.setEmotion({ neutral: 1 });
       this._faceTimer = 3.5 + Math.random() * 3;
     } else {
       this._autoPreset = null;
-      // A mood, not a single emotion: a trace of a second one keeps the
-      // composed face off the exact centre of the table.
-      const name = pickOne(AUTO_MOODS);
-      const vec: EmotionVector = { [name]: 0.65 + Math.random() * 0.35 };
-      if (name !== 'neutral' && Math.random() < 0.45) {
-        const other = pickOne(AUTO_MOODS.filter((m) => m !== name));
-        vec[other] = 0.15 + Math.random() * 0.2;
-      }
-      this.setEmotion(vec);
-      this._faceTimer = 5 + Math.random() * 6;
+      this._faceTimer = 7 + Math.random() * 8;
     }
-  }
-
-  private autoGesture(dt: number): void {
-    this._autoTimer -= dt;
-    if (this._autoTimer > 0 || this.body.gesture) return;
-    // Explanatory gestures while talking, reactions and idle business while
-    // listening, and within that a group that suits the current mood. Drawing
-    // from a group rather than a hardcoded list means a gesture added to the
-    // table joins the rotation without touching this.
-    // Poses are excluded: they hold until released, which is not something an
-    // automatic rotation should be deciding to do.
-    const groups: GestureGroup[] = this.mouth.speaking
-      ? ['explain', 'emote']
-      : (MOOD_GESTURES[dominantEmotion(this.emotion)] ?? MOOD_GESTURES.neutral);
-    const id = this.body.pickGesture(groups);
-    if (id) this.body.play(id);
-    this._autoTimer = 4 + Math.random() * 5;
   }
 
   // --- native expression presets -----------------------------------------

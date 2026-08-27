@@ -21,9 +21,10 @@ const SWITCH_CASES: Record<CommandName, Command[]> = {
       emotion: { joy: 0.8, surprise: 0.2 },
       expression: 'F_DOYA',
       gesture: 'wave',
+      perform: 'hello',
       hold: true,
     },
-    { cmd: 'say', emotion: null, expression: null, gesture: null },
+    { cmd: 'say', emotion: null, expression: null, gesture: null, perform: null },
     { cmd: 'say' },
   ],
   interrupt: [{ cmd: 'interrupt' }, { cmd: 'interrupt', id: 'c-1' }],
@@ -44,7 +45,9 @@ const SWITCH_CASES: Record<CommandName, Command[]> = {
     { cmd: 'overlay', id: 'FX_BLUSH', on: false },
   ],
   reset: [{ cmd: 'reset' }, { cmd: 'reset', id: 'c-3' }],
+  perform: [{ cmd: 'perform', id: 'happy' }, { cmd: 'perform', id: null }, { cmd: 'perform' }],
   gesture: [{ cmd: 'gesture', id: 'wave' }, { cmd: 'gesture' }],
+  hop: [{ cmd: 'hop', hop: 'bounce' }, { cmd: 'hop', id: 'c-4' }, { cmd: 'hop' }],
   point: [
     { cmd: 'point', side: 'L', azimuth: 40, elevation: -10, extent: 0.5, finger: 'thumb' },
     { cmd: 'point', azimuth: 0 },
@@ -273,6 +276,27 @@ describe('say', () => {
     expect(parsed).toMatchObject({ id: 'turn-9' });
   });
 
+  // The four combinations of the two fields, in full: the space is small enough
+  // that enumerating it beats sampling it, and `reading ?? text` is exactly the
+  // kind of fallback that gets one of the four wrong.
+  it.each([
+    { text: '3件', reading: 'さんけん' },
+    { text: '3件', reading: undefined },
+    { text: undefined, reading: 'さんけん' },
+    { text: undefined, reading: undefined },
+  ])('carries text and reading independently ($text / $reading)', ({ text, reading }) => {
+    const parsed = parseCommand({ cmd: 'say', text, reading });
+    expect(parsed).toEqual({
+      cmd: 'say',
+      ...(text === undefined ? {} : { text }),
+      ...(reading === undefined ? {} : { reading }),
+    });
+  });
+
+  it('rejects a non-string reading rather than dropping it, so a bad one is loud', () => {
+    expect(parseCommand({ cmd: 'say', text: 'あ', reading: 42 })).toBeNull();
+  });
+
   it('accepts an explicit null emotion, which is not the same as omitting it', () => {
     expect(parseCommand({ cmd: 'say', text: 'あ', emotion: null })).toEqual({
       cmd: 'say',
@@ -286,6 +310,53 @@ describe('say', () => {
       cmd: 'say',
       text: '',
       gesture: 'nod',
+    });
+  });
+});
+
+describe('cues in a line', () => {
+  it('carries the markup through untouched, because the renderer is what strips it', () => {
+    // The wire is not the place to take it out. The server forwards a parsed
+    // command on unchanged, so a schema that transformed here would hand the
+    // viewer a line the caller never sent.
+    const text = '[hello]こんばんは。[explain]今日はこの話をします。';
+    expect(parseCommand({ cmd: 'say', text })).toEqual({ cmd: 'say', text });
+  });
+
+  it('accepts an id no performance table has, exactly as `perform` does', () => {
+    // Ids are avatar- and engine-data on this wire and stay plain strings. A cue
+    // held to a stricter rule than the field it is the inline form of would be a
+    // second vocabulary to keep in step.
+    expect(parseCommand({ cmd: 'say', text: '[nosuchthing]あ' })).toMatchObject({
+      text: '[nosuchthing]あ',
+    });
+    expect(parseCommand({ cmd: 'say', text: 'あ', perform: 'nosuchthing' })).toMatchObject({
+      perform: 'nosuchthing',
+    });
+  });
+
+  it.each([
+    ['unclosed', 'こんばんは[happy'],
+    ['unopened', 'こんばんは]です'],
+    ['empty', 'あ[]い'],
+    ['not an id', 'あ[笑]い'],
+    ['spaced', 'あ[hello world]い'],
+    ['nested', 'あ[hello[explain]い'],
+    ['doubled', 'あ[[hello]]い'],
+  ])('drops a say whose markup is %s, so nothing of it is read out', (_kind, text) => {
+    // Dropped and not repaired. The renderer would strip it safely either way —
+    // nothing in brackets is ever spoken — but silently saying less than was
+    // written is its own failure, and a dropped command is one the caller is
+    // told about: a batch of only this answers 400.
+    expect(parseCommand({ cmd: 'say', text })).toBeNull();
+  });
+
+  it('refuses a bracket in the reading rather than removing it', () => {
+    // A cue is a position in the line and the reading is not the line. One
+    // written here would do nothing at all, which is worse than being refused.
+    expect(parseCommand({ cmd: 'say', text: 'あ', reading: '[happy]あ' })).toBeNull();
+    expect(parseCommand({ cmd: 'say', text: '[happy]あ', reading: 'あ' })).toMatchObject({
+      reading: 'あ',
     });
   });
 });

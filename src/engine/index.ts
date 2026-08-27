@@ -12,10 +12,12 @@
  */
 
 export * from './anatomy';
+export * from './cues';
 export type { DirectorContext } from './director';
 export { Director } from './director';
 export * from './face';
 export * from './motion';
+export * from './performance';
 export * from './profile';
 export * from './rig';
 export * from './scene';

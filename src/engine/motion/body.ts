@@ -16,10 +16,12 @@ import type {
   SpineSlot,
   Vec3Tuple,
 } from '../types';
+import { DirFollower, ScalarFollower } from './follow';
 import { Gaze } from './gaze';
-import { BASE_FINGERS, BASE_PALM, BASE_POSE, GESTURES, POINT_HAND } from './gestures';
-import { breathCurve, DEFAULT_VARIATION, saturate, settle, smoothstep } from './idle';
-import { type JumpArc, planJump, sampleJump } from './jump';
+import { BASE_FINGERS, BASE_PALM, BASE_POSE, GESTURES, pointHand } from './gestures';
+import { breathCurve, DEFAULT_VARIATION, saturate, settle } from './idle';
+import { type HopSpec, type JumpArc, planJump, sampleJump } from './jump';
+import { FINGER_ONSET, LINK_ONSET, minJerk, onset, reachEnvelope } from './timing';
 
 /**
  * Body layer: base pose, idle life (breathing / sway / head / gaze), and the
@@ -55,8 +57,8 @@ const DRIFT_WEIGHT: Record<ArmSlot, number> = {
  * The target is not continuous and cannot be made so: switching gestures moves
  * it by a large angle in a single frame, and a gesture starting moves it fast
  * while its envelope rises. Blending between poses does not fix that — it only
- * decides *which* discontinuous target is in force. A first-order follow does,
- * because no step in the target survives it.
+ * decides *which* discontinuous target is in force. A follower does, because no
+ * step in the target survives one.
  *
  * The cutoff sits above the fastest authored oscillation (`deny` swings at
  * ~1.4 Hz), so gestures keep their snap; only steps are removed. The value is a
@@ -64,9 +66,36 @@ const DRIFT_WEIGHT: Record<ArmSlot, number> = {
  * distance to target, so 13 puts a worst-case switch near 11°/frame while
  * costing a 1.2 Hz swing about 13% of its amplitude. Fingers follow slightly
  * slower because a hand changing shape reads as one motion.
+ *
+ * Quoted in first-order terms, which is how they were measured; `follow.ts`
+ * converts. The filter itself is second-order — see there for why.
  */
 const ARM_FOLLOW = 13;
 const FINGER_FOLLOW = 13;
+
+/**
+ * How fast the limb follows while a reach is carrying the wrist through the
+ * room.
+ *
+ * The follower exists to take steps out of a target that jumps. A travelling
+ * reach has no steps in it: the target is interpolated from where the wrist
+ * already was, on a curve that is smooth in position, velocity and
+ * acceleration. So there is nothing left for the filter to do, and what it does
+ * instead is bend the path — a lag in *direction* space pulls the hand off the
+ * curve it was being sent along, and the arm arrives at each frame's target one
+ * pose behind, which is the one thing a travelling reach must not do.
+ *
+ * Not switched off outright, because the first frame of a travel can still step:
+ * the elbow the search picks for the departure point need not be the one the
+ * arm was holding. At four times the standing rate that resolves inside three
+ * frames and the rest of the path runs where it was aimed.
+ */
+const TRAVEL_FOLLOW = ARM_FOLLOW * 4;
+
+/**
+ * Sides, in the order the arm loop walks them.
+ */
+const SIDES: readonly Side[] = ['L', 'R'];
 
 /**
  * Seconds of lead per radian the arms have to travel.
@@ -150,7 +179,24 @@ interface IdleEnv {
   br: number;
   d: number;
   armDrift: number;
-  kArm: number;
+  dt: number;
+}
+
+/**
+ * The two halves of a gesture's envelope, kept apart rather than multiplied.
+ *
+ * `blend` — their product — is what the pose is worth this frame and is all
+ * most of the layer needs. A reach that travels through the room needs them
+ * separately: the entrance says how far along its path the hand is, and only
+ * the exit may take the arm back off the pose. Multiplying first loses which of
+ * the two a falling weight came from, and a reach cannot tell a hand that has
+ * not set out yet from one that is being let go.
+ */
+interface Envelope {
+  /** 0 to 1 over the lead, then held. Never falls. */
+  entrance: number;
+  /** 1 until the gesture is let go, then back to 0. Never rises. */
+  exit: number;
 }
 
 /** What the director hands the body layer each frame. */
@@ -172,11 +218,28 @@ const mkVecs = (): Record<ArmSlot, THREE.Vector3> => ({
   hand: new THREE.Vector3(),
 });
 
-const mkState = (): Record<ArmSlot, THREE.Vector3> => ({
-  shoulder: BASE_POSE.shoulder.clone(),
-  upperArm: BASE_POSE.upperArm.clone(),
-  lowerArm: BASE_POSE.lowerArm.clone(),
-  hand: BASE_POSE.hand.clone(),
+const mkState = (): Record<ArmSlot, DirFollower> => ({
+  shoulder: new DirFollower(BASE_POSE.shoulder),
+  upperArm: new DirFollower(BASE_POSE.upperArm),
+  lowerArm: new DirFollower(BASE_POSE.lowerArm),
+  hand: new DirFollower(BASE_POSE.hand),
+});
+
+const mkFingerState = (): Record<FingerName, ScalarFollower> => ({
+  thumb: new ScalarFollower(BASE_FINGERS.thumb),
+  index: new ScalarFollower(BASE_FINGERS.index),
+  middle: new ScalarFollower(BASE_FINGERS.middle),
+  ring: new ScalarFollower(BASE_FINGERS.ring),
+  little: new ScalarFollower(BASE_FINGERS.little),
+});
+
+const mkEnv = (): Envelope => ({ entrance: 0, exit: 1 });
+
+const mkArmEnv = (): Record<ArmSlot, Envelope> => ({
+  shoulder: mkEnv(),
+  upperArm: mkEnv(),
+  lowerArm: mkEnv(),
+  hand: mkEnv(),
 });
 
 /**
@@ -267,10 +330,37 @@ export class Body {
 
   private _armDirs: Record<Side, Record<ArmSlot, Vec3Tuple>>;
   private _armVec: Record<Side, Record<ArmSlot, THREE.Vector3>>;
-  private _armState: Record<Side, Record<ArmSlot, THREE.Vector3>>;
+  private _armState: Record<Side, Record<ArmSlot, DirFollower>>;
   private _fingerSpec: Record<Side, Record<FingerName, number>>;
-  private _twist: Record<Side, number>;
+  private _fingerState: Record<Side, Record<FingerName, ScalarFollower>>;
+  private _twist: Record<Side, ScalarFollower>;
   private _reach: { cur: Record<Side, ArmSolution>; prev: Record<Side, ArmSolution> };
+
+  /**
+   * The current gesture's envelope, split per arm link by its onset delay, and
+   * the plain one everything else reads. Recomputed each frame; held on the
+   * instance only so the arm loop and the reach resolver see the same numbers.
+   */
+  private _env: Envelope;
+  private _armEnv: Record<ArmSlot, Envelope>;
+  private _fingerEnv: Envelope;
+
+  /**
+   * Where each wrist was standing when the current gesture started, and whether
+   * that is known for this side.
+   *
+   * A reach interpolates its target from here, so the hand crosses the room in
+   * a straight line instead of along whatever arc four independently blended
+   * link directions happen to trace. Captured once at the switch rather than
+   * tracked, because the departure point of a movement does not move.
+   */
+  private _wristFrom: Record<Side, THREE.Vector3>;
+  private _wristKnown: Record<Side, boolean>;
+  private _travelS: THREE.Vector3;
+  private _travelA: THREE.Vector3;
+  private _travelB: THREE.Vector3;
+  /** Whether the current gesture is carrying this side's hand through the room. */
+  private _travelling: Record<Side, boolean>;
 
   private _point: PointSolveSpec;
   private _pointDir: THREE.Vector3;
@@ -278,10 +368,10 @@ export class Body {
   private _anchor: THREE.Vector3;
   private _pole: THREE.Vector3;
 
-  private _palm: Record<Side, THREE.Vector3>;
+  private _palm: Record<Side, DirFollower>;
   private _palmTarget: THREE.Vector3;
   private _palmOut: Record<Side, Vec3Tuple>;
-  private _palmW: Record<Side, number>;
+  private _palmW: Record<Side, ScalarFollower>;
 
   private _tmp: THREE.Vector3;
   private _headTarget: THREE.Vector3;
@@ -360,7 +450,22 @@ export class Body {
     this._armVec = { L: mkVecs(), R: mkVecs() }; // composed target for this frame
     this._armState = { L: mkState(), R: mkState() }; // what the arm is actually doing
     this._fingerSpec = { L: { ...BASE_FINGERS }, R: { ...BASE_FINGERS } };
-    this._twist = { L: 0, R: 0 };
+    this._fingerState = {
+      L: mkFingerState(),
+      R: mkFingerState(),
+    };
+    this._twist = { L: new ScalarFollower(0), R: new ScalarFollower(0) };
+
+    this._env = mkEnv();
+    this._armEnv = mkArmEnv();
+    this._fingerEnv = mkEnv();
+
+    this._wristFrom = { L: new THREE.Vector3(), R: new THREE.Vector3() };
+    this._wristKnown = { L: false, R: false };
+    this._travelling = { L: false, R: false };
+    this._travelS = new THREE.Vector3();
+    this._travelA = new THREE.Vector3();
+    this._travelB = new THREE.Vector3();
 
     // Resolved IK output, one set per gesture slot so an outgoing reach and an
     // incoming one can both be live during a crossfade.
@@ -387,10 +492,14 @@ export class Body {
     // pole is built.
     this._pole = new THREE.Vector3();
 
-    this._palm = { L: BASE_PALM.clone(), R: BASE_PALM.clone() };
+    this._palm = { L: new DirFollower(BASE_PALM), R: new DirFollower(BASE_PALM) };
     this._palmTarget = new THREE.Vector3();
     this._palmOut = { L: [0, 0, 0], R: [0, 0, 0] };
-    this._palmW = { L: 1, R: 1 }; // how strongly the palm target is honoured
+    // How strongly the palm target is honoured. A weight on a constraint rather
+    // than something with a trajectory, so it is clamped where it is read: a
+    // filter with momentum can undershoot past zero, and a negative weight
+    // does not mean "less constrained", it means the palm faces backwards.
+    this._palmW = { L: new ScalarFollower(1), R: new ScalarFollower(1) };
 
     this._tmp = new THREE.Vector3();
     this._headTarget = new THREE.Vector3();
@@ -503,6 +612,66 @@ export class Body {
   }
 
   /**
+   * Move a reach's target back along the path the wrist is taking to it, to
+   * wherever the entrance has got to. In place.
+   *
+   * Interpolated about the shoulder — the bearing swung and the distance eased
+   * — and not along the straight line between the two points.
+   *
+   * A straight line is what the minimum-jerk result describes, and it is the
+   * right path for a reach out into the room. It is the wrong one for a reach
+   * that lands on the body. The straight line from a hand at the hip to a hand
+   * at the chin passes within a hand's breadth of the shoulder itself, and the
+   * two-link solve there is worthless: the elbow circle is enormous, the map
+   * from swivel to pose is near-vertical, and the arm has to fold past its own
+   * flexion stop to put the wrist on the line at all. Driven along it the wrist
+   * dived to within four centimetres of the shoulder with the elbow at 169
+   * degrees against a limit of 150, then snapped back out — a worse artefact
+   * than the wandering it was meant to fix.
+   *
+   * Swinging the bearing keeps the wrist on an arc that stays inside the
+   * reachable band the whole way, because both of its endpoints are, and it is
+   * also what an arm reaching to its own face does: the hand comes round rather
+   * than through. The result is still a straight line wherever the two ends sit
+   * at a similar distance from the shoulder, which is the case the minimum-jerk
+   * model was measured on.
+   */
+  private travelTarget(target: THREE.Vector3, side: Side, e: number): void {
+    const from = this._wristFrom[side];
+    const upper = this.p.bones[`upperArm.${side}`];
+    if (!upper) {
+      target.lerpVectors(from, target, e);
+      return;
+    }
+    upper.updateWorldMatrix(true, false);
+    const S = upper.getWorldPosition(this._travelS);
+    const a = this._travelA.copy(from).sub(S);
+    const b = this._travelB.copy(target).sub(S);
+    const ra = a.length();
+    const rb = b.length();
+    if (ra < 1e-6 || rb < 1e-6) {
+      target.lerpVectors(from, target, e);
+      return;
+    }
+    a.divideScalar(ra);
+    b.divideScalar(rb);
+
+    const angle = Math.acos(THREE.MathUtils.clamp(a.dot(b), -1, 1));
+    const sin = Math.sin(angle);
+    // Nothing to swing through, or the two bearings are opposed and every arc
+    // between them is as good as any other. Easing the distance alone is the
+    // whole answer in the first case and no worse than a guess in the second.
+    if (sin > 1e-6) {
+      a.multiplyScalar(Math.sin((1 - e) * angle) / sin).addScaledVector(
+        b,
+        Math.sin(e * angle) / sin,
+      );
+      a.normalize();
+    }
+    target.copy(S).addScaledVector(a, ra + (rb - ra) * e);
+  }
+
+  /**
    * The arm spec for one side of a gesture pose: authored directions, the
    * solved result of a `reach`, or the back-solved result of a `point`. All
    * three come back in character space, so the blend path downstream cannot
@@ -513,6 +682,7 @@ export class Body {
     side: Side,
     mirror: number,
     slotName: 'cur' | 'prev',
+    timed = false,
   ): ResolvedArm | null {
     const pt = pose?.point?.[side];
     if (pt) {
@@ -557,11 +727,35 @@ export class Body {
     // anchor is what the first version did, and it buries the whole hand: the
     // anchor sits on the skin, so the palm and fingers continue on into it.
     // Every one of the face-touching gestures came out with the hand inside the
-    // head, and no choice of elbow could fix it — sampling the elbow circle for
-    // `hairTouch`, the *shallowest* candidate was still 28% inside. The elbow
-    // has no authority over where the wrist is.
+    // head, and no choice of elbow could fix it — sampling the whole elbow
+    // circle for a hand held beside the temple, the *shallowest* candidate was
+    // still 28% inside. The elbow has no authority over where the wrist is.
     const target = this.reachTarget(r, side, mirror);
     if (!target) return pose?.arms?.[side] ?? null;
+
+    // Carry the wrist through the room rather than through joint space.
+    //
+    // Solving at the final anchor every frame and blending the four link
+    // directions toward the answer is what this did before, and it leaves the
+    // hand's path in the room as a by-product: four unit vectors each turning
+    // at its own rate trace a path nobody chose, and the hand wanders on its
+    // way. People do the opposite — the hand goes where it is going and the
+    // joint angles are whatever that requires.
+    //
+    // So the *target* interpolates and the solver runs on the interpolated
+    // point. Departure is where the wrist actually was when the gesture
+    // started, so this composes with whatever the arm was doing rather than
+    // starting from a rest pose it may be nowhere near.
+    //
+    // On the entrance only. Coming off a pose the arm blends back the old way,
+    // because a retreat has nowhere in particular to be and the release ramp
+    // already governs it.
+    if (timed && this._wristKnown[side]) {
+      const e = this._armEnv.hand.entrance;
+      if (e < 1) this.travelTarget(target, side, e);
+      this._travelling[side] = true;
+    }
+
     const out = this._reach[slotName][side];
     const hint = r.hand
       ? this._pointDir.set(r.hand[0] * mirror, r.hand[1], r.hand[2]).normalize()
@@ -612,21 +806,26 @@ export class Body {
    * Blend one arm slot's direction for this frame and write it into `_armDirs`.
    *
    * `pDir`/`cDir` are the outgoing and incoming gesture's directions for this
-   * slot, either of which may be absent.
+   * slot, either of which may be absent. `pw`/`cw` are what each is worth this
+   * frame — per slot rather than per gesture, because the links of a limb do
+   * not start together.
    */
   private composeArmDir(
     slot: ArmSlot,
     side: Side,
     mirror: number,
     env: IdleEnv,
-    pDir?: THREE.Vector3,
-    cDir?: THREE.Vector3,
+    pDir: THREE.Vector3 | undefined,
+    cDir: THREE.Vector3 | undefined,
+    pw: number,
+    cw: number,
+    rate = ARM_FOLLOW,
   ): Vec3Tuple {
     const v = this._armVec[side][slot].copy(BASE_POSE[slot]);
     // Outgoing first, then incoming: the incoming gesture takes over as its
     // blend rises, and the two never both sit at full weight.
-    if (pDir) v.lerp(pDir, this.prevBlend).normalize();
-    if (cDir) v.lerp(cDir, this.blend).normalize();
+    if (pDir) v.lerp(pDir, pw).normalize();
+    if (cDir) v.lerp(cDir, cw).normalize();
 
     // Breathing and idle drift are added *after* the gesture blend, not before
     // it. Folding them into the base pose means a gesture at full strength
@@ -642,7 +841,7 @@ export class Body {
     v.normalize();
 
     // Follow the target instead of snapping to it. See ARM_FOLLOW.
-    const s = this._armState[side][slot].lerp(v, env.kArm).normalize();
+    const s = this._armState[side][slot].step(v, env.dt, rate);
     const out = this._armDirs[side][slot];
     out[0] = s.x * mirror;
     out[1] = s.y;
@@ -680,15 +879,22 @@ export class Body {
     const az = (spec.azimuth ?? 0) * D;
     const el = (spec.elevation ?? 0) * D;
     const extent = spec.extent ?? 0.8;
+    const finger = spec.finger ?? 'index';
     const at: PointSpec = {
       azimuth: az,
       elevation: el,
       extent,
       mirror: false,
-      finger: spec.finger ?? 'index',
+      finger,
       point: spec.point ?? null,
       palm: spec.palm ?? null,
     };
+    // Shaped for the finger that was asked for, not for the index. The solver
+    // reads the fingertip's position off this curl, so a hand shaped to point
+    // with the wrong finger aims one that is folded into the palm — and the
+    // whole arm then travels to put that knuckle where the target is. Built
+    // once here rather than inside `build`, which runs every frame.
+    const hand = pointHand(finger);
     // Scaled by extent: turning the chest toward something the hand is not
     // actually reaching for reads as the whole character swivelling.
     const turn = az * 0.22 * extent;
@@ -701,7 +907,7 @@ export class Body {
       sustain: true,
       build: () => ({
         point: { [side]: at },
-        fingers: { [side]: POINT_HAND },
+        fingers: { [side]: hand },
         spine: {
           chest: [lean * 0.6, turn * 0.6, 0],
           spine: [lean * 0.4, turn * 0.4, 0],
@@ -751,6 +957,38 @@ export class Body {
       lead: Math.min(0.95, Math.max(def.lead, this.travel(def, v) * LEAD_PER_RAD)),
     };
     this.blend = 0;
+    this._env.entrance = 0;
+    this._env.exit = 1;
+    for (const slot of ARM_SLOTS) {
+      this._armEnv[slot].entrance = 0;
+      this._armEnv[slot].exit = 1;
+    }
+    this._fingerEnv.entrance = 0;
+    this._fingerEnv.exit = 1;
+    this.markDeparture();
+  }
+
+  /**
+   * Note where both wrists are standing, as the departure point for any reach
+   * the gesture about to start carries.
+   *
+   * Read off the posed bones rather than reconstructed from the blend state:
+   * what a movement leaves from is where the hand *is*, including everything
+   * the clamp and the secondary layers did to it, and not where the layer
+   * believes it asked for it to be.
+   */
+  private markDeparture(): void {
+    for (const side of SIDES) {
+      const hand = this.p.bones[`hand.${side}`];
+      this._travelling[side] = false;
+      if (!hand) {
+        this._wristKnown[side] = false;
+        continue;
+      }
+      hand.updateWorldMatrix(true, false);
+      hand.getWorldPosition(this._wristFrom[side]);
+      this._wristKnown[side] = true;
+    }
   }
 
   /** Largest angle any arm has to cover to reach the gesture's opening pose. */
@@ -764,7 +1002,7 @@ export class Body {
       for (const slot of ARM_SLOTS) {
         const dir = arm[slot];
         if (!dir) continue;
-        worst = Math.max(worst, this._armState[side][slot].angleTo(dir));
+        worst = Math.max(worst, this._armState[side][slot].dir.angleTo(dir));
       }
     }
     return worst;
@@ -786,9 +1024,12 @@ export class Body {
     return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
   }
 
-  /** Start a small hop. The arc it runs is `planJump`'s. */
-  jump(height: number = this.jumpHeight): void {
-    this._jump = planJump(height, this.gravity);
+  /**
+   * Start a run of hops. The arc it runs is `planJump`'s, and a run of more
+   * than one is continuous — see there for why it needs no gap between them.
+   */
+  hop({ height = this.jumpHeight, count = 1 }: Partial<HopSpec> = {}): void {
+    this._jump = planJump(height, this.gravity, count);
     this._jumpT = 0;
   }
 
@@ -846,14 +1087,36 @@ export class Body {
       const out = lead * 1.25;
       // A sustained pose holds at full weight until it is released.
       const held = def.sustain && !this.gesture.released;
-      let target: number;
       // Eased in and out. A linear ramp starts and stops with a visible corner,
       // which is exactly the frame the eye picks up as machine-driven.
-      if (t < lead) target = smoothstep(t / lead);
-      else if (held || t < lead + def.hold) target = 1;
-      else target = smoothstep(Math.max(0, 1 - (t - lead - def.hold) / out));
-      target *= variation.scale;
-      this.blend += (target - this.blend) * (1 - Math.exp(-dt * 14));
+      //
+      // The two phases are computed apart and multiplied at the end rather than
+      // being decided between: only one of them is ever off 1, so the product
+      // is the same number the branch used to produce, and a reach can ask
+      // which of the two a weight below 1 came from. See `Envelope`.
+      const xIn = lead > 0 ? Math.min(1, t / lead) : 1;
+      const xOut = held || t < lead + def.hold ? 1 : Math.max(0, 1 - (t - lead - def.hold) / out);
+      this._env.entrance = minJerk(xIn);
+      this._env.exit = minJerk(xOut);
+
+      // Per link, staggered outward along the limb and allowed to overshoot.
+      for (const slot of ARM_SLOTS) {
+        const e = this._armEnv[slot];
+        e.entrance = reachEnvelope(onset(xIn, LINK_ONSET[slot]));
+        e.exit = this._env.exit;
+      }
+      // No overshoot on a curl: a finger that opens past straight to settle
+      // back is a joint bending the wrong way, not a limb carrying momentum.
+      this._fingerEnv.entrance = minJerk(onset(xIn, FINGER_ONSET));
+      this._fingerEnv.exit = this._env.exit;
+
+      // The envelope *is* the weight, with nothing chasing it. It is already
+      // zero-velocity and zero-acceleration at both ends, so a lag on top adds
+      // nothing but lateness and an exponential tail that never quite arrives —
+      // and that tail was most of what made a finished gesture read as still
+      // settling into itself.
+      const target = this._env.entrance * this._env.exit * variation.scale;
+      this.blend = target;
       // Built from t=0, not from t-lead. Freezing the pose through the lead and
       // only starting the motion afterwards makes the gesture appear to begin
       // twice: once as the blend rises, again as the motion kicks in.
@@ -1035,14 +1298,24 @@ export class Body {
 
     // --- arms -------------------------------------------------------------
     const armDrift = 0.016 * idle;
-    const kArm = 1 - Math.exp(-dt * ARM_FOLLOW);
-    const kFinger = 1 - Math.exp(-dt * FINGER_FOLLOW);
+    const env: IdleEnv = { br, d, armDrift, dt };
+    const scale = variation.scale;
 
-    const env: IdleEnv = { br, d, armDrift, kArm };
+    /**
+     * What the current gesture is worth for one channel this frame.
+     *
+     * Per channel rather than one number for the whole gesture, because the
+     * links of a limb do not start together — `this.blend` is what the same
+     * expression gives for a channel with no onset delay of its own.
+     */
+    const plain = (e: Envelope): number => e.entrance * e.exit * scale;
 
-    for (const side of ['L', 'R'] as const) {
+    for (const side of SIDES) {
       const mirror = side === 'L' ? p.sideSign : -p.sideSign;
       const dirs = this._armDirs[side];
+      // Set by `resolveArm` below, for this frame only: whether the current
+      // gesture is carrying this hand through the room rather than posing it.
+      this._travelling[side] = false;
 
       // The shoulder is posed before the arm is solved, not with it. A reach
       // starts from the upper arm's world position, and posing the shoulder
@@ -1051,6 +1324,7 @@ export class Body {
       // exactly that, permanently: the shoulder is back at its rest orientation
       // by the time the next frame solves, so there is nothing to converge on.
       // Only authored directions are read here; a reach never states a shoulder.
+      const es = this._armEnv.shoulder;
       this.composeArmDir(
         'shoulder',
         side,
@@ -1058,6 +1332,8 @@ export class Body {
         env,
         gPrev?.arms?.[side]?.shoulder,
         g?.arms?.[side]?.shoulder,
+        this.prevBlend,
+        plain(es),
       );
 
       // Give the girdle its say before the shoulder is posed. Only for a reach,
@@ -1071,20 +1347,70 @@ export class Body {
       rig.aimShoulder(side, dirs.shoulder);
 
       const pArm = this.resolveArm(gPrev, side, mirror, 'prev');
-      const cArm = this.resolveArm(g, side, mirror, 'cur');
+      const cArm = this.resolveArm(g, side, mirror, 'cur', true);
+
+      /**
+       * A link is *carried* when a travelling reach is deciding where it goes,
+       * and blended when a pose is.
+       *
+       * Only the two links that decide where the wrist *is*. The hand's own
+       * direction is stated by the pose rather than solved from the target, so
+       * there is nothing about it the interpolated point has already eased —
+       * carrying it would put the wrist at the gesture's angle while the arm is
+       * still down by the hip, which is a request no wrist has the range for.
+       * It rides the staggered envelope with the palm and the twist instead.
+       *
+       * A carried link takes the incoming pose at full weight, because the
+       * entrance is already in the target: applying it twice would ease the arm
+       * toward a point that is itself still easing, and the hand would leave
+       * late and creep the last part of the way. Only the exit may take it back
+       * off. The amplitude variation goes too — a travel ends on an anchor that
+       * is a point on the body, and scaling a contact by 0.92 is a hand that
+       * stops short of the cheek it was reaching for. Variation belongs to the
+       * oscillations a gesture writes on top, and they still carry it.
+       *
+       * The outgoing gesture drops out entirely for the same reason: the travel
+       * departs from where the wrist actually was, which already includes
+       * whatever the outgoing pose was contributing. Crossfading it back in on
+       * top would count it twice.
+       */
+      const travelling = this._travelling[side];
+
       for (const slot of ARM_SLOTS) {
         if (slot === 'shoulder') continue;
-        this.composeArmDir(slot, side, mirror, env, pArm?.[slot], cArm?.[slot]);
+        const carried = travelling && slot !== 'hand';
+        this.composeArmDir(
+          slot,
+          side,
+          mirror,
+          env,
+          pArm?.[slot],
+          cArm?.[slot],
+          carried ? 0 : this.prevBlend,
+          carried ? this._armEnv[slot].exit : plain(this._armEnv[slot]),
+          carried ? TRAVEL_FOLLOW : ARM_FOLLOW,
+        );
       }
 
-      const twistTarget = (pArm?.twist ?? 0) * this.prevBlend + (cArm?.twist ?? 0) * this.blend;
-      this._twist[side] += (twistTarget - this._twist[side]) * kArm;
+      // The wrist's own channels ride the hand link's envelope: a palm roll and
+      // a forearm twist are part of the hand arriving, not of the arm setting
+      // out, and starting them with the shoulder is what made a hand appear to
+      // present itself before it had gone anywhere.
+      //
+      // Not travel-aware, unlike the limb directions above. A palm and a twist
+      // are stated by the pose rather than solved from the target, so there is
+      // nothing about them that the interpolated target has already eased —
+      // taking them at full weight from the first frame would be a step. They
+      // arrive late instead, which is what a wrist does.
+      const cw = plain(this._armEnv.hand);
+      const twistTarget = (pArm?.twist ?? 0) * this.prevBlend + (cArm?.twist ?? 0) * cw;
+      this._twist[side].step(twistTarget, dt, ARM_FOLLOW);
 
       // Palm direction blends and follows like the limb directions do.
       const pt = this._palmTarget.copy(BASE_PALM);
       if (pArm?.palm) pt.lerp(pArm.palm, this.prevBlend).normalize();
-      if (cArm?.palm) pt.lerp(cArm.palm, this.blend).normalize();
-      const ps = this._palm[side].lerp(pt, kArm).normalize();
+      if (cArm?.palm) pt.lerp(cArm.palm, cw).normalize();
+      const ps = this._palm[side].step(pt, dt, ARM_FOLLOW);
       const po = this._palmOut[side];
       po[0] = ps.x * mirror;
       po[1] = ps.y;
@@ -1096,23 +1422,24 @@ export class Body {
       // demands most of a half turn, which is where the wrist collapsed. Such a
       // pose releases the constraint as it blends in and the roll falls back to
       // whatever the aim itself produces.
-      let pw = 1;
-      if (pArm && !pArm.palm) pw -= this.prevBlend;
-      if (cArm && !cArm.palm) pw -= this.blend;
-      this._palmW[side] += (Math.max(0, pw) - this._palmW[side]) * kArm;
+      let hold = 1;
+      if (pArm && !pArm.palm) hold -= this.prevBlend;
+      if (cArm && !cArm.palm) hold -= cw;
+      const palmW = Math.max(0, this._palmW[side].step(Math.max(0, hold), dt, ARM_FOLLOW));
 
-      rig.aimArm(side, dirs, this._twist[side] * mirror, po, this._palmW[side]);
+      rig.aimArm(side, dirs, this._twist[side].value * mirror, po, palmW);
 
       const pf = gPrev?.fingers?.[side];
       const cf = g?.fingers?.[side];
       const spec = this._fingerSpec[side];
+      const fw = plain(this._fingerEnv);
       for (const f of FINGER_NAMES) {
         let val = BASE_FINGERS[f];
         const pv = pf?.[f];
         const cv = cf?.[f];
         if (pv !== undefined) val += (pv - val) * this.prevBlend;
-        if (cv !== undefined) val += (cv - val) * this.blend;
-        spec[f] += (val - spec[f]) * kFinger;
+        if (cv !== undefined) val += (cv - val) * fw;
+        spec[f] = this._fingerState[side][f].step(val, dt, FINGER_FOLLOW);
       }
       rig.curlHand(side, spec);
     }

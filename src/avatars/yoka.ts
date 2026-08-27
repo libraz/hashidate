@@ -66,7 +66,25 @@ export default {
     group: 'YOKA',
     label: (id: string) => id.replace(/^F_/, '').replace(/_/g, ' '),
     emotion: {
-      joy: 'F_NIKONIKO',
+      /**
+       * `F_NIKO` and not `F_NIKONIKO`, which is the obvious choice and the
+       * wrong one.
+       *
+       * These drawings include a mouth, and the viseme layer sets its own mouth
+       * shape on top rather than in place of it — the two are separate morphs
+       * that sum on the vertex. `F_NIKONIKO` is drawn as an open grin, so a line
+       * spoken over it opens a mouth that is already open: the jaw drops to the
+       * throat and the tongue is fully visible, on every vowel.
+       *
+       * It is reached by *any* joy at all, so that was the character's face for
+       * most of a stream — every greeting, every cheerful reaction. `F_NIKO` is
+       * the same smile with the mouth closed, and it leaves the visemes the
+       * whole of the travel.
+       *
+       * The grin is still there and still worth using; it is a face for a
+       * moment, asked for by name, rather than the one joy lands on by default.
+       */
+      joy: 'F_NIKO',
       anger: 'F_PUNPUN',
       sadness: 'F_IYAIYA',
       surprise: 'F_PAH',

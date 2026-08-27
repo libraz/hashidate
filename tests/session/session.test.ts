@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Director } from '@/engine/director';
+import { textToVisemes } from '@/engine/face';
 import { buildProfile } from '@/engine/profile';
 import { Wardrobe } from '@/engine/scene';
 import { Session } from '@/engine/session';
-import type { SessionEvent, SessionEventType, WardrobeTable } from '@/engine/types';
+import type { SessionEvent, SessionEventType, Take, Voice, WardrobeTable } from '@/engine/types';
 import { buildRig } from '../helpers/scene';
 
 /**
@@ -22,6 +23,9 @@ const TURN_GAP = 0.28;
 
 /** `IDLE_AFTER` in `session.ts`. */
 const IDLE_AFTER = 1.6;
+
+/** `VOICE_WAIT` in `session.ts`. */
+const VOICE_WAIT = 5;
 
 const FACES = ['F_DOYA', 'F_JITO', 'F_SUYASUYA'];
 const EFFECTS = ['FX_BLUSH', 'FX_TEARS'];
@@ -47,7 +51,16 @@ interface Harness {
   runUntil: (done: () => boolean, limit?: number) => void;
 }
 
-function build({ wardrobe = false, idle = false }: { wardrobe?: boolean; idle?: boolean } = {}) {
+function build({
+  wardrobe = false,
+  idle = false,
+  voice,
+}: {
+  wardrobe?: boolean;
+  idle?: boolean;
+  /** Handed the harness's own clock, so a fake take can run on simulated time. */
+  voice?: (now: () => number) => Voice;
+} = {}) {
   const rig = buildRig({
     groups: [
       ['Face', FACES],
@@ -62,12 +75,13 @@ function build({ wardrobe = false, idle = false }: { wardrobe?: boolean; idle?: 
     ...(wardrobe ? { wardrobe: WARDROBE } : {}),
   });
   const director = new Director(profile);
+  let clock = 0;
   const session = new Session(director, {
     wardrobe: wardrobe ? new Wardrobe(rig.root, profile, WARDROBE) : null,
     idle,
+    voice: voice?.(() => clock),
   });
 
-  let clock = 0;
   const step = (frames: number): void => {
     for (let i = 0; i < frames; i++) {
       session.update(DT);
@@ -180,6 +194,41 @@ describe('turn sequencing', () => {
     // early, every line, and the error would accumulate down the queue.
     expect(endedAt - startedAt).toBeGreaterThan(seconds + 0.19);
     expect(endedAt - startedAt).toBeLessThan(seconds + 0.24);
+  });
+
+  it('builds the viseme track from the reading when one is given, not from the text', () => {
+    const { session, runUntil } = build();
+    const seen: number[] = [];
+    session.on((ev) => {
+      if (ev.type === 'turn.start') seen.push(ev.seconds ?? 0);
+    });
+    // Written, the mouth has to guess: it counts each kanji as two morae, so
+    // 三件 comes out four beats long. The kana says it is さ-ん-け-ん, and the
+    // two ん are shorter than a full mora — a different length, which is the
+    // only way to tell from out here which string the track was built from.
+    session.say({ id: 'written', text: '三件' });
+    runUntil(() => !session.busy);
+    session.say({ id: 'read', text: '三件', reading: 'さんけん' });
+    runUntil(() => !session.busy);
+
+    const [written, read] = seen;
+    expect(written).toBeCloseTo(textToVisemes('三件').duration, 12);
+    expect(read).toBeCloseTo(textToVisemes('さんけん').duration, 12);
+    expect(read).not.toBeCloseTo(written, 3);
+  });
+
+  it('falls back to the text when no reading is given', () => {
+    const { session, runUntil } = build();
+    const seen: number[] = [];
+    session.on((ev) => {
+      if (ev.type === 'turn.start') seen.push(ev.seconds ?? 0);
+    });
+    session.say({ id: 'a', text: 'さんけん' });
+    runUntil(() => !session.busy);
+    session.say({ id: 'b', text: 'さんけん', reading: 'さんけん' });
+    runUntil(() => !session.busy);
+
+    expect(seen[0]).toBeCloseTo(seen[1], 12);
   });
 
   it('keeps the turn open while the mouth is still speaking past the estimate', () => {
@@ -488,8 +537,10 @@ describe('Session.state', () => {
         'gesture',
         'idle',
         'idleEnabled',
+        'hopping',
         'lookAt',
         'overlays',
+        'performance',
         'pickedExpression',
         'queued',
         'speaking',
@@ -508,7 +559,9 @@ describe('Session.state', () => {
       expression: null,
       pickedExpression: null,
       overlays: {},
+      performance: null,
       gesture: null,
+      hopping: false,
       strain: { L: 0, R: 0 },
     });
     expect(state.wardrobe).toEqual({ top: null });
@@ -549,10 +602,13 @@ describe('Session.vocabulary', () => {
       [
         'avatar',
         'cameras',
+        'cue',
         'emotions',
         'expressions',
         'gestures',
+        'hops',
         'overlays',
+        'performances',
         'pointing',
         'wardrobe',
         'wardrobePresets',
@@ -715,5 +771,640 @@ describe('turn ids', () => {
       session.say({ text: 'う' }),
     ];
     expect(new Set(ids).size).toBe(3);
+  });
+});
+
+describe('performances', () => {
+  it('sets the mood and plays the movement in one call', () => {
+    const { session, director, step } = build();
+    session.perform('happy');
+    step(2);
+    expect(session.state().performance).toBe('happy');
+    expect(director.target.joy).toBeGreaterThan(0.8);
+    expect(director.body.gesture?.id).toBe('cheer');
+    expect(director.body.jumping).toBe(true);
+    expect(session.state().hopping).toBe(true);
+  });
+
+  it('leaves the mood behind when it is released, and nothing else', () => {
+    // The one asymmetry in the whole layer, and the same rule a turn's emotion
+    // follows: a mood does not end with the thing that carried it.
+    const { session, director, step } = build();
+    session.perform('doze');
+    step(2);
+    expect(director.body.gesture?.id).toBe('doze');
+    session.perform(null);
+    step(2);
+    expect(session.state().performance).toBeNull();
+    expect(director.target.relaxed).toBeGreaterThan(0.5);
+    expect(director.body.gesture?.released).toBe(true);
+  });
+
+  it('puts back the lids and the gaze it took', () => {
+    const { session, director, step } = build();
+    session.lookAt(0.8);
+    session.perform('doze');
+    step(4);
+    expect(director.blink).toBeGreaterThan(0.9);
+    expect(director.body.lookAt).toBe(0);
+    session.perform(null);
+    step(4);
+    expect(director.blink).toBeLessThan(0.9);
+    expect(director.body.lookAt).toBe(0.8);
+  });
+
+  it('releases the last one when the next one starts', () => {
+    const { session, director, step } = build();
+    session.perform('bored');
+    step(2);
+    expect(director.body.gesture?.id).toBe('chin');
+    session.perform('agree');
+    step(2);
+    expect(session.state().performance).toBe('agree');
+    expect(director.body.gesture?.id).toBe('nod');
+  });
+
+  it('ignores an id the table does not have, rather than clearing what is up', () => {
+    const { session, step } = build();
+    session.perform('bored');
+    step(2);
+    session.perform('teleport');
+    step(2);
+    // The unknown id released the current one — a caller who names something
+    // that no longer exists gets a character standing still rather than one
+    // stuck in a pose they can no longer name to release.
+    expect(session.state().performance).toBeNull();
+  });
+
+  it('is cleared by resetExpression, lids and all', () => {
+    const { session, director, step } = build();
+    session.perform('doze');
+    step(4);
+    expect(director.blink).toBeGreaterThan(0.9);
+    session.resetExpression();
+    step(4);
+    expect(session.state().performance).toBeNull();
+    expect(director.blink).toBeLessThan(0.9);
+  });
+});
+
+describe('a turn that names a performance', () => {
+  it('applies it at the start and releases it at the end', () => {
+    const { session, director, step, runUntil } = build();
+    session.say({ id: 'a', text: 'あいうえお', perform: 'bored' });
+    step(2);
+    expect(session.state().performance).toBe('bored');
+    expect(director.body.gesture?.id).toBe('chin');
+    runUntil(() => !session.busy);
+    expect(session.state().performance).toBeNull();
+  });
+
+  it('keeps it up when the turn asks to hold', () => {
+    const { session, runUntil } = build();
+    session.say({ id: 'a', text: 'あいうえお', perform: 'bored', hold: true });
+    runUntil(() => !session.busy);
+    expect(session.state().performance).toBe('bored');
+  });
+
+  it('lets the turn override one part of what the performance set', () => {
+    const { session, director, step } = build();
+    session.say({ id: 'a', text: 'あい', perform: 'happy', gesture: 'wave' });
+    step(2);
+    // The performance still set the mood and the hops; only the arms differ.
+    expect(director.target.joy).toBeGreaterThan(0.8);
+    expect(director.body.jumping).toBe(true);
+    expect(director.body.gesture?.id).toBe('wave');
+  });
+
+  it('does not reach back and cancel a performance something else set later', () => {
+    const { session, step, runUntil } = build();
+    session.say({ id: 'a', text: 'あい', perform: 'bored' });
+    step(2);
+    session.perform('guarded');
+    runUntil(() => !session.busy);
+    expect(session.state().performance).toBe('guarded');
+  });
+
+  it('drops a held pose the autopilot was in before the line starts', () => {
+    // The autopilot picks sustained poses, and a line delivered with the arms
+    // still folded from the last idle pick is the bug this ordering removes.
+    const { session, director, step } = build({ idle: true });
+    step(Math.ceil((IDLE_AFTER + 1) / DT));
+    director.perform('guarded');
+    step(2);
+    expect(director.body.gesture?.id).toBe('armCross');
+    session.say({ id: 'a', text: 'あいうえお' });
+    step(2);
+    expect(director.body.gesture?.released).toBe(true);
+  });
+});
+
+describe('the autopilot picking performances', () => {
+  it('eventually puts a face and a movement on the character together', () => {
+    const { session, director, step, runUntil } = build({ idle: true });
+    step(Math.ceil((IDLE_AFTER + 1) / DT));
+    expect(director.auto).toBe(true);
+    runUntil(() => !!director.performance, 40);
+    const id = director.performance as string;
+    expect(session.state().performance).toBe(id);
+    // Whatever it picked, the mood it set is the one that entry declares — the
+    // point of the layer being that the two are never chosen apart.
+    expect(Object.keys(director.target).length).toBeGreaterThan(0);
+  });
+
+  it('lets go of a held pose when the autopilot is switched off', () => {
+    const { session, director, step, runUntil } = build({ idle: true });
+    step(Math.ceil((IDLE_AFTER + 1) / DT));
+    runUntil(() => !!director.performance, 40);
+    session.setIdle(false);
+    step(2);
+    expect(director.performance).toBeNull();
+  });
+});
+
+describe('the autopilot and a pose nothing owns', () => {
+  it('moves on from a held gesture an operator left behind', () => {
+    // The deadlock this guards: the pick waits for a running gesture to finish
+    // so as not to cut it short, and a sustained pose never finishes. Left
+    // asking whether the current *performance* holds, a pose pressed on the
+    // panel — which no performance owns — stalled the autopilot for good, and
+    // the character stood in it until the page was reloaded.
+    const { session, director, step, runUntil } = build({ idle: true });
+    step(Math.ceil((IDLE_AFTER + 1) / DT));
+    session.gesture('armCross');
+    step(2);
+    expect(director.body.gesture?.id).toBe('armCross');
+    expect(director.performance).toBeNull();
+    runUntil(() => !!director.performance, 40);
+    expect(director.performance).not.toBeNull();
+  });
+
+  it('still waits for a gesture that is going to end on its own', () => {
+    const { session, director, step } = build({ idle: true });
+    step(Math.ceil((IDLE_AFTER + 1) / DT));
+    session.perform(null);
+    session.gesture('nod');
+    // `nod` runs about three quarters of a second; nothing may replace it
+    // inside that.
+    for (let i = 0; i < 30; i++) {
+      step(1);
+      if (director.body.gesture?.id !== 'nod') break;
+    }
+    expect(director.body.gesture?.id).toBe('nod');
+  });
+});
+
+describe('cues in a line', () => {
+  /** Ten morae, so a cue at the middle of it lands at a time worth asserting on. */
+  const TEN = 'あいうえおかきくけこ';
+
+  /** Step until the performance is no longer `from`, and report the mouth time. */
+  const firesAt = (
+    { director, step }: Pick<Harness, 'director' | 'step'>,
+    from: string | null = null,
+  ): number => {
+    for (let i = 0; i < 400; i++) {
+      step(1);
+      if (director.performance !== from) return director.mouth.time;
+    }
+    throw new Error('no cue fired within the frame budget');
+  };
+
+  it('keeps the markup out of the mouth, which is the whole reason it is parsed on the way in', () => {
+    const { session, step } = build();
+    const seen: number[] = [];
+    session.on((ev) => {
+      if (ev.type === 'turn.start') seen.push(ev.seconds ?? 0);
+    });
+    session.say({ text: '[hello]こんばんは[happy]' });
+    step(1);
+
+    // Said as written, the ids would be eight morae of nonsense on top of the
+    // line. The track is the length of the words alone.
+    expect(seen[0]).toBeCloseTo(textToVisemes('こんばんは').duration, 12);
+  });
+
+  it('queues the spoken line, so nothing downstream can find markup to leak', () => {
+    const { session, step } = build();
+    session.say({ text: '[hello]こんばんは[explain]ところで' });
+    step(1);
+    expect(session.turn?.text).toBe('こんばんはところで');
+  });
+
+  it('plays a cue partway through the line rather than at either end of it', () => {
+    const harness = build();
+    harness.session.say({ text: 'あいうえお[happy]かきくけこ' });
+    const at = firesAt(harness);
+
+    expect(harness.director.performance).toBe('happy');
+    // Halfway: after the first five morae and before the line is over.
+    const half = textToVisemes('あいうえお').duration;
+    expect(at).toBeGreaterThanOrEqual(half);
+    expect(at).toBeLessThan(half + 4 * DT);
+  });
+
+  it('opens on a cue written at the top of the line, without a frame of the old face first', () => {
+    const { session, director, step } = build();
+    session.say({ text: '[happy]あいうえお' });
+    step(1);
+    expect(director.performance).toBe('happy');
+  });
+
+  it('plays several in the order they were written', () => {
+    const { session, director, runUntil } = build();
+    const seen: string[] = [];
+    session.say({ text: 'あい[calm]うえお[happy]かきく[gloomy]けこ' });
+    runUntil(() => {
+      const showing = director.performance;
+      if (showing && seen.at(-1) !== showing) seen.push(showing);
+      return seen.length === 3;
+    });
+    expect(seen).toEqual(['calm', 'happy', 'gloomy']);
+  });
+
+  it('rescales to the line that is actually spoken, because the position is a fraction', () => {
+    // The reading is half again as long as the text. A cue held as a time in
+    // seconds would fire a third of the way into this and be wrong by 0.3 s;
+    // held as a fraction it stays in the middle of the sentence — which is where
+    // it was written, and where it will still be when TTS audio is the clock.
+    const harness = build();
+    const reading = 'あいうえおかきくけこさしすせそ';
+    harness.session.say({ text: 'あいうえお[happy]かきくけこ', reading });
+    const at = firesAt(harness);
+
+    const half = textToVisemes(reading).duration / 2;
+    expect(at).toBeGreaterThanOrEqual(half);
+    expect(at).toBeLessThan(half + 4 * DT);
+    expect(at).toBeGreaterThan(textToVisemes(TEN).duration / 2 + 0.2);
+  });
+
+  it('drops a cue the performance table has no name for, rather than playing it', () => {
+    const { session, director, step } = build();
+    session.say({ text: 'あいうえお[nosuchthing]かきくけこ', perform: 'hello' });
+    step(1);
+    expect(session.turn?.cues).toEqual([]);
+
+    // And specifically does not take the face down on the way past. `perform()`
+    // releases what is showing when handed an id it does not know, which is
+    // right for a caller who can see they got no face and wrong in the middle of
+    // a word.
+    step(Math.ceil(0.9 / DT));
+    expect(director.performance).toBe('hello');
+  });
+
+  it('takes down the performance the last cue left up, not the one the turn opened with', () => {
+    const { session, director, runUntil } = build();
+    session.say({ text: 'あいうえお[happy]かきくけこ', perform: 'hello' });
+    runUntil(() => !session.busy);
+    // What a turn leaves behind is whatever was showing last. Released against
+    // `perform` instead, `happy` would sit on the character's face for good —
+    // the turn would look for `hello`, not find it, and put nothing back.
+    expect(director.performance).toBeNull();
+  });
+
+  it('holds the last cue past the line when the turn asked to hold', () => {
+    const { session, director, runUntil } = build();
+    session.say({ text: 'あいうえお[happy]かきくけこ', perform: 'hello', hold: true });
+    runUntil(() => !session.busy);
+    expect(director.performance).toBe('happy');
+  });
+
+  it('drops what has not fired when the line is cut off', () => {
+    const { session, director, step } = build();
+    session.say({ text: 'あいうえお[happy]かきくけこ' });
+    step(2);
+    expect(director.performance).toBeNull();
+    session.interrupt();
+    step(Math.ceil(3 / DT));
+    // A line that was stopped should stop changing face. Left queued, the cue
+    // would land seconds later over whatever the stream had moved on to.
+    expect(director.performance).toBeNull();
+  });
+
+  it('is a pose change when the line is nothing but cues', () => {
+    const { session, director, step } = build();
+    session.say({ text: '[happy]' });
+    step(1);
+    expect(director.performance).toBe('happy');
+    expect(session.turn?.text).toBe('');
+  });
+});
+
+describe('a cued turn, over every combination of the fields around it', () => {
+  /**
+   * The cross product rather than a sample of it: 40 cases is cheap, and what
+   * a turn leaves showing is decided by four things at once — the last cue, the
+   * `perform` it opened with, whether it holds, and whether the mouth ran on a
+   * reading. Three of the four have been wrong at some point in this file's
+   * history.
+   */
+  const LINES = {
+    none: { text: 'あいうえおかきくけこ', last: null },
+    leading: { text: '[happy]あいうえおかきくけこ', last: 'happy' },
+    middle: { text: 'あいうえお[happy]かきくけこ', last: 'happy' },
+    multiple: { text: 'あい[calm]うえお[happy]かきくけこ', last: 'happy' },
+    unknown: { text: 'あいうえお[nosuchthing]かきくけこ', last: null },
+  } as const;
+
+  const CASES = Object.entries(LINES).flatMap(([kind, line]) =>
+    [undefined, 'あいうえおかきくけこさしすせそ'].flatMap((reading) =>
+      [undefined, 'hello'].flatMap((perform) =>
+        [false, true].map((hold) => ({ kind, line, reading, perform, hold })),
+      ),
+    ),
+  );
+
+  it.each(CASES)(
+    '$kind cues, reading $reading, perform $perform, hold $hold',
+    ({ line, reading, perform, hold }) => {
+      const { session, director, runUntil } = build();
+      session.say({ text: line.text, reading, perform, hold });
+      runUntil(() => !session.busy);
+
+      // Whatever the turn put up last is what it has to put back — unless it
+      // was told to hold, in which case that same thing is what stays.
+      const showing = line.last ?? perform ?? null;
+      expect(director.performance).toBe(hold ? showing : null);
+    },
+  );
+});
+
+/**
+ * A line that has been spoken, on the harness's simulated clock.
+ *
+ * The rate is a multiplier on how fast that clock runs for *this* take, and it
+ * is the only way from out here to tell a mouth driven by the audio from one
+ * driven by the frame: in the harness both advance together at 1.0, so a take
+ * that runs at half speed is the whole experiment.
+ */
+class FakeTake implements Take {
+  playedAt: number | null = null;
+  stopped = false;
+  amplitude = 1;
+
+  constructor(
+    readonly seconds: number,
+    private readonly now: () => number,
+    private readonly rate = 1,
+  ) {}
+
+  play(): void {
+    this.playedAt = this.now();
+  }
+
+  stop(): void {
+    this.stopped = true;
+  }
+
+  get elapsed(): number {
+    if (this.playedAt === null) return 0;
+    // Past the end, like a real one: the mouth needs a clock that keeps going
+    // to notice that the line is over.
+    return (this.now() - this.playedAt) * this.rate;
+  }
+}
+
+/** A voice that answers immediately with a take of a stated length. */
+class FakeVoice implements Voice {
+  readonly asked: string[] = [];
+  readonly takes: FakeTake[] = [];
+  /** Resolvers for every outstanding request, when `defer` is on. */
+  private readonly pending: Array<(take: Take | null) => void> = [];
+
+  constructor(
+    private readonly now: () => number,
+    private readonly opts: {
+      seconds?: number;
+      rate?: number;
+      defer?: boolean;
+      fail?: boolean;
+      /** Answer null from this request onward — a sidecar that went away. */
+      nullAfter?: number;
+    } = {},
+  ) {}
+
+  prepare(text: string): Promise<Take | null> {
+    this.asked.push(text);
+    if (this.opts.fail) return Promise.reject(new Error('no voice'));
+    if (this.opts.nullAfter !== undefined && this.asked.length > this.opts.nullAfter) {
+      return Promise.resolve(null);
+    }
+    const take = new FakeTake(this.opts.seconds ?? 1, this.now, this.opts.rate);
+    this.takes.push(take);
+    if (!this.opts.defer) return Promise.resolve(take);
+    return new Promise((resolve) => this.pending.push(resolve));
+  }
+
+  /** Answer everything outstanding. */
+  answer(): Promise<void> {
+    for (const [i, resolve] of this.pending.entries()) resolve(this.takes[i]);
+    this.pending.length = 0;
+    return settle();
+  }
+}
+
+/** Let the microtask chain in `synthesise` run to the end. */
+const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+describe('a turn with a voice', () => {
+  it('holds the turn back until the line has been synthesised', async () => {
+    let voice: FakeVoice | null = null;
+    const { session, step } = build({
+      voice: (now) => {
+        voice = new FakeVoice(now, { defer: true });
+        return voice;
+      },
+    });
+    session.say({ text: 'あいうえお' });
+    step(60);
+    // Starting on the estimate and correcting when the audio turns up would put
+    // a visible jump in the middle of every line. The take arrives first or the
+    // line does not open.
+    expect(session.turn).toBeNull();
+    expect(session.queue).toHaveLength(1);
+
+    await (voice as unknown as FakeVoice).answer();
+    step(1);
+    expect(session.turn?.text).toBe('あいうえお');
+  });
+
+  it('asks for every queued line at once, so only the first turn of a run waits', async () => {
+    let voice: FakeVoice | null = null;
+    const { session } = build({
+      voice: (now) => {
+        voice = new FakeVoice(now, { defer: true });
+        return voice;
+      },
+    });
+    session.say({ text: 'あい' });
+    session.say({ text: 'うえ' });
+    session.say({ text: 'おか' });
+    // Queued, not played: three requests are in flight before the first line
+    // has opened, so the second and third are ready by the time they come up.
+    expect((voice as unknown as FakeVoice).asked).toEqual(['あい', 'うえ', 'おか']);
+  });
+
+  it('stretches the viseme track onto the length the audio turned out to be', async () => {
+    const { session, step } = build({ voice: (now) => new FakeVoice(now, { seconds: 3 }) });
+    let seconds = 0;
+    session.on((ev) => {
+      if (ev.type === 'turn.start') seconds = ev.seconds ?? 0;
+    });
+    session.say({ text: 'あいうえお' });
+    await settle();
+    step(1);
+
+    // The estimate for five morae is 0.675 s. The take is three seconds, and it
+    // is the take that gets said.
+    expect(textToVisemes('あいうえお').duration).toBeCloseTo(0.675, 6);
+    expect(seconds).toBe(3);
+  });
+
+  it('keeps the line open for as long as the audio lasts', async () => {
+    const { session, step, runUntil } = build({
+      voice: (now) => new FakeVoice(now, { seconds: 3 }),
+    });
+    session.say({ text: 'あ' });
+    await settle();
+    step(1);
+    // One mora is 0.135 s of estimate. Without the stretch the turn would be
+    // over in a sixth of a second while the voice kept talking for another two.
+    step(Math.ceil(2 / DT));
+    expect(session.turn).not.toBeNull();
+    runUntil(() => !session.busy);
+  });
+
+  it('puts the mouth on the audio clock rather than on the frame clock', async () => {
+    // The take runs at half the harness's rate — a stand-in for the renderer
+    // stalling, which is the only direction this ever goes wrong in: a frame is
+    // never delivered early, so a mouth adding up `dt` can only run ahead.
+    const { session, director, step } = build({
+      voice: (now) => new FakeVoice(now, { seconds: 4, rate: 0.5 }),
+    });
+    session.say({ text: 'あいうえおかきくけこ' });
+    await settle();
+    step(1);
+    step(60);
+
+    // A second of frames, half a second of audio.
+    expect(director.mouth.time).toBeGreaterThan(0.4);
+    expect(director.mouth.time).toBeLessThan(0.6);
+  });
+
+  it('places a cue at the same fraction of the line the audio actually is', async () => {
+    const { session, director, step } = build({
+      voice: (now) => new FakeVoice(now, { seconds: 3 }),
+    });
+    session.say({ text: 'あいうえお[happy]かきくけこ' });
+    await settle();
+    step(1);
+
+    // Halfway is 1.5 s of audio, not 0.675 s of estimate. A cue held as a time
+    // rather than as a fraction would have fired at a fifth of the way in.
+    step(Math.ceil(1.2 / DT));
+    expect(director.performance).toBeNull();
+    step(Math.ceil(0.5 / DT));
+    expect(director.performance).toBe('happy');
+  });
+
+  it('scales mouth travel by how loud the take is right now', async () => {
+    const { session, director, step } = build({
+      voice: (now) => new FakeVoice(now, { seconds: 2 }),
+    });
+    session.say({ text: 'あいうえお' });
+    await settle();
+    step(1);
+    const mouth = director.mouth;
+    const take = session.turn?.take as FakeTake;
+    step(30);
+    expect(mouth.amplitude).toBe(1);
+
+    // Silence in the middle of a take closes the mouth, whatever the track
+    // thinks is being said there — which is what keeps a pause the text never
+    // predicted from being mouthed through.
+    take.amplitude = 0;
+    step(30);
+    expect(mouth.amplitude).toBe(0);
+    expect(Object.values(mouth.weights).every((w) => w < 0.02)).toBe(true);
+  });
+
+  it('goes back to full travel on a line that has no audio', async () => {
+    const { session, director, step, runUntil } = build({
+      voice: (now) => new FakeVoice(now, { seconds: 1, nullAfter: 1 }),
+    });
+    session.say({ id: 'spoken', text: 'あいうえお' });
+    session.say({ id: 'silent', text: 'かきくけこ' });
+    await settle();
+    step(1);
+    (session.turn?.take as FakeTake).amplitude = 0.2;
+    step(10);
+    expect(director.mouth.amplitude).toBe(0.2);
+
+    // The sidecar went away between the two lines, so the second has no
+    // envelope to follow. Left alone the mouth would spend it a fifth open, for
+    // no reason visible anywhere near the cause.
+    runUntil(() => session.turn?.id === 'silent');
+    step(1);
+    expect(director.mouth.amplitude).toBe(1);
+  });
+
+  it('stops the audio when the line is cut off', async () => {
+    let voice: FakeVoice | null = null;
+    const { session, step } = build({
+      voice: (now) => {
+        voice = new FakeVoice(now, { seconds: 5 });
+        return voice;
+      },
+    });
+    session.say({ text: 'あいうえお' });
+    await settle();
+    step(2);
+    session.interrupt();
+    // Otherwise the kill switch stops everything except the thing the viewer
+    // can actually hear.
+    expect((voice as unknown as FakeVoice).takes[0].stopped).toBe(true);
+  });
+
+  it('plays the line silently when the voice never answers', async () => {
+    let voice: FakeVoice | null = null;
+    const { session, step } = build({
+      voice: (now) => {
+        voice = new FakeVoice(now, { defer: true });
+        return voice;
+      },
+    });
+    session.say({ text: 'あいうえお' });
+    step(Math.ceil((VOICE_WAIT + 0.2) / DT));
+    // A wedged sidecar must cost the line its sound and nothing else. A stream
+    // that stops dead is the worse failure.
+    expect(session.turn?.text).toBe('あいうえお');
+    expect(session.turn?.take).toBeUndefined();
+    void voice;
+  });
+
+  it('plays the line silently when synthesis fails, rather than dropping the turn', async () => {
+    const { session, step } = build({ voice: (now) => new FakeVoice(now, { fail: true }) });
+    session.say({ text: 'あいうえお' });
+    await settle();
+    step(1);
+    expect(session.turn?.text).toBe('あいうえお');
+    expect(session.turn?.take).toBeNull();
+  });
+
+  it('does not ask the voice for a turn with no words in it', async () => {
+    let voice: FakeVoice | null = null;
+    const { session, step } = build({
+      voice: (now) => {
+        voice = new FakeVoice(now);
+        return voice;
+      },
+    });
+    session.say({ perform: 'hello' });
+    await settle();
+    step(1);
+    // A pose change has nothing to say, and a turn that waited for a take that
+    // was never coming would stall the queue for `VOICE_WAIT` every time.
+    expect((voice as unknown as FakeVoice).asked).toEqual([]);
+    expect(session.turn?.perform).toBe('hello');
   });
 });

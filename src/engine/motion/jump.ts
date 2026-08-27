@@ -4,6 +4,10 @@
  * No skeleton and no state: `planJump` turns the two physical figures into the
  * arc's durations once, and `sampleJump` reads the hips off it. The body layer
  * holds the elapsed time and writes the result into the rig.
+ *
+ * `HOPS` at the foot of the file is the vocabulary the rest of the runtime uses
+ * — one hop, a bounce, a leap — so that nothing above the motion layer has to
+ * name a height in metres to ask for a jump.
  */
 
 /**
@@ -30,11 +34,13 @@ export const RECOVER_T = 0.2;
  */
 export const MAX_CROUCH = 0.05;
 
-/** One hop's arc: gravity, take-off speed, dip depth, and the phase durations. */
+/** One run's arc: gravity, take-off speed, dip depth, and the phase durations. */
 export interface JumpArc {
   g: number;
   v0: number;
   dip: number;
+  /** How many hops the run is. Every one of them uses the durations below. */
+  count: number;
   push: number;
   flight: number;
   brake: number;
@@ -86,8 +92,20 @@ export interface JumpArc {
  * centimetres is a stiff landing. That is honest rather than unfortunate: the
  * character really has nothing to absorb with, and the stiffness is exactly
  * what makes the landing legible in the chains.
+ *
+ * ## A run of hops is one crouch and one recover
+ *
+ * `count` repeats the middle three phases and nothing else, because **absorb
+ * already ends where crouch ends** — at dip depth, at rest. The landing dip of
+ * one hop *is* the loading crouch of the next, so a bounce needs no new phase
+ * and no join by eye: the velocity is continuous across the repeat for the same
+ * reason it is continuous everywhere else here.
+ *
+ * That is also why a run has no gap parameter. Standing up between hops and
+ * loading again is a different action — three jumps rather than a bounce — and
+ * it is spelled by asking for three runs of one, not by padding this arc.
  */
-export function planJump(height: number, gravity: number): JumpArc {
+export function planJump(height: number, gravity: number, count = 1): JumpArc {
   const g = Math.max(0.5, gravity);
   const h = Math.max(0.005, height);
   const v0 = Math.sqrt(2 * g * h);
@@ -96,6 +114,7 @@ export function planJump(height: number, gravity: number): JumpArc {
     g,
     v0,
     dip,
+    count: Math.max(1, Math.floor(count)),
     push: (2 * dip) / v0,
     flight: (2 * v0) / g,
     brake: (dip * Math.PI) / (2 * v0),
@@ -109,6 +128,15 @@ export function sampleJump(
 ): { rise: number; load: number; done: boolean } {
   let t = elapsed;
   let rise = 0;
+
+  // Skip whole hops before falling through the phases, so the chain below only
+  // ever describes one of them. `count - 1` is a floor rather than a bound
+  // check: past the last absorb the remainder falls out of the chain into the
+  // recover, which is where the run actually ends.
+  const cycle = arc.push + arc.flight + arc.brake;
+  if (t > CROUCH_T) {
+    t -= Math.min(arc.count - 1, Math.floor((t - CROUCH_T) / cycle)) * cycle;
+  }
 
   // The chain below subtracts each phase's duration as it falls through, so `t`
   // is always measured from the start of whichever phase matched. Written any
@@ -140,3 +168,38 @@ export function sampleJump(
 
   return { rise, load: rise < 0 ? Math.min(1, -rise / arc.dip) : 0, done: false };
 }
+
+/** One run of hops, as everything above the motion layer asks for it. */
+export interface HopSpec {
+  /** Apex height, metres. */
+  height: number;
+  /** How many hops the run is. */
+  count: number;
+}
+
+export interface HopDef extends HopSpec {
+  label: string;
+}
+
+/**
+ * The hop vocabulary.
+ *
+ * Three entries and not a slider, for the same reason the gesture table is a
+ * table: what a caller wants to say is "bounce", and a height in metres is a
+ * tuning figure that happens to produce one. The cadence is not stated at all —
+ * it falls out of the height through the arc, so a bounce is quick because it is
+ * small and a leap hangs because it is tall.
+ */
+export const HOPS = {
+  hop: { label: 'ぴょん', height: 0.07, count: 1 },
+  // Three, small and quick, with no standing up in between: this is the shape
+  // of being pleased about something, and it lives or dies on the cadence.
+  // Landing straight into the next crouch puts it near 3.5 Hz on its own.
+  bounce: { label: 'ぴょんぴょん', height: 0.045, count: 3 },
+  leap: { label: 'おおきく跳ぶ', height: 0.16, count: 1 },
+} satisfies Record<string, HopDef>;
+
+export type HopId = keyof typeof HOPS;
+
+/** The hop ids, in table order. */
+export const HOP_IDS = Object.keys(HOPS) as HopId[];

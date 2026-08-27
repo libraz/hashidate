@@ -6,9 +6,11 @@ import {
   emotionCommandSchema,
   expressionCommandSchema,
   gestureCommandSchema,
+  hopCommandSchema,
   idleCommandSchema,
   lookCommandSchema,
   overlayCommandSchema,
+  performCommandSchema,
   pointCommandSchema,
   sayCommandSchema,
   type Vocabulary,
@@ -25,9 +27,14 @@ import { ControlClient, DEFAULT_BASE, fail } from './client';
  *     yarn ctl vocab
  *     yarn ctl state
  *     yarn ctl idle on
+ *     yarn ctl perform happy
+ *     yarn ctl say "こんばんは" --perform hello --wait
  *     yarn ctl say "こんばんは" --emotion joy=0.8 --gesture wave --wait
+ *     yarn ctl say "[hello]こんばんは。[explain]今日はこの話をします。"
+ *     yarn ctl say "8月27日だよ" --reading "はちがつにじゅうしちにちだよ"
  *     yarn ctl expression F_NIKONIKO
  *     yarn ctl overlay option_guruguru
+ *     yarn ctl hop bounce
  *     yarn ctl point 40 25 --extent 0.9
  *     yarn ctl reset
  *     yarn ctl interrupt
@@ -185,9 +192,11 @@ const say: Handler = async (client, args) => {
   const { values, positionals } = parseArgs({
     args: expandGreedy(normaliseWait(args), '--emotion'),
     options: {
+      reading: { type: 'string' },
       emotion: { type: 'string', multiple: true },
       expression: { type: 'string' },
       gesture: { type: 'string' },
+      perform: { type: 'string' },
       hold: { type: 'boolean' },
       wait: { type: 'string' },
     },
@@ -198,9 +207,11 @@ const say: Handler = async (client, args) => {
   const command = build(sayCommandSchema, {
     cmd: 'say',
     text,
+    reading: values.reading,
     emotion: parseVec(values.emotion),
     expression: values.expression,
     gesture: values.gesture,
+    perform: values.perform,
     hold: values.hold ? true : undefined,
   });
   show(await client.command(command, values.wait));
@@ -254,6 +265,22 @@ const overlay: Handler = async (client, args) => {
   );
 };
 
+/**
+ * A face and a movement together, which is what most callers actually want.
+ * With no id it releases the one that is up, like `gesture`.
+ */
+const perform: Handler = async (client, args) => {
+  const { positionals } = parseArgs({ args, allowPositionals: true });
+  show(
+    await client.command(
+      build(performCommandSchema, {
+        cmd: 'perform',
+        id: positionals[0],
+      }),
+    ),
+  );
+};
+
 const gesture: Handler = async (client, args) => {
   const { positionals } = parseArgs({ args, allowPositionals: true });
   show(
@@ -261,6 +288,18 @@ const gesture: Handler = async (client, args) => {
       build(gestureCommandSchema, {
         cmd: 'gesture',
         id: positionals[0],
+      }),
+    ),
+  );
+};
+
+const hop: Handler = async (client, args) => {
+  const { positionals } = parseArgs({ args, allowPositionals: true });
+  show(
+    await client.command(
+      build(hopCommandSchema, {
+        cmd: 'hop',
+        hop: positionals[0],
       }),
     ),
   );
@@ -374,6 +413,17 @@ const vocab: Handler = async (client) => {
   // First, because the rest of the listing is this avatar's vocabulary and
   // means nothing without knowing which one is loaded.
   console.log(`avatar: ${vocabulary.avatar?.label ?? '?'} (${vocabulary.avatar?.id ?? '?'})`);
+  // Performances first: a caller reading this to decide what to send should see
+  // the composed vocabulary before the parts it is composed from. What each one
+  // is made of is printed alongside, so the listing also answers "and what does
+  // that do" without a second round trip.
+  const performances: Vocabulary['performances'] = vocabulary.performances ?? [];
+  console.log(`performances (${performances.length})`);
+  for (const item of performances) {
+    const parts = [item.gesture, item.hop].filter(Boolean).join(' + ') || '表情のみ';
+    const held = item.sustain ? ' *' : '';
+    console.log(`  ${item.id.padEnd(16)} ${item.label.padEnd(12)} [${item.group}] ${parts}${held}`);
+  }
   for (const key of ['emotions', 'expressions', 'overlays', 'gestures'] as const) {
     const items = vocabulary[key] ?? [];
     console.log(`${key} (${items.length})`);
@@ -382,6 +432,8 @@ const vocab: Handler = async (client) => {
       console.log(`  ${item.id.padEnd(16)} ${item.label}${extra}`);
     }
   }
+  const hops: Vocabulary['hops'] = vocabulary.hops ?? [];
+  console.log(`hops: ${hops.map((h) => `${h.id} (${h.label})`).join(', ')}`);
   const cameras: Vocabulary['cameras'] = vocabulary.cameras ?? [];
   console.log(`cameras: ${cameras.join(', ')}`);
   const wardrobe: Vocabulary['wardrobe'] = vocabulary.wardrobe ?? {};
@@ -421,7 +473,9 @@ const HANDLERS: Record<string, Handler> = {
   emotion,
   expression,
   overlay,
+  perform,
   gesture,
+  hop,
   point,
   camera,
   wear,
@@ -441,7 +495,10 @@ function usage(): never {
       '使い方: yarn ctl [--base URL] <コマンド> [引数...]',
       `コマンド: ${Object.keys(HANDLERS).join(', ')}`,
       '',
-      '  yarn ctl say "こんばんは" --emotion joy=0.8 --gesture wave --wait',
+      '  yarn ctl perform happy',
+      '  yarn ctl say "こんばんは" --perform hello --wait',
+      '  yarn ctl say "[hello]こんばんは。[explain]今日はこの話をします。"',
+      '  yarn ctl say "コメント3件ありがとう" --reading "コメントさんけんありがとう"',
       '  yarn ctl point 40 25 --extent 0.9',
       '  yarn ctl idle on',
     ].join('\n'),

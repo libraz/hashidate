@@ -94,16 +94,38 @@ const SOFT_HAND: Record<FingerName, number> = {
   ring: 0.3,
   little: 0.34,
 };
-// Exported because the fingertip solver needs it too: a hand aimed at a target
-// by its index finger has to actually be shaped like one, or the coordinate
-// refers to a fingertip that is curled into the palm.
-export const POINT_HAND: Record<FingerName, number> = {
+/**
+ * The other four, for a hand that is pointing with one finger.
+ *
+ * The thumb rides slack rather than closed. Pinned down against the fingers it
+ * makes a fist with something sticking out of it, which is a different gesture.
+ */
+const POINT_CLOSED: Record<FingerName, number> = {
   thumb: 0.35,
-  index: 0.02,
+  index: 0.95,
   middle: 0.95,
   ring: 0.98,
   little: 0.98,
 };
+
+/**
+ * A hand shaped to point with one particular finger.
+ *
+ * The aimed finger has to be the one actually extended, and this is not a
+ * cosmetic matter. The solver works from where the fingertip *is*, and where it
+ * is falls out of the curl this shape produced — so aiming the little finger at
+ * something while the hand is shaped to point with the index aims a fingertip
+ * folded into the palm, and the arm quietly travels somewhere else to put it
+ * there. The finger the viewer sees extended is meanwhile not the one that was
+ * asked for.
+ */
+export const pointHand = (finger: FingerName = 'index'): Record<FingerName, number> => ({
+  ...POINT_CLOSED,
+  [finger]: 0.02,
+});
+
+/** The index-pointing hand, which is what most callers mean by pointing. */
+export const POINT_HAND: Record<FingerName, number> = pointHand('index');
 const PEACE_HAND: Record<FingerName, number> = {
   thumb: 0.8,
   index: 0.02,
@@ -222,6 +244,32 @@ const both = (arm: ArmPose, fingers: FingerSpec, spine?: SpineOffsets): Pose => 
  * elbow". That is a poor default for anything near the face: the cost surface
  * has two near-level minima for most face-height targets, so the arm picks a
  * different one as the pose breathes and snaps between them.
+ *
+ * **The pole belongs behind the wrist, not in front of it.** Every hand-to-face
+ * pose here once put the elbow forward of the shoulder, and on a figure whose
+ * face sits close to its own shoulder that forces the forearm to run up and
+ * *backward* to arrive. The hand is then asked to point up and forward, and the
+ * whole of that break has to be taken by the wrist — as sideways deviation,
+ * which is the axis a wrist has least of. Measured on the validation avatar,
+ * eleven of the thirteen reaching poses settled with the wrist 30 to 130
+ * degrees past a stop of 20, and the one that did not was the one pose whose
+ * palm was rolled far enough for the break to land as flexion instead.
+ *
+ * So: keep the elbow at or behind the shoulder in z, let the forearm rise in
+ * front of the body, and give the palm enough of an upward component that what
+ * bend is left is flexion. A wrist has three times more flexion than deviation
+ * and it is the axis that reads as relaxed rather than as broken.
+ *
+ * **Nothing here reaches above the ear, and nothing here reaches across the
+ * midline to the far cheek.** Both are ordinary gestures on a person and
+ * neither is authorable on this figure: the head is large and set on a short
+ * neck, so a hand on the crown or the temple sits further from the shoulder
+ * than the arm is long and arrives with the elbow closed past its own stop,
+ * while a hand crossing to the opposite cheek runs the forearm out of pronation
+ * and the wrist takes the remainder sideways. There is no pole that fixes
+ * either — what binds is the reach and the roll, not the elbow's bearing — so a
+ * gesture wanting one of those shapes has to be re-aimed at somewhere the hand
+ * can actually get to, the way `cheekPoke` comes up under the near cheekbone.
  */
 const reach = (
   v: GestureVariation,
@@ -302,8 +350,17 @@ export const GESTURES = {
           at: 'chin',
           offset: [0.12, 0.78 + b, 0.22],
           hand: [-0.22, 0.86, 0.46],
-          palm: [0.55, -0.35, -0.76],
-          pole: [0.35, -0.88, 0.32],
+          // The palm was rolled far enough down that the forearm had to run out
+          // of pronation to deliver it, and the humerus took up the rest by
+          // turning nearly half a circle. Levelled, it costs the wrist nothing.
+          palm: [0.59, -0.05, -0.81],
+          // Elbow carried out to the side rather than in front. This is the one
+          // pose in the table that keeps its elbow forward of the shoulder, and
+          // it can: the finger goes to the chin, low enough that the forearm
+          // still rises to meet it. What was wrong was the width — tucked in at
+          // 0.35 the whole arm lay across the chest, which reads as guarded
+          // rather than as thinking, and left the humerus turned to its stop.
+          pole: [0.85, -0.75, 0.4],
           twist: 0.6,
         },
         { thumb: 0.4, index: 0.15, middle: 0.7, ring: 0.85, little: 0.9 },
@@ -386,20 +443,43 @@ export const GESTURES = {
   },
 
   bow: {
-    label: 'お辞儀',
+    label: 'ぺこり',
     group: 'greeting',
-    lead: 0.45,
-    hold: 1.2,
-    build(t) {
-      const k = Math.min(1, t / 0.5);
+    // Short, because the speed is the gesture. The release ramp is `lead × 1.25`,
+    // so this is down in a fifth of a second, a beat at the bottom, and back up
+    // in a quarter — about six tenths of a second end to end.
+    lead: 0.2,
+    hold: 0.16,
+    build(_t, v) {
+      // A bob, not a bow.
+      //
+      // This bent the trunk twelve degrees over half a second, and at that speed
+      // and that depth it read as neither: too shallow to be a formal bow, too
+      // slow to be a greeting, and the head never left the range the idle moves
+      // it through anyway. What makes a ぺこり is where the angle sits and how
+      // fast it arrives — nearly all of it in the neck, and there in a fifth of
+      // a second. The head drops about forty degrees all told.
+      //
+      // The trunk still moves, a little. A head that pitches on a still body is
+      // a nod; the few degrees at the chest are what make it the whole character
+      // bobbing rather than just the face.
+      //
+      // The head also turns very slightly as it goes. Perfectly square is the
+      // difference between a character and a mechanism, and this is the one
+      // gesture short enough that a viewer sees the whole of it at once.
       return both(
         {
-          upperArm: V(0.24, -0.95, 0.18),
-          lowerArm: V(0.14, -0.9, 0.4),
-          hand: V(0.1, -0.92, 0.38),
+          upperArm: V(0.2, -0.96, 0.2),
+          lowerArm: V(0.12, -0.86, 0.5),
+          hand: V(0.08, -0.88, 0.47),
         },
         SOFT_HAND,
-        { spine: [0.2 * k, 0, 0], chest: [0.16 * k, 0, 0], head: [0.1 * k, 0, 0] },
+        {
+          head: [0.4, 0.05 * v.side, 0.06 * v.side],
+          neck: [0.22, 0.03 * v.side, 0.03 * v.side],
+          chest: [0.1, 0, 0],
+          spine: [0.05, 0, 0],
+        },
       );
     },
   },
@@ -554,10 +634,16 @@ export const GESTURES = {
         v,
         {
           at: 'mouth',
-          offset: [0.1, 0.18 + b, 0.3],
-          hand: [-0.28, 0.82, 0.5],
-          palm: [-0.8, 0.1, -0.59],
-          pole: [0.3, -0.86, 0.42],
+          // Held a little below the mouth and well clear of it, fingers angled
+          // back toward the cheek rather than out at the viewer. That is the
+          // shape the gesture is named for — a hand raised to screen a smile,
+          // not a palm clamped over a mouth — and it is also the version the
+          // wrist can hold: at the mouth itself the arm is folded to its stop
+          // and every degree of hand angle has to come out of the wrist.
+          offset: [0.1, -0.05 + b, 0.75],
+          hand: [-0.3, 0.92, -0.27],
+          palm: [-0.83, 0.25, -0.5],
+          pole: [0.4, -0.86, -0.3],
           twist: 0.5,
         },
         SOFT_HAND,
@@ -610,30 +696,6 @@ export const GESTURES = {
   },
 
   // --- cute ---------------------------------------------------------------
-  headPat: {
-    label: '頭に手をやる',
-    group: 'cute',
-    lead: 0.4,
-    hold: 2.4,
-    build(t, v) {
-      // Stroking back and forth across the crown, not tapping.
-      const s = Math.sin(t * 3.2 * v.rate) * 0.22;
-      return reach(
-        v,
-        {
-          at: 'crown',
-          offset: [0.3 + s, 0.05, 0.1],
-          hand: [-0.55, 0.72, 0.42],
-          palm: [-0.25, -0.9, -0.35],
-          pole: [0.92, -0.28, 0.28],
-          twist: 0.5,
-        },
-        SOFT_HAND,
-        { head: [0.06, 0.03 * v.side, 0.03 * v.side] },
-      );
-    },
-  },
-
   cheekPoke: {
     label: '頬に指',
     group: 'cute',
@@ -646,40 +708,17 @@ export const GESTURES = {
         v,
         {
           at: 'cheek',
-          offset: [0.05, 0.1 + b, 0.2],
-          hand: [-0.3, 0.8, 0.52],
-          palm: [-0.75, 0.05, -0.66],
-          pole: [0.38, -0.86, 0.34],
+          // Fingertip on the cheek from below, not from in front: the finger
+          // comes up under the cheekbone with the hand still low, which keeps
+          // the face unobscured and is the pose the gesture is drawn from.
+          offset: [0.05, -0.05 + b, 1.15],
+          hand: [-0.34, 0.92, -0.21],
+          palm: [-0.71, 0.33, -0.62],
+          pole: [0.3, -0.75, -0.45],
           twist: 0.45,
         },
         { thumb: 0.45, index: 0.04, middle: 0.85, ring: 0.9, little: 0.92 },
         { head: [0.04, 0.1 * v.side, 0.08 * v.side] },
-      );
-    },
-  },
-
-  hairTouch: {
-    label: '髪を触る',
-    group: 'cute',
-    lead: 0.45,
-    hold: 2.8,
-    build(t, v) {
-      // The hand travels down past the ear rather than sitting still: this is
-      // the fidget, and the fidget is the whole gesture.
-      const d = 0.5 - 0.5 * Math.cos(t * 1.9 * v.rate);
-      // Starts at the temple and travels down past the ear.
-      return reach(
-        v,
-        {
-          at: 'temple',
-          offset: [0.15, 0.9 - d * 0.85, -0.05 - d * 0.15],
-          hand: [0.1, 0.9 - d * 0.25, -0.28],
-          palm: [-0.92, 0.05, -0.39],
-          pole: [0.55, -0.78, 0.3],
-          twist: 0.3,
-        },
-        SOFT_HAND,
-        { head: [0.02, -0.04 * v.side, 0.05 * v.side] },
       );
     },
   },
@@ -771,10 +810,13 @@ export const GESTURES = {
         v,
         {
           at: 'mouth',
-          offset: [0.62, 0.55 + b, 0.5],
-          hand: [0.18, 0.86, 0.48],
+          // The screening hand sits beside the mouth, not on it, and the
+          // fingers stand up rather than tipping forward — a hand cupped to say
+          // something quietly, seen from the side.
+          offset: [0.62, 0.55 + b, 0.85],
+          hand: [0.2, 0.97, 0.09],
           palm: [-0.86, 0.08, -0.5],
-          pole: [0.34, -0.86, 0.38],
+          pole: [0.34, -0.86, -0.22],
           twist: 0.7,
         },
         SOFT_HAND,
@@ -795,10 +837,14 @@ export const GESTURES = {
         v,
         {
           at: 'mouth',
-          offset: [0.05, 0.0 + b, 0.35],
-          hand: [-0.24, 0.84, 0.48],
+          // Lower and further out than a hand actually covering a yawn would
+          // be. Pressed to the mouth the arm reaches its fold stop and the pose
+          // reads as a fist against the face; held just under the chin it reads
+          // as the sleepy, half-hearted version, which is the funnier one.
+          offset: [0.05, -0.35 + b, 1.3],
+          hand: [-0.27, 0.96, 0.09],
           palm: [-0.8, 0.1, -0.59],
-          pole: [0.36, -0.88, 0.3],
+          pole: [0.36, -0.88, -0.3],
           twist: 0.4,
         },
         SOFT_HAND,
@@ -910,28 +956,6 @@ export const GESTURES = {
     },
   },
 
-  bothCheeks: {
-    label: '両手を頬に',
-    group: 'pose',
-    sustain: true,
-    lead: 0.42,
-    hold: 1.0,
-    build() {
-      return reachBoth(
-        {
-          at: 'cheek',
-          offset: [0.28, 0.62, 0.35],
-          hand: [-0.2, 0.84, 0.5],
-          palm: [-0.88, 0.1, -0.46],
-          pole: [0.48, -0.84, 0.26],
-          twist: 0.6,
-        },
-        OPEN_HAND,
-        { head: [0.02, 0, 0] },
-      );
-    },
-  },
-
   thumbsUp: {
     label: 'サムズアップ',
     group: 'pose',
@@ -1031,6 +1055,88 @@ export const GESTURES = {
     },
   },
 
+  promise: {
+    label: 'ゆびきり',
+    group: 'pose',
+    sustain: true,
+    lead: 0.4,
+    hold: 1.0,
+    build(t, v) {
+      // Held out and waiting, which is what makes it a promise rather than a
+      // hand shape: the drift is small and slow, because an offered hand that
+      // is perfectly still reads as a prop.
+      const b = Math.sin(t * 1.5 * v.rate) * 0.03;
+      return one(
+        v,
+        {
+          // The arm goes out in front and the wrist bends up, which is where
+          // `thumbsUp` puts it and for the same reason. Both of these poses ask
+          // a viewer to read one extended finger, and one extended finger is
+          // exactly what a long sleeve is good at hiding: the validation
+          // avatar's cardigan cuff runs most of a hand's length past the wrist,
+          // and with the forearm raised the whole hand sits down inside it —
+          // the shot is a pink tube with a fist somewhere in the dark. Carried
+          // forward with the hand angled off the forearm, the finger comes out
+          // through the side of the opening instead of down the length of it.
+          //
+          // A raised forearm is the prettier pose on a bare arm and it is not
+          // the one that survives the clothes.
+          upperArm: V(0.32, 0.06, 0.95),
+          lowerArm: V(0.3, 0.1 + b, 0.95),
+          hand: V(0.28, 0.7 + b, 0.66),
+          // Rolled the opposite way from `thumbsUp`, which is the whole of the
+          // difference between the two hands. The thumb and the little finger
+          // are on opposite edges, so the roll that stands one of them up out of
+          // the cuff buries the other against the knuckles.
+          palm: V(0.96, -0.1, 0.26),
+        },
+        // The same shaping rule as pointing, and for a stronger reason here:
+        // the extended little finger *is* the gesture.
+        pointHand('little'),
+        { head: [0.02, 0.06 * v.side, 0.06 * v.side], chest: [0, 0.03 * v.side, 0] },
+      );
+    },
+  },
+
+  doze: {
+    label: 'こっくり',
+    group: 'pose',
+    sustain: true,
+    // Slow in, because falling asleep is the one entrance in this table that
+    // should be visible as an entrance rather than as an arrival.
+    lead: 1.5,
+    hold: 1.0,
+    build(t, v) {
+      // Nodding off, which is not a deeper `bow` — the two poses differ in what
+      // they do after they arrive. A bow is held square and comes back up; this
+      // sinks, drifts, and every so often almost catches itself, and that
+      // near-catch is the whole read. Both terms are small: what sells it is
+      // that the head is *down* and not quite still.
+      const drift = Math.sin(t * 0.55 * v.rate) * 0.05;
+      const nearly = Math.sin(t * 1.7 * v.rate) * 0.02;
+      return both(
+        {
+          // Slack rather than posed. The arms hanging almost where they rest is
+          // the point — a sleeping character who is still holding their arms
+          // somewhere is a character pretending to sleep.
+          upperArm: V(0.22, -0.96, 0.14),
+          lowerArm: V(0.14, -0.97, 0.18),
+          hand: V(0.1, -0.97, 0.2),
+        },
+        { thumb: 0.3, index: 0.34, middle: 0.38, ring: 0.42, little: 0.46 },
+        {
+          // Tipped as well as dropped. A head that falls straight forward reads
+          // as a faint rather than as sleep; the roll toward one shoulder is
+          // what makes it read as comfortable.
+          head: [0.34 + drift + nearly, 0.08 * v.side, 0.16 * v.side],
+          neck: [0.24 + drift * 0.6, 0.04 * v.side, 0.08 * v.side],
+          chest: [0.07, 0, 0.02 * v.side],
+          spine: [0.05, 0, 0],
+        },
+      );
+    },
+  },
+
   listen: {
     label: '手を耳に',
     group: 'pose',
@@ -1043,10 +1149,13 @@ export const GESTURES = {
         v,
         {
           at: 'ear',
-          offset: [1.1, 0.38, -0.2],
-          hand: [0.12, 0.9, -0.3],
-          palm: [-0.25, 0.0, 0.97],
-          pole: [0.78, -0.58, 0.18],
+          // Cupped behind the ear: the hand comes from below and slightly in
+          // front, fingers tipped back, so the palm ends up facing forward past
+          // the ear rather than the hand being planted flat on it.
+          offset: [1.1, 0.38, 0.15],
+          hand: [0.08, 0.63, -0.77],
+          palm: [-0.24, 0.29, 0.93],
+          pole: [0.85, -0.95, -0.2],
           twist: 0.4,
         },
         SOFT_HAND,

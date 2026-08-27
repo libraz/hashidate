@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MouthViseme } from '@/engine/face';
-import { Mouth, textToVisemes } from '@/engine/face';
+import { Mouth, scaleTrack, textToVisemes } from '@/engine/face';
 import type { VisemeName } from '@/engine/types';
 
 /**
@@ -435,5 +435,99 @@ describe('Mouth', () => {
     drive(mouth, 1, 1 / 60);
     expect(total(mouth)).toBe(0);
     expect(mouth.busy).toBe(0);
+  });
+});
+
+describe('scaleTrack', () => {
+  it('stretches a track onto a measured length, keeping its shape', () => {
+    const estimate = textToVisemes('あいうえおかきくけこ');
+    const scaled = scaleTrack(estimate, 3);
+
+    expect(scaled.duration).toBe(3);
+    expect(scaled.events).toHaveLength(estimate.events.length);
+    // Every event moves by the same factor, so where a mora sits *within* the
+    // line is exactly what the estimate said. That is the part being kept: the
+    // stretch fixes the length, not the distribution.
+    const k = 3 / estimate.duration;
+    for (const [i, ev] of scaled.events.entries()) {
+      expect(ev.v).toBe(estimate.events[i].v);
+      expect(ev.t).toBeCloseTo(estimate.events[i].t * k, 12);
+      expect(ev.dur).toBeCloseTo(estimate.events[i].dur * k, 12);
+    }
+  });
+
+  it('is the identity when the measurement agrees with the estimate', () => {
+    const estimate = textToVisemes('あいうえお');
+    expect(scaleTrack(estimate, estimate.duration)).toEqual(estimate);
+  });
+
+  it('leaves the constants unable to matter, which is the point of doing it at all', () => {
+    // The two tracks below disagree about how fast this voice speaks by a
+    // factor of two. Normalised to the same measured length they are the same
+    // track — which is what makes the estimate survive a voice retrained to
+    // speak faster than the one these numbers were arrived at against.
+    const slow = scaleTrack(textToVisemes('あいうえお', { mora: 0.2, pause: 0.33 }), 2);
+    const fast = scaleTrack(textToVisemes('あいうえお', { mora: 0.1, pause: 0.165 }), 2);
+    expect(slow).toEqual(fast);
+  });
+
+  it('keeps the shape across a line whose pauses do most of the work', () => {
+    const estimate = textToVisemes('あ、い。う');
+    const scaled = scaleTrack(estimate, 10);
+    expect(scaled.duration).toBe(10);
+    for (const [i, ev] of scaled.events.entries()) {
+      expect(ev.t / 10).toBeCloseTo(estimate.events[i].t / estimate.duration, 12);
+    }
+  });
+
+  it('yields a shut mouth for the length of audio that has no morae in it', () => {
+    // Punctuation only. There is nothing to distribute, and the honest answer
+    // is a mouth that stays closed for exactly as long as the take lasts rather
+    // than one that invents a shape to fill it.
+    expect(scaleTrack(textToVisemes('。。'), 1.5)).toEqual({ events: [], duration: 1.5 });
+    expect(scaleTrack(textToVisemes(''), 2)).toEqual({ events: [], duration: 2 });
+  });
+});
+
+describe('Mouth.schedule', () => {
+  it('takes a track from anywhere and reports its length', () => {
+    const mouth = new Mouth();
+    const track = scaleTrack(textToVisemes('あいうえお'), 4);
+    expect(mouth.schedule(track)).toBe(4);
+    expect(mouth.track).toBe(track);
+    expect(mouth.time).toBe(0);
+  });
+
+  it('is what speak() is built on, so both paths start the same way', () => {
+    const a = new Mouth();
+    const b = new Mouth();
+    a.speak('あいうえお');
+    b.schedule(textToVisemes('あいうえお'));
+    expect(a.track).toEqual(b.track);
+  });
+});
+
+describe('Mouth.sync', () => {
+  it('puts the clock where it is told rather than where the frames added up to', () => {
+    const mouth = new Mouth();
+    mouth.speak('あいうえおかきくけこ');
+    drive(mouth, 0.5, 1 / 60);
+    expect(mouth.time).toBeGreaterThan(0.45);
+
+    // A stalled renderer delivers frames late, and only late — so a mouth left
+    // to accumulate `dt` can only run ahead of the audio. This is the
+    // correction, and it goes backwards as often as forwards.
+    mouth.sync(0.1);
+    expect(mouth.time).toBe(0.1);
+    mouth.update(1 / 60);
+    expect(mouth.time).toBeCloseTo(0.1 + 1 / 60, 12);
+  });
+
+  it('can end the line by being told the audio is past it', () => {
+    const mouth = new Mouth();
+    const dur = mouth.speak('あいうえお');
+    expect(mouth.speaking).toBe(true);
+    mouth.sync(dur + 0.3);
+    expect(mouth.speaking).toBe(false);
   });
 });

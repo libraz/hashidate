@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AVATARS } from '@/avatars';
+import { hasCueMarkup, isWellFormed } from '@/engine/cues';
 import type { CameraFrame } from '@/engine/types';
 import type { ControlStatus } from '../control-client';
 import { useSessionState } from '../hooks';
@@ -53,6 +54,7 @@ interface Props {
 export function Console({ runtime, status, control, rejected, onSwitch }: Props) {
   const [tab, setTab] = useState<TabId>('perform');
   const [text, setText] = useState('こんばんは。今日も配信を見に来てくれてありがとうございます。');
+  const [reading, setReading] = useState('');
   // Followed, not held: the control API can change the shot too, and a picker
   // showing the old framing after the orchestrator moved the camera is worse
   // than no picker.
@@ -63,9 +65,27 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
   const session = loaded?.session ?? null;
   const state = useSessionState(session);
 
+  /**
+   * The same refusal the control API gives, for the same reason.
+   *
+   * This box calls `Session.say` in process, where malformed markup is stripped
+   * rather than rejected — safe, since nothing in brackets is ever spoken, but
+   * silent: half a typed cue would take the rest of the line with it and the
+   * operator would watch the character say less than they wrote. So the check
+   * that the wire format applies is applied here too, and the button goes dead
+   * until the line is one the API would have accepted.
+   */
+  const problem = !isWellFormed(text)
+    ? '角括弧が閉じていないか、[] の中身が id ではない'
+    : hasCueMarkup(reading)
+      ? '読みに演出は書けない。角括弧は文章のほうへ'
+      : null;
+
   const say = () => {
-    if (!(session && text.trim())) return;
-    session.say({ text });
+    if (!(session && text.trim()) || problem) return;
+    // Blank means no reading was given, not a reading that is empty — an empty
+    // one would leave the mouth with nothing to say.
+    session.say({ text, reading: reading.trim() || undefined });
   };
 
   // Space says the line from anywhere that is not a text field. The most
@@ -164,7 +184,7 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
           aria-label="しゃべらせたい文章"
           className={styles.input}
           value={text}
-          placeholder="しゃべらせたい文章"
+          placeholder="しゃべらせたい文章（[hello] のように演出を挟める）"
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -173,13 +193,28 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
             }
           }}
         />
+        <input
+          id="reading"
+          name="reading"
+          aria-label="読み（かな・任意）"
+          className={styles.reading}
+          value={reading}
+          placeholder="読み（かな・任意）"
+          onChange={(e) => setReading(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              say();
+            }
+          }}
+        />
         <div className={styles.composerRow}>
-          <span className={styles.hint}>
-            {state?.queued ? `待ち ${state.queued}` : '⌘⏎ / Space'}
+          <span className={problem ? styles.hintBad : styles.hint}>
+            {problem ?? (state?.queued ? `待ち ${state.queued}` : '⌘⏎ / Space')}
           </span>
           <ChipRow>
             <Chip label="止める" variant="action" onClick={() => session?.interrupt()} />
-            <Chip label="話す" variant="primary" onClick={say} />
+            <Chip label="話す" variant="primary" onClick={say} disabled={!!problem} />
           </ChipRow>
         </div>
       </div>

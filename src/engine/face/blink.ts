@@ -43,6 +43,20 @@ export class Blink {
   /** Off holds the lids open and abandons any blink in flight. */
   enabled = true;
 
+  /**
+   * How far the lids sit shut regardless of the rhythm, 0..1. Drowsiness.
+   *
+   * A floor rather than a mode: at 0.4 the eyes are heavy and still blink, at
+   * 0.95 they are shut and the blinks underneath make no difference. That is
+   * the same continuum a face actually moves along on the way to sleep, and it
+   * means the caller does not have to decide which of the two it is asking for.
+   *
+   * It outranks `suppressed` — that flag is the director noticing surprise, and
+   * a caller that has explicitly said the eyes are closing knows better. It does
+   * not outrank `enabled`, which is a debug kill switch for the whole layer.
+   */
+  droop = 0;
+
   readonly #random: () => number;
   #weight = 0;
   /** Progress through the current blink, -1 = none. */
@@ -94,7 +108,7 @@ export class Blink {
 
     // Surprise holds the eyes open; blinking through it looks wrong.
     if (ctx.suppressed) {
-      this.#weight = 0;
+      this.#weight = this.#floor();
       this.#t = -1;
       return this.#weight;
     }
@@ -114,20 +128,28 @@ export class Blink {
     }
 
     if (this.#t < 0) {
-      this.#weight = 0;
+      this.#weight = this.#floor();
       return this.#weight;
     }
 
     this.#t += dt / this.#dur;
     if (this.#t >= 1) {
       this.#t = -1;
-      this.#weight = 0;
+      this.#weight = this.#floor();
       this.#since = 0;
       return this.#weight;
     }
 
-    this.#weight = blinkCurve(this.#t) * this.#depth;
+    // The blink rides on top of the droop rather than replacing it: a heavy lid
+    // that snaps wide open to blink and settles back is the one thing worse
+    // than not blinking at all. Taking the larger of the two closes the rest of
+    // the way and returns to where it was.
+    this.#weight = Math.max(this.#floor(), blinkCurve(this.#t) * this.#depth);
     return this.#weight;
+  }
+
+  #floor(): number {
+    return Math.min(1, Math.max(0, this.droop));
   }
 
   /**

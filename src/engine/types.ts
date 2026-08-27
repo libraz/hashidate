@@ -337,6 +337,20 @@ export interface GestureVariation {
 
 export type GestureGroup = 'reaction' | 'greeting' | 'explain' | 'emote' | 'cute' | 'pose';
 
+/**
+ * How the performance table is filed. It mirrors the gesture groups, plus
+ * `mood` for the entries that are a face and nothing else — which the gesture
+ * table has no way to express and which are most of what an idle character does.
+ */
+export type PerformanceGroup =
+  | 'mood'
+  | 'reaction'
+  | 'greeting'
+  | 'explain'
+  | 'emote'
+  | 'cute'
+  | 'pose';
+
 export interface GestureDef {
   label: string;
   group: GestureGroup;
@@ -499,18 +513,153 @@ export interface AvatarDescriptor {
  */
 export interface TurnRequest {
   id?: string;
+  /**
+   * The line, with its cues in it.
+   *
+   * `[hello]こんばんは。[explain]今日はこの話をします。` — a bracketed id starts
+   * that performance at the point it is written, which is the only way to place
+   * one inside a sentence: a second turn would put a gap in the middle of a
+   * clause, and a separate `perform` command cannot know when the first half
+   * has been said.
+   *
+   * Brackets are reserved and are never spoken. See `cues.ts` — the guarantee
+   * is structural, and it is the reason this field is parsed on the way into
+   * the queue rather than on the way out of it.
+   */
   text?: string;
+  /**
+   * How `text` is pronounced, in kana. Optional, and only worth supplying where
+   * the writing is ambiguous.
+   *
+   * Japanese writing does not carry its own reading, and nothing downstream can
+   * recover one: the mouth counts a kanji as two morae because most are, which
+   * is a guess, and the speech model has no dictionary to consult — it reads
+   * whatever its text encoder learned, with no way to correct it. So both the
+   * viseme track and the voice are driven from this when it is given, and from
+   * `text` when it is not.
+   *
+   * It is the same field for both on purpose. A reading supplied to fix "3件"
+   * fixes the mouth as a side effect, and a caller that had to think about the
+   * pronunciation once should not have to think about it again.
+   *
+   * It carries no cues. Those are positions in the line and belong with the
+   * line; a reading is kana and a bracket in one is a mistake, which the wire
+   * format refuses rather than strips.
+   */
+  reading?: string;
   emotion?: EmotionVector | null;
   expression?: string | null;
   gesture?: string | null;
+  /**
+   * A named face-and-movement from the performance table, applied before the
+   * three fields above so they can override parts of it. Released with the turn
+   * unless `hold`; its mood persists either way.
+   */
+  perform?: string | null;
   /** Keep the drawn face up after the line ends. Off by default: held past its
    *  line a drawn face stops reading as a reaction and starts reading as a mask. */
   hold?: boolean;
 }
 
+/**
+ * One performance change lifted out of a line, and where in it that happens.
+ *
+ * The grammar and the guarantee that goes with it are in `cues.ts`; this is
+ * only the shape the rest of the engine sees.
+ */
+export interface Cue {
+  /**
+   * The performance to start — a plain string, like the `perform` field this is
+   * the inline form of. An id the table does not have is dropped where the
+   * table is known, which is the session.
+   */
+  perform: string;
+  /**
+   * Where it lands, as a fraction of the line: 0 at the first mora, 1 at the
+   * last.
+   *
+   * A fraction and not a time, because the line is not necessarily as long as
+   * the estimate it was measured against. A supplied `reading` is a different
+   * string of a different length, and TTS audio is a different length again;
+   * the fraction survives both, and a time in seconds would be wrong the moment
+   * the utterance was not exactly as long as guessed.
+   */
+  at: number;
+}
+
+/**
+ * One synthesised line, ready to play.
+ *
+ * Stated here and implemented in the viewer, which is the only layer that has
+ * an `AudioContext` to implement it with. The engine holds the shape so that
+ * the turn queue can wait for one, stretch a track onto its length and read its
+ * envelope, without importing a browser.
+ */
+export interface Take {
+  /**
+   * How long the audio actually is. Measured off the decoded buffer rather than
+   * taken from whatever the synthesiser claimed — the buffer is the thing that
+   * will be played, and it is the only number both sides can agree on.
+   */
+  seconds: number;
+  /**
+   * Seconds since `play`, on the audio device's own clock rather than the
+   * frame's.
+   *
+   * Keeps counting past `seconds` once the audio has finished, and has to: the
+   * mouth decides it has stopped speaking by the clock running past the end of
+   * its track, so a clock that stopped at the last mora would leave the turn
+   * open for good.
+   */
+  readonly elapsed: number;
+  /** How loud it is right now, 0..1, normalised against this take's own peak. */
+  readonly amplitude: number;
+  play(): void;
+  stop(): void;
+}
+
+/**
+ * Where a line goes to be spoken.
+ *
+ * One method, and it is deliberately the *whole* line at once rather than a
+ * stream: the speech model does not stream, and being handed the finished take
+ * before the turn opens is what lets everything else be planned against a known
+ * length instead of corrected mid-sentence.
+ */
+export interface Voice {
+  /**
+   * Synthesise a line, or answer null when there is nothing to synthesise it
+   * with — no sidecar running, a request that failed, audio the browser will
+   * not let us start yet. Null is a normal answer and means "play it silently",
+   * not an error: the renderer has to work on a machine that does not have the
+   * voice.
+   */
+  prepare(text: string, reading?: string): Promise<Take | null>;
+}
+
+/**
+ * A queued turn: a request with its id minted and its line already parsed.
+ *
+ * `text` here is what is *said* — the markup came out in `Session.say`, and
+ * nothing downstream of the queue has to know that there was any.
+ */
 export interface Turn extends TurnRequest {
   id: string;
   text: string;
+  cues: Cue[];
+  /**
+   * The audio for this line. Three states and each means something different:
+   *
+   * - **absent** — the voice has not answered yet, and the turn waits.
+   * - **null** — there will be no audio, and the turn plays on the estimate.
+   * - **a take** — ready, and the turn will run on its clock.
+   *
+   * Synthesis starts when the turn is *queued*, not when it is played, so a
+   * caller that sends three lines in one batch has all three being made while
+   * the first is still being said. The wait is therefore paid once, at the top
+   * of a run, rather than between every line.
+   */
+  take?: Take | null;
 }
 
 export type SessionEventType =
@@ -544,7 +693,11 @@ export interface SessionState {
   expression: string | null;
   pickedExpression: string | null;
   overlays: Record<string, number>;
+  /** The performance showing, or null. Cleared as soon as one is released. */
+  performance: string | null;
   gesture: string | null;
+  /** Whether a run of hops is in flight. */
+  hopping: boolean;
   /** Joint strain from the last fingertip solve, per arm. */
   strain: Record<Side, number>;
   lookAt: number;
@@ -568,7 +721,36 @@ export interface Vocabulary {
   emotions: LabelledId[];
   expressions: LabelledId[];
   overlays: LabelledId[];
+  /**
+   * Faces and movements named together, and the list to reach for first: the
+   * two below are the parts a performance is assembled from, and are here for a
+   * caller that wants something the table has no name for.
+   *
+   * `emotion` is echoed so a caller can see what a performance will do to the
+   * mood without having to play it — the mood is the one thing that persists
+   * after the performance ends.
+   */
+  performances: Array<
+    LabelledId & {
+      group: PerformanceGroup;
+      emotion: EmotionVector;
+      gesture: string | null;
+      hop: string | null;
+      /** Held until something replaces it, rather than running out on its own. */
+      sustain: boolean;
+    }
+  >;
   gestures: Array<LabelledId & { group: GestureGroup; sustain: boolean }>;
+  hops: LabelledId[];
+  /**
+   * How to put a performance inside a line rather than at the start of one.
+   *
+   * Stated rather than discovered, like `pointing.note` below — but it belongs
+   * here for the same reason everything else does: this object is what gets
+   * pasted into a system prompt, and a syntax the caller is never told about is
+   * a syntax nobody uses.
+   */
+  cue: { syntax: string; note: string };
   cameras: CameraFrame[];
   /**
    * Continuous, so it is stated as ranges rather than as a list of ids.

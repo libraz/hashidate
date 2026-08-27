@@ -9,6 +9,7 @@ import {
   GESTURES_BY_GROUP,
   type GestureId,
   POINT_HAND,
+  pointHand,
 } from '@/engine/motion/gestures';
 import { BODY_ANCHORS, FACE_ANCHORS } from '@/engine/profile';
 import type {
@@ -69,10 +70,10 @@ const FINGER_IDS = IDS.filter(
 );
 
 describe('gesture table', () => {
-  it('holds exactly 35 gestures, each under its own id', () => {
+  it('holds exactly 34 gestures, each under its own id', () => {
     // Pinned so a dropped or duplicated entry is a failure rather than a
     // silently shorter menu.
-    expect(IDS.length).toBe(35);
+    expect(IDS.length).toBe(34);
     expect(new Set(IDS).size).toBe(IDS.length);
   });
 
@@ -121,8 +122,8 @@ describe('GESTURES_BY_GROUP', () => {
 describe('poses the table builds', () => {
   it('splits the table between authored directions, reaches and spine-only', () => {
     // Every gesture is one of the three, and nothing is both.
-    expect(ARM_IDS.length).toBe(18);
-    expect(REACH_IDS.length).toBe(14);
+    expect(ARM_IDS.length).toBe(20);
+    expect(REACH_IDS.length).toBe(11);
     expect(ARM_IDS.filter((id) => REACH_IDS.includes(id))).toEqual([]);
     expect(ARM_IDS.length + REACH_IDS.length + 3).toBe(IDS.length);
     expect(FINGER_IDS.length).toBe(ARM_IDS.length + REACH_IDS.length);
@@ -258,8 +259,8 @@ describe('which hand acts', () => {
     'stretch',
     'armCross',
     'handsClasp',
-    'bothCheeks',
     'bothPeace',
+    'doze',
   ];
   const SPINE_ONLY: GestureId[] = ['nod', 'tilt', 'lean'];
   /** Authored on a fixed hand rather than through the side helper. */
@@ -270,7 +271,7 @@ describe('which hand acts', () => {
     expect(TWO_HANDED.length + SPINE_ONLY.length + FIXED_RIGHT.length + MIRRORED.length).toBe(
       IDS.length,
     );
-    expect(MIRRORED.length).toBe(15);
+    expect(MIRRORED.length).toBe(14);
   });
 
   each(TWO_HANDED)('%s poses both arms whichever side is asked for', (id) => {
@@ -398,5 +399,33 @@ describe('the rest pose the table is authored against', () => {
     for (const name of ['middle', 'ring', 'little'] as const) {
       expect(POINT_HAND[name]).toBeGreaterThan(0.9);
     }
+  });
+});
+
+describe('pointHand', () => {
+  each(FINGERS)('extends the %s and closes the rest', (finger) => {
+    // The bug this pins: the aim used the index-pointing shape whatever finger
+    // was asked for, so picking the little finger left the arm solving for a
+    // fingertip curled into the palm while the index stayed out in front. Every
+    // choice looked the same and none of them was the one requested.
+    const hand = pointHand(finger);
+    expect(Object.keys(hand).sort()).toEqual([...FINGERS].sort());
+    expect(hand[finger]).toBeLessThan(0.1);
+    for (const other of FINGERS) {
+      if (other === finger) continue;
+      // The thumb only ever goes slack, never closed — pinned flat it makes a
+      // fist with something sticking out of it, which is a different gesture.
+      expect(hand[other]).toBeGreaterThan(other === 'thumb' ? 0.2 : 0.9);
+    }
+  });
+
+  it('is the index shape by default, and that shape is POINT_HAND', () => {
+    expect(pointHand()).toEqual(POINT_HAND);
+    expect(pointHand('index')).toEqual(POINT_HAND);
+  });
+
+  it('gives a different hand for every finger', () => {
+    const shapes = FINGERS.map((f) => JSON.stringify(pointHand(f)));
+    expect(new Set(shapes).size).toBe(FINGERS.length);
   });
 });

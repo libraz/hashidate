@@ -6,6 +6,7 @@ import { buildProfile } from '@/engine/profile';
 import { type MaterialSet, setupMaterials, Wardrobe } from '@/engine/scene';
 import { Session } from '@/engine/session';
 import type { AvatarDescriptor, CameraFrame, Profile } from '@/engine/types';
+import { BrowserVoice } from '../voice';
 import { buildFramings, type Framings } from './framing';
 
 /**
@@ -79,6 +80,15 @@ export class AvatarRuntime {
   private readonly timer = new THREE.Timer();
   private readonly camWorld = new THREE.Vector3();
   private readonly resizeObserver: ResizeObserver;
+  /**
+   * One voice for the page, not one per avatar.
+   *
+   * It owns an `AudioContext`, and a browser allows only a handful of those per
+   * document — building a fresh one on every avatar switch would run the tab out
+   * of them, and would throw away the resume the operator's first click bought.
+   * Which character is on screen has nothing to do with it either way.
+   */
+  private readonly voice = new BrowserVoice();
 
   private framings: Framings | null = null;
   private frame: CameraFrame = 'bust';
@@ -268,6 +278,7 @@ export class AvatarRuntime {
     const session = new Session(director, {
       wardrobe,
       camera: (frame) => this.goto(frame),
+      voice: this.voice,
     });
 
     this.current = { avatar, root, profile, director, session, wardrobe, materials, problems };
