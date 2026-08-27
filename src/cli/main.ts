@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import type { ZodType } from 'zod';
 import {
+  avatarCommandSchema,
   backdropCommandSchema,
   cameraCommandSchema,
   commandSchema,
@@ -15,6 +16,7 @@ import {
   pointCommandSchema,
   roomCommandSchema,
   sayCommandSchema,
+  tuneCommandSchema,
   type Vocabulary,
   wearCommandSchema,
 } from '../protocol';
@@ -34,6 +36,7 @@ import { ControlClient, DEFAULT_BASE, fail } from './client';
  *     yarn ctl say "こんばんは" --emotion joy=0.8 --gesture wave --wait
  *     yarn ctl say "[hello]こんばんは。[explain]今日はこの話をします。"
  *     yarn ctl say "8月27日だよ" --reading "はちがつにじゅうしちにちだよ"
+ *     yarn ctl say "これが、ホール。" --camera full --room hall
  *     yarn ctl expression F_NIKONIKO
  *     yarn ctl overlay option_guruguru
  *     yarn ctl hop bounce
@@ -201,12 +204,32 @@ const say: Handler = async (client, args) => {
       gesture: { type: 'string' },
       perform: { type: 'string' },
       hold: { type: 'boolean' },
+      camera: { type: 'string' },
+      backdrop: { type: 'string' },
+      room: { type: 'string' },
       wait: { type: 'string' },
     },
     allowPositionals: true,
   });
   const text = positionals[0];
   if (text === undefined) fail('say には読み上げるテキストが必要');
+  // The shot, if any of it was named. Built as a whole or not at all, because
+  // an empty object is a staging instruction that stages nothing — harmless,
+  // but it would put a `stage: {}` on every line the wire ever carried.
+  //
+  // An empty string is how a shell says null here: `--room ''` is dry, `--room`
+  // left off leaves the room where it is. The standalone commands make that
+  // distinction by having an argument or not, which a flag cannot do.
+  const empty = (v: string | undefined): string | null | undefined =>
+    v === undefined ? undefined : v === '' ? null : v;
+  const stage =
+    values.camera === undefined && values.backdrop === undefined && values.room === undefined
+      ? undefined
+      : {
+          camera: values.camera,
+          backdrop: empty(values.backdrop),
+          room: empty(values.room),
+        };
   const command = build(sayCommandSchema, {
     cmd: 'say',
     text,
@@ -216,6 +239,7 @@ const say: Handler = async (client, args) => {
     gesture: values.gesture,
     perform: values.perform,
     hold: values.hold ? true : undefined,
+    stage,
   });
   show(await client.command(command, values.wait));
 };
@@ -403,6 +427,56 @@ const wear: Handler = async (client, args) => {
   );
 };
 
+/** One positional, and no default: there is no such thing as no avatar. */
+const avatar: Handler = async (client, args) => {
+  const { positionals } = parseArgs({ args, allowPositionals: true });
+  show(await client.command(build(avatarCommandSchema, { cmd: 'avatar', id: positionals[0] })));
+};
+
+/**
+ * The set-once layer, as dotted assignments: `yarn ctl tune sway.stiffness=2`.
+ *
+ * Fourteen numbers in five groups, so a flag apiece would be a page of options
+ * for a command that is almost always used to move one of them. The path is the
+ * field's own path in `tuneCommandSchema`, which means there is nothing to
+ * remember and nothing here that has to be kept in step with it — an unknown
+ * one is refused by the schema rather than by a table in this file.
+ */
+const tune: Handler = async (client, args) => {
+  const { positionals, values } = parseArgs({
+    args,
+    options: { settle: { type: 'boolean' } },
+    allowPositionals: true,
+  });
+
+  const patch: Record<string, Record<string, unknown>> = {};
+  for (const assignment of positionals) {
+    const [path, raw] = splitOnce(assignment, '=');
+    const [group, field] = splitOnce(path, '.');
+    if (raw === null || field === null) fail(`調律は group.field=値 の形で書く: ${assignment}`);
+    // Numbers stay numbers and the two words stay booleans; anything else is
+    // left as written so the schema can say what is wrong with it.
+    const value = raw === 'true' ? true : raw === 'false' ? false : Number(raw);
+    patch[group] = { ...patch[group], [field]: value };
+  }
+
+  show(
+    await client.command(
+      build(tuneCommandSchema, {
+        cmd: 'tune',
+        ...patch,
+        ...(values.settle ? { settle: true } : {}),
+      }),
+    ),
+  );
+};
+
+/** Split on the first separator only. `null` when there is none. */
+function splitOnce(value: string, separator: string): [string, string | null] {
+  const at = value.indexOf(separator);
+  return at === -1 ? [value, null] : [value.slice(0, at), value.slice(at + separator.length)];
+}
+
 const idle: Handler = async (client, args) => {
   const { positionals } = parseArgs({ args, allowPositionals: true });
   const on = positionals[0];
@@ -514,6 +588,8 @@ const HANDLERS: Record<string, Handler> = {
   room,
   backdrop,
   wear,
+  avatar,
+  tune,
   idle,
   look,
   reset: bare('reset'),
@@ -536,6 +612,8 @@ function usage(): never {
       '  yarn ctl say "コメント3件ありがとう" --reading "コメントさんけんありがとう"',
       '  yarn ctl point 40 25 --extent 0.9',
       '  yarn ctl idle on',
+      '  yarn ctl avatar manuka',
+      '  yarn ctl tune sway.stiffness=2 idle.breathDepth=1.2',
     ].join('\n'),
   );
 }

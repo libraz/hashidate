@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { getAvatar } from '@/avatars';
+import { AVATARS, getAvatar } from '@/avatars';
 import styles from './App.module.css';
 import { initialAvatar, rememberAvatar } from './avatar-selection';
 import { Console } from './console/Console';
-import { ControlClient, type ControlStatus } from './control-client';
+import { ControlClient, type ControlStatus, type RendererControls } from './control-client';
 import { onMonitorMute } from './monitor-link';
 import { Hud } from './scene/Hud';
 import { AvatarRuntime, type RuntimeStatus } from './scene/runtime';
@@ -27,19 +27,55 @@ export function App() {
   const [control, setControl] = useState<ControlStatus>('offline');
   const [rejected, setRejected] = useState(0);
 
+  /**
+   * The runtime again, reachable without a render.
+   *
+   * The control channel is built once and outlives every avatar, so what it
+   * holds has to be stable — a callback closed over `runtime` from state would
+   * be the one captured on the render the client happened to be built on.
+   */
+  const runtimeRef = useRef<AvatarRuntime | null>(null);
+
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     const rt = new AvatarRuntime(host);
+    runtimeRef.current = rt;
     setRuntime(rt);
     const off = rt.onStatus(setStatus);
     void rt.load(initialAvatar());
     return () => {
       off();
       rt.dispose();
+      runtimeRef.current = null;
       setRuntime(null);
     };
   }, []);
+
+  /**
+   * Which avatar is on screen, as a thing the control API can ask for.
+   *
+   * The same call the picker in the console makes, which is deliberate: the
+   * panel and the console switch avatars by the same path, so the choice is
+   * remembered and pinned to the URL either way. See `avatar-selection.ts`.
+   */
+  const rendererControls = useRef<RendererControls>({
+    avatars: AVATARS.map((a) => ({ id: a.id, label: a.label })),
+    load: (id) => {
+      const next = getAvatar(id);
+      const rt = runtimeRef.current;
+      if (!(next && rt)) return false;
+      // Already there, on its way, or queued behind one that is: the swap would
+      // do nothing, and saying otherwise leaves the channel holding commands
+      // for a load that will never land. The setup a viewer is handed on
+      // connect names the avatar it is usually already showing, so this is the
+      // ordinary case rather than the odd one.
+      if (rt.avatarId === id) return false;
+      rememberAvatar(id);
+      void rt.load(next);
+      return true;
+    },
+  }).current;
 
   /**
    * The embedder's mute, when this page is the panel's preview.
@@ -62,20 +98,27 @@ export function App() {
    * instead.
    */
   useEffect(() => {
+    // A load that produced nothing still ends the swap. Without this the client
+    // would hold every later command waiting for a session that is not coming.
+    if (status.phase === 'failed') controlRef.current?.discardHeld();
     if (status.phase !== 'ready') return;
     const { session } = status.loaded;
     const existing = controlRef.current;
     if (existing) {
-      existing.bind(session);
+      existing.bind(session, status.loaded.avatar.id);
       return;
     }
     const client = new ControlClient(session, {
       onStatus: setControl,
       onRejected: () => setRejected((n) => n + 1),
+      renderer: rendererControls,
     });
     client.start();
     controlRef.current = client;
-  }, [status]);
+    // `rendererControls` is a ref's value and never changes identity; it is
+    // listed because the rule cannot tell that, not because a change would mean
+    // anything here.
+  }, [status, rendererControls]);
 
   useEffect(
     () => () => {
@@ -100,10 +143,7 @@ export function App() {
   }, [runtime, status]);
 
   const switchTo = (id: string) => {
-    const next = getAvatar(id);
-    if (!(next && runtime)) return;
-    rememberAvatar(id);
-    void runtime.load(next);
+    rendererControls.load(id);
   };
 
   // A fixed render size is applied to the host element rather than to the
@@ -114,19 +154,20 @@ export function App() {
     : undefined;
 
   return (
-    <div className={`${styles.app} ${MODE.stage ? styles.staged : ''}`}>
+    <div className={`${styles.app} ${MODE.console ? '' : styles.staged}`}>
       <div className={styles.stage} ref={hostRef} style={sized}>
-        {/* The HUD is a measurement readout. On a stream it is text over the
-            character's face, so stage mode is the one place it must not appear
-            — including while the model is still arriving. */}
-        {!MODE.stage && status.phase === 'ready' && runtime ? (
+        {/* The HUD is a measurement readout — text over the character's face —
+            so it belongs with the console rather than beside it. Including
+            while the model is still arriving: a stream that opens on
+            「読み込み中…」 has put that on the stream. */}
+        {MODE.console && status.phase === 'ready' && runtime ? (
           <Hud runtime={runtime} avatar={status.loaded.avatar} />
         ) : null}
-        {!MODE.stage && status.phase === 'loading' ? (
+        {MODE.console && status.phase === 'loading' ? (
           <div className={styles.loading}>{status.avatar.label} を読み込み中…</div>
         ) : null}
       </div>
-      {MODE.stage ? null : (
+      {MODE.console ? (
         <div className={styles.console}>
           <Console
             runtime={runtime}
@@ -136,7 +177,7 @@ export function App() {
             onSwitch={switchTo}
           />
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

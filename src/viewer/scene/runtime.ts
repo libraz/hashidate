@@ -5,7 +5,7 @@ import { Director } from '@/engine/director';
 import { buildProfile } from '@/engine/profile';
 import { type MaterialSet, setupMaterials, Wardrobe } from '@/engine/scene';
 import { Session } from '@/engine/session';
-import type { AvatarDescriptor, CameraFrame, Profile } from '@/engine/types';
+import type { AvatarDescriptor, CameraFrame, Profile, Shading } from '@/engine/types';
 import { stageMode } from '../stage-mode';
 import { BrowserVoice } from '../voice';
 import { BackdropStage } from './backdrop';
@@ -128,6 +128,9 @@ export class AvatarRuntime {
    * ever released.
    */
   private loading: string | null = null;
+
+  /** A swap asked for while another was in flight. Started when that one lands. */
+  private queued: AvatarDescriptor | null = null;
 
   constructor(host: HTMLElement) {
     this.host = host;
@@ -286,7 +289,16 @@ export class AvatarRuntime {
    * director — shows up here rather than in production.
    */
   async load(avatar: AvatarDescriptor): Promise<void> {
-    if (this.loading || avatar.id === this.current?.avatar.id) return;
+    // Asked for during another load, the request waits rather than being
+    // dropped. That case used to be theoretical and is now the ordinary one:
+    // the control server hands a viewer the setup the moment its stream
+    // connects, and the stream connects while the first model is still coming
+    // down. Dropped, the avatar the operator chose would silently not appear.
+    if (this.loading) {
+      this.queued = avatar.id === this.loading ? null : avatar;
+      return;
+    }
+    if (avatar.id === this.current?.avatar.id) return;
     this.loading = avatar.id;
     this.setStatus({ phase: 'loading', avatar });
 
@@ -300,6 +312,7 @@ export class AvatarRuntime {
         avatar,
         message: `GLB の読み込みに失敗 (${avatar.url}): ${e instanceof Error ? e.message : e}`,
       });
+      this.drainQueued();
       return;
     }
 
@@ -348,11 +361,33 @@ export class AvatarRuntime {
       // the actor did.
       scenery: this.backdrop,
       voice: this.voice,
+      // The renderer's own switch, narrowed to a port for the same reason the
+      // backdrop is: a session tuning the shading has to be able to say so
+      // without being handed everything else that draws.
+      shading: shadingPort(this),
     });
 
     this.current = { avatar, root, profile, director, session, wardrobe, materials, problems };
     this.resize();
     this.setStatus({ phase: 'ready', loaded: this.current });
+    this.drainQueued();
+  }
+
+  /**
+   * Which avatar is on screen, on its way, or waiting behind the one on its way.
+   *
+   * The answer a caller needs before asking for a swap: matching it means the
+   * request would do nothing at all, and a control channel holding commands
+   * behind a load that is never going to happen goes quiet for good.
+   */
+  get avatarId(): string | null {
+    return this.queued?.id ?? this.loading ?? this.current?.avatar.id ?? null;
+  }
+
+  private drainQueued(): void {
+    const next = this.queued;
+    this.queued = null;
+    if (next) void this.load(next);
   }
 
   /** Release a loaded avatar: scene graph and every GPU resource it brought. */
@@ -453,4 +488,19 @@ export class AvatarRuntime {
     };
     for (const fn of this.hudListeners) fn(hud);
   }
+}
+
+/**
+ * The renderer's shading, as the one switch a session may reach.
+ *
+ * A free function rather than an object literal inside the class, because the
+ * getter has to close over the runtime and a getter cannot be an arrow.
+ */
+function shadingPort(runtime: AvatarRuntime): Shading {
+  return {
+    get toon(): boolean {
+      return runtime.toonEnabled;
+    },
+    setToon: (on) => runtime.setToon(on),
+  };
 }

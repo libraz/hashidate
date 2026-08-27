@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { TUNING_RANGES } from '@/engine/tuning';
 import type { Command, CommandName } from '@/protocol';
 import { commandSchema, parseCommand } from '@/protocol';
 
@@ -82,6 +83,30 @@ const SWITCH_CASES: Record<CommandName, Command[]> = {
     { cmd: 'voice', dsp: { retune: { semitones: 3 }, eq: { airDb: 2 } } },
     { cmd: 'voice' },
   ],
+  avatar: [{ cmd: 'avatar', id: 'sample' }],
+  tune: [
+    { cmd: 'tune', idle: { breathDepth: 1.2 } },
+    { cmd: 'tune', sway: { enabled: false }, settle: true },
+    {
+      cmd: 'tune',
+      id: 'c-5',
+      idle: {
+        breathDepth: 1,
+        breathPeriod: 4.5,
+        idleAmount: 0.8,
+        weightShift: 1,
+        gazeAmount: 1.1,
+        eyeLimit: 0.6,
+        blink: true,
+      },
+      sway: { enabled: true, stiffness: 1.5, inertia: 0.9, gravity: 1 },
+      hop: { height: 0.12, gravity: 9.8 },
+      tail: { amount: 2 },
+      render: { toon: true, arkit: false },
+      settle: false,
+    },
+    { cmd: 'tune' },
+  ],
 };
 
 /** The `cmd` tags the union actually carries. */
@@ -140,6 +165,11 @@ describe('parseCommand degrading rather than throwing', () => {
       { cmd: 'idle', on: 1 },
       { cmd: 'expression', id: 7 },
       { cmd: 'wear', slot: 3 },
+      { cmd: 'avatar' },
+      { cmd: 'avatar', id: null },
+      { cmd: 'tune', idle: { breathPeriod: 0 } },
+      { cmd: 'tune', sway: { stiffness: 99 } },
+      { cmd: 'tune', render: { toon: 'on' } },
     ];
     for (const value of malformed) expect(parseCommand(value)).toBeNull();
   });
@@ -291,6 +321,39 @@ describe('say', () => {
     expect(parsed).toMatchObject({ id: 'turn-9' });
   });
 
+  it('carries a shot alongside the line', () => {
+    const parsed = parseCommand({
+      cmd: 'say',
+      text: 'あ',
+      stage: { camera: 'full', backdrop: 'night', room: 'hall' },
+    });
+    expect(parsed).toMatchObject({ stage: { camera: 'full', backdrop: 'night', room: 'hall' } });
+  });
+
+  // The distinction the engine acts on: an absent axis keeps what it had, a
+  // null one is emptied. A schema that defaulted either way would make one of
+  // the two unsayable, and it is the kind of thing a later `??` deletes.
+  it('keeps an omitted staging axis omitted and a null one null', () => {
+    expect(parseCommand({ cmd: 'say', text: 'あ', stage: { room: null } })).toEqual({
+      cmd: 'say',
+      text: 'あ',
+      stage: { room: null },
+    });
+    expect(parseCommand({ cmd: 'say', text: 'あ', stage: {} })).toEqual({
+      cmd: 'say',
+      text: 'あ',
+      stage: {},
+    });
+  });
+
+  it('refuses a framing the renderer does not have', () => {
+    expect(parseCommand({ cmd: 'say', text: 'あ', stage: { camera: 'closeup' } })).toBeNull();
+  });
+
+  it('leaves a line with no staging without the key', () => {
+    expect(parseCommand({ cmd: 'say', text: 'あ' })).toEqual({ cmd: 'say', text: 'あ' });
+  });
+
   // The four combinations of the two fields, in full: the space is small enough
   // that enumerating it beats sampling it, and `reading ?? text` is exactly the
   // kind of fallback that gets one of the four wrong.
@@ -372,6 +435,71 @@ describe('cues in a line', () => {
     expect(parseCommand({ cmd: 'say', text: 'あ', reading: '[happy]あ' })).toBeNull();
     expect(parseCommand({ cmd: 'say', text: '[happy]あ', reading: 'あ' })).toMatchObject({
       reading: 'あ',
+    });
+  });
+});
+
+describe('tune', () => {
+  it('carries one fader on its own, because that is what a drag sends', () => {
+    expect(parseCommand({ cmd: 'tune', sway: { stiffness: 1.4 } })).toEqual({
+      cmd: 'tune',
+      sway: { stiffness: 1.4 },
+    });
+  });
+
+  it('leaves an untouched group absent rather than filling it in', () => {
+    // Absent means "leave it" everywhere on this wire. A default landing here
+    // would make every knob turn also reset the four groups it did not name.
+    const parsed = parseCommand({ cmd: 'tune', idle: { blink: false } }) as Record<string, unknown>;
+    expect(Object.keys(parsed).sort()).toEqual(['cmd', 'idle']);
+    expect((parsed.idle as Record<string, unknown>).breathDepth).toBeUndefined();
+  });
+
+  it.each([
+    ['idle', 'breathDepth', TUNING_RANGES.idle.breathDepth],
+    ['idle', 'breathPeriod', TUNING_RANGES.idle.breathPeriod],
+    ['idle', 'eyeLimit', TUNING_RANGES.idle.eyeLimit],
+    ['sway', 'stiffness', TUNING_RANGES.sway.stiffness],
+    ['sway', 'inertia', TUNING_RANGES.sway.inertia],
+    ['hop', 'height', TUNING_RANGES.hop.height],
+    ['hop', 'gravity', TUNING_RANGES.hop.gravity],
+    ['tail', 'amount', TUNING_RANGES.tail.amount],
+  ])('accepts both ends of %s.%s and refuses either side of them', (group, field, range) => {
+    // The bounds a panel sweeps and the bounds the wire accepts are the same
+    // object, so a fader that reaches its end cannot send something refused.
+    for (const value of [range.min, range.max]) {
+      expect(parseCommand({ cmd: 'tune', [group]: { [field]: value } })).not.toBeNull();
+    }
+    for (const value of [range.min - 0.01, range.max + 0.01]) {
+      expect(parseCommand({ cmd: 'tune', [group]: { [field]: value } })).toBeNull();
+    }
+  });
+
+  it('carries settle, which is the one verb in a patch of values', () => {
+    expect(parseCommand({ cmd: 'tune', settle: true })).toEqual({ cmd: 'tune', settle: true });
+  });
+
+  it('parses with no groups at all, which asks for nothing and is not an error', () => {
+    expect(parseCommand({ cmd: 'tune' })).toEqual({ cmd: 'tune' });
+  });
+});
+
+describe('avatar', () => {
+  it('spends id on the avatar rather than on correlation', () => {
+    expect(parseCommand({ cmd: 'avatar', id: 'sample' })).toEqual({ cmd: 'avatar', id: 'sample' });
+  });
+
+  it('requires one, because there is no sensible avatar to mean by omission', () => {
+    // Unlike `expression` or `room`, where absent means "take it off". There is
+    // no such thing as no avatar: the renderer would have nothing to draw.
+    expect(parseCommand({ cmd: 'avatar' })).toBeNull();
+  });
+
+  it('accepts an id this renderer may not have, which it ignores when it applies', () => {
+    // The roster is renderer data and travels with the vocabulary. Refusing here
+    // would only move the failure to a place with less information about it.
+    expect(parseCommand({ cmd: 'avatar', id: 'nosuchavatar' })).toMatchObject({
+      id: 'nosuchavatar',
     });
   });
 });

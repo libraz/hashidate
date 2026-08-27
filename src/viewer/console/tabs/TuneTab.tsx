@@ -1,5 +1,6 @@
 import { type Dispatch, type SetStateAction, useRef, useState } from 'react';
 import { HOP_IDS, HOPS } from '@/engine/motion';
+import { TUNING_RANGES as R } from '@/engine/tuning';
 import type { GazeLimits } from '@/engine/types';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { Section } from '@/ui/Section';
@@ -15,6 +16,12 @@ import type { AvatarRuntime, LoadedAvatar } from '../../scene/runtime';
  * something to render. Nothing here is polled, because nothing else writes
  * them — unlike the emotion vector on the performance tab, which the autopilot
  * also moves.
+ *
+ * How far each fader travels comes from `TUNING_RANGES` rather than from the
+ * numbers that used to sit here. The same layer is reachable over the control
+ * API, and the panel that drives it that way sweeps the same faders — two copies
+ * of fourteen bounds would come to disagree without either one looking wrong.
+ * The *defaults* still belong to the engine objects; nothing here restates one.
  */
 export function TuneTab({
   loaded,
@@ -83,7 +90,7 @@ export function TuneTab({
         <Slider
           label="呼吸の深さ"
           value={breathDepth}
-          max={2}
+          {...R.idle.breathDepth}
           onChange={set(setBreathDepth, (v) => {
             body.breathDepth = v;
           })}
@@ -91,11 +98,7 @@ export function TuneTab({
         <Slider
           label="呼吸の周期"
           value={breathPeriod}
-          min={2}
-          max={8}
-          step={0.1}
-          precision={1}
-          unit="s"
+          {...R.idle.breathPeriod}
           onChange={set(setBreathPeriod, (v) => {
             body.breathPeriod = v;
           })}
@@ -103,7 +106,7 @@ export function TuneTab({
         <Slider
           label="頭のマイクロムーブ"
           value={idleAmount}
-          max={2}
+          {...R.idle.idleAmount}
           onChange={set(setIdleAmount, (v) => {
             body.idleAmount = v;
           })}
@@ -111,7 +114,7 @@ export function TuneTab({
         <Slider
           label="重心移動"
           value={weightShift}
-          max={2}
+          {...R.idle.weightShift}
           onChange={set(setWeightShift, (v) => {
             body.weightShift = v;
           })}
@@ -126,7 +129,7 @@ export function TuneTab({
         <Slider
           label="視線のゆらぎ"
           value={gazeAmount}
-          max={2}
+          {...R.idle.gazeAmount}
           onChange={set(setGazeAmount, (v) => {
             body.gazeAmount = v;
           })}
@@ -134,9 +137,7 @@ export function TuneTab({
         <Slider
           label="目の可動限界"
           value={eyeLimit}
-          min={0.2}
-          max={2}
-          step={0.05}
+          {...R.idle.eyeLimit}
           onChange={set(setEyeLimit, (v) => {
             profile.gaze.eyeYaw = baseGaze.current.limits.eyeYaw * v;
             profile.gaze.eyePitch = baseGaze.current.limits.eyePitch * v;
@@ -173,9 +174,7 @@ export function TuneTab({
           <Slider
             label="硬さ"
             value={stiffness}
-            min={0.2}
-            max={3}
-            step={0.05}
+            {...R.sway.stiffness}
             onChange={set(setStiffness, (v) => {
               spring.stiffnessScale = v;
             })}
@@ -183,8 +182,7 @@ export function TuneTab({
           <Slider
             label="揺れの持続"
             value={inertia}
-            max={1.6}
-            step={0.05}
+            {...R.sway.inertia}
             onChange={set(setInertia, (v) => {
               spring.inertiaScale = v;
             })}
@@ -192,9 +190,7 @@ export function TuneTab({
           <Slider
             label="重力"
             value={swayGravity}
-            max={4}
-            step={0.1}
-            precision={1}
+            {...R.sway.gravity}
             onChange={set(setSwayGravity, (v) => {
               spring.gravityScale = v;
             })}
@@ -217,8 +213,8 @@ export function TuneTab({
         <Slider
           label="跳ぶ高さ"
           value={jumpHeight}
-          min={1}
-          max={30}
+          min={R.hop.height.min * 100}
+          max={R.hop.height.max * 100}
           step={1}
           precision={0}
           unit="cm"
@@ -229,11 +225,7 @@ export function TuneTab({
         <Slider
           label="重力"
           value={gravity}
-          min={1.5}
-          max={20}
-          step={0.1}
-          precision={1}
-          unit="m/s²"
+          {...R.hop.gravity}
           onChange={set(setGravity, (v) => {
             body.gravity = v;
           })}
@@ -262,8 +254,7 @@ export function TuneTab({
           <Slider
             label="振りの大きさ"
             value={tailAmount}
-            max={4}
-            step={0.05}
+            {...R.tail.amount}
             onChange={set(setTailAmount, (v) => {
               tail.amount = v;
             })}

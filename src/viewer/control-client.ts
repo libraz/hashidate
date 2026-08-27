@@ -1,5 +1,5 @@
 import type { Session } from '@/engine/session';
-import type { SessionEvent } from '@/engine/types';
+import type { LabelledId, SessionEvent } from '@/engine/types';
 import { type Command, parseCommand, type ReportBody } from '@/protocol';
 
 /**
@@ -26,13 +26,52 @@ import { type Command, parseCommand, type ReportBody } from '@/protocol';
 const REPORT_INTERVAL = 700;
 const RETRY_DELAY = 1500;
 
+/**
+ * How many commands may pile up behind an avatar swap.
+ *
+ * A swap reads a model off disk, and everything sent meanwhile waits for it —
+ * see `apply`. A load that never finishes would otherwise let the backlog grow
+ * for as long as the page is open. The oldest go first, because two commands on
+ * the same axis are a correction and the later one is the correction.
+ */
+const HELD_MAX = 200;
+
 export type ControlStatus = 'online' | 'offline';
+
+/**
+ * The switches that belong to the renderer rather than to the session.
+ *
+ * Every other command in the set is one session call, which is what keeps the
+ * command set honest — a verb that cannot be expressed as one means the session
+ * is missing something. `avatar` genuinely cannot be: it *replaces* the session,
+ * along with the scene, the rig and the wardrobe underneath it. So it is named
+ * here as an exception rather than smuggled in as a special case.
+ *
+ * Absent on a renderer that loads one avatar and stays on it, which is every
+ * test: `avatar` then does nothing and the roster it reports is empty.
+ */
+export interface RendererControls {
+  /** Every avatar this renderer can load, including the one it has. */
+  readonly avatars: LabelledId[];
+  /**
+   * Start loading one. Answers whether anything is actually going to happen.
+   *
+   * False for an id this renderer does not have — a caller working from a stale
+   * roster — and false for the avatar it is already showing or already loading.
+   * Both matter for the same reason: the channel holds commands behind a swap,
+   * and a hold that nothing will ever end is a renderer that has gone silent.
+   * The second case is the common one, because the setup a viewer is handed on
+   * connect names the avatar it is usually already on.
+   */
+  load(id: string): boolean;
+}
 
 export interface ControlOptions {
   base?: string;
   onStatus?: (status: ControlStatus) => void;
   /** Commands the wire carried but the schema rejected. Surfaced, not swallowed. */
   onRejected?: (raw: unknown) => void;
+  renderer?: RendererControls;
 }
 
 export class ControlClient {
@@ -40,6 +79,7 @@ export class ControlClient {
   private readonly base: string;
   private readonly onStatus: (status: ControlStatus) => void;
   private readonly onRejected: (raw: unknown) => void;
+  private readonly renderer: RendererControls | null;
 
   status: ControlStatus = 'offline';
 
@@ -50,12 +90,22 @@ export class ControlClient {
   private timer: ReturnType<typeof setInterval> | null = null;
   private retry: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
+  /**
+   * Commands waiting for an avatar to finish arriving, or null when none is.
+   *
+   * Empty and non-null is meaningful: it means a swap is in flight and nothing
+   * has arrived behind it yet.
+   */
+  private held: Command[] | null = null;
+  /** The avatar the hold is waiting for. Null when nothing is held. */
+  private awaiting: string | null = null;
 
   constructor(session: Session, opts: ControlOptions = {}) {
     this.session = session;
     this.base = opts.base ?? '/api';
     this.onStatus = opts.onStatus ?? (() => {});
     this.onRejected = opts.onRejected ?? (() => {});
+    this.renderer = opts.renderer ?? null;
     this.bind(session);
   }
 
@@ -68,8 +118,20 @@ export class ControlClient {
    * goes back up immediately, because that is the part that just changed: the
    * expression ids and wardrobe slots the caller was told about belong to the
    * avatar that is no longer loaded.
+   *
+   * This is also where a swap ends. Anything that arrived while the model was
+   * being read is applied here, in order, onto the session it was meant for —
+   * see `apply`.
+   *
+   * `avatar` says which one this session is of, and the hold ends only when it
+   * is the one that was asked for. Not merely when *a* session arrives: a swap
+   * requested while another model was still loading produces a session for the
+   * intermediate avatar first, and flushing onto that one would dress, tune and
+   * pose a character that is about to be replaced. A caller that does not know
+   * — the constructor — passes null and releases, which is right, because
+   * nothing can be held before the first command.
    */
-  bind(session: Session): void {
+  bind(session: Session, avatar: string | null = null): void {
     this.unbind?.();
     this.session = session;
     this.unbind = session.on((ev) => {
@@ -78,7 +140,27 @@ export class ControlClient {
       // rather than on the next tick of the reporting timer.
       if (ev.type.startsWith('turn.')) void this.report();
     });
+    if (this.awaiting === null || this.awaiting === avatar) this.flush();
     if (this.status === 'online') void this.report(true);
+  }
+
+  /**
+   * Let go of the commands held behind a swap without applying them.
+   *
+   * For the load that never produced a session: a GLB that is missing, or one
+   * the loader refused. The alternative is a renderer that goes quiet forever
+   * because it is still waiting for an avatar that is not coming.
+   */
+  discardHeld(): void {
+    this.held = null;
+    this.awaiting = null;
+  }
+
+  private flush(): void {
+    const held = this.held;
+    this.held = null;
+    this.awaiting = null;
+    for (const command of held ?? []) this.apply(command);
   }
 
   start(): void {
@@ -182,8 +264,21 @@ export class ControlClient {
   private async post(withVocabulary: boolean): Promise<void> {
     const events = this.pending;
     this.pending = [];
-    const body: ReportBody = { state: this.session.state(), events };
-    if (withVocabulary) body.vocabulary = this.session.vocabulary();
+    // The set-once layer rides on the timer beside the state rather than only
+    // when it changes, for the same reason the voice report does: it is what a
+    // remote fader is drawn from, and a fader that only updates when somebody
+    // moves it cannot show what an avatar swap did to it.
+    const body: ReportBody = {
+      state: this.session.state(),
+      events,
+      tuning: this.session.tuning(),
+    };
+    if (withVocabulary) {
+      body.vocabulary = this.session.vocabulary();
+      // Fixed for the life of the page, so it goes with the vocabulary rather
+      // than every 700 ms.
+      if (this.renderer) body.avatars = this.renderer.avatars;
+    }
     // The chain the renderer is *actually* running, so a panel draws that rather
     // than what it last sent — see `VoiceReport`. On the report timer and not
     // only on change, because it carries the loudness of the last take and a
@@ -213,10 +308,33 @@ export class ControlClient {
    * throwing. The orchestrator and the renderer are separate processes with
    * separate release cycles, and a newer caller talking to an older renderer
    * should degrade, not crash the stream.
+   *
+   * ## `avatar` holds everything behind it
+   *
+   * The one command that is not a session call, because it replaces the session.
+   * A model takes a second or two to read, and the session that exists during
+   * that window is the *old* one — so a caller that swaps the avatar and dresses
+   * it in the same breath would otherwise dress the character being replaced,
+   * and then watch the new one arrive undressed. Anything that arrives while a
+   * swap is in flight is queued and applied when the new session is bound.
    */
   apply(c: Command): void {
+    if (this.held) {
+      this.held.push(c);
+      if (this.held.length > HELD_MAX) this.held.splice(0, this.held.length - HELD_MAX);
+      return;
+    }
     const s = this.session;
     switch (c.cmd) {
+      // Not `s.something`: see the note above. A load the renderer refuses —
+      // an id it does not have, or the avatar it is already showing — is not
+      // held for, since nothing is going to arrive to end the hold.
+      case 'avatar':
+        if (this.renderer?.load(c.id)) {
+          this.held = [];
+          this.awaiting = c.id;
+        }
+        return;
       case 'say':
         s.say({
           id: c.id,
@@ -227,6 +345,7 @@ export class ControlClient {
           gesture: c.gesture,
           perform: c.perform,
           hold: c.hold,
+          stage: c.stage,
         });
         return;
       // The whole pending list, in order. Not `clear` plus a run of `say`: the
@@ -299,6 +418,9 @@ export class ControlClient {
         return;
       case 'wear':
         s.wear(c);
+        return;
+      case 'tune':
+        s.tune(c);
         return;
       default:
         return;

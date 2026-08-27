@@ -1,6 +1,14 @@
 import { z } from 'zod';
 import { hasCueMarkup, isWellFormed } from '../engine/cues';
-import type { CameraFrame, EmotionName, FingerName, Side, TurnRequest } from '../engine/types';
+import { TUNING_RANGES, type TuningPatch, type TuningRange } from '../engine/tuning';
+import type {
+  CameraFrame,
+  EmotionName,
+  FingerName,
+  Side,
+  Staging,
+  TurnRequest,
+} from '../engine/types';
 
 /**
  * The command vocabulary, as it travels on the wire.
@@ -99,6 +107,23 @@ const correlationId = z.string().optional();
  * held past its line a drawn face stops reading as a reaction and starts
  * reading as the character's actual face.
  */
+/**
+ * A shot, as a line can carry one. See `sayCommandSchema.stage`.
+ *
+ * Deliberately the three persistent staging axes and nothing else. What belongs
+ * on a turn is what the renderer can hold across it and hand back — a camera
+ * framing, a backdrop and an acoustic. A gesture or an expression is already on
+ * the turn and is released with it, which is the opposite lifetime, and putting
+ * both kinds under one key would make the field mean two things.
+ */
+export const stageSchema = z.object({
+  camera: cameraFrameSchema.optional(),
+  backdrop: z.string().nullable().optional(),
+  room: z.string().nullable().optional(),
+});
+
+type _StageIsStaging = Expect<Equals<z.infer<typeof stageSchema>, Staging>>;
+
 export const sayCommandSchema = z.object({
   cmd: z.literal('say'),
   /** Doubles as the turn id: `turn.start` and `turn.end` come back under it. */
@@ -150,6 +175,31 @@ export const sayCommandSchema = z.object({
    */
   perform: z.string().nullable().optional(),
   hold: z.boolean().optional(),
+  /**
+   * The shot this line is delivered in, applied when the turn starts.
+   *
+   * The same three things `camera`, `backdrop` and `room` say on their own, and
+   * they still say it — this does not replace them. What it adds is *when*: a
+   * standalone staging command takes effect the moment it arrives, which is
+   * correct for a caller reacting to something, and wrong for a caller
+   * describing a line it has not reached yet.
+   *
+   * That distinction is what makes a script sound like one. A caller sending a
+   * line at a time and waiting for each to finish pays about 1.2 s of silence
+   * between every pair of them, because the renderer asks for a line's audio
+   * when the line is queued and a queue one deep leaves nothing to prepare
+   * during. Sending the whole run at once takes that to 0.3 s — but only if the
+   * staging can travel with the run, and before this it could not: four lines
+   * in one request meant four camera moves at the top of the first one.
+   *
+   * Absent and null are different, here as everywhere: no `room` key leaves the
+   * room alone, `room: null` takes the character out of one.
+   *
+   * These stay put after the turn, like the commands they mirror. A shot is
+   * where the stream is, not a property of a sentence, and a caller that wants
+   * it back says so on the line it wants it back for.
+   */
+  stage: stageSchema.optional(),
 });
 
 /**
@@ -555,6 +605,109 @@ export const wearCommandSchema = z.object({
   preset: z.string().optional(),
 });
 
+// --- the renderer -----------------------------------------------------------
+//
+// Neither a performance nor a shot: which character is on screen, and how the
+// layers underneath it are set. Both are things an operator decides before a
+// stream rather than during one, and both were reachable only from a console
+// running on the same page as the renderer until they were named here.
+
+/**
+ * Load a different avatar.
+ *
+ * `id` is the avatar's own id, not the correlation id, on the same rule as
+ * `expression` and `perform`. An id the renderer does not have is ignored: what
+ * avatars exist is renderer data, reported alongside the vocabulary, and a
+ * caller working from a stale list should not be able to blank the stream.
+ *
+ * This is the one command that replaces the thing every other command talks to.
+ * The swap builds a new scene and a new session, which takes as long as reading
+ * a model off disk, so commands that arrive behind it are held until the new
+ * avatar is standing and then applied to it — see `ControlClient.apply`. Sending
+ * `avatar` and then dressing it in the same breath does what it reads like.
+ */
+export const avatarCommandSchema = z.object({
+  cmd: z.literal('avatar'),
+  id: z.string(),
+});
+
+/** A number stated as far as its control may travel. See `TUNING_RANGES`. */
+const within = (range: TuningRange) => z.number().min(range.min).max(range.max);
+
+/**
+ * Move part of the set-once layer: breath, sway, jump, tail, shading.
+ *
+ * ## The field names are the engine's, deliberately
+ *
+ * The same trade `voiceDspSchema` makes, for the same reason: there is nothing
+ * to translate *to*. A spring stiffness scale is a spring stiffness scale, and
+ * a second set of names for these fourteen numbers would only produce a mapping
+ * table for the two ends to drift across. The one place the wire does insist on
+ * its own unit is `hop.height`, which is metres here because metres is what the
+ * body layer holds — both panels state it in centimetres, and that is theirs.
+ *
+ * ## Bounded, unlike `point`
+ *
+ * The ranges come from `TUNING_RANGES` and a value outside one fails the
+ * command. `point` deliberately accepts a bearing the arm cannot reach, because
+ * reaching as far as it can is a real answer and the strain readout is how a
+ * caller learns what the pose cost. Nothing here has that shape: a breath
+ * period of zero is not an ambitious breath, and there is no readout that would
+ * tell the caller so.
+ *
+ * ## Everything is optional and merges onto what is running
+ *
+ * A surface with one fader under the mouse sends one number. Absent means "leave
+ * it", never "reset it" — which is what makes a knob turn cost one small message
+ * rather than a full statement of the layer.
+ */
+export const tuneCommandSchema = z.object({
+  cmd: z.literal('tune'),
+  id: correlationId,
+  idle: z
+    .object({
+      breathDepth: within(TUNING_RANGES.idle.breathDepth).optional(),
+      breathPeriod: within(TUNING_RANGES.idle.breathPeriod).optional(),
+      idleAmount: within(TUNING_RANGES.idle.idleAmount).optional(),
+      weightShift: within(TUNING_RANGES.idle.weightShift).optional(),
+      gazeAmount: within(TUNING_RANGES.idle.gazeAmount).optional(),
+      /** A multiplier over the avatar's measured limits, not an angle. */
+      eyeLimit: within(TUNING_RANGES.idle.eyeLimit).optional(),
+      blink: z.boolean().optional(),
+    })
+    .optional(),
+  sway: z
+    .object({
+      enabled: z.boolean().optional(),
+      stiffness: within(TUNING_RANGES.sway.stiffness).optional(),
+      inertia: within(TUNING_RANGES.sway.inertia).optional(),
+      gravity: within(TUNING_RANGES.sway.gravity).optional(),
+    })
+    .optional(),
+  hop: z
+    .object({
+      /** Metres. */
+      height: within(TUNING_RANGES.hop.height).optional(),
+      gravity: within(TUNING_RANGES.hop.gravity).optional(),
+    })
+    .optional(),
+  tail: z.object({ amount: within(TUNING_RANGES.tail.amount).optional() }).optional(),
+  render: z.object({ toon: z.boolean().optional(), arkit: z.boolean().optional() }).optional(),
+  /** Snap the spring chains to rest, after the values above have landed. */
+  settle: z.boolean().optional(),
+});
+
+/**
+ * The payload is a `TuningPatch` and nothing else, on the same footing as `say`
+ * and its `TurnRequest`: the guard trips if the engine's notion of what is
+ * tunable moves without this schema following.
+ */
+type _TunePayloadIsPatch = Expect<
+  Equals<Omit<z.infer<typeof tuneCommandSchema>, 'cmd' | 'id'>, TuningPatch>
+>;
+
+export type { TuningPatch };
+
 // --- the set ----------------------------------------------------------------
 
 /**
@@ -581,6 +734,8 @@ export const commandSchema = z.discriminatedUnion('cmd', [
   backdropCommandSchema,
   voiceCommandSchema,
   wearCommandSchema,
+  avatarCommandSchema,
+  tuneCommandSchema,
 ]);
 
 export type Command = z.infer<typeof commandSchema>;

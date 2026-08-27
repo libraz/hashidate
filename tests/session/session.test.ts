@@ -6,6 +6,8 @@ import { buildProfile } from '@/engine/profile';
 import { Wardrobe } from '@/engine/scene';
 import { Session } from '@/engine/session';
 import type {
+  CameraFrame,
+  LabelledId,
   SessionEvent,
   SessionEventType,
   Take,
@@ -63,11 +65,16 @@ function build({
   wardrobe = false,
   idle = false,
   voice,
+  camera,
+  scenery,
 }: {
   wardrobe?: boolean;
   idle?: boolean;
   /** Handed the harness's own clock, so a fake take can run on simulated time. */
   voice?: (now: () => number) => Voice;
+  /** The staging hooks a renderer supplies, for the turns that carry a shot. */
+  camera?: (frame: CameraFrame) => void;
+  scenery?: { backdrops: LabelledId[]; setBackdrop: (id: string | null) => void };
 } = {}) {
   const rig = buildRig({
     groups: [
@@ -88,6 +95,8 @@ function build({
     wardrobe: wardrobe ? new Wardrobe(rig.root, profile, WARDROBE) : null,
     idle,
     voice: voice?.(() => clock),
+    camera,
+    scenery,
   });
 
   const step = (frames: number): void => {
@@ -767,6 +776,81 @@ describe('direct control between turns', () => {
 
   it('setBackdrop is a no-op on a renderer with no backdrops', () => {
     expect(() => harness.session.setBackdrop('night')).not.toThrow();
+  });
+
+  // The whole reason staging can ride on a turn: a caller can describe the
+  // fourth line's shot while the first line is still being said, and the shot
+  // still lands on the fourth line. Queued is not applied.
+  it('applies a turn staging when the turn starts, not when it is queued', () => {
+    const camera = vi.fn();
+    const setBackdrop = vi.fn();
+    const { session, step, runUntil } = build({
+      camera,
+      scenery: { backdrops: [], setBackdrop },
+    });
+
+    session.say({ text: 'いち', stage: { camera: 'face' } });
+    session.say({ text: 'に', stage: { camera: 'full', backdrop: 'night' } });
+    // Both are in the queue and neither has begun, so nothing has moved.
+    expect(camera).not.toHaveBeenCalled();
+    expect(setBackdrop).not.toHaveBeenCalled();
+
+    runUntil(() => session.turn?.text === 'いち');
+    expect(camera).toHaveBeenCalledTimes(1);
+    expect(camera).toHaveBeenLastCalledWith('face');
+    // The second line's backdrop is still waiting for the second line.
+    expect(setBackdrop).not.toHaveBeenCalled();
+
+    runUntil(() => session.turn?.text === 'に');
+    expect(camera).toHaveBeenLastCalledWith('full');
+    expect(setBackdrop).toHaveBeenCalledWith('night');
+    step(1);
+  });
+
+  // Absent and null are different, and the engine is where that survives or is
+  // lost: `?? null` here would empty an axis the caller never mentioned.
+  it('leaves a staging axis alone when the turn omits it, and empties it on null', () => {
+    const camera = vi.fn();
+    const setBackdrop = vi.fn();
+    const { session, runUntil } = build({
+      camera,
+      scenery: { backdrops: [], setBackdrop },
+    });
+
+    session.say({ text: 'いち', stage: { camera: 'bust', backdrop: 'night' } });
+    runUntil(() => session.turn?.text === 'いち');
+    expect(setBackdrop).toHaveBeenLastCalledWith('night');
+
+    // No backdrop key at all: the night stays up and the renderer is not told
+    // anything about it a second time.
+    session.say({ text: 'に', stage: { camera: 'full' } });
+    runUntil(() => session.turn?.text === 'に');
+    expect(setBackdrop).toHaveBeenCalledTimes(1);
+
+    // An explicit null is the flat background, and has to reach the renderer.
+    session.say({ text: 'さん', stage: { backdrop: null } });
+    runUntil(() => session.turn?.text === 'さん');
+    expect(setBackdrop).toHaveBeenLastCalledWith(null);
+  });
+
+  it('says a line with no staging without touching the shot', () => {
+    const camera = vi.fn();
+    const { session, runUntil } = build({ camera });
+    session.say({ text: 'いち' });
+    runUntil(() => session.turn?.text === 'いち');
+    expect(camera).not.toHaveBeenCalled();
+  });
+
+  it('carries the staging of a turn edited in place through the queue', () => {
+    const camera = vi.fn();
+    const { session, runUntil } = build({ camera });
+    session.say({ text: 'いち' });
+    session.say({ id: 'second', text: 'に', stage: { camera: 'face' } });
+    // Same id and same words, so the take is kept — and the shot has to be
+    // updated with everything else that is applied at `start`.
+    session.replaceQueue([{ id: 'second', text: 'に', stage: { camera: 'full' } }]);
+    runUntil(() => session.turn?.text === 'に');
+    expect(camera).toHaveBeenLastCalledWith('full');
   });
 
   it('reports an empty backdrop list rather than omitting it', () => {

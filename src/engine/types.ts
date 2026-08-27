@@ -516,10 +516,26 @@ export interface AvatarDescriptor {
 // --- session ----------------------------------------------------------------
 
 /**
+ * Where a line is delivered: the framing, the set and the acoustic.
+ *
+ * The three staging axes `Session` already exposes as their own calls, gathered
+ * so a turn can carry them. They behave here exactly as they do there — each is
+ * a pass-through to whatever the renderer supplied, each persists after the
+ * turn, and an axis left out is an axis left alone. `null` is not "left out":
+ * it is the empty value that axis has, dry for a room and flat for a backdrop.
+ */
+export interface Staging {
+  camera?: CameraFrame;
+  backdrop?: string | null;
+  room?: string | null;
+}
+
+/**
  * One turn: a line of dialogue delivered with a face and a gesture.
  *
  * Everything optional applies for the duration of the turn — except the
- * emotion, which persists, because a mood does not end with the sentence.
+ * emotion, which persists, because a mood does not end with the sentence, and
+ * the staging, which persists because a shot is not a property of a sentence.
  */
 export interface TurnRequest {
   id?: string;
@@ -569,6 +585,21 @@ export interface TurnRequest {
   /** Keep the drawn face up after the line ends. Off by default: held past its
    *  line a drawn face stops reading as a reaction and starts reading as a mask. */
   hold?: boolean;
+  /**
+   * The shot this line is delivered in, applied as the turn begins.
+   *
+   * Everything else here describes the character. This describes where they are
+   * being seen and heard, and it is on a turn for one reason: timing. The
+   * standalone calls take effect when they are made, which is what a caller
+   * reacting to something wants and the opposite of what a caller writing a
+   * script wants — a script knows its fourth line needs a wide shot long before
+   * the first line has been said, and had no way to say so without waiting.
+   *
+   * Waiting is what this exists to avoid. A caller that sends one line and waits
+   * for it pays the whole of the next line's synthesis as silence; sending the
+   * run at once hides it behind playback. See `Staging` for the field itself.
+   */
+  stage?: Staging;
 }
 
 /**
@@ -695,6 +726,23 @@ export interface Scenery {
   readonly backdrops: LabelledId[];
   /** Show one of them, or null for the flat background. Unknown ids are null. */
   setBackdrop(id: string | null): void;
+}
+
+/**
+ * How the avatar's own materials are drawn.
+ *
+ * One switch, and it is here rather than on the director because the answer is
+ * a renderer's: toon shading is a material graph over the meshes a GLB loader
+ * built, and the engine has no meshes — it has a rig and a face. Absent on a
+ * renderer that draws only one way, which is every test.
+ *
+ * It exists at all because the fallback is worth being able to see. Turning it
+ * off gives the materials the file arrived with, which is how a model that
+ * looks wrong is told apart from a shader that is wrong about it.
+ */
+export interface Shading {
+  readonly toon: boolean;
+  setToon(on: boolean): void;
 }
 
 /**

@@ -19,17 +19,32 @@
  * presentation: a command that a language model could not have expressed is one
  * this script cannot send either.
  *
- * Each beat is posted with `?wait=1`, so the next one is sent when the line has
- * finished rather than after a guessed number of seconds. A tour on a timer
- * would drift the moment a line synthesised slowly, and the whole thing is meant
- * to be watched.
+ * Requests are posted with `?wait=1`, so the next one is sent when the last line
+ * of this one has finished rather than after a guessed number of seconds. A tour
+ * on a timer would drift the moment a line synthesised slowly, and the whole
+ * thing is meant to be watched.
  *
  * ## Staging travels with the line it belongs to
  *
- * A beat is one batch: the camera, backdrop and room changes first, then the
- * line. They arrive together and are applied in order, so the shot is already
- * framed when the character starts speaking. Splitting them into two requests
- * would put a visible frame or two of the old framing under the new line.
+ * The camera, backdrop and room changes go in front of the line they belong to
+ * and in the same request, so the shot is already framed when the character
+ * starts speaking. Splitting them into two requests would put a visible frame or
+ * two of the old framing under the new line.
+ *
+ * ## Lines travel together where the staging lets them
+ *
+ * One line per request costs about 1.2 s of silence between every pair of them,
+ * measured; several lines in one request costs 0.3. The difference is not the
+ * network, it is that the viewer asks for every line the moment it is queued —
+ * so a queue two deep hides the next line's synthesis behind the current line's
+ * playback, and a queue one deep hides nothing.
+ *
+ * So consecutive lines are sent together, and the camera, backdrop and room go
+ * with the line they belong to rather than in front of it — `say.stage` is
+ * applied when its turn starts, so four lines and four different shots survive
+ * being in one request. A run only breaks where a beat needs something that is
+ * not staging: a `point` has to be aimed and released around the line it goes
+ * with, and a `hold` is a wait with nothing to overlap it.
  *
  * usage: yarn tsx tools/demo/tour.ts [--base http://127.0.0.1:8765]
  */
@@ -39,9 +54,24 @@ const DEFAULT_BASE = 'http://127.0.0.1:8765';
 /** One command, loosely typed: the schemas live in `src/protocol` and validate server-side. */
 type Command = Record<string, unknown>;
 
+/** The camera, backdrop and room, as a line carries them. */
+interface Stage {
+  camera?: 'face' | 'bust' | 'upper' | 'full';
+  backdrop?: string | null;
+  room?: string | null;
+}
+
 interface Beat {
-  /** Applied before the line, in order. Camera, backdrop, room, pointing. */
-  stage?: Command[];
+  /** The shot this beat's line is delivered in. Rides on the line. */
+  stage?: Stage;
+  /**
+   * Commands sent ahead of the line, applied on arrival.
+   *
+   * Only for what staging cannot carry — pointing and its release. Anything put
+   * here breaks the run, so the camera does not belong here even though it once
+   * did: it would cost a second of silence to say what `stage` says for free.
+   */
+  before?: Command[];
   /** The line. Cue markup in `text` is what moves the character mid-sentence. */
   say?: Command;
   /** Seconds to sit still afterwards, for a beat with nothing to wait on. */
@@ -61,12 +91,8 @@ const say = (text: string, extra: Command = {}): Command => ({ cmd: 'say', text,
 const TOUR: Beat[] = [
   // --- who and what ---------------------------------------------------------
   {
-    stage: [
-      { cmd: 'camera', frame: 'bust' },
-      { cmd: 'backdrop', id: 'dusk' },
-      { cmd: 'room', id: 'room' },
-      { cmd: 'idle', on: true },
-    ],
+    stage: { camera: 'bust', backdrop: 'dusk', room: 'room' },
+    before: [{ cmd: 'idle', on: true }],
     say: say(
       '[hello]こんばんは。旅枕ヨカです。[explain]きょうは、わたし自身を動かしている仕組みを、ひととおり説明します。',
     ),
@@ -79,7 +105,7 @@ const TOUR: Beat[] = [
 
   // --- the shape of it ------------------------------------------------------
   {
-    stage: [{ cmd: 'camera', frame: 'upper' }],
+    stage: { camera: 'upper' },
     say: say(
       '[explain]中身は、大きく五つに分かれています。エンジン、ビューア、制御サーバ、命令を出すクライアント、それに音声のサイドカーです。',
     ),
@@ -98,7 +124,7 @@ const TOUR: Beat[] = [
 
   // --- the face -------------------------------------------------------------
   {
-    stage: [{ cmd: 'camera', frame: 'face' }],
+    stage: { camera: 'face' },
     say: say('[explain]まず、顔の話をします。顔は、三つの層が重なってできています。'),
   },
   {
@@ -120,7 +146,7 @@ const TOUR: Beat[] = [
 
   // --- the body -------------------------------------------------------------
   {
-    stage: [{ cmd: 'camera', frame: 'upper' }],
+    stage: { camera: 'upper' },
     say: say(
       '[explain]体のほうは、演技という単位で呼びます。顔と動きが必ずセットになっていて、無表情のまま手だけ振る、ということが起きないようにしてあります。',
     ),
@@ -132,35 +158,33 @@ const TOUR: Beat[] = [
     say: say('[doublePeace]決めポーズもあります。[bang]ばーん。[shy]……ちょっと恥ずかしいですね。'),
   },
   {
-    stage: [
-      { cmd: 'camera', frame: 'full' },
-      { cmd: 'point', side: 'R', azimuth: 55, elevation: 20, extent: 0.9 },
-    ],
+    stage: { camera: 'full' },
+    before: [{ cmd: 'point', side: 'R', azimuth: 55, elevation: 20, extent: 0.9 }],
     say: say(
       '指差しだけは、決められた形ではなくて、角度で指定します。画面のどこかを指すのに、名前のついた姿勢を選ばせるのは無理があるからです。',
     ),
   },
   {
-    stage: [{ cmd: 'point', side: 'R', azimuth: -50, elevation: -10, extent: 0.85 }],
+    before: [{ cmd: 'point', side: 'R', azimuth: -50, elevation: -10, extent: 0.85 }],
     say: say(
       'こう指定すると、こう。腕が届かないところを指されたら、届く範囲で伸ばして、どれだけ無理をしたかを返します。',
     ),
   },
-  { stage: [{ cmd: 'gesture' }], hold: 0.8 },
+  { before: [{ cmd: 'gesture' }], hold: 0.8 },
 
   // --- staging --------------------------------------------------------------
   {
-    stage: [{ cmd: 'camera', frame: 'bust' }],
+    stage: { camera: 'bust' },
     say: say(
       '[explain]カメラの寄りは四段階です。顔、バスト、上半身、全身。いまはバストに戻したところです。',
     ),
   },
   {
-    stage: [{ cmd: 'backdrop', id: 'night' }],
+    stage: { backdrop: 'night' },
     say: say('[present]背景も切り替えられます。これが深夜。'),
   },
   {
-    stage: [{ cmd: 'backdrop', id: 'rain' }],
+    stage: { backdrop: 'rain' },
     say: say(
       '[wonder]これが雨。[explain]背景は、声の響きとは別に選びます。部屋を移ったわけではないので、音は変わりません。',
     ),
@@ -168,7 +192,7 @@ const TOUR: Beat[] = [
 
   // --- the voice ------------------------------------------------------------
   {
-    stage: [{ cmd: 'backdrop', id: 'morning' }],
+    stage: { backdrop: 'morning' },
     say: say(
       '[explain]声は、別のプロセスが作っています。参照する録音から声の特徴を取り出しておいて、そこに文章を通しています。',
     ),
@@ -179,15 +203,15 @@ const TOUR: Beat[] = [
     ),
   },
   {
-    stage: [{ cmd: 'room', id: 'booth' }],
+    stage: { room: 'booth' },
     say: say('[present]そのかわり、響きはあとから足します。これが、ブース。'),
   },
   {
-    stage: [{ cmd: 'room', id: 'hall' }],
+    stage: { room: 'hall' },
     say: say('[notice]これが、ホール。同じ声です。部屋だけが違います。'),
   },
   {
-    stage: [{ cmd: 'room', id: 'room' }],
+    stage: { room: 'room' },
     say: say(
       '[explain]部屋の広さと、壁がどれだけ音を吸うかから、その部屋のインパルス応答を作って、声に畳み込んでいます。残響の長さを直接指定しているわけではありません。',
     ),
@@ -213,7 +237,7 @@ const TOUR: Beat[] = [
 
   // --- how it was made ------------------------------------------------------
   {
-    stage: [{ cmd: 'camera', frame: 'upper' }],
+    stage: { camera: 'upper' },
     say: say(
       '[ponder]最後にひとつ。エンジンの中の数字は、ほとんど目で見て決めたものです。計算で出したものではありません。',
     ),
@@ -231,13 +255,10 @@ const TOUR: Beat[] = [
 
   // --- out ------------------------------------------------------------------
   {
-    stage: [
-      { cmd: 'camera', frame: 'bust' },
-      { cmd: 'backdrop', id: 'dusk' },
-    ],
+    stage: { camera: 'bust', backdrop: 'dusk' },
     say: say('[thanks]説明は、以上です。[hello]見てくれて、ありがとう。'),
   },
-  { stage: [{ cmd: 'reset' }, { cmd: 'perform' }] },
+  { before: [{ cmd: 'reset' }, { cmd: 'perform' }] },
 ];
 
 async function post(base: string, body: unknown, wait: boolean): Promise<void> {
@@ -254,22 +275,51 @@ async function post(base: string, body: unknown, wait: boolean): Promise<void> {
   if (wait && payload.completed === false) console.warn('  (この行は待ちきれませんでした)');
 }
 
+/**
+ * The beats, cut into the requests they will be sent as.
+ *
+ * A run collects consecutive lines, and only two things break one. A `before`
+ * opens a new run, because those commands apply the moment they arrive and a
+ * run is sent all at once — pointing at something two lines early is the whole
+ * failure this avoids. A `hold` closes one, because it is a wait and there is
+ * nothing to overlap it with.
+ *
+ * Staging does not break a run and that is the point of it riding on the line.
+ * See the module docstring for what that is worth.
+ */
+function runs(beats: Beat[]): Beat[][] {
+  const out: Beat[][] = [];
+  for (const beat of beats) {
+    const current = out.at(-1);
+    if (current === undefined || beat.before !== undefined) out.push([beat]);
+    else current.push(beat);
+    if (beat.hold !== undefined) out.push([]);
+  }
+  return out.filter((run) => run.length > 0);
+}
+
+/** The line as it goes on the wire, with its shot attached. */
+const wire = (beat: Beat): Command[] =>
+  beat.say === undefined ? [] : [beat.stage ? { ...beat.say, stage: beat.stage } : beat.say];
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const flag = argv.indexOf('--base');
   const base = flag >= 0 ? argv[flag + 1] : DEFAULT_BASE;
 
-  console.log(`${TOUR.length} ビート、${base} へ送ります`);
-  for (const [index, beat] of TOUR.entries()) {
-    const label =
-      typeof beat.say?.text === 'string'
-        ? beat.say.text.replace(/\[[^\]]*\]/g, '')
-        : '（配置のみ）';
-    console.log(`\n[${index + 1}/${TOUR.length}] ${label.slice(0, 46)}`);
+  const groups = runs(TOUR);
+  console.log(`${TOUR.length} ビートを ${groups.length} 回に分けて ${base} へ送ります`);
+  for (const [index, run] of groups.entries()) {
+    const spoken = run.filter((beat) => beat.say !== undefined);
+    const first = spoken[0]?.say?.text;
+    const label = typeof first === 'string' ? first.replace(/\[[^\]]*\]/g, '') : '（配置のみ）';
+    const count = spoken.length > 1 ? ` (+${spoken.length - 1} 行)` : '';
+    console.log(`\n[${index + 1}/${groups.length}]${count} ${label.slice(0, 46)}`);
 
-    const commands = [...(beat.stage ?? []), ...(beat.say ? [beat.say] : [])];
-    if (commands.length) await post(base, { batch: commands }, beat.say !== undefined);
-    if (beat.hold) await new Promise((done) => setTimeout(done, beat.hold * 1000));
+    const commands = run.flatMap((beat) => [...(beat.before ?? []), ...wire(beat)]);
+    if (commands.length) await post(base, { batch: commands }, spoken.length > 0);
+    const hold = run.at(-1)?.hold;
+    if (hold) await new Promise((done) => setTimeout(done, hold * 1000));
   }
   console.log('\nおわり');
 }

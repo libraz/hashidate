@@ -1,5 +1,7 @@
 import { z } from 'zod';
+import type { Tuning as EngineTuning } from '../engine/tuning';
 import type {
+  LabelledId as EngineLabelledId,
   SessionEvent as EngineSessionEvent,
   SessionState as EngineSessionState,
   Vocabulary as EngineVocabulary,
@@ -98,6 +100,9 @@ export const labelledIdSchema = z.object({
   id: z.string(),
   label: z.string(),
 });
+
+export type LabelledId = z.infer<typeof labelledIdSchema>;
+type _LabelledIdMatchesEngine = Expect<Equals<LabelledId, EngineLabelledId>>;
 
 const gestureGroupSchema = z.enum(['reaction', 'greeting', 'explain', 'emote', 'cute', 'pose']);
 type _GestureGroupsMatchEngine = Expect<Equals<z.infer<typeof gestureGroupSchema>, GestureGroup>>;
@@ -209,6 +214,45 @@ export type VoiceReport = z.infer<typeof voiceReportSchema>;
 type _VoiceReportMatchesEngine = Assert<VoiceReport, EngineVoiceReport>;
 type _EngineMatchesVoiceReport = Assert<EngineVoiceReport, VoiceReport>;
 
+/**
+ * What the set-once layer is running, so a remote fader can be drawn at the
+ * value that is actually in force rather than at the one somebody last sent.
+ *
+ * Reported for the same reason `VoiceReport` is: the defaults belong to the
+ * engine objects that own them and differ per avatar, so a panel that inferred
+ * them from its own command history would be wrong from the moment it opened
+ * and wrong again after every swap.
+ *
+ * `has` is what makes the difference between a control that is off and a
+ * control that is not there. An avatar with no spring bones has no sway to
+ * tune, and a fader for a chain that does not exist is a dead one.
+ */
+export const tuningSchema = z.object({
+  idle: z.object({
+    breathDepth: z.number(),
+    breathPeriod: z.number(),
+    idleAmount: z.number(),
+    weightShift: z.number(),
+    gazeAmount: z.number(),
+    eyeLimit: z.number(),
+    blink: z.boolean(),
+  }),
+  sway: z.object({
+    enabled: z.boolean(),
+    stiffness: z.number(),
+    inertia: z.number(),
+    gravity: z.number(),
+  }),
+  /** `height` is metres here, as it is in the command. */
+  hop: z.object({ height: z.number(), gravity: z.number() }),
+  tail: z.object({ amount: z.number() }),
+  render: z.object({ toon: z.boolean(), arkit: z.boolean() }),
+  has: z.object({ sway: z.boolean(), tail: z.boolean(), arkit: z.boolean() }),
+});
+
+export type Tuning = z.infer<typeof tuningSchema>;
+type _TuningMatchesEngine = Expect<Equals<Tuning, EngineTuning>>;
+
 // --- viewer -> server -------------------------------------------------------
 
 /**
@@ -225,6 +269,15 @@ export const reportBodySchema = z.object({
   events: z.array(sessionEventSchema).optional(),
   vocabulary: vocabularySchema.optional(),
   voice: voiceReportSchema.optional(),
+  tuning: tuningSchema.optional(),
+  /**
+   * Every avatar this renderer can load, which is not the same question as what
+   * the loaded one can do. It rides with the vocabulary rather than on the timer
+   * — the roster is fixed for the life of the process — and it is here at all so
+   * that a surface offering a picker is offering the renderer's own list rather
+   * than a copy of the registry it happens to share a bundle with.
+   */
+  avatars: z.array(labelledIdSchema).optional(),
 });
 
 export type ReportBody = z.infer<typeof reportBodySchema>;
@@ -293,6 +346,28 @@ export const queueEntrySchema = turnSchema.extend({
 export type QueueEntry = z.infer<typeof queueEntrySchema>;
 
 /**
+ * A turn the renderer has finished with, as the server files it.
+ *
+ * The entry it was, plus the two things that only become true at the end: when
+ * it stopped, and whether it got there. A line that was cut off is kept for the
+ * same reason a finished one is — it is the line most likely to be wanted back,
+ * because being cut off is usually the reason somebody reaches for the history
+ * at all.
+ *
+ * The id is the one it was said under, so the event log for that turn and the
+ * row an operator is looking at still name the same thing. Sending it round
+ * again mints a new one; see `queueRewindSchema`.
+ */
+export const historyEntrySchema = queueEntrySchema.extend({
+  /** Epoch seconds the renderer reported it done. */
+  saidAt: z.number(),
+  /** True when it was interrupted. Absent means it was said to the end. */
+  interrupted: z.boolean().optional(),
+});
+
+export type HistoryEntry = z.infer<typeof historyEntrySchema>;
+
+/**
  * The body of a queue insertion.
  *
  * `turn` and `turns` both work, and the single form is not sugar: the caller
@@ -328,6 +403,38 @@ export const queueUpdateSchema = turnSchema.extend({
 
 export type QueueUpdate = z.infer<typeof queueUpdateSchema>;
 
+/**
+ * The body of `POST /api/queue/rewind`: send something already said round again.
+ *
+ * Two modes, because "again" means two different things during a broadcast and
+ * the difference is where the script resumes.
+ *
+ * - `from` takes the named line **and everything said after it** out of the
+ *   history and puts them back at the front of the queue, in order. The show
+ *   carries on from that point, which is what a rewind is.
+ * - `one` copies the named line to the front and leaves the history alone. For
+ *   a line that was fluffed and wants saying again, without moving anything
+ *   else.
+ *
+ * Either way the returned lines are new entries with new ids. Reusing the old
+ * one would put a second `turn.end` under an id that has already ended, and
+ * anything correlating against the event log would have no way to tell the two
+ * apart.
+ *
+ * `interrupt` decides what happens to the line currently on air: cut it off
+ * where it is, or let it finish and start the rewound script after it. It is a
+ * choice per operation and has no default — cutting a character off mid-word is
+ * sometimes exactly right and is never something to do by accident.
+ */
+export const queueRewindSchema = z.object({
+  id: z.string(),
+  mode: z.enum(['from', 'one']).default('from'),
+  /** Cut the line being said. Absent lets it finish. */
+  interrupt: z.boolean().optional(),
+});
+
+export type QueueRewind = z.infer<typeof queueRewindSchema>;
+
 /** The reply to anything that reads or changes the queue. */
 export const queueResponseSchema = z.object({
   queue: z.array(queueEntrySchema),
@@ -336,6 +443,20 @@ export const queueResponseSchema = z.object({
 });
 
 export type QueueResponse = z.infer<typeof queueResponseSchema>;
+
+/**
+ * The reply to `GET /api/history`: what has been said, oldest first.
+ *
+ * Its own endpoint rather than a field on the snapshot, and the reason is the
+ * polling rate. The panel re-reads the snapshot twice a second; a hundred spoken
+ * lines riding along with every one of those would be the largest thing on the
+ * wire by an order of magnitude, to say something that changes once a line.
+ */
+export const historyResponseSchema = z.object({
+  history: z.array(historyEntrySchema),
+});
+
+export type HistoryResponse = z.infer<typeof historyResponseSchema>;
 
 // --- server -> orchestrator -------------------------------------------------
 
@@ -358,6 +479,10 @@ export const snapshotSchema = z.object({
   events: z.array(sessionEventSchema),
   /** What the voice is running. Null until a viewer with a voice has reported. */
   voice: voiceReportSchema.nullable(),
+  /** What the set-once layer is running. Null until a viewer has reported. */
+  tuning: tuningSchema.nullable(),
+  /** What this renderer can load. Empty until a viewer has reported. */
+  avatars: z.array(labelledIdSchema),
   /** The pending turns, in the order they will be said. See `queue.ts`. */
   queue: z.array(queueEntrySchema),
 });

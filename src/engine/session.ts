@@ -27,16 +27,19 @@ import { EMOTION_LABELS, EMOTIONS } from './face';
 import { GESTURES, HOP_IDS, HOPS } from './motion';
 import { holdsUntilReleased, PERFORMANCE_IDS, PERFORMANCE_TABLE } from './performance';
 import type { Wardrobe } from './scene';
+import type { Tuning, TuningPatch } from './tuning';
 import type {
   CameraFrame,
   EmotionName,
   EmotionVector,
   FingerName,
+  GazeLimits,
   GestureDef,
   Scenery,
   SessionEvent,
   SessionEventType,
   SessionState,
+  Shading,
   Side,
   Turn,
   TurnRequest,
@@ -82,6 +85,11 @@ export interface SessionOptions {
    * is what every test does.
    */
   voice?: Voice | null;
+  /**
+   * How the avatar's materials are drawn. Absent means the renderer draws only
+   * one way, and the `render.toon` half of a tuning patch does nothing.
+   */
+  shading?: Shading | null;
 }
 
 /**
@@ -115,6 +123,7 @@ export class Session {
   readonly camera: ((frame: CameraFrame) => void) | null;
   readonly scenery: Scenery | null;
   readonly voice: Voice | null;
+  readonly shading: Shading | null;
 
   idleEnabled: boolean;
   readonly queue: Turn[] = [];
@@ -142,6 +151,18 @@ export class Session {
   private _events: SessionEvent[] = [];
   private readonly _listeners = new Set<SessionListener>();
 
+  /**
+   * The avatar's own eye limits, as they were measured.
+   *
+   * `tune`'s `eyeLimit` is a multiplier and the profile is what it multiplies,
+   * so the figures it started from have to survive being scaled — reading the
+   * current profile back would compound every drag of the fader. Captured per
+   * session, which is per avatar: a swap builds a new one.
+   */
+  private readonly _baseGaze: GazeLimits;
+  /** The last `eyeLimit` applied, so the layer can report what it is running. */
+  private _eyeLimit = 1;
+
   constructor(
     director: Director,
     {
@@ -150,6 +171,7 @@ export class Session {
       scenery = null,
       idle = false,
       voice = null,
+      shading = null,
     }: SessionOptions = {},
   ) {
     this.d = director;
@@ -157,6 +179,8 @@ export class Session {
     this.camera = camera;
     this.scenery = scenery;
     this.voice = voice;
+    this.shading = shading;
+    this._baseGaze = { ...director.p.gaze };
 
     // Off by default so opening the viewer gives a still character. An
     // orchestrator turns it on once at startup: between turns a character that
@@ -241,6 +265,7 @@ export class Session {
     gesture = null,
     perform = null,
     hold = false,
+    stage,
   }: TurnRequest): Turn {
     const line = parseLine(text);
     const turn: Turn = {
@@ -258,6 +283,7 @@ export class Session {
       gesture,
       perform,
       hold,
+      stage,
       // Absent means "still being made". A session with no voice, and a turn
       // with no words in it, are settled as null right away so nothing waits.
       ...(this.voice && line.text ? {} : { take: null }),
@@ -302,6 +328,7 @@ export class Session {
             gesture: request.gesture ?? null,
             perform: request.perform ?? null,
             hold: request.hold ?? false,
+            stage: request.stage,
           });
         }
       }
@@ -509,6 +536,98 @@ export class Session {
     return false;
   }
 
+  /**
+   * Move part of the set-once layer. See `tuning.ts` for what is in it.
+   *
+   * Absent is not the same as a value, all the way down: a patch names the
+   * faders that moved and leaves every other number exactly where it was. That
+   * is what lets a surface send one knob per drag instead of the whole layer,
+   * and it is the same rule `setVoiceChain` follows for the same reason.
+   *
+   * A group this avatar does not have is a no-op rather than an error — sway on
+   * a model with no spring bones, a tail on a model with no tail — which is the
+   * shape `wear` and `setRoom` already have.
+   */
+  tune(patch: TuningPatch): void {
+    const d = this.d;
+    const { idle, sway, hop, tail, render, settle } = patch;
+
+    if (idle) {
+      if (idle.breathDepth !== undefined) d.body.breathDepth = idle.breathDepth;
+      if (idle.breathPeriod !== undefined) d.body.breathPeriod = idle.breathPeriod;
+      if (idle.idleAmount !== undefined) d.body.idleAmount = idle.idleAmount;
+      if (idle.weightShift !== undefined) d.body.weightShift = idle.weightShift;
+      if (idle.gazeAmount !== undefined) d.body.gazeAmount = idle.gazeAmount;
+      if (idle.blink !== undefined) d.blinkEnabled = idle.blink;
+      // Scaled off the measured limits rather than off the current ones, so
+      // dragging the fader twice does not square the multiplier.
+      if (idle.eyeLimit !== undefined) {
+        this._eyeLimit = idle.eyeLimit;
+        d.p.gaze.eyeYaw = this._baseGaze.eyeYaw * idle.eyeLimit;
+        d.p.gaze.eyePitch = this._baseGaze.eyePitch * idle.eyeLimit;
+      }
+    }
+
+    if (sway) {
+      if (sway.enabled !== undefined) d.spring.enabled = sway.enabled;
+      if (sway.stiffness !== undefined) d.spring.stiffnessScale = sway.stiffness;
+      if (sway.inertia !== undefined) d.spring.inertiaScale = sway.inertia;
+      if (sway.gravity !== undefined) d.spring.gravityScale = sway.gravity;
+    }
+
+    if (hop) {
+      if (hop.height !== undefined) d.body.jumpHeight = hop.height;
+      if (hop.gravity !== undefined) d.body.gravity = hop.gravity;
+    }
+
+    if (tail?.amount !== undefined) d.tail.amount = tail.amount;
+
+    if (render) {
+      if (render.toon !== undefined) this.shading?.setToon(render.toon);
+      // Asked for on an avatar with no ARKit shapes, this stays where it is:
+      // the director reads it together with `arkit.supported`, so setting it
+      // would advertise a mode the face cannot actually be driven in.
+      if (render.arkit !== undefined && d.p.arkit.supported) d.useArkit = render.arkit;
+    }
+
+    // Last, so that a patch which changes the stiffness and asks for a
+    // standstill in one breath gets the standstill under the new stiffness.
+    if (settle) d.spring.reset();
+  }
+
+  /**
+   * What that layer is running, and what this avatar has to run it with.
+   *
+   * Reported rather than remembered, on the same footing as `Voice.report`: a
+   * fader drawn from the last command sent is a fader that lies about an avatar
+   * that was swapped underneath it, and every default here belongs to the
+   * engine object that owns it rather than to whoever last touched a panel.
+   */
+  tuning(): Tuning {
+    const d = this.d;
+    return {
+      idle: {
+        breathDepth: d.body.breathDepth,
+        breathPeriod: d.body.breathPeriod,
+        idleAmount: d.body.idleAmount,
+        weightShift: d.body.weightShift,
+        gazeAmount: d.body.gazeAmount,
+        eyeLimit: this._eyeLimit,
+        blink: d.blinkEnabled,
+      },
+      sway: {
+        enabled: d.spring.enabled,
+        stiffness: d.spring.stiffnessScale,
+        inertia: d.spring.inertiaScale,
+        gravity: d.spring.gravityScale,
+      },
+      hop: { height: d.body.jumpHeight, gravity: d.body.gravity },
+      tail: { amount: d.tail.amount },
+      render: { toon: this.shading?.toon ?? true, arkit: d.useArkit },
+      has: { sway: d.spring.active, tail: d.tail.active, arkit: d.p.arkit.supported },
+    };
+  }
+
   // --- per-frame ----------------------------------------------------------
 
   update(dt: number): void {
@@ -562,6 +681,28 @@ export class Session {
   private start(turn: Turn): void {
     this.turn = turn;
     const d = this.d;
+    // The shot first, and before the audio below, so the frame the line opens
+    // on is already the right one. It goes through the same three calls a
+    // standalone `camera`, `backdrop` or `room` would, which is the whole point
+    // of putting it on a turn: not a second way to stage, the same way, said
+    // early enough to travel with the line it belongs to.
+    //
+    // "Before" is exact for the camera and the backdrop and approximate for the
+    // room, which is not something this can fix from here. A renderer builds an
+    // impulse response to change the acoustic and that is asynchronous — 2 ms
+    // for the smallest of the current set and 62 for the largest — so a line
+    // that moves rooms opens dry for about a frame. Standalone `room` has
+    // always behaved that way; nothing here makes it worse.
+    //
+    // `undefined` and `null` are not the same and the difference is load
+    // bearing — an axis the caller left out keeps what it had, an axis set to
+    // null is emptied. `??` here would quietly turn the first into the second.
+    if (turn.stage) {
+      const { camera, backdrop, room } = turn.stage;
+      if (camera !== undefined) this.setCamera(camera);
+      if (backdrop !== undefined) this.setBackdrop(backdrop);
+      if (room !== undefined) this.setRoom(room);
+    }
     // The autopilot has to be off before anything goes in. Its own timer would
     // otherwise cut the gesture short on the very next frame, and switching it
     // off releases the performance it was holding — which, done later, would
