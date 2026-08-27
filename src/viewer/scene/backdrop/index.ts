@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { LabelledId } from '@/engine/types';
+import { SceneryAssets } from './assets';
 import type { BuiltBackdrop, Pattern } from './patterns';
 import { PATTERNS } from './patterns';
 import type { TextureBin } from './textures';
@@ -67,6 +68,7 @@ export class BackdropStage {
   /** The viewer's own rig, hidden while a backdrop is up. */
   private readonly defaultLights: THREE.Object3D[];
   private readonly baseline: Baseline;
+  private readonly scenery = new SceneryAssets();
 
   private mounted: Mounted | null = null;
   /**
@@ -136,6 +138,7 @@ export class BackdropStage {
 
     for (const light of this.defaultLights) light.visible = false;
     this.scene.add(built.root);
+    this.scenery.attach(this.scene);
     this.scene.fog = built.fog;
     this.scene.environment = this.ensureEnvironment();
     this.scene.environmentIntensity = built.environmentIntensity;
@@ -159,6 +162,7 @@ export class BackdropStage {
     if (!mounted) return;
     this.mounted = null;
 
+    this.scenery.detach(this.scene);
     this.scene.remove(mounted.built.root);
     release(mounted.built.root);
     for (const texture of mounted.textures) texture.dispose();
@@ -174,6 +178,7 @@ export class BackdropStage {
 
   dispose(): void {
     this.clear();
+    this.scenery.dispose();
     this.environment?.dispose();
     this.environment = null;
   }

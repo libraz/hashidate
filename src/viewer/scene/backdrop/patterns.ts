@@ -1,22 +1,17 @@
 import * as THREE from 'three';
 import {
-  bed,
   casement,
   curtains,
-  desk,
   garland,
-  lamp,
-  mug,
   picture,
   plant,
   ROOM,
   rug,
-  shelf,
   shell,
   WINDOW,
   wetPane,
 } from './parts';
-import { art, plank, plaster, rain, screen, sky, type TextureBin, weave } from './textures';
+import { art, generatedFabric, pbrMaps, rain, sky, type TextureBin, weave } from './textures';
 
 /**
  * The four rooms.
@@ -142,31 +137,89 @@ interface Finish {
 /** Shell, window and sill, with the finishes a pattern chose. */
 function room(bin: TextureBin, finish: Finish, skyTexture: THREE.Texture | null): THREE.Group {
   const group = new THREE.Group();
+  // The maps are kept separate per plane because their scale is part of the
+  // material: a wall needs a readable fine pattern while the ceiling should
+  // stay visually quieter.
+  const wallpaper = pbrMaps(
+    bin,
+    {
+      color: '/textures/wallpaper-knit-base.jpg',
+      normal: '/textures/wallpaper-knit-normal.jpg',
+      roughness: '/textures/wallpaper-knit-roughness.jpg',
+    },
+    2.2,
+    1.45,
+  );
+  const ceilingPaper = pbrMaps(
+    bin,
+    {
+      color: '/textures/wallpaper-knit-base.jpg',
+      normal: '/textures/wallpaper-knit-normal.jpg',
+      roughness: '/textures/wallpaper-knit-roughness.jpg',
+    },
+    2.8,
+    2.8,
+  );
+  const floorboards = pbrMaps(
+    bin,
+    {
+      color: '/textures/wood-floor-light-base.jpg',
+      normal: '/textures/wood-floor-light-normal.jpg',
+      roughness: '/textures/wood-floor-light-roughness.jpg',
+    },
+    2.6,
+    3.5,
+  );
   group.add(
     shell({
-      wall: surfaceOf(plaster(bin, finish.wallHex, finish.seed), finish.wallHex, 0.95),
-      ceiling: paint(finish.ceilingHex, 1),
-      trim: paint(finish.trimHex, 0.65),
+      // The room is actually white.  Time of day comes from the light and the
+      // view through the window, not from repainting every wall per preset.
+      // The pale knit-like wallpaper retains a white room while lending the
+      // broad surfaces a scale that plain paint cannot give them.
+      wall: surfaceOf(wallpaper.color, 0xf4f1ed, 0.82, {
+        normalMap: wallpaper.normal,
+        normalScale: new THREE.Vector2(0.32, 0.32),
+        roughnessMap: wallpaper.roughness,
+      }),
+      ceiling: surfaceOf(ceilingPaper.color, 0xfdfbf8, 0.88, {
+        normalMap: ceilingPaper.normal,
+        normalScale: new THREE.Vector2(0.2, 0.2),
+        roughnessMap: ceilingPaper.roughness,
+      }),
+      trim: paint(0xffffff, 0.62),
       floor: surfaceOf(
-        plank(bin, {
-          hex: finish.floorHex,
-          spread: finish.floorSpread,
-          gapHex: finish.floorGapHex,
-          seed: finish.seed + 5,
-        }),
+        // The downloaded board scan has joints, grain, and a non-uniform
+        // finish, so light catches it like wood rather than printed stripes.
+        floorboards.color,
         finish.floorHex,
-        0.55,
+        0.48,
+        {
+          normalMap: floorboards.normal,
+          normalScale: new THREE.Vector2(0.45, 0.45),
+          roughnessMap: floorboards.roughness,
+        },
       ),
     }),
   );
   group.add(
     casement({
-      frame: paint(finish.trimHex, 0.6),
-      sill: paint(finish.trimHex, 0.6),
+      frame: paint(0xffffff, 0.58),
+      sill: paint(0xffffff, 0.58),
       glass: glazing(),
       view: unlit(0xffffff, skyTexture),
     }),
   );
+
+  const fairyLights = garland(unlit(0xffd4a8), paint(0xe8a8b9, 0.6), {
+    from: new THREE.Vector3(-2.35, 2.35, ROOM.backZ + 0.05),
+    to: new THREE.Vector3(-0.34, 2.27, ROOM.backZ + 0.05),
+    sag: 0.09,
+    bulbs: 14,
+  });
+  group.add(fairyLights);
+  const fairyGlow = new THREE.PointLight(0xffc99e, 0.28, 2.1, 2);
+  fairyGlow.position.set(-1.36, 2.08, ROOM.backZ + 0.28);
+  group.add(fairyGlow);
   return group;
 }
 
@@ -297,14 +350,6 @@ const dusk: Pattern = {
       ),
     );
 
-    const books = shelf(paint(0xb99169, 0.7), {
-      width: 1.15,
-      spines: [0x8d5b4c, 0x3f5a6b, 0xc9a26b, 0x5c6b4f, 0xa8534f, 0xd0c3ae],
-      seed: 44,
-    });
-    books.position.set(-1.0, 1.56, ROOM.backZ + 0.11);
-    root.add(books);
-
     const frames = new THREE.Group();
     const frameMaterial = paint(0x6b5744, 0.6);
     for (const [x, y, w, h, tilt, seed] of [
@@ -320,19 +365,6 @@ const dusk: Pattern = {
       frames.add(hung);
     }
     root.add(frames);
-
-    // Low, and well out to the side. The key rakes from the left, so a plant
-    // this far over throws its leaves across the wall behind it — which is a
-    // good thing to have in a frame and a bad thing to have much of. At full
-    // height it filled the bottom-left corner with hard spikes and pulled the
-    // eye straight off the face.
-    const fern = plant(paint(0xb08768, 0.85), foliage(0x4c6b45), {
-      leaves: 13,
-      height: 0.78,
-      seed: 77,
-    });
-    fern.position.set(-2.25, 0, -1.35);
-    root.add(fern);
 
     const mat = rug(surfaceOf(weave(bin, 0xb5a08c, 88), 0xb5a08c, 1), { width: 2.2, depth: 1.5 });
     mat.position.set(-0.2, 0.006, -0.5);
@@ -425,40 +457,6 @@ const night: Pattern = {
       ),
     );
 
-    const screenGlow = unlit(0xffffff, screen(bin, 903));
-    const workstation = desk(
-      {
-        top: surfaceOf(
-          plank(bin, { hex: 0x7c5c3f, spread: 0.16, gapHex: 0x33241a, seed: 12 }),
-          0x7c5c3f,
-          0.5,
-        ),
-        leg: paint(0x2c2e33, 0.45),
-        screen: paint(0x1d1f24, 0.42),
-        glow: screenGlow,
-      },
-      { width: 1.5, screenWidth: 0.66 },
-    );
-    workstation.position.set(-1.0, 0, ROOM.backZ + 0.31);
-    root.add(workstation);
-
-    const deskLamp = lamp(paint(0x2f3238, 0.4), unlit(0xffd9a0));
-    deskLamp.position.set(-1.62, 0.745, ROOM.backZ + 0.36);
-    deskLamp.rotation.y = 0.5;
-    root.add(deskLamp);
-
-    const cup = mug(paint(0xd8d2c6, 0.55));
-    cup.position.set(-0.42, 0.745, ROOM.backZ + 0.5);
-    root.add(cup);
-
-    const books = shelf(paint(0x5d4b3a, 0.72), {
-      width: 1.2,
-      spines: [0x3f4a5e, 0x6b4c3a, 0x8a6a4a, 0x4f5b4a, 0x7a4f52],
-      seed: 51,
-    });
-    books.position.set(-1.05, 1.62, ROOM.backZ + 0.11);
-    root.add(books);
-
     // Hung low enough to be in shot. At picture-rail height it was above the
     // top of the bust framing entirely, which is the sort of thing that is
     // obvious in the render and invisible in the source.
@@ -529,7 +527,7 @@ const night: Pattern = {
 const morning: Pattern = {
   id: 'morning',
   label: '朝',
-  note: '曇天の拡散光。影がほとんど出ず、顔だけが立つ。',
+  note: '淡いピンクの寝室に曇天の拡散光。ぬいぐるみと灯りがやわらかく見える。',
   build(bin) {
     const root = new THREE.Group();
     const finish: Finish = {
@@ -537,10 +535,10 @@ const morning: Pattern = {
       // nowhere left to go, and the avatar — which is pale to begin with —
       // dissolves into it. Warm grey lit brightly reads as white; white lit
       // brightly reads as nothing.
-      wallHex: 0xcfcac1,
-      ceilingHex: 0xdedbd4,
-      trimHex: 0xeeece6,
-      floorHex: 0xc4ac8e,
+      wallHex: 0xe6d6d5,
+      ceilingHex: 0xf5eeeb,
+      trimHex: 0xfffaf5,
+      floorHex: 0xcda98e,
       floorSpread: 0.14,
       floorGapHex: 0x7d6749,
       seed: 640,
@@ -576,23 +574,10 @@ const morning: Pattern = {
       ),
     );
 
-    const linen = surfaceOf(weave(bin, 0xf2eee7, 640), 0xf2eee7, 1);
-    const cot = bed(
-      {
-        frame: paint(0xd9c8b0, 0.75),
-        duvet: linen,
-        pillow: surfaceOf(weave(bin, 0xfaf8f4, 641), 0xfaf8f4, 1),
-      },
-      { width: 1.1, length: 2.0 },
-    );
-    cot.position.set(-1.5, 0, -1.45);
-    cot.rotation.y = Math.PI / 2;
-    root.add(cot);
-
     // A cluster rather than a single frame, hung at slightly different heights.
     // Three objects at one height is a shelf; three at three heights is a wall
     // somebody arranged.
-    const frameMaterial = paint(0xe8e2d8, 0.6);
+    const frameMaterial = paint(0xf3bdc9, 0.58);
     for (const [x, y, w, h, tilt, seed] of [
       [-1.18, 1.72, 0.3, 0.4, 0.008, 21],
       [-0.82, 1.55, 0.22, 0.26, -0.014, 22],
@@ -600,7 +585,7 @@ const morning: Pattern = {
     ] as const) {
       const hung = picture(
         frameMaterial,
-        unlit(0xffffff, art(bin, [0xfaf6ef, 0xa8c4c0, 0xe4b9a0], seed)),
+        unlit(0xffffff, art(bin, [0xfff8f4, 0xf1b7c3, 0xc6a6cf], seed)),
         { width: w, height: h, tilt },
       );
       hung.position.set(x, y, ROOM.backZ + 0.018);
@@ -618,7 +603,13 @@ const morning: Pattern = {
     pot.position.set(WINDOW.centerX - 0.3, WINDOW.sillY, ROOM.backZ + 0.07);
     root.add(pot);
 
-    const mat = rug(surfaceOf(weave(bin, 0xe0d5c4, 645), 0xe0d5c4, 1), { width: 2.4, depth: 1.6 });
+    const mat = rug(
+      surfaceOf(generatedFabric(bin, '/textures/pink-quilt.png', 2, 2), 0xf1bdc8, 0.98),
+      {
+        width: 2.4,
+        depth: 1.6,
+      },
+    );
     mat.position.set(0.1, 0.006, -0.3);
     root.add(mat);
 
@@ -652,6 +643,10 @@ const morning: Pattern = {
     const bounce = new THREE.DirectionalLight(0xfff7ec, 0.22);
     bounce.position.set(-0.6, 1.7, 4.2);
     root.add(bounce);
+
+    const fairyGlow = new THREE.PointLight(0xffc6a3, 0.75, 2.6, 2);
+    fairyGlow.position.set(-1.35, 2.1, ROOM.backZ + 0.34);
+    root.add(fairyGlow);
 
     return {
       root,
@@ -696,7 +691,11 @@ const rainy: Pattern = {
       ),
     );
 
-    const streaks = rain(bin, 2088);
+    // A shower never draws the same tracks twice.  Its seed is local to this
+    // mounted room, so changing weather does not alter any of the furnishings.
+    const showerSeed = 2088 + Math.floor(Math.random() * 10_000);
+    const streaks = rain(bin, showerSeed);
+    const rainfall = 0.045 + Math.random() * 0.035;
     const pane = wetPane(
       new THREE.MeshStandardMaterial({
         color: 0xdfe9f2,
@@ -718,65 +717,6 @@ const rainy: Pattern = {
         { coverage: 0.26 },
       ),
     );
-
-    const workstation = desk(
-      {
-        top: surfaceOf(
-          plank(bin, { hex: 0x8a6a52, spread: 0.14, gapHex: 0x37281f, seed: 9 }),
-          0x8a6a52,
-          0.5,
-        ),
-        leg: paint(0x3a3d42, 0.45),
-        screen: paint(0x25272c, 0.42),
-        // Switched off, which is a dark mirror rather than a black rectangle.
-        // Unlit near-black was what it was first, and it sat in the frame as a
-        // hole — the one object in the room that no light touched. A very smooth
-        // standard material with almost no albedo picks up the environment and
-        // the lamp instead, which is what a dead screen actually looks like.
-        glow: new THREE.MeshStandardMaterial({
-          color: 0x14181e,
-          roughness: 0.11,
-          metalness: 0.1,
-          envMapIntensity: 1.8,
-        }),
-      },
-      { width: 1.35, screenWidth: 0.5 },
-    );
-    workstation.position.set(-1.1, 0, ROOM.backZ + 0.31);
-    root.add(workstation);
-
-    const deskLamp = lamp(paint(0xb9b2a6, 0.45), unlit(0xffd9a8));
-    deskLamp.position.set(-1.66, 0.745, ROOM.backZ + 0.38);
-    deskLamp.rotation.y = 0.62;
-    root.add(deskLamp);
-
-    const cup = mug(paint(0x6f7a80, 0.5));
-    cup.position.set(-0.55, 0.745, ROOM.backZ + 0.52);
-    root.add(cup);
-
-    const books = shelf(paint(0x7a6552, 0.72), {
-      width: 1.05,
-      spines: [0x4a5560, 0x7d6a58, 0x5f6b5c, 0x8a7d6b],
-      seed: 66,
-    });
-    books.position.set(-1.1, 1.66, ROOM.backZ + 0.11);
-    root.add(books);
-
-    // More leaves, smaller, and a lighter green.
-    //
-    // Breaking the frame edge with something organic is a good idea badly
-    // executed at the first sizes: thirteen leaves at nearly a metre put four or
-    // five enormous flat shapes across the bottom-right corner, and a large
-    // untextured plane in near-silhouette is indistinguishable from a sticker.
-    // The same silhouette made of twice as many pieces at half the size stops
-    // being a shape and starts being foliage.
-    const fern = plant(paint(0x8c8880, 0.9), foliage(0x6c8259), {
-      leaves: 22,
-      height: 0.68,
-      seed: 12,
-    });
-    fern.position.set(1.5, 0, -2.05);
-    root.add(fern);
 
     // Cool, soft, and from the left like the others — rain has no sun, but it
     // still has a window, and light that arrives from nowhere in particular is
@@ -817,7 +757,9 @@ const rainy: Pattern = {
        */
       update: (dt: number) => {
         if (!streaks) return;
-        streaks.offset.y = (streaks.offset.y - dt * 0.06) % 1;
+        // Canvas textures have their V axis flipped for WebGL.  Increasing the
+        // offset is therefore the direction a drop travels down the pane.
+        streaks.offset.y = (streaks.offset.y + dt * rainfall) % 1;
       },
     };
   },

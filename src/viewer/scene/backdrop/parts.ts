@@ -729,3 +729,40 @@ export function mug(material: THREE.Material): THREE.Group {
   group.add(handle);
   return group;
 }
+
+/** A small seated bunny plush: soft, rounded and deliberately a little lopsided. */
+export function bunnyPlush(
+  fur: THREE.Material,
+  accent: THREE.Material,
+  opts: { scale?: number; tilt?: number } = {},
+): THREE.Group {
+  const group = new THREE.Group();
+  const scale = opts.scale ?? 1;
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.115 * scale, 20, 14), fur);
+  body.scale.set(1, 1.1, 0.82);
+  body.position.y = 0.115 * scale;
+  body.castShadow = true;
+  body.receiveShadow = true;
+  group.add(body);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.09 * scale, 20, 14), fur);
+  head.position.set(0, 0.255 * scale, 0.012 * scale);
+  head.castShadow = true;
+  group.add(head);
+
+  for (const side of [-1, 1]) {
+    const ear = slab(0.038 * scale, 0.14 * scale, 0.028 * scale, fur, 18);
+    ear.position.set(side * 0.045 * scale, 0.37 * scale, 0.005 * scale);
+    ear.rotation.z = side * 0.14;
+    group.add(ear);
+    const paw = new THREE.Mesh(new THREE.SphereGeometry(0.03 * scale, 12, 10), accent);
+    paw.position.set(side * 0.073 * scale, 0.12 * scale, 0.075 * scale);
+    group.add(paw);
+  }
+
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.012 * scale, 10, 8), accent);
+  nose.position.set(0, 0.25 * scale, 0.083 * scale);
+  group.add(nose);
+  group.rotation.z = opts.tilt ?? 0;
+  return group;
+}

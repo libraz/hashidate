@@ -76,6 +76,75 @@ function finish(
   return tex;
 }
 
+/**
+ * A project-owned, generated raster texture.
+ *
+ * The room's small fabrics need the irregular weave and stitching that is hard
+ * to suggest with a few lines on a canvas.  Keeping the texture in `public/`
+ * still makes it a regular project asset, while this helper gives it the same
+ * colour-space, filtering and disposal behaviour as the procedural textures.
+ */
+export function generatedFabric(
+  bin: TextureBin,
+  path: string,
+  repeatX: number,
+  repeatY: number,
+): THREE.Texture | null {
+  if (typeof document === 'undefined') return null;
+  const texture = new THREE.TextureLoader().load(path);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(repeatX, repeatY);
+  texture.anisotropy = 16;
+  bin.push(texture);
+  return texture;
+}
+
+/** Texture maps from one downloaded PBR material, kept in lockstep in UV space. */
+export interface PbrMaps {
+  color: THREE.Texture | null;
+  normal: THREE.Texture | null;
+  roughness: THREE.Texture | null;
+}
+
+function externalMap(
+  bin: TextureBin,
+  path: string,
+  repeatX: number,
+  repeatY: number,
+  color: boolean,
+): THREE.Texture | null {
+  if (typeof document === 'undefined') return null;
+  const texture = new THREE.TextureLoader().load(path);
+  texture.colorSpace = color ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(repeatX, repeatY);
+  texture.anisotropy = 16;
+  bin.push(texture);
+  return texture;
+}
+
+/**
+ * Load the colour, normal, and roughness maps of a PBR surface.
+ *
+ * A normal or roughness image is data, not a photograph: marking it as sRGB
+ * bends its values during decoding and makes a floor look waxy or inflated.
+ */
+export function pbrMaps(
+  bin: TextureBin,
+  paths: { color: string; normal: string; roughness: string },
+  repeatX: number,
+  repeatY: number,
+): PbrMaps {
+  return {
+    color: externalMap(bin, paths.color, repeatX, repeatY, true),
+    normal: externalMap(bin, paths.normal, repeatX, repeatY, false),
+    roughness: externalMap(bin, paths.roughness, repeatX, repeatY, false),
+  };
+}
+
 // --- surfaces ---------------------------------------------------------------
 
 /**
