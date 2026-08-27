@@ -135,8 +135,16 @@
   line-height: 1.7;
 }
 
-.framing {
+/*
+ * The four controls chosen by looking at the picture: who, how framed, in front
+ * of what, and whether they are moving between lines. Stacked rather than in a
+ * row — every one of them is a segmented track that wants the full width, and
+ * two of them side by side would each be narrower than their own labels.
+ */
+.staging {
   display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 /*

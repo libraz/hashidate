@@ -1,0 +1,90 @@
+/*
+ * Readouts, not controls. Everything here is monospace on the value side and
+ * quiet on the label side, so a column of figures reads as a column.
+ */
+
+.facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+
+.fact {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.factLabel {
+  flex: 0 0 92px;
+  color: var(--fg-faint);
+}
+
+.factValue {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+
+/* Scrolled rather than grown, for the same reason the history above the queue
+   is: this is the tail of a log and the rows worth reading are the first few. */
+.log {
+  max-height: 220px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.75;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+}
+
+.entry {
+  display: flex;
+  gap: var(--space-4);
+  color: var(--fg-faint);
+}
+
+.entryTime {
+  flex: 0 0 66px;
+}
+
+.entryType {
+  flex: 0 0 108px;
+  color: var(--fg-dim);
+}
+
+.entryBody {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.json {
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  padding: var(--space-4);
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--fg-dim);
+  white-space: pre;
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-4);
+  text-align: center;
+  font-size: var(--text-xs);
+  line-height: 1.8;
+  border: 1px dashed var(--line-soft);
+  border-radius: var(--radius-md);
+  color: var(--fg-faint);
+}

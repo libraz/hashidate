@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CameraFrame, Snapshot } from '@/protocol';
 import { Segmented } from '@/ui/Segmented';
+import { Toggle } from '@/ui/Toggle';
 import { sendMonitorMute } from '@/viewer/monitor-link';
-import { setCamera } from '../api';
+import { setBackdrop as sendBackdrop, setAvatar, setCamera, setIdle } from '../api';
 import styles from './Preview.module.css';
 
 /**
@@ -47,13 +48,16 @@ import styles from './Preview.module.css';
  * reading and muting again is a thing done constantly, and a model download and
  * two seconds of black picture each time would mean nobody does it.
  *
- * ## Framing lives here
+ * ## The staging lives here
  *
- * The camera is the one control an operator reaches for *because of what they
- * can see*, so it sits under the picture rather than in a tab. Orbiting is
- * deliberately not available — the preview does not take the pointer, so a wheel
- * over it scrolls the panel rather than dollying a camera the stream does not
- * share.
+ * Who is on screen, how they are framed, what is behind them and whether they
+ * are moving between lines: four controls an operator reaches for *because of
+ * what they can see*, so they sit under the picture rather than in a tab. They
+ * are the same four the console keeps above its tabs, for the same reason.
+ *
+ * Orbiting is deliberately not available — the preview does not take the
+ * pointer, so a wheel over it scrolls the panel rather than dollying a camera
+ * the stream does not share.
  */
 
 const FRAMES: Array<{ value: CameraFrame; label: string }> = [
@@ -62,6 +66,12 @@ const FRAMES: Array<{ value: CameraFrame; label: string }> = [
   { value: 'upper', label: '上半身' },
   { value: 'full', label: '全身' },
 ];
+
+/**
+ * "No backdrop" needs a value, because `Segmented` picks by string and null is
+ * not one. A sentinel that never leaves this file.
+ */
+const NO_BACKDROP = '-';
 
 /** Both survive a reload: turning either off is a deliberate choice. */
 const SHOWN_KEY = 'aituber.panel.preview';
@@ -109,7 +119,7 @@ const store = (key: string, value: boolean): void => {
   }
 };
 
-export function Preview({ snapshot }: { snapshot: Snapshot }) {
+export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: () => void }) {
   const [on, setOn] = useState(() => readStored(SHOWN_KEY, true));
   // Off by default: on an OBS setup with monitoring switched on, sound here is
   // every line twice. The operator who cannot hear it any other way turns it on
@@ -131,6 +141,19 @@ export function Preview({ snapshot }: { snapshot: Snapshot }) {
   const avatar = snapshot.vocabulary.avatar?.id ?? null;
   const speaking = snapshot.state.speaking ?? false;
   const blocked = useHeld(snapshot.voice?.blocked ?? false, BLOCKED_HOLD_MS);
+  const backdrops = snapshot.vocabulary.backdrops ?? [];
+  const idle = snapshot.state.idleEnabled ?? false;
+
+  /**
+   * The set, held rather than followed.
+   *
+   * The renderer reports what it is *doing* — speaking, posing, wearing — and
+   * not what it is standing in front of, so there is nothing to follow. Holding
+   * the choice made here is what the console does with the same control and for
+   * the same reason: a set is chosen a handful of times in a session, and until
+   * one is chosen nothing is lit rather than the wrong thing being lit.
+   */
+  const [backdrop, setBackdrop] = useState<string | null>(null);
 
   return (
     <section className={styles.preview}>
@@ -204,7 +227,19 @@ export function Preview({ snapshot }: { snapshot: Snapshot }) {
         </p>
       ) : null}
 
-      <div className={styles.framing}>
+      <div className={styles.staging}>
+        {/* Who is on screen. The renderer holds every command sent behind a swap
+            until the model is standing, so the tab below can be used the moment
+            this is clicked rather than after the picture comes back. */}
+        {snapshot.avatars.length > 1 ? (
+          <Segmented
+            ariaLabel="アバター"
+            options={snapshot.avatars.map((a) => ({ value: a.id, label: a.label }))}
+            value={avatar}
+            onChange={(id) => void setAvatar(id).then(refresh)}
+          />
+        ) : null}
+
         <Segmented
           ariaLabel="カメラ"
           options={FRAMES}
@@ -213,6 +248,28 @@ export function Preview({ snapshot }: { snapshot: Snapshot }) {
           // wrong the moment an orchestrator moved the camera.
           value={null}
           onChange={(frame) => void setCamera(frame)}
+        />
+
+        {backdrops.length ? (
+          <Segmented
+            ariaLabel="背景"
+            options={[
+              { value: NO_BACKDROP, label: 'なし', title: '素の背景' },
+              ...backdrops.map((b) => ({ value: b.id, label: b.label })),
+            ]}
+            value={backdrop ?? NO_BACKDROP}
+            onChange={(id) => {
+              const next = id === NO_BACKDROP ? null : id;
+              setBackdrop(next);
+              void sendBackdrop(next);
+            }}
+          />
+        ) : null}
+
+        <Toggle
+          label="自動モード（アイドル）"
+          checked={idle}
+          onChange={(v) => void setIdle(v).then(refresh)}
         />
       </div>
     </section>

@@ -1,0 +1,170 @@
+/*
+ * What has already been said.
+ *
+ * Drawn quieter than the pending list on purpose: it is above the queue and
+ * would otherwise compete with it for the eye all broadcast, to show lines
+ * nobody needs until something goes wrong. Folded away it is one line of text.
+ */
+
+.history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.head:hover {
+  color: var(--fg);
+}
+
+.caret {
+  width: 1em;
+  color: var(--fg-faint);
+}
+
+.hint {
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+}
+
+/* --- how a rewind treats the line on air ---------------------------------- */
+
+.mode {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* Never wrapped: the segmented track beside it asks for the full width, and a
+   two-word label folded in half reads as a layout accident. */
+.modeLabel {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+
+/* --- the list ------------------------------------------------------------- */
+
+/*
+ * Scrolled rather than grown. A hundred rows would push the pending queue — the
+ * thing this panel exists for — off the bottom of the screen, and the rows worth
+ * reaching for are the first few anyway.
+ */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  max-height: 38vh;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "meta actions"
+    "text actions";
+  align-items: center;
+  gap: 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+}
+
+.meta {
+  grid-area: meta;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.time {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+
+/* Cut off rather than finished. A measurement colour: it is a fact about the
+   line, not a warning about what pressing anything here would do. */
+.cutTag {
+  padding: 0 var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--line));
+  border-radius: var(--radius-sm);
+  color: var(--warn);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.source {
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+}
+
+.text {
+  grid-area: text;
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  /* One line. The row is a handle for finding a line, not for reading it. */
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.actions {
+  grid-area: actions;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.actions button {
+  height: 22px;
+  padding: 0 var(--space-3);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.actions button:hover {
+  background: var(--surface-hover);
+  color: var(--accent);
+  border-color: var(--accent-edge);
+}
+
+.empty,
+.error {
+  margin: 0;
+  padding: var(--space-4);
+  text-align: center;
+  font-size: var(--text-xs);
+  line-height: 1.8;
+  border: 1px dashed var(--line-soft);
+  border-radius: var(--radius-md);
+  color: var(--fg-faint);
+}
+
+.error {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 40%, var(--line));
+}

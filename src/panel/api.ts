@@ -1,12 +1,19 @@
+import type { EmotionVector, FingerName, Side } from '@/engine/types';
 import type {
   CameraFrame,
   Command,
+  HistoryResponse,
   QueueEntry,
   QueueResponse,
+  QueueRewind,
   Snapshot,
+  TuningPatch,
   TurnRequest,
   VoiceDsp,
 } from '@/protocol';
+
+/** Which of the two rewinds. See `queueRewindSchema`. */
+export type RewindMode = QueueRewind['mode'];
 
 /**
  * The panel's whole relationship with the runtime: HTTP, and nothing else.
@@ -110,6 +117,28 @@ export const queuePop = (): Promise<QueueResult> => post<QueueResponse>('/queue/
 
 export const queueClear = (): Promise<QueueResult> => post<QueueResponse>('/queue/clear', {});
 
+// --- what has already been said ---------------------------------------------
+
+/**
+ * The spoken lines, oldest first.
+ *
+ * Read on its own rather than out of the snapshot, and read only while the
+ * operator is looking at it: a hundred lines twice a second, to say something
+ * that changes once a line, would be the largest thing on this wire.
+ */
+export const readHistory = (): Promise<HistoryResponse | Failure> =>
+  request<HistoryResponse>('/history');
+
+/**
+ * Send something already said round again. See `queueRewindSchema` for what the
+ * two modes mean and why `interrupt` is a decision rather than a default.
+ */
+export const queueRewind = (
+  id: string,
+  mode: RewindMode,
+  interrupt: boolean,
+): Promise<QueueResult> => post<QueueResponse>('/queue/rewind', { id, mode, interrupt });
+
 // --- commands ---------------------------------------------------------------
 
 /**
@@ -141,5 +170,77 @@ export const setCamera = (frame: CameraFrame): Promise<unknown> => send({ cmd: '
 
 export const setVoice = (preset: string | null | undefined, dsp?: VoiceDsp): Promise<unknown> =>
   send({ cmd: 'voice', ...(preset === undefined ? {} : { preset }), ...(dsp ? { dsp } : {}) });
+
+// --- the stage --------------------------------------------------------------
+
+/** What the character is seen in front of. Null is the flat background. */
+export const setBackdrop = (id: string | null): Promise<unknown> => send({ cmd: 'backdrop', id });
+
+/**
+ * Load a different avatar.
+ *
+ * The renderer holds every command sent behind this one until the model is
+ * standing, so a swap followed by a costume in the same breath arrives in that
+ * order. See `ControlClient.apply`.
+ */
+export const setAvatar = (id: string): Promise<unknown> => send({ cmd: 'avatar', id });
+
+/** The idle autopilot: whether the character keeps moving between lines. */
+export const setIdle = (on: boolean): Promise<unknown> => send({ cmd: 'idle', on });
+
+// --- the performance --------------------------------------------------------
+
+/** A named face-and-movement, or `null` to release the one that is up. */
+export const perform = (id: string | null): Promise<unknown> => send({ cmd: 'perform', id });
+
+export const setEmotion = (vec: EmotionVector): Promise<unknown> => send({ cmd: 'emotion', vec });
+
+/** One of the avatar's drawn expressions, or `null` to hand the face back. */
+export const setExpression = (id: string | null): Promise<unknown> =>
+  send({ cmd: 'expression', id });
+
+export const setOverlay = (id: string, weight: number): Promise<unknown> =>
+  send({ cmd: 'overlay', id, weight });
+
+/** Drop the drawn expression and every overlay, and take the mood to neutral. */
+export const resetFace = (): Promise<unknown> => send({ cmd: 'reset' });
+
+/** A gesture, or — with no id — stop the one that is running. */
+export const gesture = (id?: string): Promise<unknown> =>
+  send(id === undefined ? { cmd: 'gesture' } : { cmd: 'gesture', id });
+
+export const hop = (id?: string): Promise<unknown> =>
+  send({ cmd: 'hop', ...(id === undefined ? {} : { hop: id }) });
+
+export interface Aim {
+  side: Side;
+  finger: FingerName;
+  /** Degrees, as the wire states them. */
+  azimuth: number;
+  elevation: number;
+  extent: number;
+}
+
+export const point = (aim: Aim): Promise<unknown> => send({ cmd: 'point', ...aim });
+
+/** How much the gaze tracks the camera. A blend, not an angle. */
+export const setLook = (amount: number): Promise<unknown> => send({ cmd: 'look', amount });
+
+// --- the wardrobe -----------------------------------------------------------
+
+/** Dress one slot. `null` takes the garment off. */
+export const wear = (slot: string, item: string | null): Promise<unknown> =>
+  send({ cmd: 'wear', slot, item });
+
+/** A whole outfit at once. */
+export const wearPreset = (preset: string): Promise<unknown> => send({ cmd: 'wear', preset });
+
+// --- the set-once layer -----------------------------------------------------
+
+/**
+ * Move part of the tuning. A patch names the faders that moved and nothing else,
+ * so a drag costs one small message. See `tuneCommandSchema`.
+ */
+export const tune = (patch: TuningPatch): Promise<unknown> => send({ cmd: 'tune', ...patch });
 
 export { isFailure };

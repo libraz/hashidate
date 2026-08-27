@@ -1,10 +1,14 @@
 import { useState } from 'react';
 import { Segmented } from '@/ui/Segmented';
 import { clear, interrupt } from './api';
+import { DressTab } from './dress/DressTab';
 import { EMPTY, useRuntime } from './hooks';
+import { InspectTab } from './inspect/InspectTab';
 import styles from './Panel.module.css';
+import { PerformTab } from './perform/PerformTab';
 import { Preview } from './preview/Preview';
 import { QueueTab } from './queue/QueueTab';
+import { TuneTab } from './tune/TuneTab';
 import { VoiceTab } from './voice/VoiceTab';
 
 /**
@@ -28,11 +32,25 @@ import { VoiceTab } from './voice/VoiceTab';
  * right now" answerable from across a room.
  */
 
-type Tab = 'queue' | 'voice';
+/**
+ * The tabs, in the order a broadcast uses them.
+ *
+ * The first three are touched during one: the script, the acting, the voice.
+ * The last three are set before it and looked at when something is wrong — a
+ * costume, the layer underneath the character, and the readouts. The four names
+ * borrowed from the console are the console's, deliberately: an operator moving
+ * between the two screens should not have to learn a second vocabulary for the
+ * same jobs.
+ */
+type Tab = 'queue' | 'perform' | 'voice' | 'dress' | 'tune' | 'inspect';
 
 const TABS = [
   { value: 'queue' as const, label: 'キュー' },
+  { value: 'perform' as const, label: '演じる' },
   { value: 'voice' as const, label: '音声' },
+  { value: 'dress' as const, label: '装う' },
+  { value: 'tune' as const, label: '調律' },
+  { value: 'inspect' as const, label: '診る' },
 ];
 
 export function Panel() {
@@ -99,14 +117,15 @@ export function Panel() {
       */}
       <main className={styles.body}>
         <div className={styles.monitor}>
-          <Preview snapshot={data} />
+          <Preview snapshot={data} refresh={refresh} />
         </div>
         <div className={styles.controls}>
-          {tab === 'queue' ? (
-            <QueueTab snapshot={data} refresh={refresh} />
-          ) : (
-            <VoiceTab snapshot={data} refresh={refresh} />
-          )}
+          {tab === 'queue' ? <QueueTab snapshot={data} refresh={refresh} /> : null}
+          {tab === 'perform' ? <PerformTab snapshot={data} refresh={refresh} /> : null}
+          {tab === 'voice' ? <VoiceTab snapshot={data} refresh={refresh} /> : null}
+          {tab === 'dress' ? <DressTab snapshot={data} refresh={refresh} /> : null}
+          {tab === 'tune' ? <TuneTab snapshot={data} /> : null}
+          {tab === 'inspect' ? <InspectTab snapshot={data} /> : null}
         </div>
       </main>
     </div>

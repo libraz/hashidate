@@ -38,6 +38,8 @@ export const EMPTY: Snapshot = {
   vocabulary: {},
   events: [],
   voice: null,
+  tuning: null,
+  avatars: [],
   queue: [],
 };
 

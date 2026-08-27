@@ -10,6 +10,7 @@ import {
   queueUpdate,
 } from '../api';
 import { checkQueue, type LineCheck } from '../lint';
+import { History } from './History';
 import { LineEditor } from './LineEditor';
 import { clock, QueueRow } from './QueueRow';
 import styles from './QueueTab.module.css';
@@ -90,6 +91,11 @@ export function QueueTab({ snapshot, refresh }: Props) {
 
   return (
     <div className={styles.tab}>
+      {/* Past above, present under it, future below: the three regions read as
+          one timeline, and a rewind moves a row from the top of it to the
+          bottom. */}
+      <History refresh={refresh} />
+
       <OnAir running={running} speaking={snapshot.state.speaking ?? false} />
 
       <div className={styles.summary}>
