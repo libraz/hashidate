@@ -1,3 +1,4 @@
+import { useT } from '@/i18n';
 import type { VoiceReport } from '@/protocol';
 import styles from './Meters.module.css';
 
@@ -37,6 +38,7 @@ const LUFS_ROOF = -4;
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
 
 export function Meters({ voice }: { voice: VoiceReport | null }) {
+  const { t } = useT();
   const lufs = voice?.lufs ?? null;
   const peak = voice?.truePeakDb ?? null;
 
@@ -48,7 +50,7 @@ export function Meters({ voice }: { voice: VoiceReport | null }) {
     <div className={styles.meters}>
       <div className={styles.meter}>
         <div className={styles.head}>
-          <span className={styles.label}>ラウドネス</span>
+          <span className={styles.label}>{t('panel.meters.loudness')}</span>
           <span className={`${styles.value} ${styles[lufsState]}`}>
             {lufs === null ? '—' : `${lufs.toFixed(1)} LUFS`}
           </span>
@@ -71,12 +73,12 @@ export function Meters({ voice }: { voice: VoiceReport | null }) {
             />
           )}
         </div>
-        <span className={styles.foot}>目安 {TARGET_LUFS} LUFS</span>
+        <span className={styles.foot}>{t('panel.meters.target', { value: TARGET_LUFS })}</span>
       </div>
 
       <div className={styles.meter}>
         <div className={styles.head}>
-          <span className={styles.label}>トゥルーピーク</span>
+          <span className={styles.label}>{t('panel.meters.truePeak')}</span>
           <span className={`${styles.value} ${styles[peakState]}`}>
             {peak === null ? '—' : `${peak.toFixed(1)} dBTP`}
           </span>
@@ -94,7 +96,9 @@ export function Meters({ voice }: { voice: VoiceReport | null }) {
             />
           )}
         </div>
-        <span className={styles.foot}>天井 {PEAK_CEILING_DBTP} dBTP</span>
+        <span className={styles.foot}>
+          {t('panel.meters.ceiling', { value: PEAK_CEILING_DBTP })}
+        </span>
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { useT } from '@/i18n';
 import type { TurnRequest, Vocabulary } from '@/protocol';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { checkLine } from '../lint';
@@ -34,12 +35,13 @@ interface Props {
   /** The entry being edited, or a blank turn for a new one. */
   initial: TurnRequest;
   vocabulary: Partial<Vocabulary>;
-  /** Shown on the submit button: 追加 / 保存. */
+  /** Shown on the submit button: 追加 (add) / 保存 (save). */
   submitLabel: string;
   onSubmit: (turn: TurnRequest) => void;
   onCancel: () => void;
   /**
-   * A second way to commit the same draft, for the composer's 割り込み.
+   * A second way to commit the same draft, for the composer's 割り込み
+   * (interrupt).
    *
    * One draft, two destinations — the end of the queue or the front of it —
    * because a comment worth answering arrives while the line is half typed, and
@@ -67,6 +69,7 @@ export function LineEditor({
   const area = useRef<HTMLTextAreaElement>(null);
   const textId = useId();
   const readingId = useId();
+  const { t, tx } = useT();
 
   // Focus on open, and put the caret at the end rather than selecting: an edit
   // usually continues a line rather than replacing it, and a stray keystroke
@@ -122,7 +125,7 @@ export function LineEditor({
       }}
     >
       <label className={styles.label} htmlFor={textId}>
-        台詞
+        {t('panel.editor.text')}
       </label>
       <textarea
         id={textId}
@@ -130,6 +133,9 @@ export function LineEditor({
         className={styles.text}
         value={text}
         rows={3}
+        // Not translated, and not a message: the placeholder's whole job is to
+        // show what a line with cue markup in it looks like, and the avatar
+        // this drives speaks Japanese.
         placeholder="こんばんは。[explain]今日はこの話をします。"
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
@@ -146,13 +152,13 @@ export function LineEditor({
 
       <div className={styles.readingRow}>
         <label className={styles.label} htmlFor={readingId}>
-          読み
+          {t('panel.editor.reading')}
         </label>
         <input
           id={readingId}
           className={styles.reading}
           value={reading}
-          placeholder="かなで。数え方・日付・固有名詞だけで十分"
+          placeholder={t('panel.editor.reading.placeholder')}
           onChange={(e) => setReading(e.target.value)}
         />
       </div>
@@ -164,46 +170,48 @@ export function LineEditor({
           aria-expanded={showCues}
           onClick={() => setShowCues((v) => !v)}
         >
-          演技 {showCues ? '−' : '+'}
+          {t('panel.editor.acting')} {showCues ? '−' : '+'}
         </button>
         <span className={styles.estimate}>
-          およそ {check.seconds.toFixed(1)} 秒
-          {check.cues.length ? ` · キュー ${check.cues.length}` : ''}
+          {t('panel.editor.estimate', { seconds: check.seconds.toFixed(1) })}
+          {check.cues.length
+            ? ` · ${t('panel.editor.cueCount', { count: check.cues.length })}`
+            : ''}
         </span>
         <label className={styles.hold}>
           <input type="checkbox" checked={hold} onChange={(e) => setHold(e.target.checked)} />
-          表情を保持
+          {t('panel.editor.hold')}
         </label>
       </div>
 
       {showCues ? (
         <div className={styles.palette}>
           <p className={styles.paletteNote}>
-            クリックでカーソル位置に <code>[id]</code> を挿入。角括弧は読み上げられません。
+            {t('panel.editor.palette.before')} <code>[id]</code> {t('panel.editor.palette.after')}
           </p>
           <ChipRow>
             {(vocabulary.performances ?? []).map((p) => (
               <Chip
                 key={p.id}
-                label={p.label}
+                label={tx(p.label)}
                 tag={p.id}
-                title={`[${p.id}] を挿入`}
+                title={t('panel.editor.insertCue', { id: p.id })}
                 onClick={() => insertCue(p.id)}
               />
             ))}
           </ChipRow>
           <div className={styles.performRow}>
-            <span className={styles.label}>行全体</span>
+            <span className={styles.label}>{t('panel.editor.wholeLine')}</span>
             <ChipRow>
               <Chip
-                label="なし"
+                label={t('panel.editor.none')}
                 state={perform === '' ? 'on' : 'off'}
                 onClick={() => setPerform('')}
               />
               {(vocabulary.performances ?? []).map((p) => (
                 <Chip
                   key={p.id}
-                  label={p.label}
+                  label={tx(p.label)}
                   tag={p.id}
                   state={perform === p.id ? 'on' : 'off'}
                   onClick={() => setPerform(perform === p.id ? '' : p.id)}
@@ -226,7 +234,7 @@ export function LineEditor({
 
       <div className={styles.buttons}>
         <button type="button" className={styles.cancel} onClick={onCancel}>
-          取消
+          {t('panel.editor.cancel')}
         </button>
         {secondaryLabel && onSecondary ? (
           <button

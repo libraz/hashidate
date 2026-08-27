@@ -39,7 +39,11 @@ export const EMPTY: Snapshot = {
   events: [],
   voice: null,
   tuning: null,
+  placement: null,
   avatars: [],
+  decks: [],
+  slides: null,
+  speech: 'absent',
   queue: [],
 };
 

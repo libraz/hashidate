@@ -1,11 +1,13 @@
-import type { EmotionVector, FingerName, Side } from '@/engine/types';
+import type { EmotionVector, FingerName, Placement, Side, SlidePlacement } from '@/engine/types';
+import { getLocale, translate } from '@/i18n';
 import type {
-  CameraFrame,
   Command,
+  DecksResponse,
   HistoryResponse,
   QueueEntry,
   QueueResponse,
   QueueRewind,
+  Shot,
   Snapshot,
   TuningPatch,
   TurnRequest,
@@ -70,7 +72,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T | Failure
     if (!res.ok) return isFailure(body) ? body : { error: `HTTP ${res.status}` };
     return body as T;
   } catch {
-    return { error: '制御サーバーに接続できません' };
+    // Read at the moment of failure rather than captured at module load: the
+    // language can be switched while the panel is open, and this is the one
+    // string here that has no component around it to re-render.
+    return { error: translate('error.controlUnreachable', getLocale()) };
   }
 }
 
@@ -85,6 +90,17 @@ const post = <T>(path: string, body: unknown): Promise<T | Failure> =>
 
 /** Everything the panel draws, in one round trip. */
 export const readState = (): Promise<Snapshot | Failure> => request<Snapshot>('/state');
+
+/**
+ * The documents on disk, as the server finds them now.
+ *
+ * The roster also rides on the snapshot, so nothing has to call this to draw the
+ * picker. It is here for the rescan: a document is a file an operator drops into
+ * a directory mid-broadcast, and this is the panel asking the only process with
+ * a filesystem to go and look again rather than waiting for whatever cadence it
+ * would have looked on.
+ */
+export const readDecks = (): Promise<DecksResponse | Failure> => request<DecksResponse>('/decks');
 
 // --- the queue --------------------------------------------------------------
 
@@ -160,13 +176,14 @@ export const clear = (): Promise<unknown> => send({ cmd: 'clear' });
 export const setRoom = (id: string | null): Promise<unknown> => send({ cmd: 'room', id });
 
 /**
- * Frame the shot.
+ * Place the camera: a framing, an offset off it, or both.
  *
- * Belongs beside the preview rather than in a tab: framing is the one thing an
- * operator changes *because of what they can see*, and a control for it that is
- * not next to the picture is a control used by memory.
+ * Belongs beside the preview rather than in a tab, and now more than ever: the
+ * framing is the one thing an operator changes *because of what they can see*,
+ * and the offsets come from dragging the picture itself. An absent field is
+ * left alone, so naming a framing does not straighten a shot somebody tilted.
  */
-export const setCamera = (frame: CameraFrame): Promise<unknown> => send({ cmd: 'camera', frame });
+export const setCamera = (shot: Shot): Promise<unknown> => send({ cmd: 'camera', ...shot });
 
 export const setVoice = (preset: string | null | undefined, dsp?: VoiceDsp): Promise<unknown> =>
   send({ cmd: 'voice', ...(preset === undefined ? {} : { preset }), ...(dsp ? { dsp } : {}) });
@@ -187,6 +204,42 @@ export const setAvatar = (id: string): Promise<unknown> => send({ cmd: 'avatar',
 
 /** The idle autopilot: whether the character keeps moving between lines. */
 export const setIdle = (on: boolean): Promise<unknown> => send({ cmd: 'idle', on });
+
+/**
+ * The measurements, printed over every renderer attached — the preview here and
+ * whatever is going to air, which is usually the one being asked about.
+ *
+ * Not remembered anywhere. A renderer that reloads comes back without it, by
+ * design; see `debugCommandSchema`.
+ */
+export const setDebugReadout = (on: boolean): Promise<unknown> => send({ cmd: 'debug', on });
+
+// --- the document layer -----------------------------------------------------
+
+/**
+ * Put a document up, or take it down with `null`.
+ *
+ * `id` is the file's own name, not a correlation id, and `page` is where to open
+ * it — absent is the first page rather than whatever page the document being
+ * replaced was on. See `deckCommandSchema`.
+ */
+export const deck = (id: string | null, page?: number): Promise<unknown> =>
+  send({ cmd: 'deck', id, ...(page === undefined ? {} : { page }) });
+
+/**
+ * Turn a page: `page` for the one a jump names, `by` for the one an arrow key
+ * means. Neither is "next", and either end clamps rather than failing.
+ */
+export const slide = (move: { page?: number; by?: number } = {}): Promise<unknown> =>
+  send({ cmd: 'slide', ...move });
+
+/**
+ * Lay out the frame: where the character stands in it and where the document
+ * behind them sits. Both halves are partials that merge onto what is set, so a
+ * slider under the pointer sends the one number it moved.
+ */
+export const place = (layout: { avatar?: Placement; slide?: SlidePlacement }): Promise<unknown> =>
+  send({ cmd: 'place', ...layout });
 
 // --- the performance --------------------------------------------------------
 

@@ -170,7 +170,8 @@
 }
 
 /*
- * 割り込み: the same draft, sent to the front of the queue instead of the end.
+ * 割り込み (interrupt): the same draft, sent to the front of the queue instead of
+ * the end.
  *
  * Outlined rather than filled. It is not the destructive action — nothing is cut
  * off, the line simply goes next — but it does change the order of a running

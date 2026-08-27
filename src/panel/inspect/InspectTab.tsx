@@ -1,3 +1,4 @@
+import { useT } from '@/i18n';
 import type { SessionEvent, Snapshot } from '@/protocol';
 import { Section } from '@/ui/Section';
 import styles from './InspectTab.module.css';
@@ -25,6 +26,7 @@ const SHOWN = 60;
 
 export function InspectTab({ snapshot }: { snapshot: Snapshot }) {
   const { state, vocabulary, voice, events, avatars } = snapshot;
+  const { t, tx } = useT();
   const strain = state.strain;
   // Newest first: the row anybody is looking for is the one that just happened.
   const log = [...events].reverse().slice(0, SHOWN);
@@ -32,70 +34,74 @@ export function InspectTab({ snapshot }: { snapshot: Snapshot }) {
   return (
     <>
       <Section
-        title="接続"
-        meta={snapshot.connected ? `${snapshot.viewers}` : '未接続'}
-        note={[
-          'レンダラーが何面つながっているか。パネルのプレビューも一面として数える。',
-          '「未接続」は誰もいないか、報告が途絶えて数秒たった状態。ビューアのタブを閉じるとこうなる。',
-        ]}
+        title={t('panel.inspect.link')}
+        meta={snapshot.connected ? `${snapshot.viewers}` : t('panel.inspect.link.none')}
+        note={[t('panel.inspect.link.note1'), t('panel.inspect.link.note2')]}
       >
         <div className={styles.facts}>
-          <Fact label="ビューア" value={`${snapshot.viewers}`} />
-          <Fact label="アバター" value={vocabulary.avatar?.label ?? '—'} />
-          <Fact label="読み込める" value={avatars.map((a) => a.label).join(' · ') || '—'} />
-          <Fact label="待ち行列" value={`${snapshot.queue.length}`} />
-          <Fact label="イベント通番" value={`${snapshot.seq}`} />
+          <Fact label={t('panel.inspect.viewers')} value={`${snapshot.viewers}`} />
+          <Fact
+            label={t('panel.inspect.avatar')}
+            value={vocabulary.avatar?.label ? tx(vocabulary.avatar.label) : '—'}
+          />
+          <Fact
+            label={t('panel.inspect.loadable')}
+            value={avatars.map((a) => tx(a.label)).join(' · ') || '—'}
+          />
+          <Fact label={t('panel.inspect.queue')} value={`${snapshot.queue.length}`} />
+          <Fact label={t('panel.inspect.seq')} value={`${snapshot.seq}`} />
         </div>
       </Section>
 
       <Section
-        title="関節の負担"
+        title={t('panel.inspect.strain')}
         meta={strain ? `L ${strain.L.toFixed(2)} · R ${strain.R.toFixed(2)}` : ''}
         note={[
-          '直近の指さしで腕がどれだけ無理をしたか。0 は楽な範囲、1 を超えると届かないところへ手を伸ばしている。',
-          '可動域を超える指示は失敗せず、届く範囲で止まる。この数字だけが、要求どおりの姿勢になったかどうかを教える。',
-          '関節ごとの内訳はレンダラー側のコンソールにある — 毎秒何度も測り直すもので、この線に載せるものではない。',
+          t('panel.inspect.strain.note1'),
+          t('panel.inspect.strain.note2'),
+          t('panel.inspect.strain.note3'),
         ]}
       >
         <div className={styles.facts}>
-          <Fact label="右腕" value={strain ? strain.R.toFixed(2) : '—'} />
-          <Fact label="左腕" value={strain ? strain.L.toFixed(2) : '—'} />
+          <Fact label={t('panel.inspect.rightArm')} value={strain ? strain.R.toFixed(2) : '—'} />
+          <Fact label={t('panel.inspect.leftArm')} value={strain ? strain.L.toFixed(2) : '—'} />
         </div>
       </Section>
 
       <Section
-        title="音声"
-        meta={voice ? (voice.preset ?? '素通し') : ''}
-        note={[
-          '直近の一行の測定値。ラウドネスは配信の基準に対して、真のピークは 0 を超えると歪む。',
-          '「ブロック」はブラウザがまだ音声デバイスを許していない状態で、ここからは直せない — ビューアの画面を一度クリックする必要がある。',
-        ]}
+        title={t('panel.inspect.voice')}
+        meta={voice ? (voice.preset ?? t('panel.inspect.voice.bypass')) : ''}
+        note={[t('panel.inspect.voice.note1'), t('panel.inspect.voice.note2')]}
       >
         {voice ? (
           <div className={styles.facts}>
-            <Fact label="チェイン" value={voice.preset ?? '素通し'} />
-            <Fact label="部屋" value={voice.room ?? 'ドライ'} />
             <Fact
-              label="ラウドネス"
+              label={t('panel.inspect.chain')}
+              value={voice.preset ?? t('panel.inspect.voice.bypass')}
+            />
+            <Fact label={t('panel.inspect.room')} value={voice.room ?? t('panel.inspect.dry')} />
+            <Fact
+              label={t('panel.inspect.loudness')}
               value={voice.lufs === null ? '—' : `${voice.lufs.toFixed(1)} LUFS`}
             />
             <Fact
-              label="真のピーク"
+              label={t('panel.inspect.truePeak')}
               value={voice.truePeakDb === null ? '—' : `${voice.truePeakDb.toFixed(1)} dBTP`}
             />
-            <Fact label="ブロック" value={voice.blocked ? 'あり' : 'なし'} />
+            <Fact
+              label={t('panel.inspect.blocked')}
+              value={voice.blocked ? t('panel.inspect.yes') : t('panel.inspect.no')}
+            />
           </div>
         ) : (
-          <p className={styles.empty}>声を持つビューアがまだ報告していない。</p>
+          <p className={styles.empty}>{t('panel.inspect.voice.empty')}</p>
         )}
       </Section>
 
       <Section
-        title="イベント"
+        title={t('panel.inspect.events')}
         meta={`${events.length}`}
-        note={[
-          'レンダラーが返すターン境界。オーケストレータが次の行を送るのを待つのもこれで、外部の制御 API が受け取るのと同じもの。',
-        ]}
+        note={[t('panel.inspect.events.note')]}
       >
         {log.length ? (
           <div className={styles.log}>
@@ -111,17 +117,14 @@ export function InspectTab({ snapshot }: { snapshot: Snapshot }) {
             ))}
           </div>
         ) : (
-          <p className={styles.empty}>まだ何も起きていない。</p>
+          <p className={styles.empty}>{t('panel.inspect.events.empty')}</p>
         )}
       </Section>
 
       <Section
-        title="語彙"
+        title={t('panel.inspect.vocabulary')}
         meta={vocabulary.avatar?.id ?? ''}
-        note={[
-          'このアバターに何を頼めるかの一覧。宣言ではなく発見されたもので、表情はモデル自身のシェイプ群から、衣装はメッシュから引いている。差し替えると中身が変わる。',
-          'LLM のシステムプロンプトに貼るのはこのオブジェクト。',
-        ]}
+        note={[t('panel.inspect.vocabulary.note1'), t('panel.inspect.vocabulary.note2')]}
       >
         <pre className={styles.json}>{JSON.stringify(vocabulary, null, 1)}</pre>
       </Section>

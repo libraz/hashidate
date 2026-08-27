@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { GESTURE_GROUPS } from '@/engine/motion';
 import { PERFORMANCE_GROUPS } from '@/engine/performance';
 import type { EmotionName, EmotionVector, FingerName, Side } from '@/engine/types';
+import { type Localized, type MessageKey, type Translator, useT } from '@/i18n';
 import type { LabelledId, Snapshot } from '@/protocol';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { Field } from '@/ui/Field';
@@ -48,30 +49,46 @@ import {
  * not — the character has already moved.
  */
 
-/** Every emotion but neutral: neutral is what 解除 means, not a thing to pick. */
+/** Every emotion but neutral: neutral is what Clear means, not a thing to pick. */
 const pickable = (emotions: LabelledId[]): LabelledId[] =>
   emotions.filter((emotion) => emotion.id !== 'neutral');
 
-const FINGERS: Array<{ value: FingerName; label: string }> = [
-  { value: 'thumb', label: '親' },
-  { value: 'index', label: '人差' },
-  { value: 'middle', label: '中' },
-  { value: 'ring', label: '薬' },
-  { value: 'little', label: '小' },
+const FINGERS: Array<{ value: FingerName; key: MessageKey }> = [
+  { value: 'thumb', key: 'panel.perform.finger.thumb' },
+  { value: 'index', key: 'panel.perform.finger.index' },
+  { value: 'middle', key: 'panel.perform.finger.middle' },
+  { value: 'ring', key: 'panel.perform.finger.ring' },
+  { value: 'little', key: 'panel.perform.finger.little' },
 ];
 
-const SIDES: Array<{ value: Side; label: string }> = [
-  { value: 'R', label: '右手' },
-  { value: 'L', label: '左手' },
+const SIDES: Array<{ value: Side; key: MessageKey }> = [
+  { value: 'R', key: 'panel.perform.side.right' },
+  { value: 'L', key: 'panel.perform.side.left' },
 ];
 
-/** Group an avatar's list by its own group key, in the engine's heading order. */
+/** The two hand pickers, named in the operator's language rather than the rig's. */
+const options = <T extends string>(
+  table: Array<{ value: T; key: MessageKey }>,
+  t: Translator['t'],
+): Array<{ value: T; label: string }> => table.map(({ value, key }) => ({ value, label: t(key) }));
+
+/**
+ * Group an avatar's list by its own group key, in the engine's heading order.
+ *
+ * The headings are two-language values straight out of the engine tables, so the
+ * locale is resolved here rather than at every heading that comes out.
+ */
 function byGroup<T extends { group: string }>(
   items: T[],
-  headings: Record<string, string>,
+  headings: Record<string, Localized>,
+  tx: Translator['tx'],
 ): Array<{ key: string; label: string; items: T[] }> {
   return Object.entries(headings)
-    .map(([key, label]) => ({ key, label, items: items.filter((item) => item.group === key) }))
+    .map(([key, label]) => ({
+      key,
+      label: tx(label),
+      items: items.filter((item) => item.group === key),
+    }))
     .filter((group) => group.items.length > 0);
 }
 
@@ -82,6 +99,7 @@ interface Props {
 
 export function PerformTab({ snapshot, refresh }: Props) {
   const { vocabulary, state } = snapshot;
+  const { t, tx } = useT();
   const [mixing, setMixing] = useState(false);
   const [aim, setAim] = useState<Aim>({
     side: 'R',
@@ -96,8 +114,8 @@ export function PerformTab({ snapshot, refresh }: Props) {
 
   const emotion: EmotionVector = state.emotion ?? {};
   const moods = pickable(vocabulary.emotions ?? []);
-  const performances = byGroup(vocabulary.performances ?? [], PERFORMANCE_GROUPS);
-  const gestures = byGroup(vocabulary.gestures ?? [], GESTURE_GROUPS);
+  const performances = byGroup(vocabulary.performances ?? [], PERFORMANCE_GROUPS, tx);
+  const gestures = byGroup(vocabulary.gestures ?? [], GESTURE_GROUPS, tx);
   const pointing = vocabulary.pointing;
   const strain = state.strain?.[aim.side] ?? 0;
 
@@ -119,12 +137,9 @@ export function PerformTab({ snapshot, refresh }: Props) {
   return (
     <>
       <Section
-        title="プリセット"
+        title={t('panel.perform.presets')}
         meta={state.performance ?? ''}
-        note={[
-          '表情とモーションをひと組にしたもの。下の「感情」「ジェスチャ」はその部品で、名前のない組み合わせを作るときに使う。',
-          '感情はプリセットを抜けても残る。姿勢や伏し目のように保持されるものは * 印つきで、次のプリセットか「解除」で戻る。',
-        ]}
+        note={[t('panel.perform.presets.note1'), t('panel.perform.presets.note2')]}
       >
         {performances.map((group) => (
           <Field key={group.key} label={group.label}>
@@ -132,8 +147,8 @@ export function PerformTab({ snapshot, refresh }: Props) {
               {group.items.map((item) => (
                 <Chip
                   key={item.id}
-                  label={item.sustain ? `${item.label} *` : item.label}
-                  title={`${item.id}  ${[item.gesture, item.hop].filter(Boolean).join(' + ') || '表情のみ'}`}
+                  label={item.sustain ? `${tx(item.label)} *` : tx(item.label)}
+                  title={`${item.id}  ${[item.gesture, item.hop].filter(Boolean).join(' + ') || t('panel.perform.faceOnly')}`}
                   state={state.performance === item.id ? 'on' : 'off'}
                   onClick={() => run(perform(state.performance === item.id ? null : item.id))}
                 />
@@ -142,35 +157,44 @@ export function PerformTab({ snapshot, refresh }: Props) {
           </Field>
         ))}
         <ChipRow>
-          <Chip label="解除" variant="action" onClick={() => run(perform(null))} />
+          <Chip
+            label={t('panel.perform.release')}
+            variant="action"
+            onClick={() => run(perform(null))}
+          />
         </ChipRow>
       </Section>
 
       <Section
-        title="感情"
-        note={[
-          '連続値なので複数を混ぜると中間表情になる。チップは単独指定、「配合」を開くと比率を作れる。',
-          '台詞が終わっても残る — 気分は文の長さでは終わらない。',
-        ]}
+        title={t('panel.perform.emotion')}
+        note={[t('panel.perform.emotion.note1'), t('panel.perform.emotion.note2')]}
       >
         <ChipRow>
           {moods.map((mood) => (
             <Chip
               key={mood.id}
-              label={mood.label}
+              label={tx(mood.label)}
               title={mood.id}
               state={(emotion[mood.id as EmotionName] ?? 0) > 0.5 ? 'auto' : 'off'}
               onClick={() => run(setEmotion({ [mood.id as EmotionName]: 1 }))}
             />
           ))}
-          <Chip label="解除" variant="action" onClick={() => run(resetFace())} />
-          <Chip label="配合" state={mixing ? 'on' : 'off'} onClick={() => setMixing((v) => !v)} />
+          <Chip
+            label={t('panel.perform.release')}
+            variant="action"
+            onClick={() => run(resetFace())}
+          />
+          <Chip
+            label={t('panel.perform.mix')}
+            state={mixing ? 'on' : 'off'}
+            onClick={() => setMixing((v) => !v)}
+          />
         </ChipRow>
         {mixing
           ? moods.map((mood) => (
               <Slider
                 key={mood.id}
-                label={`${mood.label}  ${mood.id}`}
+                label={`${tx(mood.label)}  ${mood.id}`}
                 value={emotion[mood.id as EmotionName] ?? 0}
                 onChange={(v) => mix(mood.id, v)}
               />
@@ -180,18 +204,15 @@ export function PerformTab({ snapshot, refresh }: Props) {
 
       {vocabulary.expressions?.length ? (
         <Section
-          title="描き起こし表情"
+          title={t('panel.perform.expressions')}
           meta={`${vocabulary.expressions.length}`}
-          note={[
-            'モデル同梱の完成形の表情。合成では作れない目や口の形が入るため、感情とは別系統で持つ。',
-            '塗りつぶしが操作者の選択、枠線だけのものは感情か自動モードが選んだもの。後者は解除できない。',
-          ]}
+          note={[t('panel.perform.expressions.note1'), t('panel.perform.expressions.note2')]}
         >
           <ChipRow>
             {vocabulary.expressions.map((preset) => (
               <Chip
                 key={preset.id}
-                label={preset.label}
+                label={tx(preset.label)}
                 title={preset.id}
                 state={
                   state.pickedExpression === preset.id
@@ -205,16 +226,20 @@ export function PerformTab({ snapshot, refresh }: Props) {
                 }
               />
             ))}
-            <Chip label="解除" variant="action" onClick={() => run(resetFace())} />
+            <Chip
+              label={t('panel.perform.release')}
+              variant="action"
+              onClick={() => run(resetFace())}
+            />
           </ChipRow>
         </Section>
       ) : null}
 
       {vocabulary.overlays?.length ? (
         <Section
-          title="重ねる効果"
+          title={t('panel.perform.overlays')}
           meta={`${vocabulary.overlays.length}`}
-          note={['表情を置き換えず上に重なるので、複数を同時に出せる。']}
+          note={[t('panel.perform.overlays.note')]}
         >
           <ChipRow>
             {vocabulary.overlays.map((overlay) => {
@@ -222,25 +247,26 @@ export function PerformTab({ snapshot, refresh }: Props) {
               return (
                 <Chip
                   key={overlay.id}
-                  label={overlay.label}
+                  label={tx(overlay.label)}
                   title={overlay.id}
                   state={up ? 'on' : 'off'}
                   onClick={() => run(setOverlay(overlay.id, up ? 0 : 1))}
                 />
               );
             })}
-            <Chip label="全解除" variant="action" onClick={() => run(resetFace())} />
+            <Chip
+              label={t('panel.perform.releaseAll')}
+              variant="action"
+              onClick={() => run(resetFace())}
+            />
           </ChipRow>
         </Section>
       ) : null}
 
       <Section
-        title="ジェスチャ"
+        title={t('panel.perform.gestures')}
         meta={state.gesture ?? ''}
-        note={[
-          '表情を伴わない体だけの語彙。再生ごとに速さ・振幅・左右が変わり、切り替えはクロスフェードで送る。',
-          'ポーズ群は解除するまで保持する。それ以外は自分で終わる。跳躍は腕とは別に走るので同時に出せる。',
-        ]}
+        note={[t('panel.perform.gestures.note1'), t('panel.perform.gestures.note2')]}
       >
         {gestures.map((group) => (
           <Field key={group.key} label={group.label}>
@@ -248,7 +274,7 @@ export function PerformTab({ snapshot, refresh }: Props) {
               {group.items.map((item) => (
                 <Chip
                   key={item.id}
-                  label={item.label}
+                  label={tx(item.label)}
                   title={item.id}
                   state={state.gesture === item.id ? 'auto' : 'off'}
                   onClick={() => run(gesture(item.id))}
@@ -258,12 +284,12 @@ export function PerformTab({ snapshot, refresh }: Props) {
           </Field>
         ))}
         {vocabulary.hops?.length ? (
-          <Field label="跳躍">
+          <Field label={t('panel.perform.hops')}>
             <ChipRow>
               {vocabulary.hops.map((item) => (
                 <Chip
                   key={item.id}
-                  label={item.label}
+                  label={tx(item.label)}
                   title={item.id}
                   onClick={() => run(hop(item.id))}
                 />
@@ -272,37 +298,34 @@ export function PerformTab({ snapshot, refresh }: Props) {
           </Field>
         ) : null}
         <ChipRow>
-          <Chip label="停止" variant="action" onClick={() => run(gesture())} />
+          <Chip label={t('panel.perform.stop')} variant="action" onClick={() => run(gesture())} />
         </ChipRow>
       </Section>
 
       {pointing ? (
         <Section
-          title="指さし"
-          meta={strain > 0 ? `負担 ${strain.toFixed(2)}` : ''}
-          note={[
-            pointing.note,
-            '可動域を超える指示は失敗せず、届く範囲まで伸ばして止まる。どれだけ無理をしたかは「負担」に出る。',
-          ]}
+          title={t('panel.perform.pointing')}
+          meta={strain > 0 ? t('panel.perform.strain', { value: strain.toFixed(2) }) : ''}
+          note={[tx(pointing.note), t('panel.perform.pointing.note')]}
         >
-          <Field label="手">
+          <Field label={t('panel.perform.hand')}>
             <Segmented
-              ariaLabel="どちらの手"
-              options={SIDES}
+              ariaLabel={t('panel.perform.hand.aria')}
+              options={options(SIDES, t)}
               value={aim.side}
               onChange={(side) => aimAt({ side })}
             />
           </Field>
-          <Field label="指">
+          <Field label={t('panel.perform.finger')}>
             <Segmented
-              ariaLabel="どの指"
-              options={FINGERS}
+              ariaLabel={t('panel.perform.finger.aria')}
+              options={options(FINGERS, t)}
               value={aim.finger}
               onChange={(finger) => aimAt({ finger })}
             />
           </Field>
           <Slider
-            label="方位  azimuth"
+            label={t('panel.perform.azimuth')}
             value={aim.azimuth}
             min={pointing.azimuth[0]}
             max={pointing.azimuth[1]}
@@ -312,7 +335,7 @@ export function PerformTab({ snapshot, refresh }: Props) {
             onChange={(azimuth) => setAim((a) => ({ ...a, azimuth }))}
           />
           <Slider
-            label="仰角  elevation"
+            label={t('panel.perform.elevation')}
             value={aim.elevation}
             min={pointing.elevation[0]}
             max={pointing.elevation[1]}
@@ -322,7 +345,7 @@ export function PerformTab({ snapshot, refresh }: Props) {
             onChange={(elevation) => setAim((a) => ({ ...a, elevation }))}
           />
           <Slider
-            label="伸ばし  extent"
+            label={t('panel.perform.extent')}
             value={aim.extent}
             min={pointing.extent[0]}
             max={pointing.extent[1]}
@@ -332,18 +355,19 @@ export function PerformTab({ snapshot, refresh }: Props) {
               else here: a drag would be sixty solves and sixty requests, and the
               arm would chase the slider rather than being aimed. */}
           <ChipRow>
-            <Chip label="指す" variant="primary" onClick={() => aimAt()} />
-            <Chip label="解除" variant="action" onClick={() => run(gesture())} />
+            <Chip label={t('panel.perform.point')} variant="primary" onClick={() => aimAt()} />
+            <Chip
+              label={t('panel.perform.release')}
+              variant="action"
+              onClick={() => run(gesture())}
+            />
           </ChipRow>
         </Section>
       ) : null}
 
-      <Section
-        title="カメラ目線"
-        note={['視線がカメラを追う度合い。0 は正面を向いたまま、1 は常にレンズを見る。']}
-      >
+      <Section title={t('panel.perform.lookAt')} note={[t('panel.perform.lookAt.note')]}>
         <Slider
-          label="カメラ目線  lookAt"
+          label={t('panel.perform.lookAt')}
           value={state.lookAt ?? 1}
           onChange={(amount) => run(setLook(amount))}
         />

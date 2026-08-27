@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useT } from '@/i18n';
 import type { HistoryEntry } from '@/protocol';
 import { Segmented } from '@/ui/Segmented';
 import { isFailure, POLL_INTERVAL, queueRewind, type RewindMode, readHistory } from '../api';
@@ -34,26 +35,29 @@ import styles from './History.module.css';
 const stamp = (seconds: number): string =>
   new Date(seconds * 1000).toLocaleTimeString('ja-JP', { hour12: false });
 
-const CUT_OPTIONS = [
-  {
-    value: 'finish' as const,
-    label: '言い終わってから',
-    title: 'いま言っている行は最後まで喋り、その次から巻き戻し先に入ります',
-  },
-  {
-    value: 'cut' as const,
-    label: '中断して切替',
-    title: 'いま言っている行をその場で止めて、巻き戻し先に切り替えます',
-  },
-];
+const CUT_MODES = ['finish', 'cut'] as const;
 
-type Cut = (typeof CUT_OPTIONS)[number]['value'];
+type Cut = (typeof CUT_MODES)[number];
 
 export function History({ refresh }: { refresh: () => void }) {
   const [open, setOpen] = useState(false);
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [cut, setCut] = useState<Cut>('finish');
+  const { t } = useT();
+
+  const cutOptions = [
+    {
+      value: 'finish' as const,
+      label: t('panel.history.cut.finish'),
+      title: t('panel.history.cut.finish.title'),
+    },
+    {
+      value: 'cut' as const,
+      label: t('panel.history.cut.cut'),
+      title: t('panel.history.cut.cut.title'),
+    },
+  ];
 
   /**
    * Set on unmount and on close, and checked after every await, so a request in
@@ -107,17 +111,19 @@ export function History({ refresh }: { refresh: () => void }) {
         <span className={styles.caret} aria-hidden="true">
           {open ? '▾' : '▸'}
         </span>
-        履歴
-        <span className={styles.hint}>{open ? '新しい順・最大100件' : '話し終えた行'}</span>
+        {t('panel.history.title')}
+        <span className={styles.hint}>
+          {open ? t('panel.history.hint.open') : t('panel.history.hint.closed')}
+        </span>
       </button>
 
       {open ? (
         <>
           <div className={styles.mode}>
-            <span className={styles.modeLabel}>巻き戻すとき</span>
+            <span className={styles.modeLabel}>{t('panel.history.rewindLabel')}</span>
             <Segmented
-              ariaLabel="巻き戻したときに再生中の行をどうするか"
-              options={CUT_OPTIONS}
+              ariaLabel={t('panel.history.cutAria')}
+              options={cutOptions}
               value={cut}
               onChange={setCut}
             />
@@ -126,14 +132,16 @@ export function History({ refresh }: { refresh: () => void }) {
           {error ? <p className={styles.error}>{error}</p> : null}
 
           {entries.length === 0 ? (
-            <p className={styles.empty}>まだ話し終えた行はありません。</p>
+            <p className={styles.empty}>{t('panel.history.empty')}</p>
           ) : (
             <ul className={styles.list}>
               {[...entries].reverse().map((entry) => (
                 <li key={entry.id} className={styles.row}>
                   <div className={styles.meta}>
                     <span className={styles.time}>{stamp(entry.saidAt)}</span>
-                    {entry.interrupted ? <span className={styles.cutTag}>中断</span> : null}
+                    {entry.interrupted ? (
+                      <span className={styles.cutTag}>{t('panel.history.interrupted')}</span>
+                    ) : null}
                     {entry.source ? <span className={styles.source}>{entry.source}</span> : null}
                   </div>
                   <p className={styles.text}>{entry.text}</p>
@@ -141,16 +149,16 @@ export function History({ refresh }: { refresh: () => void }) {
                     <button
                       type="button"
                       onClick={() => void rewind(entry.id, 'from')}
-                      title="この行と、これより後に話した行をまとめてキューの先頭に戻す"
+                      title={t('panel.history.fromHere.title')}
                     >
-                      ここから
+                      {t('panel.history.fromHere')}
                     </button>
                     <button
                       type="button"
                       onClick={() => void rewind(entry.id, 'one')}
-                      title="この行だけをキューの先頭に入れて、もう一度言わせる"
+                      title={t('panel.history.thisOne.title')}
                     >
-                      この行だけ
+                      {t('panel.history.thisOne')}
                     </button>
                   </div>
                 </li>

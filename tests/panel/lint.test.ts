@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { same } from '@/i18n/locale';
 import { checkLine, checkQueue } from '@/panel/lint';
 import type { QueueEntry, Vocabulary } from '@/protocol';
 
@@ -10,13 +11,17 @@ import type { QueueEntry, Vocabulary } from '@/protocol';
  * a line is spoken with a face that never changed. That is the right behaviour
  * on the render path and the reason none of it is visible until it has already
  * gone out. These tests pin the one place it is visible.
+ *
+ * The findings themselves come from the message catalogue, so they read in
+ * English here: that is the locale the store falls back to away from a browser.
+ * What is being asserted is which check fired, not how it is worded.
  */
 
 const vocabulary: Partial<Vocabulary> = {
   performances: [
     {
       id: 'hello',
-      label: '挨拶',
+      label: same('挨拶'),
       group: 'greeting',
       emotion: {},
       gesture: null,
@@ -25,7 +30,7 @@ const vocabulary: Partial<Vocabulary> = {
     },
     {
       id: 'explain',
-      label: '説明',
+      label: same('説明'),
       group: 'explain',
       emotion: {},
       gesture: null,
@@ -33,8 +38,8 @@ const vocabulary: Partial<Vocabulary> = {
       sustain: false,
     },
   ],
-  gestures: [{ id: 'wave', label: '手を振る', group: 'greeting', sustain: false }],
-  expressions: [{ id: 'F_DOYA', label: 'ドヤ' }],
+  gestures: [{ id: 'wave', label: same('手を振る'), group: 'greeting', sustain: false }],
+  expressions: [{ id: 'F_DOYA', label: same('ドヤ') }],
 };
 
 const messages = (turn: Parameters<typeof checkLine>[0]): string[] =>
@@ -55,7 +60,9 @@ describe('checkLine, on cues', () => {
     // The session drops this rather than playing it, and drops it silently —
     // releasing the face mid-sentence over a typo would be worse. So this
     // message is the only way anyone finds out before the stream does.
-    expect(messages({ text: '[greet]こんばんは' })).toEqual(['[greet] は演技表にありません']);
+    expect(messages({ text: '[greet]こんばんは' })).toEqual([
+      '[greet] is not in the performance table',
+    ]);
   });
 
   it('judges nothing before a vocabulary has arrived', () => {
@@ -71,12 +78,12 @@ describe('checkLine, on cues', () => {
     // not one, and comes out of the spoken line leaving nothing behind.
     const found = messages({ text: '[笑]おかしいですね' });
     expect(found).toHaveLength(1);
-    expect(found[0]).toContain('キューとして読めない角括弧');
+    expect(found[0]).toContain('cannot be read as a cue');
   });
 
   it('flags an unclosed bracket, which takes the rest of the line with it', () => {
     const found = messages({ text: 'こんばんは[hello' });
-    expect(found.some((m) => m.includes('キューとして読めない角括弧'))).toBe(true);
+    expect(found.some((m) => m.includes('cannot be read as a cue'))).toBe(true);
   });
 
   it('passes a line with no brackets at all', () => {
@@ -86,15 +93,19 @@ describe('checkLine, on cues', () => {
 
 describe('checkLine, on the fields around the line', () => {
   it('flags a bracket in a reading', () => {
-    expect(messages({ text: '三件', reading: 'さん[けん]' })).toContain('読みに角括弧は書けません');
+    expect(messages({ text: '三件', reading: 'さん[けん]' })).toContain(
+      'A reading cannot contain square brackets',
+    );
   });
 
   it('flags a perform, gesture or expression the avatar does not have', () => {
     expect(messages({ text: 'あ', perform: 'nope' })).toContain(
-      'perform: nope は演技表にありません',
+      'perform: nope is not in the performance table',
     );
-    expect(messages({ text: 'あ', gesture: 'nope' })).toContain('gesture: nope はありません');
-    expect(messages({ text: 'あ', expression: 'nope' })).toContain('expression: nope はありません');
+    expect(messages({ text: 'あ', gesture: 'nope' })).toContain('gesture: nope does not exist');
+    expect(messages({ text: 'あ', expression: 'nope' })).toContain(
+      'expression: nope does not exist',
+    );
   });
 
   it('accepts the ones it does have', () => {
@@ -104,7 +115,9 @@ describe('checkLine, on the fields around the line', () => {
   });
 
   it('notes a turn that says and does nothing', () => {
-    expect(messages({ text: '   ' })).toEqual(['台詞も演技もない空のターンです']);
+    expect(messages({ text: '   ' })).toEqual([
+      'An empty turn, with neither a line nor a performance',
+    ]);
   });
 
   it('does not call a pose-only turn empty', () => {
@@ -126,12 +139,12 @@ describe('checkLine, on length and spacing', () => {
   it('notes a line too long to be interrupted cleanly', () => {
     const long = 'あいうえおかきくけこ'.repeat(20);
     const found = messages({ text: long });
-    expect(found.some((m) => m.includes('割り込みが効きません'))).toBe(true);
+    expect(found.some((m) => m.includes('cannot be interrupted cleanly'))).toBe(true);
   });
 
   it('notes two cues that land close enough that only the second is seen', () => {
     const found = messages({ text: '[hello]あ[explain]いうえおかきくけこさしすせそ' });
-    expect(found.some((m) => m.includes('近すぎます'))).toBe(true);
+    expect(found.some((m) => m.includes('land too close together'))).toBe(true);
   });
 
   it('does not flag cues that are comfortably apart', () => {

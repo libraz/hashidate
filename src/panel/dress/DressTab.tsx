@@ -1,3 +1,4 @@
+import { useT } from '@/i18n';
 import type { Snapshot } from '@/protocol';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { Field } from '@/ui/Field';
@@ -21,13 +22,14 @@ export function DressTab({ snapshot, refresh }: { snapshot: Snapshot; refresh: (
   const slots = Object.entries(snapshot.vocabulary.wardrobe ?? {});
   const presets = snapshot.vocabulary.wardrobePresets ?? [];
   const worn = snapshot.state.wardrobe ?? {};
+  const { t, tx } = useT();
 
   const run = (job: Promise<unknown>): void => void job.then(refresh);
 
   if (!slots.length) {
     return (
-      <Section title="衣装">
-        <p>このアバターは着せ替えを持たない。</p>
+      <Section title={t('panel.dress.title')}>
+        <p>{t('panel.dress.none')}</p>
       </Section>
     );
   }
@@ -36,17 +38,15 @@ export function DressTab({ snapshot, refresh }: { snapshot: Snapshot; refresh: (
     <>
       {presets.length ? (
         <Section
-          title="組み合わせ"
+          title={t('panel.dress.presets')}
           meta={`${presets.length}`}
-          note={[
-            'ひと揃いを一度に着せる。押した時点で、下のスロットはすべてこの組み合わせのものになる。',
-          ]}
+          note={[t('panel.dress.presets.note')]}
         >
           <ChipRow>
             {presets.map((preset) => (
               <Chip
                 key={preset.id}
-                label={preset.label}
+                label={tx(preset.label)}
                 title={preset.id}
                 onClick={() => run(wearPreset(preset.id))}
               />
@@ -56,26 +56,24 @@ export function DressTab({ snapshot, refresh }: { snapshot: Snapshot; refresh: (
       ) : null}
 
       <Section
-        title="パーツ"
-        meta={`${slots.length} スロット`}
-        note={[
-          'スロットひとつにつき一着。衣装が素体を貫通しないように、覆われる部分のシェイプは着替えと同時に自動で上がる。',
-        ]}
+        title={t('panel.dress.slots')}
+        meta={t('panel.dress.slotCount', { count: slots.length })}
+        note={[t('panel.dress.slots.note')]}
       >
         {slots.map(([slot, def]) => (
-          <Field key={slot} label={def.label}>
+          <Field key={slot} label={tx(def.label)}>
             <ChipRow>
               {def.items.map((item) => (
                 <Chip
                   key={item.id}
-                  label={item.label}
+                  label={tx(item.label)}
                   title={item.id}
                   state={worn[slot] === item.id ? 'on' : 'off'}
                   onClick={() => run(wear(slot, item.id))}
                 />
               ))}
               <Chip
-                label="なし"
+                label={t('panel.dress.bare')}
                 variant="action"
                 state={worn[slot] === null ? 'on' : 'off'}
                 onClick={() => run(wear(slot, null))}

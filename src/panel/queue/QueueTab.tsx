@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useT } from '@/i18n';
 import type { QueueEntry, Snapshot, TurnRequest } from '@/protocol';
 import {
   queueAdd,
@@ -38,11 +39,11 @@ import styles from './QueueTab.module.css';
  *
  * ## Interjection is two verbs, not one
  *
- * A viewer's comment that changes the subject wants **割り込み** — go to the
- * front of the queue and be said next. A comment that ends the current topic
- * wants that *and* a stop. They are separate buttons because the second one cuts
- * the character off mid-word, which is sometimes exactly right and is never
- * something to do by accident.
+ * A viewer's comment that changes the subject wants **割り込み** (interrupt) — go
+ * to the front of the queue and be said next. A comment that ends the current
+ * topic wants that *and* a stop. They are separate buttons because the second
+ * one cuts the character off mid-word, which is sometimes exactly right and is
+ * never something to do by accident.
  */
 
 interface Props {
@@ -58,6 +59,7 @@ export function QueueTab({ snapshot, refresh }: Props) {
   const [composing, setComposing] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
+  const { t } = useT();
 
   const entries = snapshot.queue;
   const { checks, seconds, warnings } = checkQueue(entries, snapshot.vocabulary);
@@ -100,42 +102,45 @@ export function QueueTab({ snapshot, refresh }: Props) {
 
       <div className={styles.summary}>
         <span className={styles.count}>
-          待ち <strong>{entries.length}</strong>
+          {t('panel.queue.waiting')} <strong>{entries.length}</strong>
         </span>
-        <span className={styles.total}>残り {clock(seconds)}</span>
-        {warnings > 0 ? <span className={styles.warnings}>要確認 {warnings}</span> : null}
+        <span className={styles.total}>{t('panel.queue.remaining', { time: clock(seconds) })}</span>
+        {warnings > 0 ? (
+          <span className={styles.warnings}>{t('panel.queue.warnings', { count: warnings })}</span>
+        ) : null}
         <div className={styles.summaryActions}>
           <button
             type="button"
             onClick={() => void run(queueShift())}
             disabled={entries.length === 0}
-            title="先頭を取り出して捨てる"
+            title={t('panel.queue.dropFirst.title')}
           >
-            先頭を捨てる
+            {t('panel.queue.dropFirst')}
           </button>
           <button
             type="button"
             onClick={() => void run(queuePop())}
             disabled={entries.length === 0}
-            title="末尾を取り出して捨てる"
+            title={t('panel.queue.dropLast.title')}
           >
-            末尾を捨てる
+            {t('panel.queue.dropLast')}
           </button>
           <button
             type="button"
             className={styles.danger}
             onClick={() => void run(queueClear())}
             disabled={entries.length === 0}
-            title="待ち行列を空にする。いま言っている行はそのまま終わります"
+            title={t('panel.queue.clear.title')}
           >
-            全消去
+            {t('panel.queue.clear')}
           </button>
         </div>
       </div>
 
       {entries.length === 0 ? (
         <p className={styles.empty}>
-          待ち行列は空です。下で書くか、<code>POST /api/queue</code> で投入されます。
+          {t('panel.queue.empty.before')} <code>POST /api/queue</code>{' '}
+          {t('panel.queue.empty.after')}
         </p>
       ) : (
         <ul
@@ -177,16 +182,16 @@ export function QueueTab({ snapshot, refresh }: Props) {
           <LineEditor
             initial={{}}
             vocabulary={snapshot.vocabulary}
-            submitLabel="末尾に追加"
+            submitLabel={t('panel.queue.push')}
             onSubmit={(turn) => submitNew(turn, 'push')}
-            secondaryLabel="次に割り込む"
+            secondaryLabel={t('panel.queue.interject')}
             onSecondary={(turn) => submitNew(turn, 'unshift')}
             onCancel={() => setComposing(false)}
           />
         </div>
       ) : (
         <button type="button" className={styles.add} onClick={() => setComposing(true)}>
-          + 行を追加
+          {t('panel.queue.addLine')}
         </button>
       )}
     </div>
@@ -202,9 +207,12 @@ export function QueueTab({ snapshot, refresh }: Props) {
  * else would cost it its meaning.
  */
 function OnAir({ running, speaking }: { running: string | null; speaking: boolean }) {
+  const { t } = useT();
   return (
     <div className={`${styles.onAir} ${running ? styles.live : ''}`}>
-      <span className={styles.airLabel}>{running ? '発話中' : '待機'}</span>
+      <span className={styles.airLabel}>
+        {running ? t('panel.queue.onAir') : t('panel.queue.standingBy')}
+      </span>
       <span className={styles.airId}>{running ?? '—'}</span>
       {speaking ? <span className={styles.airDot} aria-hidden="true" /> : null}
     </div>
@@ -245,13 +253,14 @@ function RowOrEditor({
   onRemove: () => void;
   onPromote: () => void;
 }) {
+  const { t } = useT();
   if (editing) {
     return (
       <li className={styles.editingRow}>
         <LineEditor
           initial={entry}
           vocabulary={snapshot.vocabulary}
-          submitLabel="保存"
+          submitLabel={t('panel.queue.save')}
           onSubmit={onSave}
           onCancel={onCancelEdit}
         />
@@ -260,7 +269,7 @@ function RowOrEditor({
   }
   // A row with no check has only just arrived between the poll and this render.
   // Skipping it for one frame is better than inventing an empty check, which
-  // would flash "台詞なし" on a line that has text.
+  // would flash "台詞なし" (no dialogue) on a line that has text.
   if (!check) return null;
   return <QueueRow entry={entry} check={check} index={index} {...row} />;
 }

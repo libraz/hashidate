@@ -1,0 +1,173 @@
+/*
+ * The document tab.
+ *
+ * Two controls that the shared widgets do not cover: a page transport, and the
+ * nine-position grid. Both are built out of the same tokens everything else
+ * here uses — the grid is a `Chip` in nine pieces arranged as the frame it
+ * names, not a second visual language.
+ */
+
+.empty {
+  margin: 0;
+  padding: var(--space-5) var(--space-4);
+  text-align: center;
+  color: var(--fg-faint);
+  font-size: var(--text-sm);
+  line-height: 1.8;
+  border: 1px dashed var(--line-soft);
+  border-radius: var(--radius-md);
+}
+
+/* --- the page transport ---------------------------------------------------- */
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/*
+ * The two arrows are the largest targets in the tab.
+ *
+ * They are pressed dozens of times in a segment, by somebody looking at the
+ * render rather than at the panel — the keyboard binding exists for exactly
+ * that, and these have to be reachable for the times a hand is on the mouse.
+ */
+.step {
+  width: 40px;
+  height: var(--control-height);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-size: var(--text-md);
+  cursor: pointer;
+}
+
+.step:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent-edge);
+  color: var(--accent);
+}
+
+.step:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Tabular figures: the number changes constantly and must not shift the arrows. */
+.count {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 84px;
+  justify-content: center;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The page is up but has not finished drawing.
+ *
+ * Worth its own mark rather than blanking the number: what is on air is still
+ * the previous page, and an operator holding an arrow key needs to know that
+ * the picture is behind the count rather than that the file is broken.
+ */
+.drawing {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+}
+
+.jump {
+  width: 56px;
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  text-align: right;
+}
+
+.jump:focus {
+  border-color: var(--accent-dim);
+  outline: none;
+}
+
+.jump:disabled {
+  opacity: 0.35;
+}
+
+/*
+ * A fault nothing sent from here can clear: the file was moved, or it is not a
+ * document the renderer can open. Stated in the measurement colour, because it
+ * is a readout rather than a control that went wrong.
+ */
+.error {
+  margin: var(--space-3) 0 0;
+  color: var(--bad);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+}
+
+/* --- the anchor grid ------------------------------------------------------- */
+
+/* A fieldset because the nine buttons are one control; its own frame is not
+   wanted, so the browser's border, padding and margin all come off. */
+.grid {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-1);
+  width: 100%;
+  max-width: 168px;
+}
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  height: 34px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease);
+}
+
+.cell:hover {
+  background: var(--surface-hover);
+  color: var(--fg-dim);
+}
+
+/* Full border plus tint, per the token file: never a stripe down one side. */
+.on {
+  background: var(--accent-tint);
+  border-color: var(--accent-edge);
+  color: var(--accent);
+}
+
+.dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+.cellLabel {
+  line-height: 1;
+}

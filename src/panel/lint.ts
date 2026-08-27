@@ -1,5 +1,6 @@
 import { parseLine } from '@/engine/cues';
 import { textToVisemes } from '@/engine/face/lipsync';
+import { getLocale, type MessageKey, type Params, translate } from '@/i18n';
 import type { QueueEntry, TurnRequest, Vocabulary } from '@/protocol';
 
 /**
@@ -7,10 +8,10 @@ import type { QueueEntry, TurnRequest, Vocabulary } from '@/protocol';
  *
  * The whole reason this exists: the caller upstream of the queue is a language
  * model, and everything it writes goes to a mouth. It will invent a performance
- * id, put a bracket in a reading, or write `[笑]` meaning an emotion and get
- * silence — all three fail *quietly*, because the engine is built to degrade
- * rather than throw on the render path. A cue naming nothing is dropped, a
- * malformed bracket is stripped, and the line is spoken with a face that never
+ * id, put a bracket in a reading, or write `[笑]` (laugh) meaning an emotion and
+ * get silence — all three fail *quietly*, because the engine is built to
+ * degrade rather than throw on the render path. A cue naming nothing is dropped,
+ * a malformed bracket is stripped, and the line is spoken with a face that never
  * changed. On a live stream nobody finds out until it has already happened.
  *
  * So the checks the engine deliberately does not make are made here instead,
@@ -27,6 +28,15 @@ import type { QueueEntry, TurnRequest, Vocabulary } from '@/protocol';
  * count. It is an estimate either way: a synthesised take is a different length,
  * and the cues survive that because they are stored as fractions.
  */
+
+/**
+ * Findings are written in the operator's language, resolved as they are built.
+ *
+ * Not a React module, so the locale is read from the store rather than a hook.
+ * The panel re-runs every check on each render, so a language switch reaches
+ * these on the next frame like everything else.
+ */
+const say = (key: MessageKey, params?: Params): string => translate(key, getLocale(), params);
 
 export type Severity = 'warn' | 'note';
 
@@ -85,7 +95,7 @@ export function checkLine(turn: TurnRequest, vocabulary: Partial<Vocabulary>): L
     // Dropped by the session rather than played, and silently: `perform()` on an
     // unknown id would release whatever face is up, which mid-sentence is worse
     // than doing nothing. So this is the only place it can be seen.
-    findings.push({ severity: 'warn', message: `[${cue.perform}] は演技表にありません` });
+    findings.push({ severity: 'warn', message: say('panel.lint.unknownCue', { id: cue.perform }) });
   }
 
   // A bracket that survived the parse was not a cue. It came out of the spoken
@@ -95,7 +105,7 @@ export function checkLine(turn: TurnRequest, vocabulary: Partial<Vocabulary>): L
   if (stray > 0) {
     findings.push({
       severity: 'warn',
-      message: `キューとして読めない角括弧が ${stray} 箇所あります(読み上げからは除かれます)`,
+      message: say('panel.lint.strayBrackets', { count: stray }),
     });
   }
 
@@ -103,30 +113,39 @@ export function checkLine(turn: TurnRequest, vocabulary: Partial<Vocabulary>): L
     // The wire refuses this outright, so it can only arrive from a caller that
     // bypassed the schema — but the panel is where a line is *written*, and
     // catching it here means the operator fixes it instead of the POST failing.
-    findings.push({ severity: 'warn', message: '読みに角括弧は書けません' });
+    findings.push({ severity: 'warn', message: say('panel.lint.readingBrackets') });
   }
 
   if (turn.perform && canJudge && !known.has(turn.perform)) {
-    findings.push({ severity: 'warn', message: `perform: ${turn.perform} は演技表にありません` });
+    findings.push({
+      severity: 'warn',
+      message: say('panel.lint.unknownPerform', { id: turn.perform }),
+    });
   }
   if (turn.gesture && (vocabulary.gestures ?? []).length > 0) {
     if (!(vocabulary.gestures ?? []).some((g) => g.id === turn.gesture)) {
-      findings.push({ severity: 'warn', message: `gesture: ${turn.gesture} はありません` });
+      findings.push({
+        severity: 'warn',
+        message: say('panel.lint.unknownGesture', { id: turn.gesture }),
+      });
     }
   }
   if (turn.expression && (vocabulary.expressions ?? []).length > 0) {
     if (!(vocabulary.expressions ?? []).some((e) => e.id === turn.expression)) {
-      findings.push({ severity: 'warn', message: `expression: ${turn.expression} はありません` });
+      findings.push({
+        severity: 'warn',
+        message: say('panel.lint.unknownExpression', { id: turn.expression }),
+      });
     }
   }
 
   if (line.text.trim() === '' && !turn.perform && !turn.gesture && !turn.expression) {
-    findings.push({ severity: 'note', message: '台詞も演技もない空のターンです' });
+    findings.push({ severity: 'note', message: say('panel.lint.emptyTurn') });
   }
   if (seconds > LONG_SECONDS) {
     findings.push({
       severity: 'note',
-      message: `${seconds.toFixed(0)} 秒。長い行は割り込みが効きません`,
+      message: say('panel.lint.tooLong', { seconds: seconds.toFixed(0) }),
     });
   }
 
@@ -136,7 +155,10 @@ export function checkLine(turn: TurnRequest, vocabulary: Partial<Vocabulary>): L
     if ((cues[i].at - cues[i - 1].at) * seconds >= CUE_CROWDING_SECONDS) continue;
     findings.push({
       severity: 'note',
-      message: `[${cues[i - 1].perform}] と [${cues[i].perform}] が近すぎます`,
+      message: say('panel.lint.cuesCrowded', {
+        first: cues[i - 1].perform,
+        second: cues[i].perform,
+      }),
     });
   }
 

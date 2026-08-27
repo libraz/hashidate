@@ -1,4 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { type MessageKey, useT } from '@/i18n';
+import type { SpeechState } from '@/protocol';
+import { LocaleSwitch } from '@/ui/LocaleSwitch';
 import { Segmented } from '@/ui/Segmented';
 import { clear, interrupt } from './api';
 import { DressTab } from './dress/DressTab';
@@ -8,6 +11,7 @@ import styles from './Panel.module.css';
 import { PerformTab } from './perform/PerformTab';
 import { Preview } from './preview/Preview';
 import { QueueTab } from './queue/QueueTab';
+import { SlidesTab } from './slides/SlidesTab';
 import { TuneTab } from './tune/TuneTab';
 import { VoiceTab } from './voice/VoiceTab';
 
@@ -23,9 +27,9 @@ import { VoiceTab } from './voice/VoiceTab';
  *
  * ## The transport bar is above the tabs and stays there
  *
- * 停止 and 以降を破棄 apply whatever is on screen. During a broadcast the thing
- * that has to be reachable in one movement is the stop, and a stop that lives
- * inside a tab is a stop that is behind a click when it is needed.
+ * Stop and drop-the-rest apply whatever is on screen. During a broadcast the
+ * thing that has to be reachable in one movement is the stop, and a stop that
+ * lives inside a tab is a stop that is behind a click when it is needed.
  *
  * `--live` marks the character speaking and nothing else, per the token file. On
  * this page it is the header's only colour, which is what makes "is it talking
@@ -35,62 +39,105 @@ import { VoiceTab } from './voice/VoiceTab';
 /**
  * The tabs, in the order a broadcast uses them.
  *
- * The first three are touched during one: the script, the acting, the voice.
- * The last three are set before it and looked at when something is wrong — a
+ * The first four are touched during one: the script, the acting, the voice, and
+ * the document being presented — a page is turned between two sentences, which
+ * puts the slides with the live half rather than with the setup half. The
+ * last three are set before it and looked at when something is wrong — a
  * costume, the layer underneath the character, and the readouts. The four names
  * borrowed from the console are the console's, deliberately: an operator moving
  * between the two screens should not have to learn a second vocabulary for the
  * same jobs.
  */
-type Tab = 'queue' | 'perform' | 'voice' | 'dress' | 'tune' | 'inspect';
+type Tab = 'queue' | 'perform' | 'voice' | 'slides' | 'dress' | 'tune' | 'inspect';
 
-const TABS = [
-  { value: 'queue' as const, label: 'キュー' },
-  { value: 'perform' as const, label: '演じる' },
-  { value: 'voice' as const, label: '音声' },
-  { value: 'dress' as const, label: '装う' },
-  { value: 'tune' as const, label: '調律' },
-  { value: 'inspect' as const, label: '診る' },
+/**
+ * What the header says about the voice, per state, and null for the two states
+ * worth saying nothing about.
+ *
+ * `ready` needs no line, and neither does `absent`: most machines have no
+ * sidecar and never will, so a panel that reported its absence would be
+ * reporting it permanently — which is how a warning stops being read. What is
+ * worth a line is the voice that was answering and stopped, because from the
+ * panel that failure is invisible: the queue drains, the mouth moves, the
+ * meters stay where they were, and every line goes out silent.
+ */
+const SPEECH_NOTICE: Record<SpeechState, MessageKey | null> = {
+  absent: null,
+  ready: null,
+  loading: 'panel.speech.loading',
+  down: 'panel.speech.down',
+};
+
+const TAB_LABELS: Array<{ value: Tab; key: MessageKey }> = [
+  { value: 'queue', key: 'panel.tabs.queue' },
+  { value: 'perform', key: 'panel.tabs.perform' },
+  { value: 'voice', key: 'panel.tabs.voice' },
+  { value: 'slides', key: 'panel.tabs.slides' },
+  { value: 'dress', key: 'panel.tabs.dress' },
+  { value: 'tune', key: 'panel.tabs.tune' },
+  { value: 'inspect', key: 'panel.tabs.inspect' },
 ];
 
 export function Panel() {
   const { snapshot, error, refresh } = useRuntime();
   const [tab, setTab] = useState<Tab>('queue');
+  const { t, tx, locale } = useT();
+
+  // The tab strip is what the operator picks the panel out of a browser's tab
+  // bar by, and `index.html` can only ship one language of it. `lang` moves with
+  // it so that a screen reader and the browser's own hyphenation agree with the
+  // text actually on screen.
+  const documentTitle = t('panel.documentTitle');
+  useEffect(() => {
+    document.title = documentTitle;
+    document.documentElement.lang = locale;
+  }, [documentTitle, locale]);
+
+  const tabs = TAB_LABELS.map(({ value, key }) => ({ value, label: t(key) }));
 
   // An empty snapshot rather than a loading state: the panel draws the same
   // layout either way, and every field would otherwise need its own branch.
   const data = snapshot ?? EMPTY;
   const speaking = data.state.speaking ?? false;
+  const notice = SPEECH_NOTICE[data.speech];
+  const avatarLabel = data.vocabulary.avatar?.label;
 
   return (
     <div className={styles.panel}>
       <header className={styles.header}>
         <div className={styles.identity}>
-          <span className={styles.title}>配信パネル</span>
-          <span className={styles.avatar}>{data.vocabulary.avatar?.label ?? '—'}</span>
+          <span className={styles.title}>{t('panel.title')}</span>
+          <span className={styles.avatar}>{avatarLabel ? tx(avatarLabel) : '—'}</span>
         </div>
 
         <span className={`${styles.link} ${data.connected ? styles.online : ''}`}>
           <span className={styles.dot} aria-hidden="true" />
-          {data.connected ? `接続 ${data.viewers}` : 'レンダラー未接続'}
+          {data.connected
+            ? t('panel.status.connected', { viewers: data.viewers })
+            : t('panel.status.disconnected')}
         </span>
+
+        {/* Beside the link readout rather than in a tab: it is set once by
+            whoever opens the panel, and a setting nobody can find is a panel
+            that stays in the wrong language all evening. */}
+        <LocaleSwitch />
 
         <div className={styles.transport}>
           <button
             type="button"
             className={styles.clear}
             onClick={() => void clear().then(refresh)}
-            title="いま言っている行は終わらせて、以降を破棄します"
+            title={t('panel.drop.title')}
           >
-            以降を破棄
+            {t('panel.drop')}
           </button>
           <button
             type="button"
             className={`${styles.stop} ${speaking ? styles.armed : ''}`}
             onClick={() => void interrupt().then(refresh)}
-            title="いま言っている行を途中で切り、待ち行列も破棄します"
+            title={t('panel.stop.title')}
           >
-            停止
+            {t('panel.stop')}
           </button>
         </div>
       </header>
@@ -100,8 +147,13 @@ export function Panel() {
           does not flicker empty and get clicked on by mistake. */}
       {error ? <div className={styles.error}>{error}</div> : null}
 
+      {/* Under the transport error rather than beside it: a control server that
+          is gone is the larger fault of the two, and this one is still true
+          while it is being fixed. See `SPEECH_NOTICE`. */}
+      {notice ? <div className={styles.notice}>{t(notice)}</div> : null}
+
       <div className={styles.tabs}>
-        <Segmented options={TABS} value={tab} onChange={setTab} ariaLabel="パネル" />
+        <Segmented options={tabs} value={tab} onChange={setTab} ariaLabel={t('panel.tabs.aria')} />
       </div>
 
       {/*
@@ -123,6 +175,7 @@ export function Panel() {
           {tab === 'queue' ? <QueueTab snapshot={data} refresh={refresh} /> : null}
           {tab === 'perform' ? <PerformTab snapshot={data} refresh={refresh} /> : null}
           {tab === 'voice' ? <VoiceTab snapshot={data} refresh={refresh} /> : null}
+          {tab === 'slides' ? <SlidesTab snapshot={data} refresh={refresh} /> : null}
           {tab === 'dress' ? <DressTab snapshot={data} refresh={refresh} /> : null}
           {tab === 'tune' ? <TuneTab snapshot={data} /> : null}
           {tab === 'inspect' ? <InspectTab snapshot={data} /> : null}

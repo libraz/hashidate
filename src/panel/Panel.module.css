@@ -155,6 +155,20 @@
   font-size: var(--text-sm);
 }
 
+/*
+ * The same banner in the warning colour, for a fault that leaves the panel
+ * working: the voice is gone but everything on this screen still does what it
+ * says. Square for the same reason as `.error` above.
+ */
+.notice {
+  flex: 0 0 auto;
+  padding: var(--space-3) var(--space-5);
+  border-left: 2px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface-raised));
+  color: var(--warn);
+  font-size: var(--text-sm);
+}
+
 /* --- tabs and body -------------------------------------------------------- */
 
 .tabs {

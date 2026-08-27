@@ -1,3 +1,4 @@
+import { useT } from '@/i18n';
 import type { QueueEntry } from '@/protocol';
 import type { LineCheck } from '../lint';
 import styles from './QueueRow.module.css';
@@ -58,6 +59,7 @@ export function QueueRow({
   onRemove,
   onPromote,
 }: Props) {
+  const { t } = useT();
   const warnings = check.findings.filter((f) => f.severity === 'warn');
   const notes = check.findings.filter((f) => f.severity === 'note');
 
@@ -110,12 +112,15 @@ export function QueueRow({
           {entry.source ? <span className={styles.source}>{entry.source}</span> : null}
           <span className={styles.seconds}>{clock(check.seconds)}</span>
           {entry.reading ? (
-            <span className={styles.tag} title={`読み: ${entry.reading}`}>
-              読み
+            <span
+              className={styles.tag}
+              title={t('panel.row.reading.title', { reading: entry.reading })}
+            >
+              {t('panel.row.reading')}
             </span>
           ) : null}
           {entry.hold ? (
-            <span className={styles.tag} title="この行のあと表情を保持します">
+            <span className={styles.tag} title={t('panel.row.hold.title')}>
               hold
             </span>
           ) : null}
@@ -125,23 +130,23 @@ export function QueueRow({
             avatar does not have is struck through rather than hidden: it is
             about to do nothing, and the row has to say so. */}
         <p className={styles.line}>
-          {check.spoken || <span className={styles.silent}>(台詞なし)</span>}
+          {check.spoken || <span className={styles.silent}>{t('panel.row.silent')}</span>}
         </p>
 
         {check.cues.length || entry.perform || entry.gesture || entry.expression ? (
           <div className={styles.cues}>
             {entry.perform ? (
-              <span className={styles.field} title="この行のあいだ演技">
+              <span className={styles.field} title={t('panel.row.perform.title')}>
                 {entry.perform}
               </span>
             ) : null}
             {entry.gesture ? (
-              <span className={styles.field} title="この行のあいだ動作">
+              <span className={styles.field} title={t('panel.row.gesture.title')}>
                 {entry.gesture}
               </span>
             ) : null}
             {entry.expression ? (
-              <span className={styles.field} title="この行のあいだ表情">
+              <span className={styles.field} title={t('panel.row.expression.title')}>
                 {entry.expression}
               </span>
             ) : null}
@@ -153,7 +158,7 @@ export function QueueRow({
                 // where in the line the markup was written.
                 key={`${cue.perform}-${cue.at}`}
                 className={`${styles.cue} ${cue.known ? '' : styles.unknown}`}
-                title={`${Math.round(cue.at * 100)}% の位置`}
+                title={t('panel.row.cue.title', { percent: Math.round(cue.at * 100) })}
               >
                 {cue.perform}
               </span>
@@ -180,13 +185,18 @@ export function QueueRow({
       </div>
 
       <div className={styles.actions}>
-        <button type="button" onClick={onPromote} title="先頭へ">
+        <button type="button" onClick={onPromote} title={t('panel.row.promote')}>
           ↑↑
         </button>
-        <button type="button" onClick={onEdit} title="編集">
-          編集
+        <button type="button" onClick={onEdit} title={t('panel.row.edit')}>
+          {t('panel.row.edit')}
         </button>
-        <button type="button" onClick={onRemove} title="削除" className={styles.remove}>
+        <button
+          type="button"
+          onClick={onRemove}
+          title={t('panel.row.remove')}
+          className={styles.remove}
+        >
           ✕
         </button>
       </div>

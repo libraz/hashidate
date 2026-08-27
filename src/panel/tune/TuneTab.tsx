@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { TUNING_RANGES, type Tuning, type TuningPatch } from '@/engine/tuning';
+import { useT } from '@/i18n';
 import type { Snapshot } from '@/protocol';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { Section } from '@/ui/Section';
@@ -38,6 +39,7 @@ interface Props {
 }
 
 export function TuneTab({ snapshot }: Props) {
+  const { t } = useT();
   const reported = snapshot.tuning;
   const avatar = snapshot.vocabulary.avatar?.id ?? null;
 
@@ -54,8 +56,8 @@ export function TuneTab({ snapshot }: Props) {
 
   if (!draft) {
     return (
-      <Section title="調律">
-        <p>レンダラーがまだ何も報告していない。ビューアを開くと値が入る。</p>
+      <Section title={t('panel.tune.title')}>
+        <p>{t('panel.tune.empty')}</p>
       </Section>
     );
   }
@@ -71,50 +73,47 @@ export function TuneTab({ snapshot }: Props) {
   return (
     <>
       <Section
-        title="アイドル"
-        note={[
-          '呼吸と重心移動はジェスチャ中も止まらない。手を上げた瞬間に呼吸が止まるキャラクターは人形に見える。',
-          'まばたきは視線移動に引き寄せられる。目の可動域は白目が出ない範囲に絞ってあり、向きを変えるのはほぼ頭の仕事になる。',
-        ]}
+        title={t('panel.tune.idle')}
+        note={[t('panel.tune.idle.note1'), t('panel.tune.idle.note2')]}
       >
         <Fader
-          label="呼吸の深さ"
+          label={t('panel.tune.breathDepth')}
           range={R.idle.breathDepth}
           value={draft.idle.breathDepth}
           onChange={(breathDepth) => set({ idle: { breathDepth } })}
         />
         <Fader
-          label="呼吸の周期"
+          label={t('panel.tune.breathPeriod')}
           range={R.idle.breathPeriod}
           value={draft.idle.breathPeriod}
           onChange={(breathPeriod) => set({ idle: { breathPeriod } })}
         />
         <Fader
-          label="頭のマイクロムーブ"
+          label={t('panel.tune.idleAmount')}
           range={R.idle.idleAmount}
           value={draft.idle.idleAmount}
           onChange={(idleAmount) => set({ idle: { idleAmount } })}
         />
         <Fader
-          label="重心移動"
+          label={t('panel.tune.weightShift')}
           range={R.idle.weightShift}
           value={draft.idle.weightShift}
           onChange={(weightShift) => set({ idle: { weightShift } })}
         />
         <Fader
-          label="視線のゆらぎ"
+          label={t('panel.tune.gazeAmount')}
           range={R.idle.gazeAmount}
           value={draft.idle.gazeAmount}
           onChange={(gazeAmount) => set({ idle: { gazeAmount } })}
         />
         <Fader
-          label="目の可動限界"
+          label={t('panel.tune.eyeLimit')}
           range={R.idle.eyeLimit}
           value={draft.idle.eyeLimit}
           onChange={(eyeLimit) => set({ idle: { eyeLimit } })}
         />
         <Toggle
-          label="自動まばたき"
+          label={t('panel.tune.blink')}
           checked={draft.idle.blink}
           onChange={(blink) => set({ idle: { blink } })}
         />
@@ -122,31 +121,28 @@ export function TuneTab({ snapshot }: Props) {
 
       {draft.has.sway ? (
         <Section
-          title="揺れもの"
-          note={[
-            '髪・衣装・リボンなど、駆動されず親に遅れて揺れるだけのボーン。倍率はモデルに書かれた値に対するもの。',
-            '固定ステップで解いているので、フレームレートが変わっても揺れ幅は変わらない。',
-          ]}
+          title={t('panel.tune.sway')}
+          note={[t('panel.tune.sway.note1'), t('panel.tune.sway.note2')]}
         >
           <Toggle
-            label="揺れを有効にする"
+            label={t('panel.tune.swayEnabled')}
             checked={draft.sway.enabled}
             onChange={(enabled) => set({ sway: { enabled } })}
           />
           <Fader
-            label="硬さ"
+            label={t('panel.tune.stiffness')}
             range={R.sway.stiffness}
             value={draft.sway.stiffness}
             onChange={(stiffness) => set({ sway: { stiffness } })}
           />
           <Fader
-            label="揺れの持続"
+            label={t('panel.tune.inertia')}
             range={R.sway.inertia}
             value={draft.sway.inertia}
             onChange={(inertia) => set({ sway: { inertia } })}
           />
           <Fader
-            label="重力"
+            label={t('panel.tune.gravity')}
             range={R.sway.gravity}
             value={draft.sway.gravity}
             onChange={(gravity) => set({ sway: { gravity } })}
@@ -154,23 +150,23 @@ export function TuneTab({ snapshot }: Props) {
           {/* Not a value and so not part of the readout: it snaps the chains to
               rest so that two settings can be compared from the same standstill. */}
           <ChipRow>
-            <Chip label="静止させる" variant="action" onClick={() => void tune({ settle: true })} />
+            <Chip
+              label={t('panel.tune.settle')}
+              variant="action"
+              onClick={() => void tune({ settle: true })}
+            />
           </ChipRow>
         </Section>
       ) : null}
 
       <Section
-        title="跳躍"
-        note={[
-          '揺れものが正しく調整されているか見るための動き。呼吸では分からないことが着地の一瞬で分かる。',
-          '高さと重力だけで弧が決まる。重力を下げると同じ高さのまま頂点で浮く。',
-          '脚はリグに含まれないので、バストアップか上半身の画角で見ること。',
-        ]}
+        title={t('panel.tune.hop')}
+        note={[t('panel.tune.hop.note1'), t('panel.tune.hop.note2'), t('panel.tune.hop.note3')]}
       >
         <Fader
           // Centimetres here and metres on the wire. A jump is stated in the one
           // and stored in the other; see `TUNING_RANGES`.
-          label="跳ぶ高さ"
+          label={t('panel.tune.hopHeight')}
           range={{ ...R.hop.height, min: R.hop.height.min * 100, max: R.hop.height.max * 100 }}
           value={draft.hop.height * 100}
           step={1}
@@ -179,7 +175,7 @@ export function TuneTab({ snapshot }: Props) {
           onChange={(cm) => set({ hop: { height: cm / 100 } })}
         />
         <Fader
-          label="重力"
+          label={t('panel.tune.gravity')}
           range={R.hop.gravity}
           value={draft.hop.gravity}
           onChange={(gravity) => set({ hop: { gravity } })}
@@ -187,14 +183,9 @@ export function TuneTab({ snapshot }: Props) {
       </Section>
 
       {draft.has.tail ? (
-        <Section
-          title="尻尾"
-          note={[
-            '尻尾は腰にぶら下がっているだけなので、揺れもの層に任せると止まって見える。感情から振りを決めて根元を能動的に振り、その先は揺れもの層が追う。',
-          ]}
-        >
+        <Section title={t('panel.tune.tail')} note={[t('panel.tune.tail.note')]}>
           <Fader
-            label="振りの大きさ"
+            label={t('panel.tune.tailAmount')}
             range={R.tail.amount}
             value={draft.tail.amount}
             onChange={(amount) => set({ tail: { amount } })}
@@ -203,18 +194,14 @@ export function TuneTab({ snapshot }: Props) {
       ) : null}
 
       <Section
-        title="描画"
+        title={t('panel.tune.render')}
         note={[
-          'トゥーンを切ると、GLB が持ってきたマテリアルそのままになる。モデルがおかしいのかシェーダーがおかしいのかを切り分けるためのもの。',
-          ...(draft.has.arkit
-            ? [
-                'ARKit 合成を切ると VRM プリセットに落ちる。プリセットは顔全体の彫刻なので同時にひとつしか出せない — 縮退動作の確認用。',
-              ]
-            : []),
+          t('panel.tune.render.note1'),
+          ...(draft.has.arkit ? [t('panel.tune.render.note2')] : []),
         ]}
       >
         <Toggle
-          label="トゥーン表示"
+          label={t('panel.tune.toon')}
           checked={draft.render.toon}
           onChange={(toon) => set({ render: { toon } })}
         />
@@ -223,7 +210,7 @@ export function TuneTab({ snapshot }: Props) {
             reads as a bug. */}
         {draft.has.arkit ? (
           <Toggle
-            label="表情を ARKit 合成で駆動"
+            label={t('panel.tune.arkit')}
             checked={draft.render.arkit}
             onChange={(arkit) => set({ render: { arkit } })}
           />

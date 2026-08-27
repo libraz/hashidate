@@ -21,13 +21,15 @@
 }
 
 .title {
+  /* The one auto margin in the row, so the switches sit together against the
+     right edge rather than spreading out as more of them are added. */
+  margin-right: auto;
   font-size: var(--text-xs);
   color: var(--fg-dim);
   letter-spacing: 0.04em;
 }
 
 .toggle {
-  margin-left: auto;
   height: 20px;
   padding: 0 var(--space-3);
   background: transparent;
@@ -49,11 +51,12 @@
 }
 
 /*
- * The preview is making sound.
+ * A switch that is on.
  *
- * Worth marking, because it is the setting most likely to be left on by
- * accident and the one whose consequence — every line heard twice — is easy to
- * blame on the renderer instead. Full border plus tint, never a stripe.
+ * Worth marking on both of them, and most on the sound: it is the setting most
+ * likely to be left on by accident and the one whose consequence — every line
+ * heard twice — is easy to blame on the renderer instead. Full border plus
+ * tint, never a stripe.
  */
 .armed {
   background: var(--accent-tint);
@@ -103,9 +106,14 @@
   height: 100%;
   border: 0;
   display: block;
-  /* A monitor, not a control: the wheel scrolls the panel behind it and the
-     camera is moved by the framing buttons below. */
-  pointer-events: none;
+  /* The picture is the camera control: drag to swing round, wheel to come in.
+     `grab` rather than the default arrow, because nothing else on this page
+     responds to being dragged and the affordance is otherwise invisible. */
+  cursor: grab;
+}
+
+.canvas:active {
+  cursor: grabbing;
 }
 
 .off {
@@ -145,6 +153,46 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+/* The framing and the way back to it, on one line: the second is only ever
+   pressed because of what the first plus a drag left behind. */
+.shot {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.shot > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.reset {
+  flex: 0 0 auto;
+  padding: 0 var(--space-3);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.reset:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--accent);
+  border-color: var(--accent-edge);
+}
+
+/* Not hidden when there is nothing to undo: the readout beside it is where the
+   operator reads how far off the framing they have wandered, and a control that
+   appears and disappears moves everything under it. */
+.reset:disabled {
+  color: var(--fg-faint);
+  cursor: default;
 }
 
 /*

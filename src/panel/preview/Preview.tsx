@@ -1,9 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import type { CameraFrame, Snapshot } from '@/protocol';
+import { type Translator, useT } from '@/i18n';
+import type { CameraFrame, Shot, Snapshot } from '@/protocol';
 import { Segmented } from '@/ui/Segmented';
 import { Toggle } from '@/ui/Toggle';
-import { sendMonitorMute } from '@/viewer/monitor-link';
-import { setBackdrop as sendBackdrop, setAvatar, setCamera, setIdle } from '../api';
+import { onMonitorShot, sendMonitorMute } from '@/viewer/monitor-link';
+import { CAMERA_FRAMES, CAMERA_LABELS } from '@/viewer/scene/framing';
+import {
+  setBackdrop as sendBackdrop,
+  setAvatar,
+  setCamera,
+  setDebugReadout,
+  setIdle,
+} from '../api';
 import styles from './Preview.module.css';
 
 /**
@@ -55,17 +63,20 @@ import styles from './Preview.module.css';
  * what they can see*, so they sit under the picture rather than in a tab. They
  * are the same four the console keeps above its tabs, for the same reason.
  *
- * Orbiting is deliberately not available — the preview does not take the
- * pointer, so a wheel over it scrolls the panel rather than dollying a camera
- * the stream does not share.
+ * ## The picture is also the camera control
+ *
+ * Drag to swing round the character, wheel to come in. The frame takes the
+ * pointer for this, which it deliberately did not before — the reason it did
+ * not was that the camera was a property of *that* renderer and dollying it
+ * moved a shot the stream did not share. It is shared now: the embedded viewer
+ * reads its own camera back and posts it up here, and this turns it into the
+ * ordinary `camera` command an orchestrator could have sent, so the renderer on
+ * air swings with it. See `monitor-link.ts` and `Shot`.
+ *
+ * The cost is that a wheel over the picture no longer scrolls the panel. Worth
+ * it: the shot is the one thing that can only be judged by looking, and this is
+ * the only place in the program where the operator is looking at it.
  */
-
-const FRAMES: Array<{ value: CameraFrame; label: string }> = [
-  { value: 'face', label: '顔' },
-  { value: 'bust', label: 'バスト' },
-  { value: 'upper', label: '上半身' },
-  { value: 'full', label: '全身' },
-];
 
 /**
  * "No backdrop" needs a value, because `Segmented` picks by string and null is
@@ -73,9 +84,26 @@ const FRAMES: Array<{ value: CameraFrame; label: string }> = [
  */
 const NO_BACKDROP = '-';
 
+/** The framing as authored, with the camera standing where it put it. */
+const STRAIGHT_ON: Required<Shot> = { frame: 'bust', yaw: 0, pitch: 0, zoom: 1 };
+
+/** How far off the framing the camera is, short enough to sit on a button. */
+const describe = (shot: Required<Shot>, t: Translator['t']): string =>
+  [
+    shot.yaw === 0
+      ? ''
+      : `${t(shot.yaw > 0 ? 'panel.preview.shot.right' : 'panel.preview.shot.left')}${Math.abs(shot.yaw).toFixed(0)}°`,
+    shot.pitch === 0
+      ? ''
+      : `${t(shot.pitch > 0 ? 'panel.preview.shot.up' : 'panel.preview.shot.down')}${Math.abs(shot.pitch).toFixed(0)}°`,
+    shot.zoom === 1 ? '' : `${shot.zoom.toFixed(2)}×`,
+  ]
+    .filter(Boolean)
+    .join(' ');
+
 /** Both survive a reload: turning either off is a deliberate choice. */
-const SHOWN_KEY = 'aituber.panel.preview';
-const HEARD_KEY = 'aituber.panel.preview.audio';
+const SHOWN_KEY = 'hashidate.panel.preview';
+const HEARD_KEY = 'hashidate.panel.preview.audio';
 
 /**
  * How long a report of blocked audio keeps the warning up.
@@ -120,11 +148,23 @@ const store = (key: string, value: boolean): void => {
 };
 
 export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: () => void }) {
+  const { t, tx } = useT();
   const [on, setOn] = useState(() => readStored(SHOWN_KEY, true));
   // Off by default: on an OBS setup with monitoring switched on, sound here is
   // every line twice. The operator who cannot hear it any other way turns it on
   // once and it stays on.
   const [heard, setHeard] = useState(() => readStored(HEARD_KEY, false));
+  /**
+   * The measurements, held rather than followed, and not stored anywhere.
+   *
+   * Held for the reason the set below is: nothing reports it back. Not stored
+   * for a different one — the two settings above are how this operator likes
+   * the panel, and this is a thing switched on to answer a question. A panel
+   * that came back from a reload still holding it would eventually be a panel
+   * with a terminal drawn over the picture that nobody remembers asking for,
+   * and the renderer on air would have gone back to clean without it.
+   */
+  const [measured, setMeasured] = useState(false);
   const frame = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => store(SHOWN_KEY, on), [on]);
@@ -155,32 +195,90 @@ export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: ()
    */
   const [backdrop, setBackdrop] = useState<string | null>(null);
 
+  /**
+   * The shot, which this panel is the authority on.
+   *
+   * Held for the same reason the set above is — nothing reports it back — but
+   * for a stronger one too: this is where it is *set*. The framing buttons name
+   * one, the pointer over the picture moves off it, and both end in the same
+   * `camera` command. An orchestrator that moves the camera itself leaves this
+   * stale, which is the same trade every held control here makes.
+   */
+  const [shot, setShot] = useState<Required<Shot>>(STRAIGHT_ON);
+
+  /**
+   * What the drag produced, coming back out of the picture.
+   *
+   * The preview reads its own camera and posts it up; this turns it into the
+   * ordinary command an orchestrator could have sent. Rate-limited inside the
+   * frame — see `SHOT_INTERVAL` in the runtime — so this fires about ten times
+   * a second while a drag is happening and once when it settles.
+   */
+  useEffect(() => {
+    if (!on) return;
+    return onMonitorShot((moved) => {
+      setShot(moved);
+      void setCamera(moved);
+    });
+  }, [on]);
+
+  /** Name a framing, keeping wherever the operator is standing to see it. */
+  const frameAt = (next: CameraFrame): void => {
+    setShot((prev) => ({ ...prev, frame: next }));
+    void setCamera({ frame: next });
+  };
+
+  const straightOn = (): void => {
+    setShot((prev) => ({ ...STRAIGHT_ON, frame: prev.frame }));
+    void setCamera({ yaw: 0, pitch: 0, zoom: 1 });
+  };
+
+  const moved = shot.yaw !== 0 || shot.pitch !== 0 || shot.zoom !== 1;
+
   return (
     <section className={styles.preview}>
       <div className={styles.head}>
-        <span className={styles.title}>プレビュー</span>
+        <span className={styles.title}>{t('panel.preview.title')}</span>
+        {/* The same readout `?debug=1` opens on, and an ordinary command — so it
+            goes to every renderer attached, this preview included. That is the
+            point: the question it answers is nearly always about the picture
+            going to air, and the preview then shows what that picture looks
+            like because it is a second renderer of the same commands. It is
+            never folded into the standing setup, so a renderer that reloads
+            comes back clean; see `debugCommandSchema`. */}
+        <button
+          type="button"
+          className={`${styles.toggle} ${measured ? styles.armed : ''}`}
+          aria-pressed={measured}
+          onClick={() => {
+            const next = !measured;
+            setMeasured(next);
+            void setDebugReadout(next);
+          }}
+          title={t(
+            measured ? 'panel.preview.readout.hideTitle' : 'panel.preview.readout.showTitle',
+          )}
+        >
+          {t(measured ? 'panel.preview.readout.on' : 'panel.preview.readout.off')}
+        </button>
         <button
           type="button"
           className={`${styles.toggle} ${heard ? styles.armed : ''}`}
           aria-pressed={heard}
           disabled={!on}
           onClick={() => setHeard((v) => !v)}
-          title={
-            heard
-              ? 'この画面の音を止める。OBS のモニタリングを使っているなら二重に聞こえます'
-              : 'この画面の音を出す。OBS 側でモニタリングしていない場合はここが唯一の確認手段です'
-          }
+          title={t(heard ? 'panel.preview.audio.muteTitle' : 'panel.preview.audio.unmuteTitle')}
         >
-          {heard ? '音声 入' : '音声 切'}
+          {t(heard ? 'panel.preview.audio.on' : 'panel.preview.audio.off')}
         </button>
         <button
           type="button"
           className={styles.toggle}
           aria-pressed={on}
           onClick={() => setOn((v) => !v)}
-          title={on ? 'プレビューを止めて GPU を返す' : 'プレビューを表示する'}
+          title={t(on ? 'panel.preview.hideTitle' : 'panel.preview.showTitle')}
         >
-          {on ? '停止' : '表示'}
+          {t(on ? 'panel.preview.hide' : 'panel.preview.show')}
         </button>
       </div>
 
@@ -201,18 +299,18 @@ export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: ()
             // No `?size`: the canvas matches the element. A browser source is
             // pinned to a pixel size so nothing resamples it; a monitor on a
             // window somebody resizes wants the opposite.
-            src="/?stage=1&mute=1"
-            title="アバターのプレビュー"
-            // The picture is a monitor. Taking the pointer would mean a wheel
-            // over it dollies a camera the stream does not share, while the
-            // panel behind it stops scrolling.
+            src="/?mute=1"
+            title={t('panel.preview.frameTitle')}
+            // The picture takes the pointer, and that is the whole point of it
+            // now: drag to swing round the character, wheel to come in. What
+            // the drag produces is read back and sent as an ordinary `camera`
+            // command, so the renderer on air moves with it. The cost is that a
+            // wheel over the picture no longer scrolls the panel — worth it,
+            // since the shot is the one thing judged by looking.
             tabIndex={-1}
           />
         ) : (
-          <p className={styles.off}>
-            プレビュー停止中。二つ目の WebGL
-            コンテキストを開かないので、配信側の描画が軽くなります。
-          </p>
+          <p className={styles.off}>{t('panel.preview.stopped')}</p>
         )}
       </div>
 
@@ -221,11 +319,7 @@ export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: ()
           page it is on has been interacted with, so a viewer nobody has clicked
           mouths every line in silence — and from here that looks exactly like a
           speech sidecar that is not running. */}
-      {blocked ? (
-        <p className={styles.blocked}>
-          音声ブロック中。ビューアの画面を一度クリックすると次の行から声が出ます。
-        </p>
-      ) : null}
+      {blocked ? <p className={styles.blocked}>{t('panel.preview.blocked')}</p> : null}
 
       <div className={styles.staging}>
         {/* Who is on screen. The renderer holds every command sent behind a swap
@@ -233,29 +327,45 @@ export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: ()
             this is clicked rather than after the picture comes back. */}
         {snapshot.avatars.length > 1 ? (
           <Segmented
-            ariaLabel="アバター"
-            options={snapshot.avatars.map((a) => ({ value: a.id, label: a.label }))}
+            ariaLabel={t('panel.preview.avatarAria')}
+            options={snapshot.avatars.map((a) => ({ value: a.id, label: tx(a.label) }))}
             value={avatar}
             onChange={(id) => void setAvatar(id).then(refresh)}
           />
         ) : null}
 
-        <Segmented
-          ariaLabel="カメラ"
-          options={FRAMES}
-          // The renderer does not report its framing, so nothing is lit. A
-          // segment shown as selected on the strength of the last click would be
-          // wrong the moment an orchestrator moved the camera.
-          value={null}
-          onChange={(frame) => void setCamera(frame)}
-        />
+        <div className={styles.shot}>
+          <Segmented
+            ariaLabel={t('panel.preview.cameraAria')}
+            options={CAMERA_FRAMES.map((f) => ({ value: f, label: tx(CAMERA_LABELS[f]) }))}
+            value={shot.frame}
+            onChange={frameAt}
+          />
+          {/* Only offered once there is something to undo, and it undoes only
+              the offsets: the framing is a choice, standing off it is a nudge. */}
+          <button
+            type="button"
+            className={styles.reset}
+            disabled={!moved}
+            onClick={straightOn}
+            title={t('panel.preview.straightOn.title')}
+          >
+            {moved
+              ? t('panel.preview.straightOnFrom', { offset: describe(shot, t) })
+              : t('panel.preview.straightOn')}
+          </button>
+        </div>
 
         {backdrops.length ? (
           <Segmented
-            ariaLabel="背景"
+            ariaLabel={t('panel.preview.backdropAria')}
             options={[
-              { value: NO_BACKDROP, label: 'なし', title: '素の背景' },
-              ...backdrops.map((b) => ({ value: b.id, label: b.label })),
+              {
+                value: NO_BACKDROP,
+                label: t('panel.preview.backdropNone'),
+                title: t('panel.preview.backdropNone.title'),
+              },
+              ...backdrops.map((b) => ({ value: b.id, label: tx(b.label) })),
             ]}
             value={backdrop ?? NO_BACKDROP}
             onChange={(id) => {
@@ -267,7 +377,7 @@ export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: ()
         ) : null}
 
         <Toggle
-          label="自動モード（アイドル）"
+          label={t('panel.preview.idle')}
           checked={idle}
           onChange={(v) => void setIdle(v).then(refresh)}
         />
