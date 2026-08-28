@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">hashidate</title>
+  <desc id="desc">An abstract cyan sandbar crossing a dark field.</desc>
+  <rect x="64" y="64" width="896" height="896" rx="208" fill="#0f1115"/>
+  <path
+    fill="#7ad3e8"
+    d="M224 708c88-40 205-63 276-114 70-50 68-102-7-148-61-37-78-81-42-116 62-61 208-98 363-88-135 14-248 49-300 93-31 27-22 52 31 79 103 52 135 130 79 207-66 91-226 159-358 170-59 5-88-13-88-39 0-17 15-31 46-44Z"
+  />
+</svg>

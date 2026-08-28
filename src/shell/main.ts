@@ -62,6 +62,7 @@ app.setAppLogsPath();
 const singleInstance = app.requestSingleInstanceLock();
 
 const paths = checkoutPaths();
+const appIcon = join(paths.root, 'src/shell/assets/hashidate-icon.png');
 const port = controlPort();
 const logs = logDirectory();
 // Where the sidecar answers is deliberately not passed to the control child.
@@ -182,6 +183,7 @@ function makeWindow(kind: WindowKind): BrowserWindow {
   const window = new BrowserWindow({
     ...restored,
     title: spec.title,
+    icon: appIcon,
     show: false,
     webPreferences: {
       contextIsolation: true,
@@ -499,6 +501,7 @@ app
       app.quit();
       return;
     }
+    app.dock?.setIcon(appIcon);
     installPermissionPolicy();
     await control.start();
     // Model loading is intentionally not on the critical path. The viewer and
