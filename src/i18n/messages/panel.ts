@@ -27,6 +27,22 @@ export const panelEn = {
     'The speech sidecar is loading its model. Nothing will be heard until it is ready.',
   'panel.speech.down':
     'The speech sidecar is not answering. Until it is, the mouth moves in silence.',
+  'panel.source.aria': 'OBS browser source URL',
+  'panel.source.title': 'OBS source',
+  'panel.source.size': 'Size',
+  'panel.source.backdrop': 'Backdrop',
+  'panel.source.deck': 'Deck',
+  'panel.source.place': 'Place',
+  'panel.source.none': 'None',
+  'panel.source.full': 'Full frame',
+  'panel.source.right': 'Bottom right',
+  'panel.source.left': 'Bottom left',
+  'panel.source.transparent': 'Transparent',
+  'panel.source.transparent.roomWins':
+    'A room draws its own background, so it covers this. Choose no backdrop to composite over what is underneath.',
+  'panel.source.copy': 'Copy URL',
+  'panel.source.copied': 'Copied',
+  'panel.source.copyFailed': 'Could not copy',
 
   // --- the preview beside the controls ---------------------------------------
   'panel.preview.title': 'Preview',
@@ -35,12 +51,6 @@ export const panelEn = {
   'panel.preview.readout.hideTitle': 'Take the measurements off the picture',
   'panel.preview.readout.showTitle':
     'Print breathing, gaze, frame rate and the document state on every viewer attached, including the one going to air',
-  'panel.preview.audio.on': 'Audio on',
-  'panel.preview.audio.off': 'Audio off',
-  'panel.preview.audio.muteTitle':
-    'Silence this window. With OBS monitoring on you are hearing every line twice.',
-  'panel.preview.audio.unmuteTitle':
-    'Play the sound here. If OBS is not monitoring the source, this is the only way to hear it.',
   'panel.preview.hide': 'Stop',
   'panel.preview.show': 'Show',
   'panel.preview.hideTitle': 'Stop the preview and give the GPU back',
@@ -150,7 +160,7 @@ export const panelEn = {
   'panel.perform.presets.note1':
     'A face and a movement kept as one. Emotion and Gestures below are its parts, for combinations that have no name.',
   'panel.perform.presets.note2':
-    'The emotion outlives the preset. Anything held — a stance, lowered eyes — is marked with a *, and returns on the next preset or on Clear.',
+    'The mood outlives a performance. Clear here resets the mood, expression and overlays to neutral, and releases anything held — a stance or lowered eyes.',
   'panel.perform.faceOnly': 'face only',
   'panel.perform.release': 'Clear',
   'panel.perform.releaseAll': 'Clear all',
@@ -437,6 +447,22 @@ export const panelJa: Record<keyof typeof panelEn, string> = {
   'panel.stop.title': 'いま言っている行を途中で切り、待ち行列も破棄します',
   'panel.speech.loading': '音声サイドカーがモデルを読み込み中です。準備できるまで声は出ません。',
   'panel.speech.down': '音声サイドカーが応答しません。このままでは声が出ず、口だけが動きます。',
+  'panel.source.aria': 'OBS ブラウザソース URL',
+  'panel.source.title': 'OBS ソース',
+  'panel.source.size': 'サイズ',
+  'panel.source.backdrop': '背景',
+  'panel.source.deck': '資料',
+  'panel.source.place': '位置',
+  'panel.source.none': 'なし',
+  'panel.source.full': '全画面',
+  'panel.source.right': '右下',
+  'panel.source.left': '左下',
+  'panel.source.transparent': '透過',
+  'panel.source.transparent.roomWins':
+    '部屋は自前の背景を描くので、透過は隠れます。下のレイヤーに重ねるなら背景を「なし」にしてください',
+  'panel.source.copy': 'URL をコピー',
+  'panel.source.copied': 'コピーしました',
+  'panel.source.copyFailed': 'コピーできませんでした',
 
   'panel.preview.title': 'プレビュー',
   'panel.preview.readout.on': '計測 入',
@@ -444,12 +470,6 @@ export const panelJa: Record<keyof typeof panelEn, string> = {
   'panel.preview.readout.hideTitle': '計測値の表示を消す',
   'panel.preview.readout.showTitle':
     '呼吸・視線・フレームレート・資料の状態を、接続中のすべてのビューアに表示する（配信に出る画面にも出ます）',
-  'panel.preview.audio.on': '音声 入',
-  'panel.preview.audio.off': '音声 切',
-  'panel.preview.audio.muteTitle':
-    'この画面の音を止める。OBS のモニタリングを使っているなら二重に聞こえます',
-  'panel.preview.audio.unmuteTitle':
-    'この画面の音を出す。OBS 側でモニタリングしていない場合はここが唯一の確認手段です',
   'panel.preview.hide': '停止',
   'panel.preview.show': '表示',
   'panel.preview.hideTitle': 'プレビューを止めて GPU を返す',
@@ -549,7 +569,7 @@ export const panelJa: Record<keyof typeof panelEn, string> = {
   'panel.perform.presets.note1':
     '表情とモーションをひと組にしたもの。下の「感情」「ジェスチャ」はその部品で、名前のない組み合わせを作るときに使う。',
   'panel.perform.presets.note2':
-    '感情はプリセットを抜けても残る。姿勢や伏し目のように保持されるものは * 印つきで、次のプリセットか「解除」で戻る。',
+    '演技の気分は残る。この画面の「解除」は気分・表情・重ねる効果を平常に戻し、姿勢や伏し目のように保持されたものも解放する。',
   'panel.perform.faceOnly': '表情のみ',
   'panel.perform.release': '解除',
   'panel.perform.releaseAll': '全解除',

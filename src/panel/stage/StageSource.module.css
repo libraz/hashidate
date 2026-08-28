@@ -1,0 +1,67 @@
+.source {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.label {
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+}
+.source label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+}
+.source select,
+.copy {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  padding: 3px 5px;
+}
+.check {
+  white-space: nowrap;
+}
+.url {
+  flex: 1 1 320px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+}
+.copy {
+  cursor: pointer;
+  white-space: nowrap;
+}
+.copy:hover {
+  background: var(--surface-hover);
+  color: var(--accent);
+}
+
+/*
+ * A copy that was refused.
+ *
+ * Marked rather than left to the label alone, because this is the one control
+ * on the row whose failure leaves the operator with no other way to get the
+ * address out of the window. The panel's own warning colour, on the same
+ * reading as `.notice` there: a fault that leaves everything else working.
+ * Full border plus tint rather than a stripe, because this one is rounded.
+ */
+.failed,
+.failed:hover {
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
+  color: var(--warn);
+}
+
+.source input:disabled + span {
+  color: var(--fg-faint);
+  opacity: 0.55;
+  cursor: help;
+}

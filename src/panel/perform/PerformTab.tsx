@@ -150,7 +150,9 @@ export function PerformTab({ snapshot, refresh }: Props) {
                   label={item.sustain ? `${tx(item.label)} *` : tx(item.label)}
                   title={`${item.id}  ${[item.gesture, item.hop].filter(Boolean).join(' + ') || t('panel.perform.faceOnly')}`}
                   state={state.performance === item.id ? 'on' : 'off'}
-                  onClick={() => run(perform(state.performance === item.id ? null : item.id))}
+                  onClick={() =>
+                    run(state.performance === item.id ? resetFace() : perform(item.id))
+                  }
                 />
               ))}
             </ChipRow>
@@ -160,7 +162,7 @@ export function PerformTab({ snapshot, refresh }: Props) {
           <Chip
             label={t('panel.perform.release')}
             variant="action"
-            onClick={() => run(perform(null))}
+            onClick={() => run(resetFace())}
           />
         </ChipRow>
       </Section>

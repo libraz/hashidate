@@ -12,6 +12,7 @@ import { PerformTab } from './perform/PerformTab';
 import { Preview } from './preview/Preview';
 import { QueueTab } from './queue/QueueTab';
 import { SlidesTab } from './slides/SlidesTab';
+import { StageSource } from './stage/StageSource';
 import { TuneTab } from './tune/TuneTab';
 import { VoiceTab } from './voice/VoiceTab';
 
@@ -141,6 +142,8 @@ export function Panel() {
           </button>
         </div>
       </header>
+
+      <StageSource snapshot={data} />
 
       {/* The server restarts during development and the panel stays open. The
           banner appears over the last data rather than replacing it, so a queue
