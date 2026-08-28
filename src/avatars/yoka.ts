@@ -93,15 +93,14 @@ export default {
        * wrong one.
        *
        * These drawings include a mouth, and the viseme layer sets its own mouth
-       * shape on top rather than in place of it — the two are separate morphs
-       * that sum on the vertex. `F_NIKONIKO` is drawn as an open grin, so a line
-       * spoken over it opens a mouth that is already open: the jaw drops to the
-       * throat and the tongue is fully visible, on every vowel.
+       * shape on top rather than in place of it. The engine measures an authored
+       * opening against `mouthClose` and applies the inverse only while speaking,
+       * so `F_NIKONIKO` can remain an open grin without swallowing the visemes.
        *
        * It is reached by *any* joy at all, so that was the character's face for
        * most of a stream — every greeting, every cheerful reaction. `F_NIKO` is
-       * the same smile with the mouth closed, and it leaves the visemes the
-       * whole of the travel.
+       * the same smile with the mouth closed, and therefore needs no such
+       * correction while it leaves the visemes the whole of the travel.
        *
        * The grin is still there and still worth using; it is a face for a
        * moment, asked for by name, rather than the one joy lands on by default.

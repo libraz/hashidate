@@ -47,6 +47,8 @@ export interface ExpressionPreset {
   lid: LidClosure;
   /** How much of the author's own "park this out of view" travel it carries, 0..1. */
   swap: number;
+  /** How much of the authored mouth opening the canonical close shape reverses, 0..1. */
+  mouthClose: number;
 }
 
 /** Deltas accumulated against another shape's, before the ratio is taken. */
@@ -69,6 +71,10 @@ function accumulate(target: MorphAttribute, onto: MorphAttribute, into: Projecti
 /** How much of `onto` the accumulated deltas amount to, 0..1. */
 const ratio = ({ dot, len }: Projection): number =>
   len > 1e-12 ? Math.min(1, Math.max(0, dot / len)) : 0;
+
+/** The reverse projection used when an authored drawing opens the mouth. */
+const reverseRatio = ({ dot, len }: Projection): number =>
+  len > 1e-12 ? Math.min(1, Math.max(0, -dot / len)) : 0;
 
 /**
  * How much of "close this eye" a preset already contains, per eye, 0..1.
@@ -165,6 +171,28 @@ function artSwap(profile: Profile, id: string, hideIds: string[]): number {
   return best;
 }
 
+/**
+ * How much of an authored mouth opening is cancelled by `mouthClose` while
+ * speaking, 0..1.
+ *
+ * Both shapes are deltas on the same mesh. The close shape points opposite to
+ * an authored open mouth, so its useful amount is the clamped negative
+ * projection. Avatars without the canonical shape, or with a preset on another
+ * mesh, simply measure zero and keep their old behaviour.
+ */
+function mouthClosure(profile: Profile, id: string): number {
+  const own = attributesOf(profile.morphTargets.get(id));
+  const close = attributesOf(profile.morphTargets.get('mouthClose'));
+  if (!(own.size && close.size)) return 0;
+
+  const p: Projection = { dot: 0, len: 0 };
+  for (const [mesh, onto] of close) {
+    const target = own.get(mesh);
+    if (target) accumulate(target, onto, p);
+  }
+  return reverseRatio(p);
+}
+
 /** Shape ids in a declared group that actually exist on this GLB. */
 function idsInGroup(profile: Profile, spec: DrawnShapeSpec | null | undefined): string[] {
   if (!spec?.group) return [];
@@ -191,6 +219,7 @@ export function buildPresets(profile: Profile, avatar?: AvatarDescriptor): Expre
     label: same(label(id)),
     lid: lidClosure(profile, id),
     swap: artSwap(profile, id, hideIds),
+    mouthClose: mouthClosure(profile, id),
   }));
 }
 

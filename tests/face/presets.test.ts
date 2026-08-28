@@ -172,7 +172,13 @@ describe('buildPresets / lid closure', () => {
     };
     const profile = buildProfile(rig.root, descriptor);
     expect(buildPresets(profile, descriptor)).toEqual([
-      { id: 'B_HAZUKASHII', label: same('B_HAZUKASHII'), lid: { L: 0, R: 0 }, swap: 0 },
+      {
+        id: 'B_HAZUKASHII',
+        label: same('B_HAZUKASHII'),
+        lid: { L: 0, R: 0 },
+        mouthClose: 0,
+        swap: 0,
+      },
     ]);
   });
 
@@ -183,6 +189,37 @@ describe('buildPresets / lid closure', () => {
     for (const preset of buildPresets(profile, descriptor)) {
       expect(preset.lid).toEqual({ L: 0, R: 0 });
     }
+  });
+});
+
+describe('buildPresets / mouth closure', () => {
+  it('measures the inverse projection of an authored mouth opening', () => {
+    const rig = buildRig({
+      groups: [[FACE_GROUP, ['F_OPEN', 'F_CLOSED']]],
+      deltas: { mouthClose: 4e-3, F_OPEN: -2e-3, F_CLOSED: 0 },
+    });
+    const descriptor: AvatarDescriptor = {
+      ...rig.descriptor,
+      presets: { group: FACE_GROUP },
+    };
+    const profile = buildProfile(rig.root, descriptor);
+    const presets = buildPresets(profile, descriptor);
+    expect(presets.find((p) => p.id === 'F_OPEN')?.mouthClose).toBeCloseTo(0.5, 6);
+    expect(presets.find((p) => p.id === 'F_CLOSED')?.mouthClose).toBe(0);
+  });
+
+  it('does nothing when the avatar has no canonical mouthClose shape', () => {
+    const rig = buildRig({
+      arkit: false,
+      groups: [[FACE_GROUP, ['F_OPEN']]],
+      deltas: { F_OPEN: -2e-3 },
+    });
+    const descriptor: AvatarDescriptor = {
+      ...rig.descriptor,
+      presets: { group: FACE_GROUP },
+    };
+    const profile = buildProfile(rig.root, descriptor);
+    expect(buildPresets(profile, descriptor)[0].mouthClose).toBe(0);
   });
 });
 
