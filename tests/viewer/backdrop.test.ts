@@ -160,6 +160,12 @@ const captured = (s: Mountable) => ({
   inScene: s.scene.children.length,
 });
 
+/** The same, less the one value a suspended room deliberately does not touch. */
+const restored = (s: Mountable) => {
+  const { background, ...rest } = captured(s);
+  return rest;
+};
+
 describe('putting the room away for a document', () => {
   const room = PATTERNS[0].id;
 
@@ -172,7 +178,33 @@ describe('putting the room away for a document', () => {
     suspended.backdrop.setBackdrop(room);
     suspended.backdrop.suspend();
 
-    expect(captured(suspended)).toEqual(captured(cleared));
+    // The background is the exception and is checked below: whoever suspended
+    // the room did so because something else is behind the character, and it
+    // is theirs to say what.
+    expect(restored(suspended)).toEqual(restored(cleared));
+  });
+
+  it('paints nothing while it is away, whatever it is told to do', () => {
+    // A document is up, so the frame behind the character is the page and the
+    // character's canvas is clear. A `backdrop` on a line arrives mid-segment,
+    // and the room it takes down giving the background back on its way out
+    // would put the flat colour over the page — an opaque rectangle exactly the
+    // size of the character's canvas, for the rest of the document.
+    const s = mountable();
+    s.backdrop.setBackdrop(room);
+    s.backdrop.suspend();
+    // What the runtime does once a document is up. See `updateBackground`.
+    s.scene.background = null;
+
+    s.backdrop.setBackdrop(PATTERNS[1].id);
+    expect(s.scene.background).toBeNull();
+    s.backdrop.clear();
+    expect(s.scene.background).toBeNull();
+
+    // And the room asked for meanwhile still arrives when the page goes away.
+    s.backdrop.setBackdrop(PATTERNS[1].id);
+    s.backdrop.resume();
+    expect(s.scene.background).not.toBeNull();
   });
 
   it('keeps the room, so it is the same one that comes back', () => {

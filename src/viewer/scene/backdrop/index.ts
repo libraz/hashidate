@@ -222,6 +222,14 @@ export class BackdropStage {
    * Idempotent, because the two callers overlap: a room cleared while it is
    * suspended has already been lowered, and every step here is a restore rather
    * than an undo.
+   *
+   * The background is the one exception, and only while suspended. Suspended
+   * means something else is behind the character — a document, or whatever the
+   * source is stacked over — and the caller that put the room away has already
+   * decided what that is. Restoring the captured colour there would paint over
+   * a page with the flat grey the scene happened to be built with, which is a
+   * frame nobody asked for and nothing would take back until the document came
+   * down.
    */
   private lower(): void {
     const built = this.mounted?.built;
@@ -229,7 +237,7 @@ export class BackdropStage {
     if (built) this.scene.remove(built.root);
 
     this.scene.fog = this.baseline.fog;
-    this.scene.background = this.baseline.background;
+    if (!this.suspended) this.scene.background = this.baseline.background;
     this.scene.environment = this.baseline.environment;
     this.scene.environmentIntensity = this.baseline.environmentIntensity;
     this.renderer.toneMapping = this.baseline.toneMapping;

@@ -8,9 +8,11 @@ import { Session } from '@/engine/session';
 import type {
   AvatarDescriptor,
   CameraFrame,
+  LabelledId,
   Placement,
   PlacementReport,
   Profile,
+  Scenery,
   Shading,
   Shot,
   SlidePlacement,
@@ -598,6 +600,11 @@ export class AvatarRuntime {
     return this.backdrop.current;
   }
 
+  /** The rooms this renderer can show. See `sceneryPort`. */
+  get backdrops(): LabelledId[] {
+    return this.backdrop.backdrops;
+  }
+
   /**
    * Put the avatar in a room, or take it out.
    *
@@ -880,11 +887,13 @@ export class AvatarRuntime {
     const session = new Session(director, {
       wardrobe,
       camera: (shot) => this.setShot(shot),
-      // The stage rather than the runtime, so a session cannot reach anything
-      // else here. A new session is built on every avatar swap and the room it
-      // is handed is the one already standing — the set does not change because
-      // the actor did.
-      scenery: this.backdrop,
+      // A port rather than the stage itself, narrow enough that a session
+      // cannot reach anything else here — and routed through `setBackdrop` so
+      // that a room changed by a line settles the background the same way a
+      // room changed from the console does. See `sceneryPort`. A new session is
+      // built on every avatar swap and the room it is handed is the one already
+      // standing — the set does not change because the actor did.
+      scenery: sceneryPort(this),
       voice: this.voice,
       // The renderer's own switch, narrowed to a port for the same reason the
       // backdrop is: a session tuning the shading has to be able to say so
@@ -1047,6 +1056,27 @@ export class AvatarRuntime {
     };
     for (const fn of this.hudListeners) fn(hud);
   }
+}
+
+/**
+ * The room, as a session may reach it.
+ *
+ * Deliberately not `BackdropStage` itself, which is the same object and the
+ * wrong door. Changing a room takes the standing one down, and what is behind
+ * the character afterwards depends on the document layer and on how the source
+ * was opened — neither of which a room knows. A `backdrop` on a line that went
+ * straight to the stage would leave the character's canvas opaque over a page
+ * until the document came down and the frame loop noticed. `updateBackground`
+ * is the only thing allowed to decide what is behind both layers, and this is
+ * what keeps every route to a room going past it.
+ */
+function sceneryPort(runtime: AvatarRuntime): Scenery {
+  return {
+    get backdrops(): LabelledId[] {
+      return runtime.backdrops;
+    },
+    setBackdrop: (id) => runtime.setBackdrop(id),
+  };
 }
 
 /**
