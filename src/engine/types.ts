@@ -297,7 +297,7 @@ export interface PointSpec {
   /** 0..1 of the arm's full reach, fingertip included. */
   extent?: number;
   finger?: FingerName;
-  /** False for an absolute bearing; otherwise the azimuth mirrors per side. */
+  /** False for absolute bearing/point/palm directions; otherwise they mirror per side. */
   mirror?: boolean;
   /**
    * Authored form: a tuple in character space.

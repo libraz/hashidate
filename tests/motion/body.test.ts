@@ -12,6 +12,7 @@ import type {
   GestureVariation,
   Profile,
   Side,
+  Vec3Tuple,
 } from '@/engine/types';
 import { buildRig } from '../helpers/scene';
 
@@ -33,13 +34,138 @@ interface Harness {
   rig: Rig;
 }
 
-function harness(): Harness {
+interface PointCapture {
+  point: THREE.Vector3;
+  palm: THREE.Vector3;
+}
+
+function harness(yaw = 0): Harness {
   const built = buildRig();
+  built.root.rotation.y = yaw;
+  built.root.updateMatrixWorld(true);
   const profile = buildProfile(built.root, built.descriptor);
   const rig = new Rig(profile);
   const body = new Body(rig, profile);
   // Nothing here is testing the idle, and a breath riding on top of the
   // trajectory shows up as noise in every speed measurement below.
+  body.breathDepth = 0;
+  body.idleAmount = 0;
+  body.weightShift = 0;
+  body.gazeAmount = 0;
+  return { body, profile, rig };
+}
+
+/** A posed segment expressed in the body's canonical frame. */
+function canonicalDirection(
+  h: Harness,
+  side: Side,
+  parentName: string,
+  childName: string,
+): THREE.Vector3 {
+  const parent = h.profile.bones[parentName as BoneSlot];
+  const child = h.profile.bones[childName as BoneSlot];
+  if (!(parent && child)) throw new Error(`synthetic rig is missing ${parentName}/${childName}`);
+  parent.updateWorldMatrix(true, false);
+  child.updateWorldMatrix(true, false);
+  const world = child
+    .getWorldPosition(new THREE.Vector3())
+    .sub(parent.getWorldPosition(new THREE.Vector3()))
+    .normalize();
+  h.rig.anat.update();
+  return new THREE.Vector3(
+    world.dot(h.rig.anat.right) * (side === 'R' ? 1 : -1),
+    world.dot(h.rig.anat.up),
+    world.dot(h.rig.anat.fwd),
+  );
+}
+
+function canonicalHandDirection(h: Harness, side: Side): THREE.Vector3 {
+  const hand = h.profile.bones[`hand.${side}`];
+  const middle = h.profile.fingerBones[`middle.${side}`]?.[0];
+  if (!(hand && middle)) throw new Error(`synthetic rig is missing hand.${side}/middle.${side}`);
+  hand.updateWorldMatrix(true, false);
+  middle.updateWorldMatrix(true, false);
+  const world = middle
+    .getWorldPosition(new THREE.Vector3())
+    .sub(hand.getWorldPosition(new THREE.Vector3()))
+    .normalize();
+  h.rig.anat.update();
+  return new THREE.Vector3(
+    world.dot(h.rig.anat.right) * (side === 'R' ? 1 : -1),
+    world.dot(h.rig.anat.up),
+    world.dot(h.rig.anat.fwd),
+  );
+}
+
+function settleGesture(h: Harness, id: string, frames = 120): void {
+  h.rig.reset();
+  h.body.update(DT);
+  h.body.play(id);
+  for (let i = 0; i < frames; i++) {
+    h.rig.reset();
+    h.body.update(DT);
+  }
+}
+
+function twistGesture(twist: number): GestureDef {
+  return {
+    label: { en: 'Twist', ja: 'ひねり' },
+    group: 'pose',
+    sustain: true,
+    lead: 0.1,
+    hold: 1,
+    build: () => ({
+      arms: {
+        L: {
+          upperArm: new THREE.Vector3(0.44, -0.74, 0.42).normalize(),
+          lowerArm: new THREE.Vector3(0.3, -0.12, 0.92).normalize(),
+          hand: new THREE.Vector3(0.24, -0.02, 0.95).normalize(),
+          twist,
+        },
+        R: {
+          upperArm: new THREE.Vector3(0.44, -0.74, 0.42).normalize(),
+          lowerArm: new THREE.Vector3(0.3, -0.12, 0.92).normalize(),
+          hand: new THREE.Vector3(0.24, -0.02, 0.95).normalize(),
+          twist,
+        },
+      },
+    }),
+  };
+}
+
+function handOrientation(h: Harness, side: Side): { axis: THREE.Vector3; palm: THREE.Vector3 } {
+  const hand = h.profile.bones[`hand.${side}`];
+  const palmLocal = h.rig.palmLocal[side];
+  if (!(hand && palmLocal)) throw new Error(`synthetic rig is missing hand.${side}`);
+  hand.updateWorldMatrix(true, false);
+  const q = hand.getWorldQuaternion(new THREE.Quaternion());
+  return {
+    axis: h.profile.restDir[`hand.${side}`].clone().applyQuaternion(q).normalize(),
+    palm: palmLocal.clone().applyQuaternion(q).normalize(),
+  };
+}
+
+function signedRoll(from: THREE.Vector3, to: THREE.Vector3, axis: THREE.Vector3): number {
+  const a = from.clone().addScaledVector(axis, -from.dot(axis)).normalize();
+  const b = to.clone().addScaledVector(axis, -to.dot(axis)).normalize();
+  return Math.atan2(axis.dot(a.clone().cross(b)), a.dot(b));
+}
+
+function copyDirection(value: THREE.Vector3 | Vec3Tuple | null | undefined): THREE.Vector3 | null {
+  if (!value) return null;
+  return Array.isArray(value) ? new THREE.Vector3(value[0], value[1], value[2]) : value.clone();
+}
+
+function captureOf(seen: Record<Side, PointCapture | null>, side: Side): PointCapture | null {
+  return seen[side];
+}
+
+function harnessWithoutBodyFrame(): Harness {
+  const built = buildRig();
+  const profile = buildProfile(built.root, built.descriptor);
+  profile.body = null;
+  const rig = new Rig(profile);
+  const body = new Body(rig, profile);
   body.breathDepth = 0;
   body.idleAmount = 0;
   body.weightShift = 0;
@@ -153,6 +279,299 @@ describe('gesture entrance', () => {
     const crosses = (which: 0 | 1) => turned.findIndex((t) => t[which] > total[which] * 0.15);
 
     expect(crosses(0)).toBeLessThan(crosses(1));
+  });
+});
+
+describe('character-space arm directions', () => {
+  it('keeps authored hand twist mirrored by its axial sign on neutral and turned rigs', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      const settled = (yaw: number, twist: number, side: Side) => {
+        const h = harness(yaw);
+        h.rig.limitsEnabled = false;
+        h.rig.reset();
+        h.body.update(DT);
+        h.body.playDef(twistGesture(twist), `twist.${twist}`);
+        for (let i = 0; i < 120; i++) {
+          h.rig.reset();
+          h.body.update(DT);
+        }
+        return handOrientation(h, side);
+      };
+
+      const neutral = {
+        L: settled(0, 0, 'L'),
+        R: settled(0, 0, 'R'),
+      };
+      const neutralTwisted = {
+        L: settled(0, 0.7, 'L'),
+        R: settled(0, 0.7, 'R'),
+      };
+      const turned = settled(Math.PI / 2, 0.7, 'R');
+      const leftRoll = signedRoll(neutral.L.palm, neutralTwisted.L.palm, neutral.L.axis);
+      const rightRoll = signedRoll(neutral.R.palm, neutralTwisted.R.palm, neutral.R.axis);
+      const turnedRoll = signedRoll(
+        settled(Math.PI / 2, 0, 'R').palm,
+        turned.palm,
+        settled(Math.PI / 2, 0, 'R').axis,
+      );
+
+      // The authored hand twist is axial: its sign is opposite the lateral
+      // character mirror, preserving the shipped L=+ / R=- roll convention.
+      expect(leftRoll).toBeGreaterThan(0.2);
+      expect(rightRoll).toBeLessThan(-0.2);
+      expect(leftRoll + rightRoll).toBeCloseTo(0, 2);
+      expect(turnedRoll).toBeCloseTo(rightRoll, 2);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('mirrors raw reach elbow angles semantically after a root turn', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      const anglesAt = (yaw: number): Record<Side, number | undefined> => {
+        const h = harness(yaw);
+        const angles: Partial<Record<Side, number>> = {};
+        const solveReach = vi
+          .spyOn(h.rig, 'solveReach')
+          .mockImplementation((side, _target, angle) => {
+            angles[side] = angle;
+            return null;
+          });
+        const def: GestureDef = {
+          label: { en: 'Raw reach', ja: '到達' },
+          group: 'pose',
+          sustain: true,
+          lead: 0.1,
+          hold: 1,
+          build: () => ({
+            reach: {
+              L: { at: 'mouth', elbow: 0.6 },
+              R: { at: 'mouth', elbow: 0.6 },
+            },
+          }),
+        };
+        h.rig.reset();
+        h.body.update(DT);
+        h.body.playDef(def, `raw-reach.${yaw}`);
+        solveReach.mockClear();
+        angles.L = undefined;
+        angles.R = undefined;
+        h.rig.reset();
+        h.body.update(DT);
+        solveReach.mockRestore();
+        return { L: angles.L, R: angles.R };
+      };
+
+      const neutral = anglesAt(0);
+      const turned = anglesAt(Math.PI / 2);
+      expect(neutral.L).toBeCloseTo(0.6, 10);
+      expect(neutral.R).toBeCloseTo(-0.6, 10);
+      expect(turned.L).toBeCloseTo(neutral.L ?? 0, 10);
+      expect(turned.R).toBeCloseTo(neutral.R ?? 0, 10);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('keeps an absolute point direction unmirrored and normalized without a body frame', () => {
+    const h = harnessWithoutBodyFrame();
+    const seen: Record<Side, PointCapture | null> = {
+      L: null,
+      R: null,
+    };
+    const solvePoint = vi.spyOn(h.rig, 'solvePoint').mockImplementation((side, spec) => {
+      const point = copyDirection(spec.point);
+      const palm = copyDirection(spec.palm);
+      if (point && palm) seen[side] = { point, palm };
+      return null;
+    });
+    const value: [number, number, number] = [0.4, 0.2, 0.8];
+    const palm: [number, number, number] = [-0.3, 0.6, -0.7];
+    const def: GestureDef = {
+      label: { en: 'Absolute point', ja: '絶対指示' },
+      group: 'explain',
+      sustain: true,
+      lead: 0.1,
+      hold: 1,
+      build: () => ({
+        point: {
+          L: { point: value, palm, mirror: false },
+          R: { point: value, palm, mirror: false },
+        },
+      }),
+    };
+    h.rig.reset();
+    h.body.update(DT);
+    h.body.playDef(def, 'absolute-point');
+    solvePoint.mockClear();
+    seen.L = null;
+    seen.R = null;
+    h.rig.reset();
+    h.body.update(DT);
+    solvePoint.mockRestore();
+
+    const left = captureOf(seen, 'L');
+    const right = captureOf(seen, 'R');
+    if (!(left && right)) throw new Error('absolute point did not reach the solver');
+    expect(left.point.distanceTo(right.point)).toBeLessThan(1e-12);
+    expect(left.palm.distanceTo(right.palm)).toBeLessThan(1e-12);
+    expect(left.point.length()).toBeCloseTo(1, 12);
+    expect(left.palm.length()).toBeCloseTo(1, 12);
+  });
+
+  it('mirrors explicit point and palm directions for a normal semantic pose', () => {
+    const h = harness();
+    const seen: Record<Side, PointCapture | null> = {
+      L: null,
+      R: null,
+    };
+    const solvePoint = vi.spyOn(h.rig, 'solvePoint').mockImplementation((side, spec) => {
+      const point = copyDirection(spec.point);
+      const palm = copyDirection(spec.palm);
+      if (point && palm) seen[side] = { point, palm };
+      return null;
+    });
+    const point: [number, number, number] = [0.4, 0.2, 0.8];
+    const palm: [number, number, number] = [-0.3, 0.6, -0.7];
+    const def: GestureDef = {
+      label: { en: 'Mirrored point', ja: '左右指示' },
+      group: 'explain',
+      sustain: true,
+      lead: 0.1,
+      hold: 1,
+      build: () => ({
+        point: {
+          L: { point, palm },
+          R: { point, palm },
+        },
+      }),
+    };
+    h.rig.reset();
+    h.body.update(DT);
+    h.body.playDef(def, 'mirrored-point');
+    solvePoint.mockClear();
+    seen.L = null;
+    seen.R = null;
+    h.rig.reset();
+    h.body.update(DT);
+    solvePoint.mockRestore();
+
+    const left = captureOf(seen, 'L');
+    const right = captureOf(seen, 'R');
+    if (!(left && right)) throw new Error('mirrored point did not reach the solver');
+    h.rig.anat.update();
+    for (const key of ['point', 'palm'] as const) {
+      expect(left[key].dot(h.rig.anat.right)).toBeCloseTo(-right[key].dot(h.rig.anat.right), 12);
+      expect(left[key].dot(h.rig.anat.up)).toBeCloseTo(right[key].dot(h.rig.anat.up), 12);
+      expect(left[key].dot(h.rig.anat.fwd)).toBeCloseTo(right[key].dot(h.rig.anat.fwd), 12);
+    }
+  });
+
+  it('keeps a direct gesture unchanged in the live body frame when the root turns', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      const poses = [0, Math.PI / 2, Math.PI].map((yaw) => {
+        const h = harness(yaw);
+        settleGesture(h, 'present');
+        return [
+          canonicalDirection(h, 'R', 'upperArm.R', 'lowerArm.R'),
+          canonicalDirection(h, 'R', 'lowerArm.R', 'hand.R'),
+          canonicalHandDirection(h, 'R'),
+        ];
+      });
+
+      for (const pose of poses.slice(1)) {
+        for (let i = 0; i < pose.length; i++) {
+          expect(pose[i].distanceTo(poses[0][i])).toBeLessThan(1e-8);
+        }
+      }
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('mirrors both arms in the canonical outward frame', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      const h = harness(Math.PI / 2);
+      settleGesture(h, 'present');
+      for (const [parent, child] of [
+        ['upperArm', 'lowerArm'],
+        ['lowerArm', 'hand'],
+      ]) {
+        const left = canonicalDirection(h, 'L', `${parent}.L`, `${child}.L`);
+        const right = canonicalDirection(h, 'R', `${parent}.R`, `${child}.R`);
+        expect(left.distanceTo(right)).toBeLessThan(1e-8);
+      }
+      expect(
+        canonicalHandDirection(h, 'L').distanceTo(canonicalHandDirection(h, 'R')),
+      ).toBeLessThan(1e-8);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('keeps a direct-to-reach transition on the same canonical path after a root turn', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      const transition = (yaw: number): THREE.Vector3[][] => {
+        const h = harness(yaw);
+        settleGesture(h, 'present');
+        h.body.play('catPaw');
+        const samples: THREE.Vector3[][] = [];
+        for (let i = 0; i < 20; i++) {
+          h.rig.reset();
+          h.body.update(DT);
+          samples.push([
+            canonicalDirection(h, 'R', 'upperArm.R', 'lowerArm.R'),
+            canonicalDirection(h, 'R', 'lowerArm.R', 'hand.R'),
+            canonicalHandDirection(h, 'R'),
+          ]);
+        }
+        return samples;
+      };
+
+      const straight = transition(0);
+      const turned = transition(Math.PI / 2);
+      for (let frame = 0; frame < straight.length; frame++) {
+        for (let slot = 0; slot < straight[frame].length; slot++) {
+          expect(straight[frame][slot].distanceTo(turned[frame][slot])).toBeLessThan(1e-8);
+        }
+      }
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('does not mutate a shared authored direction while resolving several frames', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      const h = harness(Math.PI / 2);
+      const shared = new THREE.Vector3(0.42, -0.78, 0.46).normalize();
+      const pose = { arms: { L: { upperArm: shared }, R: { upperArm: shared } } };
+      const before = shared.clone();
+      h.rig.reset();
+      h.body.update(DT);
+      h.body.playDef(
+        {
+          label: { en: 'shared', ja: '共有' },
+          group: 'pose',
+          lead: 0.1,
+          hold: 1,
+          build: () => pose,
+        },
+        'shared',
+      );
+      for (let i = 0; i < 90; i++) {
+        h.rig.reset();
+        h.body.update(DT);
+      }
+      expect(shared.distanceTo(before)).toBeLessThan(1e-12);
+    } finally {
+      random.mockRestore();
+    }
   });
 });
 

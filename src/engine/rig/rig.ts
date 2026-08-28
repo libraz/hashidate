@@ -242,8 +242,8 @@ type LimitedDirs = Partial<Record<ArmSlot, THREE.Vector3>> & {
  * A fingertip request as the solver receives it.
  *
  * `PointSpec` states its directions as character-space tuples, which is how a
- * gesture authors them; the motion layer mirrors them per side into a scratch
- * vector first, so both forms arrive here.
+ * gesture authors them; the motion layer projects them into world-space
+ * scratch vectors first, so both forms arrive here in the solver's frame.
  */
 export interface PointRequest extends Omit<PointSpec, 'point' | 'palm'> {
   point?: Vec3Tuple | THREE.Vector3 | null;

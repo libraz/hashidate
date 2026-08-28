@@ -104,6 +104,12 @@ const TRAVEL_FOLLOW = ARM_FOLLOW * 4;
  */
 const SIDES: readonly Side[] = ['L', 'R'];
 
+/** Lateral sign in the semantic character frame, independent of world yaw. */
+const sideMirror = (side: Side): number => (side === 'R' ? 1 : -1);
+
+/** Axial rotation sign; it retains the shipped left/right twist orientation. */
+const rotationMirror = (side: Side): number => -sideMirror(side);
+
 /**
  * Seconds of lead per radian the arms have to travel.
  *
@@ -136,7 +142,7 @@ interface ResolvedArm {
  * The fingertip request as the solver reads it.
  *
  * `PointSpec` states its directions as authored tuples; this carries the shared
- * scratch vectors the per-side mirror was applied into, which is what keeps a
+ * scratch vectors after character-to-world projection, which is what keeps a
  * solve that runs up to four times a frame from allocating.
  */
 interface PointSolveSpec {
@@ -144,6 +150,7 @@ interface PointSolveSpec {
   elevation: number;
   extent: number;
   finger: FingerName;
+  /** World-space scratch vectors handed to Rig.solvePoint. */
   point: THREE.Vector3 | null;
   palm: THREE.Vector3 | null;
 }
@@ -249,22 +256,6 @@ const mkArmEnv = (): Record<ArmSlot, Envelope> => ({
   hand: mkEnv(),
 });
 
-/**
- * Copy an authored direction into scratch with the side's mirror applied.
- *
- * A pose may state either form — `PointSpec` allows both — and what the solver
- * is handed is always the scratch vector, because a solve runs up to four times
- * a frame and per-frame allocation shows up as dropped frames.
- */
-const mirrorInto = (
-  out: THREE.Vector3,
-  v: Vec3Tuple | THREE.Vector3,
-  mirror: number,
-): THREE.Vector3 =>
-  Array.isArray(v)
-    ? out.set((v[0] ?? 0) * mirror, v[1] ?? 0, v[2] ?? 0)
-    : out.set(v.x * mirror, v.y, v.z);
-
 const mkReach = (): ArmSolution => ({
   upperArm: new THREE.Vector3(),
   lowerArm: new THREE.Vector3(),
@@ -336,6 +327,7 @@ export class Body {
   private _gaze: Gaze;
 
   private _armDirs: Record<Side, Record<ArmSlot, Vec3Tuple>>;
+  private _armWorld: Record<Side, Record<ArmSlot, Vec3Tuple>>;
   private _armVec: Record<Side, Record<ArmSlot, THREE.Vector3>>;
   private _armState: Record<Side, Record<ArmSlot, DirFollower>>;
   private _fingerSpec: Record<Side, Record<FingerName, number>>;
@@ -378,6 +370,7 @@ export class Body {
   private _palm: Record<Side, DirFollower>;
   private _palmTarget: THREE.Vector3;
   private _palmOut: Record<Side, Vec3Tuple>;
+  private _palmWorldOut: Record<Side, Vec3Tuple>;
   private _palmW: Record<Side, ScalarFollower>;
 
   private _tmp: THREE.Vector3;
@@ -454,6 +447,7 @@ export class Body {
     // time, and steady garbage shows up as dropped frames long before it shows
     // up as memory.
     this._armDirs = { L: mkDirs(), R: mkDirs() };
+    this._armWorld = { L: mkDirs(), R: mkDirs() };
     this._armVec = { L: mkVecs(), R: mkVecs() }; // composed target for this frame
     this._armState = { L: mkState(), R: mkState() }; // what the arm is actually doing
     this._fingerSpec = { L: { ...BASE_FINGERS }, R: { ...BASE_FINGERS } };
@@ -502,6 +496,7 @@ export class Body {
     this._palm = { L: new DirFollower(BASE_PALM), R: new DirFollower(BASE_PALM) };
     this._palmTarget = new THREE.Vector3();
     this._palmOut = { L: [0, 0, 0], R: [0, 0, 0] };
+    this._palmWorldOut = { L: [0, 0, 0], R: [0, 0, 0] };
     // How strongly the palm target is honoured. A weight on a constraint rather
     // than something with a trajectory, so it is clamped where it is read: a
     // filter with momentum can undershoot past zero, and a negative weight
@@ -510,6 +505,106 @@ export class Body {
 
     this._tmp = new THREE.Vector3();
     this._headTarget = new THREE.Vector3();
+  }
+
+  /**
+   * The profile's `sideSign` is only a fallback for a rig with no body frame.
+   * Once anatomy has resolved, the lateral axis comes from the live chest and
+   * therefore follows root yaw and every committed spine offset.
+   */
+  private legacyMirror(side: Side): number {
+    return side === 'L' ? this.p.sideSign : -this.p.sideSign;
+  }
+
+  /**
+   * Sign for rotations about an arm axis. With a resolved body frame the
+   * lateral semantic sign and the axial sign differ; without one, preserve the
+   * profile's pre-frame convention exactly.
+   */
+  private axialMirror(side: Side, frameReady?: boolean): number {
+    const ready = frameReady ?? this.rig.anat.update();
+    return ready ? rotationMirror(side) : this.legacyMirror(side);
+  }
+
+  /**
+   * Project a character-space direction into world space without touching the
+   * authored tuple. `lateral` is normally the semantic side sign; a value of
+   * one is used for an absolute point bearing. The fallback deliberately keeps
+   * the old world-X behaviour when no anatomical frame can be resolved.
+   */
+  private characterToWorld(
+    out: THREE.Vector3,
+    value: Vec3Tuple | THREE.Vector3,
+    side: Side,
+    lateral = sideMirror(side),
+    frameReady?: boolean,
+  ): THREE.Vector3 {
+    const x = (Array.isArray(value) ? (value[0] ?? 0) : value.x) * lateral;
+    const y = Array.isArray(value) ? (value[1] ?? 0) : value.y;
+    const z = Array.isArray(value) ? (value[2] ?? 0) : value.z;
+    const ready = frameReady ?? this.rig.anat.update();
+    if (ready) {
+      const { anat } = this.rig;
+      return out
+        .copy(anat.right)
+        .multiplyScalar(x)
+        .addScaledVector(anat.up, y)
+        .addScaledVector(anat.fwd, z)
+        .normalize();
+    }
+    return out
+      .set((Array.isArray(value) ? (value[0] ?? 0) : value.x) * -this.p.sideSign * lateral, y, z)
+      .normalize();
+  }
+
+  /**
+   * The tuple form of `characterToWorld`, for the world-space contract at the
+   * Rig boundary. A separate buffer keeps `_armDirs` and `_palmOut` canonical.
+   */
+  private characterTupleToWorld(
+    out: Vec3Tuple,
+    value: Vec3Tuple | THREE.Vector3,
+    side: Side,
+    lateral = sideMirror(side),
+    frameReady?: boolean,
+  ): Vec3Tuple {
+    const x = (Array.isArray(value) ? (value[0] ?? 0) : value.x) * lateral;
+    const y = Array.isArray(value) ? (value[1] ?? 0) : value.y;
+    const z = Array.isArray(value) ? (value[2] ?? 0) : value.z;
+    const ready = frameReady ?? this.rig.anat.update();
+    if (ready) {
+      const { anat } = this.rig;
+      out[0] = anat.right.x * x + anat.up.x * y + anat.fwd.x * z;
+      out[1] = anat.right.y * x + anat.up.y * y + anat.fwd.y * z;
+      out[2] = anat.right.z * x + anat.up.z * y + anat.fwd.z * z;
+      return out;
+    }
+    out[0] = (Array.isArray(value) ? (value[0] ?? 0) : value.x) * -this.p.sideSign * lateral;
+    out[1] = y;
+    out[2] = z;
+    return out;
+  }
+
+  /**
+   * Bring a world-space solver result back into the canonical blend frame.
+   * Solvers never write into the follower state directly: this inverse is the
+   * one boundary where a world result becomes a character-space direction.
+   */
+  private worldToCharacter(
+    out: THREE.Vector3,
+    value: THREE.Vector3,
+    side: Side,
+    frameReady?: boolean,
+  ): THREE.Vector3 {
+    const ready = frameReady ?? this.rig.anat.update();
+    if (ready) {
+      const { anat } = this.rig;
+      const x = value.dot(anat.right) * sideMirror(side);
+      const y = value.dot(anat.up);
+      const z = value.dot(anat.fwd);
+      return out.set(x, y, z).normalize();
+    }
+    return out.set(value.x * this.legacyMirror(side), value.y, value.z).normalize();
   }
 
   /**
@@ -597,7 +692,11 @@ export class Body {
    * the shoulder is posed, and the shoulder has to be posed before the arm can
    * be solved from it. Nothing here depends on the arm, so the order works out.
    */
-  private reachTarget(r: ReachSpec | undefined, side: Side, mirror: number): THREE.Vector3 | null {
+  private reachTarget(
+    r: ReachSpec | undefined,
+    side: Side,
+    frameReady?: boolean,
+  ): THREE.Vector3 | null {
     if (!r) return null;
     const target =
       r.space === 'body'
@@ -610,7 +709,7 @@ export class Body {
       const back = (this.p.limb?.[`tip.${side}.middle`] ?? 0) * HAND_CONTACT;
       if (back > 0) {
         target.addScaledVector(
-          this._pointDir.set(r.hand[0] * mirror, r.hand[1], r.hand[2]).normalize(),
+          this.characterToWorld(this._pointDir, r.hand, side, sideMirror(side), frameReady),
           -back,
         );
       }
@@ -690,6 +789,7 @@ export class Body {
     mirror: number,
     slotName: 'cur' | 'prev',
     timed = false,
+    frameReady?: boolean,
   ): ResolvedArm | null {
     const pt = pose?.point?.[side];
     if (pt) {
@@ -703,8 +803,27 @@ export class Body {
       spec.elevation = pt.elevation ?? 0;
       spec.extent = pt.extent ?? 0.8;
       spec.finger = pt.finger ?? 'index';
-      spec.point = pt.point ? mirrorInto(this._pointDir, pt.point, mirror) : null;
-      spec.palm = pt.palm ? mirrorInto(this._pointPalm, pt.palm, mirror) : null;
+      // These tuples are authored in the character frame too. An absolute
+      // point bearing and its palm keep their lateral sign for either arm;
+      // otherwise both mirror because the pose is relative to the hand's side.
+      spec.point = pt.point
+        ? this.characterToWorld(
+            this._pointDir,
+            pt.point,
+            side,
+            pt.mirror === false ? 1 : mirror,
+            frameReady,
+          )
+        : null;
+      spec.palm = pt.palm
+        ? this.characterToWorld(
+            this._pointPalm,
+            pt.palm,
+            side,
+            pt.mirror === false ? 1 : mirror,
+            frameReady,
+          )
+        : null;
       if (!this.rig.solvePoint(side, spec, out)) return pose?.arms?.[side] ?? null;
       // How hard the resulting pose was on the joints, kept so a caller can
       // tell an aim that was met from one the arm could only approximate.
@@ -712,12 +831,12 @@ export class Body {
       // as it can, which is what a person does — so without this the answer to
       // "did it work" is a screenshot.
       this.pointStrain[side] = out.strain ?? 0;
-      // Solved in world space; the blend path re-applies the mirror on the way
-      // out, and mirror is ±1 so multiplying inverts it.
-      out.upperArm.x *= mirror;
-      out.lowerArm.x *= mirror;
-      out.hand.x *= mirror;
-      out.palm.x *= mirror;
+      // The solver reports world directions. Keep the follower/blend state in
+      // canonical character space until the final Rig call below.
+      this.worldToCharacter(out.upperArm, out.upperArm, side, frameReady);
+      this.worldToCharacter(out.lowerArm, out.lowerArm, side, frameReady);
+      this.worldToCharacter(out.hand, out.hand, side, frameReady);
+      this.worldToCharacter(out.palm, out.palm, side, frameReady);
       out.twist = pt.twist ?? 0;
       return out;
     }
@@ -737,7 +856,7 @@ export class Body {
     // head, and no choice of elbow could fix it — sampling the whole elbow
     // circle for a hand held beside the temple, the *shallowest* candidate was
     // still 28% inside. The elbow has no authority over where the wrist is.
-    const target = this.reachTarget(r, side, mirror);
+    const target = this.reachTarget(r, side, frameReady);
     if (!target) return pose?.arms?.[side] ?? null;
 
     // Carry the wrist through the room rather than through joint space.
@@ -765,7 +884,7 @@ export class Body {
 
     const out = this._reach[slotName][side];
     const hint = r.hand
-      ? this._pointDir.set(r.hand[0] * mirror, r.hand[1], r.hand[2]).normalize()
+      ? this.characterToWorld(this._pointDir, r.hand, side, mirror, frameReady)
       : null;
 
     // A pole point is the preferred way to state the elbow, and the only one
@@ -787,20 +906,24 @@ export class Body {
       solved = !!this.rig.solveReach(side, target, out.poleA, out);
     } else if (r.elbow !== undefined) {
       // Authored in character terms, so the two arms mirror. A rotation about a
-      // mirrored axis runs the other way, which `mirror` being ±1 takes care of.
-      solved = !!this.rig.solveReach(side, target, r.elbow * mirror, out);
+      // mirrored axis runs the other way; this is axial, not the lateral sign
+      // used to project point bearings and directions.
+      solved = !!this.rig.solveReach(
+        side,
+        target,
+        r.elbow * this.axialMirror(side, frameReady),
+        out,
+      );
     } else {
       solved = !!this.rig.solveReachNatural(side, target, hint, out);
     }
     if (!solved) return pose?.arms?.[side] ?? null;
 
-    // Back to character space; the blend path re-applies the mirror on the way
-    // out, and mirror is ±1 so multiplying inverts it.
-    out.upperArm.x *= mirror;
-    out.lowerArm.x *= mirror;
-    // `hand` and `palm` are authored in character space and left in it; the
-    // blend path mirrors both on the way out. Only the solved limb directions
-    // above arrive in world space and have to be brought back.
+    // Back to character space before blending. The solver's world result is
+    // never allowed to become the follower's state, so a root turn cannot
+    // masquerade as a gesture change.
+    this.worldToCharacter(out.upperArm, out.upperArm, side, frameReady);
+    this.worldToCharacter(out.lowerArm, out.lowerArm, side, frameReady);
     if (r.hand) out.hand.set(r.hand[0], r.hand[1], r.hand[2]).normalize();
     else out.hand.copy(out.lowerArm);
     if (r.palm) out.palm.set(r.palm[0], r.palm[1], r.palm[2]).normalize();
@@ -820,7 +943,6 @@ export class Body {
   private composeArmDir(
     slot: ArmSlot,
     side: Side,
-    mirror: number,
     env: IdleEnv,
     pDir: THREE.Vector3 | undefined,
     cDir: THREE.Vector3 | undefined,
@@ -850,7 +972,9 @@ export class Body {
     // Follow the target instead of snapping to it. See ARM_FOLLOW.
     const s = this._armState[side][slot].step(v, env.dt, rate);
     const out = this._armDirs[side][slot];
-    out[0] = s.x * mirror;
+    // Keep the follower output in character space. It is projected into world
+    // space only at the Rig boundary, after the spine has been committed.
+    out[0] = s.x;
     out[1] = s.y;
     out[2] = s.z;
     return out;
@@ -1003,7 +1127,7 @@ export class Body {
     const pose = def.build(0, v);
     let worst = 0;
     for (const side of ['L', 'R'] as const) {
-      const mirror = side === 'L' ? this.p.sideSign : -this.p.sideSign;
+      const mirror = sideMirror(side);
       const arm = this.resolveArm(pose, side, mirror, 'cur');
       if (!arm) continue;
       for (const slot of ARM_SLOTS) {
@@ -1319,6 +1443,9 @@ export class Body {
     }
 
     rig.commitSpine();
+    // Spine offsets change the body frame. Resolve it once here, after commit,
+    // so every direction sent to Rig in this frame uses the same live basis.
+    const frameReady = rig.anat.update();
 
     // --- arms -------------------------------------------------------------
     const armDrift = 0.016 * idle;
@@ -1335,8 +1462,9 @@ export class Body {
     const plain = (e: Envelope): number => e.entrance * e.exit * scale;
 
     for (const side of SIDES) {
-      const mirror = side === 'L' ? p.sideSign : -p.sideSign;
+      const mirror = sideMirror(side);
       const dirs = this._armDirs[side];
+      const worldDirs = this._armWorld[side];
       // Set by `resolveArm` below, for this frame only: whether the current
       // gesture is carrying this hand through the room rather than posing it.
       this._travelling[side] = false;
@@ -1352,7 +1480,6 @@ export class Body {
       this.composeArmDir(
         'shoulder',
         side,
-        mirror,
         env,
         gPrev?.arms?.[side]?.shoulder,
         g?.arms?.[side]?.shoulder,
@@ -1365,13 +1492,16 @@ export class Body {
       // that says where the shoulder goes means it.
       const gr = g?.reach?.[side];
       if (gr && !g?.arms?.[side]?.shoulder) {
-        const gt = this.reachTarget(gr, side, mirror);
-        if (gt) rig.girdleRoom(side, gt, dirs.shoulder, this.blend);
+        const gt = this.reachTarget(gr, side, frameReady);
+        this.characterTupleToWorld(worldDirs.shoulder, dirs.shoulder, side, mirror, frameReady);
+        if (gt) rig.girdleRoom(side, gt, worldDirs.shoulder, this.blend);
+      } else {
+        this.characterTupleToWorld(worldDirs.shoulder, dirs.shoulder, side, mirror, frameReady);
       }
-      rig.aimShoulder(side, dirs.shoulder);
+      rig.aimShoulder(side, worldDirs.shoulder);
 
-      const pArm = this.resolveArm(gPrev, side, mirror, 'prev');
-      const cArm = this.resolveArm(g, side, mirror, 'cur', true);
+      const pArm = this.resolveArm(gPrev, side, mirror, 'prev', false, frameReady);
+      const cArm = this.resolveArm(g, side, mirror, 'cur', true, frameReady);
 
       /**
        * A link is *carried* when a travelling reach is deciding where it goes,
@@ -1406,7 +1536,6 @@ export class Body {
         this.composeArmDir(
           slot,
           side,
-          mirror,
           env,
           pArm?.[slot],
           cArm?.[slot],
@@ -1414,6 +1543,7 @@ export class Body {
           carried ? this._armEnv[slot].exit : plain(this._armEnv[slot]),
           carried ? TRAVEL_FOLLOW : ARM_FOLLOW,
         );
+        this.characterTupleToWorld(worldDirs[slot], dirs[slot], side, mirror, frameReady);
       }
 
       // The wrist's own channels ride the hand link's envelope: a palm roll and
@@ -1436,9 +1566,17 @@ export class Body {
       if (cArm?.palm) pt.lerp(cArm.palm, cw).normalize();
       const ps = this._palm[side].step(pt, dt, ARM_FOLLOW);
       const po = this._palmOut[side];
-      po[0] = ps.x * mirror;
+      // Palm state follows the same canonical frame as the arm directions.
+      po[0] = ps.x;
       po[1] = ps.y;
       po[2] = ps.z;
+      const palmWorld = this.characterTupleToWorld(
+        this._palmWorldOut[side],
+        po,
+        side,
+        mirror,
+        frameReady,
+      );
 
       // BASE_PALM describes an arm hanging at the side, and only that. A pose
       // that raises the hand and states no palm of its own must not be held to
@@ -1451,7 +1589,13 @@ export class Body {
       if (cArm && !cArm.palm) hold -= cw;
       const palmW = Math.max(0, this._palmW[side].step(Math.max(0, hold), dt, ARM_FOLLOW));
 
-      rig.aimArm(side, dirs, this._twist[side].value * mirror, po, palmW);
+      rig.aimArm(
+        side,
+        worldDirs,
+        this._twist[side].value * this.axialMirror(side, frameReady),
+        palmWorld,
+        palmW,
+      );
 
       const pf = gPrev?.fingers?.[side];
       const cf = g?.fingers?.[side];
