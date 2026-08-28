@@ -19,7 +19,7 @@ Every command goes to `POST /api/command`, one at a time or several under `batch
 | `backdrop` | The room the character is seen in. No id is the flat background. A separate axis from `room` — a set can be cut without the microphone appearing to move. |
 | `deck` | The document she is presenting from, by filename. No id takes it down. It occupies the same place as a backdrop, so the set is put away while one is up and restored when it comes down. |
 | `slide` | Turn a page. `page` is absolute, `by` is relative, and a bare `slide` is next. Past either end is clamped rather than refused. |
-| `place` | Where the character stands in the output frame and where the document sits behind her, each as a rectangle of it. Not the camera: the shot is untouched and the picture of it is moved, so the gestures still play as authored. |
+| `place` | Where the character stands in the output frame and where the document sits behind her, each as a rectangle of it. Not the camera: the shot is untouched and the picture of it is moved, so the gestures still play as authored. Also rides on a line under `stage.place`, which is how a script moves her aside for a deck and back. |
 | `wear` | One slot to an item, or a whole preset at once. |
 | `avatar` | Load a different character. The only command that replaces the session every other one talks to, so the renderer holds what arrives behind it until the model is standing — swap and dress in one breath does what it reads like. |
 | `tune` | The set-once layer: breath, sway, jump, tail, shading. Every field optional and merged onto what is running, so one fader is one small message. Bounded, unlike `point` — a breath period of zero is not an ambitious breath. |

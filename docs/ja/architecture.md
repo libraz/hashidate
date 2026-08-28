@@ -17,9 +17,10 @@
 | `src/control` | その API を呼ぶ Node 側のクライアント。`ctl` と MCP アダプタが共有します。 |
 | `src/cli` | `ctl`。手で動かすための薄いクライアントです。 |
 | `src/mcp` | MCP アダプタ。同じ制御 API を、言語モデルに渡せるツールの形で話します。 |
+| `src/script` | 台本——あらかじめ書いておいたターンの並び——を読む部分。語彙は増やしません。1 行がターンそのもので、setup の 1 項目がコマンドそのものです。 |
 | `tools/blender` | モデル変換。Blender 組み込みの Python で動くため、ここだけ Python です。 |
 | `tools/tts` | 音声サイドカー。音声モデルが PyTorch のコードベースなので、ここも Python です。HTTP 越しに呼ぶだけで import はしません。 |
-| `slides/` | 見ながら喋るスライドの置き場。git 管理外で、ビルドにも含まれません。`--slides` で場所ごと移せます。 |
+| `show/` | 配信に持ち込むものの置き場。`slides/`、`scripts/`、`motions/` の 3 つ。git 管理外でビルドにも含まれず、前の 2 つは `--slides` と `--motions` で場所ごと移せます。 |
 
 ## 効いている継ぎ目
 

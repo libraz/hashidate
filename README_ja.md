@@ -91,9 +91,9 @@ yarn ctl watch                                  # 発話のイベントを追う
 
 まずここから：[はじめに](docs/ja/introduction.md)、[使いどころ](docs/ja/use-cases.md)、[はじめかた](docs/ja/getting-started.md)。
 
-動かす：[制御 API](docs/ja/control-api.md)、[コマンド](docs/ja/commands.md)、[プリセット](docs/ja/performances.md)、[原稿と演出](docs/ja/lines-and-cues.md)、[MCP アダプタ](docs/ja/mcp.md)。
+動かす：[制御 API](docs/ja/control-api.md)、[コマンド](docs/ja/commands.md)、[プリセット](docs/ja/performances.md)、[原稿と演出](docs/ja/lines-and-cues.md)、[台本](docs/ja/scripts.md)、[MCP アダプタ](docs/ja/mcp.md)。
 
-絵と音：[音声](docs/ja/speech.md)、[ステージ](docs/ja/stage.md)、[スライド](docs/ja/slides.md)、[2 つの面](docs/ja/surfaces.md)。
+絵と音：[音声](docs/ja/speech.md)、[ステージ](docs/ja/stage.md)、[スライド](docs/ja/slides.md)、[モーション](docs/ja/motions.md)、[2 つの面](docs/ja/surfaces.md)。
 
 その下：[構成](docs/ja/architecture.md)、[アバター](docs/ja/avatars.md)。
 

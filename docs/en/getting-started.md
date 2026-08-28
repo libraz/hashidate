@@ -50,6 +50,8 @@ make dev
 
 `make dev` starts the viewer on `127.0.0.1:5173`, the control API on `127.0.0.1:8765` and the speech sidecar on `127.0.0.1:8770`, and proxies `/api` from the first to the second. The sidecar is left out when its environment is not built, which is the usual case; `yarn dev` starts the first two alone.
 
+Ctrl-C stops all three. When it never got the chance — a closed terminal, a dropped connection — the old processes keep the ports and the next `make dev` fails to bind; `make stop` frees them. It goes by port rather than by anything it remembers, so it clears a listener left by any project, and prints each one before ending it.
+
 Drive it from another terminal:
 
 ```sh
@@ -62,6 +64,15 @@ yarn ctl point 40 25 --extent 0.9 --finger little
 yarn ctl idle on
 yarn ctl watch                                  # follow the turn events
 ```
+
+Or hand it a whole segment at once. `show/scripts/demo.yaml` is the runtime introducing itself, in about two minutes, and it is the quickest way to see what a turn actually looks like:
+
+```sh
+yarn ctl play demo --check      # read it, no server needed
+yarn ctl play demo --replace    # run it
+```
+
+See [Scripts](scripts.md).
 
 `yarn build` produces a static viewer in `dist/`; `yarn start` serves it from the control server alone, without vite.
 

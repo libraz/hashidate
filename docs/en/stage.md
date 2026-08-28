@@ -56,6 +56,19 @@ What lands on the anchor is the character rather than that picture. A framing is
 
 Which means only the tighter of the two fractions decides anything for the character, and at `1` an anchor has nowhere to move to. The two fractions are really for the document, which has a `fit`. See [Slides](slides.md).
 
+A layout can also ride on a line, under `stage.place`, which is how a script moves her aside for a deck and back afterwards:
+
+```yaml
+- text: "[present]資料を出すこともできます。"
+  stage:
+    deck: hashidate
+    slide: 1
+    place:
+      avatar: { anchor: bottom-right, width: 0.26, height: 0.54, margin: 0.015 }
+```
+
+Both on the same line, deliberately. Sent as a separate command the layout lands at some other moment, and the frame is briefly wrong in the most visible way there is — the character standing in the middle of the page she is talking about. See [Scripts](scripts.md).
+
 ## Next
 
 - [Slides](slides.md) — what else occupies this place

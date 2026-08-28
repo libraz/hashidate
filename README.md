@@ -91,9 +91,9 @@ Three processes and a page. A caller posts commands to the control server; the s
 
 Start here: [Introduction](docs/en/introduction.md), [Use cases](docs/en/use-cases.md), [Getting started](docs/en/getting-started.md).
 
-Driving it: [The control API](docs/en/control-api.md), [Commands](docs/en/commands.md), [Performances](docs/en/performances.md), [Lines and cues](docs/en/lines-and-cues.md), [The MCP adapter](docs/en/mcp.md).
+Driving it: [The control API](docs/en/control-api.md), [Commands](docs/en/commands.md), [Performances](docs/en/performances.md), [Lines and cues](docs/en/lines-and-cues.md), [Scripts](docs/en/scripts.md), [The MCP adapter](docs/en/mcp.md).
 
-The picture and the sound: [Speech](docs/en/speech.md), [The stage](docs/en/stage.md), [Slides](docs/en/slides.md), [Two surfaces](docs/en/surfaces.md).
+The picture and the sound: [Speech](docs/en/speech.md), [The stage](docs/en/stage.md), [Slides](docs/en/slides.md), [Motions](docs/en/motions.md), [Two surfaces](docs/en/surfaces.md).
 
 Under it: [Architecture](docs/en/architecture.md), [Avatars](docs/en/avatars.md).
 

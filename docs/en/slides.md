@@ -8,7 +8,9 @@ It is flat. The page is not geometry in the room and not a texture on a screen s
 
 ## Putting one up
 
-Put the documents in `slides/` — `--slides <dir>` moves that anywhere, including outside the repository, and either way they are ignored by git. A document's id is its filename without the extension.
+Put the documents in `show/slides/` — `--slides <dir>` moves that anywhere, including outside the repository, and either way they are ignored by git. A document's id is its filename without the extension.
+
+One document ships: `hashidate.pdf`, five pages about this runtime, which is what the demo script presents from. It is the exception to the ignore rule for the same reason `demo.yaml` is — it belongs to the project rather than to a broadcast.
 
 ```sh
 yarn ctl deck intro          # up, at page 1
@@ -28,6 +30,7 @@ Which is what makes a document follow a script rather than an operator:
 
 ```sh
 yarn ctl say "The whole picture first." --slide 2
+yarn ctl say "And this is what it looks like." --deck hashidate --slide 1
 ```
 
 That page is **absolute, and there is deliberately no relative form on a line.** A queued line can be dropped, reordered or sent round again, and a "next page" written into one means a different page every time the script is touched — the rest of the deck slips by one and nothing in the queue says why.

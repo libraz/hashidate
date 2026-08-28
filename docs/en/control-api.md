@@ -38,6 +38,7 @@ An axis left out of `stage` keeps what it had; `null` empties it — dry for a r
 | `GET /api/decks` | The documents on disk, with their page counts. Re-read rather than cached: a file appears while the stream is running. |
 | `GET /api/decks/<id>/text` | What a document says, page by page, `?from=` and `?to=`. Extracted without drawing anything. |
 | `GET /slides/<id>.pdf` | The bytes, for the renderer. Not under `/api/` because it is file serving rather than an API call. |
+| `GET /api/motions` | The gestures written into `show/motions/`, parsed and checked, with any file that would not parse listed beside them. Read by the renderer when it connects. |
 | `GET /api/stream` | The viewer's SSE down-channel. |
 | `POST /api/report` | The viewer's up-channel, and its heartbeat. Not for callers. |
 | `POST /api/speech` | The viewer's route to the speech sidecar. Not for callers. 503 when there is no sidecar, which is a normal answer. |

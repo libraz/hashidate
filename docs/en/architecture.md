@@ -17,9 +17,10 @@ Three processes and a page. A caller posts commands to the control server; the s
 | `src/control` | The node-side client for that API, shared by `ctl` and the MCP adapter. |
 | `src/cli` | `ctl` — a thin client, for driving the avatar by hand. |
 | `src/mcp` | The MCP adapter: the same control API, as tools a language model can be handed. |
+| `src/script` | Reads a script: a run of turns written out in advance. Invents no vocabulary — a line is a turn, a setup entry is a command. |
 | `tools/blender` | The model pipeline. Python, because it runs inside Blender. |
 | `tools/tts` | The speech sidecar. Python, because the speech model is a PyTorch codebase. Reached over HTTP, never imported. |
-| `slides/` | The documents she presents from. Not tracked, not part of the build, and `--slides` moves it elsewhere entirely. |
+| `show/` | What an operator brings to a broadcast: `slides/`, `scripts/`, `motions/`. Not tracked, not part of the build; `--slides` and `--motions` move the first two elsewhere entirely. |
 
 ## The seams that matter
 
