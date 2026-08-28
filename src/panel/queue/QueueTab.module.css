@@ -51,12 +51,60 @@
   color: var(--fg-faint);
 }
 
+/* Beside the id rather than at the far edge: it is about that line, and what
+   sits at the edge is the control. */
 .airDot {
-  margin-left: auto;
   width: 7px;
   height: 7px;
   border-radius: 99px;
   background: var(--live);
+}
+
+/*
+ * Let the queue move, or stop it.
+ *
+ * Pushed to the right edge, and deliberately far from the drop and clear
+ * controls under the list: those destroy lines and this one does not. Its
+ * height matches the rest of the panel's controls rather than being enlarged —
+ * it is pressed once or twice a segment, and the thing that has to be findable
+ * in a hurry is the stop in the header.
+ */
+.hold {
+  margin-left: auto;
+  height: var(--control-height);
+  padding: 0 var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.hold:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent-edge);
+  color: var(--accent);
+}
+
+.hold:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/*
+ * The queue is held, so this is the button that starts the segment.
+ *
+ * Full border plus tint, per the token file: never a stripe down one side.
+ */
+.armed {
+  background: var(--accent-tint);
+  border-color: var(--accent-edge);
+  color: var(--accent);
 }
 
 /* --- summary -------------------------------------------------------------- */

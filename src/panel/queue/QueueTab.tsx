@@ -9,8 +9,10 @@ import {
   queueRemove,
   queueShift,
   queueUpdate,
+  setPaused,
 } from '../api';
 import { checkQueue, type LineCheck } from '../lint';
+import { ScriptPicker } from '../script/ScriptPicker';
 import { History } from './History';
 import { LineEditor } from './LineEditor';
 import { clock, QueueRow } from './QueueRow';
@@ -18,6 +20,14 @@ import styles from './QueueTab.module.css';
 
 /**
  * The pending script, and everything that can be done to it during a broadcast.
+ *
+ * ## The picker is above the timeline, not part of it
+ *
+ * A script is loaded here rather than somewhere of its own, because loading one
+ * *is* filling this queue and the whole feedback for having pressed it is the
+ * list appearing underneath. It sits above the three regions below and is drawn
+ * differently, since it is where a segment starts rather than another thing
+ * that happened to a line. See `ScriptPicker`.
  *
  * ## Three regions, and the boundaries between them are real
  *
@@ -93,12 +103,20 @@ export function QueueTab({ snapshot, refresh }: Props) {
 
   return (
     <div className={styles.tab}>
+      <ScriptPicker entries={entries} refresh={refresh} />
+
       {/* Past above, present under it, future below: the three regions read as
           one timeline, and a rewind moves a row from the top of it to the
           bottom. */}
       <History refresh={refresh} />
 
-      <OnAir running={running} speaking={snapshot.state.speaking ?? false} />
+      <OnAir
+        running={running}
+        speaking={snapshot.state.speaking ?? false}
+        paused={snapshot.paused}
+        pending={entries.length}
+        onToggleHold={() => void run(setPaused(!snapshot.paused))}
+      />
 
       <div className={styles.summary}>
         <span className={styles.count}>
@@ -199,22 +217,61 @@ export function QueueTab({ snapshot, refresh }: Props) {
 }
 
 /**
- * The line on air.
+ * The line on air, and whether the queue is moving.
  *
  * Its own region above the list rather than a highlighted first row, because
  * nothing that applies to a pending line applies to it. `live` and not `accent`:
  * the token file reserves that colour for exactly this, and using it anywhere
  * else would cost it its meaning.
+ *
+ * The hold lives here rather than in a transport of its own, because this is
+ * already the answer to "is anything happening" — and a held queue with twenty
+ * lines in it is a different answer from an idle one with none, which the old
+ * "standing by" could not tell apart. The button is on the right, away from the
+ * drop and clear controls under the list: those destroy lines and this one does
+ * not.
  */
-function OnAir({ running, speaking }: { running: string | null; speaking: boolean }) {
+function OnAir({
+  running,
+  speaking,
+  paused,
+  pending,
+  onToggleHold,
+}: {
+  running: string | null;
+  speaking: boolean;
+  paused: boolean;
+  pending: number;
+  onToggleHold: () => void;
+}) {
   const { t } = useT();
+  // No colour of its own for the held state. `--live` is the only tint this
+  // block is allowed, per the token file, and a second one beside it would cost
+  // the first the thing it is for. What says "held" is the label and the armed
+  // button, which is what an operator is going to press anyway.
   return (
     <div className={`${styles.onAir} ${running ? styles.live : ''}`}>
       <span className={styles.airLabel}>
-        {running ? t('panel.queue.onAir') : t('panel.queue.standingBy')}
+        {running
+          ? t('panel.queue.onAir')
+          : paused
+            ? t('panel.queue.held')
+            : t('panel.queue.standingBy')}
       </span>
       <span className={styles.airId}>{running ?? '—'}</span>
       {speaking ? <span className={styles.airDot} aria-hidden="true" /> : null}
+      {/* Disabled with nothing to release rather than hidden: a control that
+          appears when a queue fills is one an operator has to find again every
+          time, and where it is matters more than whether it can be pressed. */}
+      <button
+        type="button"
+        className={`${styles.hold} ${paused ? styles.armed : ''}`}
+        disabled={paused && pending === 0}
+        onClick={onToggleHold}
+        title={t(paused ? 'panel.queue.play.title' : 'panel.queue.hold.title')}
+      >
+        {t(paused ? 'panel.queue.play' : 'panel.queue.hold')}
+      </button>
     </div>
   );
 }

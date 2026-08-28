@@ -96,6 +96,12 @@ export const panelEn = {
   'panel.queue.save': 'Save',
   'panel.queue.onAir': 'On air',
   'panel.queue.standingBy': 'Standing by',
+  'panel.queue.held': 'Held',
+  'panel.queue.play': 'Start',
+  'panel.queue.play.title': 'Let the queue move again. The next line starts immediately.',
+  'panel.queue.hold': 'Hold',
+  'panel.queue.hold.title':
+    'Stop the queue advancing. The line being spoken finishes and nothing is discarded.',
 
   // --- one pending row -------------------------------------------------------
   'panel.row.reading': 'reading',
@@ -273,42 +279,29 @@ export const panelEn = {
   'panel.slides.ago.hours': '{count} h ago',
   'panel.slides.ago.days': '{count} d ago',
 
-  // --- recording a segment ---------------------------------------------------
-  'panel.record.script': 'Script',
-  'panel.record.script.note1':
-    'A script written into scripts/ is a run of turns with its staging. Pressing one replaces the queue and loads it, and it does not start.',
-  'panel.record.script.note2':
-    'That is the point: the lines are already being synthesised while the shot is framed, so the first one comes out the moment the queue is let go.',
-  'panel.record.script.note3':
-    'A file saved mid-session joins the list once Rescan is pressed. Anything in the directory that is not a script is listed below with the reason.',
-  'panel.record.script.lines': '{count} lines',
-  'panel.record.script.rescan': 'Rescan',
-  'panel.record.script.rescan.title': 'Read the script directory again',
-  'panel.record.script.empty': 'No scripts. Put a YAML file in scripts/ and press Rescan.',
-  'panel.record.script.noRenderer':
-    'The lines are queued, but the script’s setup went nowhere: no renderer is connected. Open the stage and load it again.',
+  // --- the script a segment is run from --------------------------------------
+  'panel.script.title': 'Script',
+  'panel.script.aria': 'The scripts on disk',
+  'panel.script.lines': '{count} lines',
+  'panel.script.rescan': 'Rescan',
+  'panel.script.rescan.title': 'Read the script directory again',
+  'panel.script.empty': 'No scripts. Put a YAML file in scripts/ and press Rescan.',
+  'panel.script.hold': 'Load without starting',
+  'panel.script.hold.title':
+    'On, a script is loaded held so the shot can be framed before the first line. Off, pressing one plays it.',
+  'panel.script.replaces':
+    'Loading one also drops the {count} pending lines that did not come from a script.',
+  'panel.script.noRenderer':
+    'The lines are queued, but the script\u2019s setup went nowhere: no renderer is connected. Open the stage and load it again.',
 
-  'panel.record.play': 'Playback',
-  'panel.record.play.held': 'Held',
-  'panel.record.play.running': 'Running',
-  'panel.record.play.pending': '{count} pending',
-  'panel.record.play.start': 'Start',
-  'panel.record.play.start.title': 'Let the queue move again. The next line starts immediately.',
-  'panel.record.play.hold': 'Hold',
-  'panel.record.play.hold.title':
-    'Stop the queue advancing. The line being spoken finishes; nothing is discarded.',
-  'panel.record.play.note1':
-    'A hold stops the queue moving. The line on air finishes normally and nothing is dropped — cutting a line off is Stop, at the top of the panel.',
-  'panel.record.play.note2':
-    'Recording releases a hold by itself, once the take is genuinely rolling. This is for letting a script go without recording it.',
-
+  // --- writing a take to a file ----------------------------------------------
   'panel.record.take': 'Recording',
   'panel.record.take.note1':
     'The frame is composed again at the size below, so a take is the same size whatever the stage window is. It cannot add detail: a stage window smaller than the output records soft.',
   'panel.record.take.note2':
     'The renderer that is not muted is the one that records, which is the stage rather than the preview above.',
   'panel.record.take.note3':
-    'Starting a take also releases a held queue, once bytes are actually being written. The file lands in recordings/.',
+    'Load a script in the Queue tab, frame the shot, then record. The file lands in recordings/.',
   'panel.record.take.size': 'Output size',
   'panel.record.take.fps': 'Frame rate',
   'panel.record.take.autoStop': 'Stop at the end of the script',
@@ -316,6 +309,7 @@ export const panelEn = {
     'End the take a moment after the last line. A line queued in that moment carries it on.',
   'panel.record.take.start': 'Record',
   'panel.record.take.start.title': 'Start recording, and let a held queue go once it is rolling',
+  'panel.record.take.releases': 'and lets the held queue go once it is rolling',
   'panel.record.take.stop': 'Stop',
   'panel.record.take.stop.title': 'End the take. The last second is still being written.',
   'panel.record.take.file': 'File',
@@ -564,6 +558,11 @@ export const panelJa: Record<keyof typeof panelEn, string> = {
   'panel.queue.save': '保存',
   'panel.queue.onAir': '発話中',
   'panel.queue.standingBy': '待機',
+  'panel.queue.held': '停止中',
+  'panel.queue.play': '再生開始',
+  'panel.queue.play.title': 'キューを動かす。次の行がすぐ始まる。',
+  'panel.queue.hold': '一時停止',
+  'panel.queue.hold.title': 'キューの進行を止める。喋っている行は言い切り、何も捨てない。',
 
   'panel.row.reading': '読み',
   'panel.row.reading.title': '読み: {reading}',
@@ -732,33 +731,18 @@ export const panelJa: Record<keyof typeof panelEn, string> = {
   'panel.slides.ago.hours': '{count} 時間前',
   'panel.slides.ago.days': '{count} 日前',
 
-  'panel.record.script': '台本',
-  'panel.record.script.note1':
-    'scripts/ に書いた台本は、演出込みの一連のターン。押すとキューを置き換えて読み込むが、喋り出しはしない。',
-  'panel.record.script.note2':
-    'それが狙い。画角を決めているあいだに各行の音声合成は進んでいるので、キューを解放した瞬間に一行目が出る。',
-  'panel.record.script.note3':
-    '途中で保存したファイルは再読込を押せば一覧に入る。台本になっていないファイルは理由つきで下に並ぶ。',
-  'panel.record.script.lines': '{count} 行',
-  'panel.record.script.rescan': '再読込',
-  'panel.record.script.rescan.title': '台本ディレクトリを読み直す',
-  'panel.record.script.empty': '台本がない。scripts/ に YAML を置いて再読込を押す。',
-  'panel.record.script.noRenderer':
+  'panel.script.title': '台本',
+  'panel.script.aria': 'ディスク上の台本',
+  'panel.script.lines': '{count} 行',
+  'panel.script.rescan': '再読込',
+  'panel.script.rescan.title': '台本ディレクトリを読み直す',
+  'panel.script.empty': '台本がない。scripts/ に YAML を置いて再読込を押す。',
+  'panel.script.hold': '読み込んだら止めておく',
+  'panel.script.hold.title':
+    'オンなら、一行目の前に画角を決められるよう止めたまま読み込む。オフなら、押した台本がそのまま再生される。',
+  'panel.script.replaces': '読み込むと、台本の外から入った待機中の {count} 行も捨てられる。',
+  'panel.script.noRenderer':
     '行はキューに入ったが、台本の setup は届いていない。レンダラーが接続されていない。ステージを開いてから読み込み直す。',
-
-  'panel.record.play': '再生',
-  'panel.record.play.held': '停止中',
-  'panel.record.play.running': '再生中',
-  'panel.record.play.pending': '残り {count} 行',
-  'panel.record.play.start': '再生開始',
-  'panel.record.play.start.title': 'キューを動かす。次の行がすぐ始まる。',
-  'panel.record.play.hold': '一時停止',
-  'panel.record.play.hold.title':
-    'キューの進行を止める。喋っている行は最後まで喋る。何も捨てない。',
-  'panel.record.play.note1':
-    '一時停止はキューの進行を止めるだけ。放送中の行は普通に終わり、何も捨てない。行を途中で切るのは上部の停止。',
-  'panel.record.play.note2':
-    '録画を開始すれば、実際に録れ始めた時点で一時停止は自動的に解除される。ここは録画せずに台本を流したいときのもの。',
 
   'panel.record.take': '録画',
   'panel.record.take.note1':
@@ -766,14 +750,15 @@ export const panelJa: Record<keyof typeof panelEn, string> = {
   'panel.record.take.note2':
     '録画するのはミュートされていないレンダラー。つまり上のプレビューではなくステージのほう。',
   'panel.record.take.note3':
-    '録画開始は、実際に書き込みが始まった時点で一時停止も解除する。ファイルは recordings/ に落ちる。',
+    'キュータブで台本を読み込み、画角を決めてから録画する。ファイルは recordings/ に落ちる。',
   'panel.record.take.size': '出力サイズ',
-  'panel.record.take.fps': 'フレームレート',
+  'panel.record.take.fps': '毎秒コマ',
   'panel.record.take.autoStop': '台本の終わりで停止',
   'panel.record.take.autoStop.title':
     '最終行の少しあとで録画を終える。そのあいだに行が入れば録画は続く。',
   'panel.record.take.start': '録画開始',
   'panel.record.take.start.title': '録画を始め、録れ始めた時点で一時停止を解除する',
+  'panel.record.take.releases': '録れ始めた時点で一時停止も解除される',
   'panel.record.take.stop': '停止',
   'panel.record.take.stop.title': '録画を終える。最後の一秒はまだ書き込み中。',
   'panel.record.take.file': 'ファイル',

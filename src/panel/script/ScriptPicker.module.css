@@ -1,0 +1,87 @@
+/*
+ * The script picker, above the queue it fills.
+ *
+ * Drawn as a source rather than as a region of the timeline below it: a plain
+ * sunken block with a title row, not the raised card the on-air readout and the
+ * queue rows use. The difference is doing work — it says this is where the
+ * lines come from rather than another thing that happened to them.
+ */
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+}
+
+/*
+ * Title on the left, the one setting that changes what a chip does on the
+ * right. It is on the same line rather than under the chips because it has to
+ * be read *before* one is pressed, and nothing below a row of buttons is.
+ */
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.title {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--fg);
+}
+
+/*
+ * What pressing a chip is about to cost, and only while it costs something.
+ *
+ * The warning colour rather than the fault colour: nothing is wrong, and this
+ * is about to be true. No stripe down one side — see the token file; a rounded
+ * block takes a full border and a tint.
+ */
+.warn {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface-raised));
+  border: 1px solid color-mix(in srgb, var(--warn) 28%, var(--line));
+  border-radius: var(--radius-sm);
+  color: var(--warn);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+}
+
+.empty {
+  margin: 0;
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  line-height: 1.8;
+}
+
+/* A fault nothing sent from here can clear: the file was moved, the directory
+   is gone, or the control server is not answering. */
+.error {
+  margin: 0;
+  color: var(--bad);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+}
+
+/* Files in the directory that are not scripts. Under the roster, never in
+   place of the chip that would have been there. */
+.broken {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  line-height: 1.8;
+}
+
+.broken code {
+  margin-right: var(--space-2);
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+}
