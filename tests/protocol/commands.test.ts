@@ -412,6 +412,50 @@ describe('say', () => {
     });
   });
 
+  it('carries the layout the line is delivered in, both halves', () => {
+    const stage = {
+      deck: 'intro',
+      place: {
+        avatar: { anchor: 'bottom-right' as const, width: 0.26, height: 0.54, margin: 0.015 },
+        slide: { fit: 'contain' as const },
+      },
+    };
+    expect(parseCommand({ cmd: 'say', text: 'あ', stage })).toEqual({
+      cmd: 'say',
+      text: 'あ',
+      stage,
+    });
+  });
+
+  it('carries one field of a layout on its own, so a line moves what it names', () => {
+    const stage = { place: { avatar: { anchor: 'bottom-right' as const } } };
+    expect(parseCommand({ cmd: 'say', text: 'あ', stage })).toEqual({
+      cmd: 'say',
+      text: 'あ',
+      stage,
+    });
+  });
+
+  it('refuses a layout the frame has no room for, exactly as place does', () => {
+    for (const avatar of [{ anchor: 'middle' }, { width: 0 }, { width: 2 }, { margin: -1 }]) {
+      expect(
+        parseCommand({ cmd: 'say', text: 'あ', stage: { place: { avatar } } }),
+        JSON.stringify(avatar),
+      ).toBeNull();
+    }
+  });
+
+  // `fit` is how a picture fills its rectangle, which the character's does not
+  // have — it is a render of a scene rather than an image with edges.
+  it('has no fit on the character half of a layout', () => {
+    const parsed = parseCommand({
+      cmd: 'say',
+      text: 'あ',
+      stage: { place: { avatar: { fit: 'cover' } } },
+    });
+    expect(parsed).toEqual({ cmd: 'say', text: 'あ', stage: { place: { avatar: {} } } });
+  });
+
   it('refuses a page that is not a page', () => {
     for (const slide of [0, -1, 1.5, '2', null]) {
       expect(

@@ -104,6 +104,55 @@ const correlationId = z.string().optional();
 /** A number no further than the thing it moves may travel. */
 const within = (range: { min: number; max: number }) => z.number().min(range.min).max(range.max);
 
+// --- laying out the frame ---------------------------------------------------
+//
+// Up here with the shared primitives rather than beside `place`, because a
+// layout is stated in two places: as its own command, and on a line under
+// `stage`. One definition, used by both — see `placeCommandSchema` for what a
+// placement means and why the two layers travel together.
+
+const anchorSchema = z.enum([
+  'center',
+  'top-left',
+  'top',
+  'top-right',
+  'left',
+  'right',
+  'bottom-left',
+  'bottom',
+  'bottom-right',
+]);
+type _AnchorsMatchEngine = Expect<Equals<z.infer<typeof anchorSchema>, Anchor>>;
+
+/**
+ * A rectangle of the output frame. See `Placement` in the engine for why it is
+ * two fractions rather than a size and an aspect ratio.
+ *
+ * Every field is optional and an absent one is left alone, so a slider under
+ * the pointer sends one number.
+ */
+export const placementSchema = z.object({
+  anchor: anchorSchema.optional(),
+  width: within(PLACEMENT_LIMITS.width).optional(),
+  height: within(PLACEMENT_LIMITS.height).optional(),
+  margin: within(PLACEMENT_LIMITS.margin).optional(),
+});
+
+type _PlacementMatchesEngine = Expect<Equals<z.infer<typeof placementSchema>, Placement>>;
+
+export const slidePlacementSchema = placementSchema.extend({
+  fit: z.enum(['contain', 'cover']).optional(),
+});
+
+type _SlidePlacementMatchesEngine = Assert<z.infer<typeof slidePlacementSchema>, SlidePlacement>;
+type _EngineMatchesSlidePlacement = Assert<SlidePlacement, z.infer<typeof slidePlacementSchema>>;
+
+/** Both layers of a layout: the command's payload, and `stage.place`. */
+export const placeStageSchema = z.object({
+  avatar: placementSchema.optional(),
+  slide: slidePlacementSchema.optional(),
+});
+
 // --- turns ------------------------------------------------------------------
 
 /**
@@ -118,11 +167,16 @@ const within = (range: { min: number; max: number }) => z.number().min(range.min
 /**
  * A shot, as a line can carry one. See `sayCommandSchema.stage`.
  *
- * Deliberately the three persistent staging axes and nothing else. What belongs
- * on a turn is what the renderer can hold across it and hand back — a camera
- * framing, a backdrop and an acoustic. A gesture or an expression is already on
- * the turn and is released with it, which is the opposite lifetime, and putting
- * both kinds under one key would make the field mean two things.
+ * Deliberately the persistent staging axes and nothing else. What belongs on a
+ * turn is what the renderer can hold across it and hand back — a camera
+ * framing, a backdrop, an acoustic, a document, a layout. A gesture or an
+ * expression is already on the turn and is released with it, which is the
+ * opposite lifetime, and putting both kinds under one key would make the field
+ * mean two things.
+ *
+ * That test is the whole membership rule, and it is why this set has grown
+ * since it was three: a page and a placement pass it, and `voice`, `wear` and
+ * `tune` pass it too but are set once for a stream rather than per line.
  */
 export const stageSchema = z.object({
   camera: cameraFrameSchema.optional(),
@@ -140,6 +194,15 @@ export const stageSchema = z.object({
    * the operator turning a page live, who is reacting rather than describing.
    */
   slide: z.number().int().min(1).optional(),
+  /**
+   * Where the two layers sit in the frame, exactly as `place` states it.
+   *
+   * The fourth axis a line may carry, and it is here for the same reason `deck`
+   * is: putting a document up and moving the character out of its way is one
+   * decision, and split across a turn and a standalone command it arrives as
+   * two — with a frame in between where they overlap.
+   */
+  place: placeStageSchema.optional(),
 });
 
 type _StageIsStaging = Expect<Equals<z.infer<typeof stageSchema>, Staging>>;
@@ -595,42 +658,6 @@ export const slideCommandSchema = z.object({
   by: z.number().int().optional(),
 });
 
-const anchorSchema = z.enum([
-  'center',
-  'top-left',
-  'top',
-  'top-right',
-  'left',
-  'right',
-  'bottom-left',
-  'bottom',
-  'bottom-right',
-]);
-type _AnchorsMatchEngine = Expect<Equals<z.infer<typeof anchorSchema>, Anchor>>;
-
-/**
- * A rectangle of the output frame. See `Placement` in the engine for why it is
- * two fractions rather than a size and an aspect ratio.
- *
- * Every field is optional and an absent one is left alone, so a slider under
- * the pointer sends one number.
- */
-export const placementSchema = z.object({
-  anchor: anchorSchema.optional(),
-  width: within(PLACEMENT_LIMITS.width).optional(),
-  height: within(PLACEMENT_LIMITS.height).optional(),
-  margin: within(PLACEMENT_LIMITS.margin).optional(),
-});
-
-type _PlacementMatchesEngine = Expect<Equals<z.infer<typeof placementSchema>, Placement>>;
-
-export const slidePlacementSchema = placementSchema.extend({
-  fit: z.enum(['contain', 'cover']).optional(),
-});
-
-type _SlidePlacementMatchesEngine = Assert<z.infer<typeof slidePlacementSchema>, SlidePlacement>;
-type _EngineMatchesSlidePlacement = Assert<SlidePlacement, z.infer<typeof slidePlacementSchema>>;
-
 /**
  * Lay out the frame: where the character stands in it, and where the document
  * behind them sits.
@@ -658,8 +685,7 @@ type _EngineMatchesSlidePlacement = Assert<SlidePlacement, z.infer<typeof slideP
 export const placeCommandSchema = z.object({
   cmd: z.literal('place'),
   id: correlationId,
-  avatar: placementSchema.optional(),
-  slide: slidePlacementSchema.optional(),
+  ...placeStageSchema.shape,
 });
 
 /**

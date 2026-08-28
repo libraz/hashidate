@@ -106,3 +106,16 @@ export {
   vocabularySchema,
   voiceReportSchema,
 } from './messages';
+export {
+  MOTION_MAX_FRAMES,
+  MOTION_MAX_SECONDS,
+  type Motion,
+  type MotionBody,
+  type MotionsResponse,
+  motionArmSchema,
+  motionBodySchema,
+  motionFrameSchema,
+  motionSchema,
+  motionsResponseSchema,
+  parseMotion,
+} from './motions';
