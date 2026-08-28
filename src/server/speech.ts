@@ -21,6 +21,10 @@ import type { SpeechState } from '../protocol';
  *
  *     viewer ──POST /api/speech──► this ──POST /speak──► tools/tts
  *            ◄─────── wav ────────      ◄───── wav ─────
+ *
+ * Being in the middle is also what makes it the only place that can see the
+ * same line asked for by every renderer at once, which it answers once. See
+ * `TAKE_TTL_MS` — that is about the mouth staying in step, not about speed.
  */
 
 /**
@@ -40,10 +44,174 @@ export const SIDECAR = `http://127.0.0.1:${process.env.HASHIDATE_TTS_PORT ?? 877
  */
 const TIMEOUT_MS = 30_000;
 
+/**
+ * How long a take stays worth handing back, and how much of them to hold.
+ *
+ * **This is not a cache for speed, it is one for keeping renderers in step.**
+ * Every viewer asks for every line — a muted one included, deliberately, so
+ * that its mouth runs on the same clock as the one on air — and the sidecar
+ * serialises the GPU under a lock. Three renderers is three synthesis passes
+ * of the same sentence, one after another, and the third of them starts a
+ * couple of seconds after the first: whichever renderer is served last has
+ * already given up waiting and fallen back to the text estimate, which is the
+ * "the mouth moved and nothing was said" failure with no fault anywhere to
+ * find. Answered from here, the second and third renderer get the take the
+ * first one waited for, and they get the *same* one — the model samples, so
+ * two passes over one sentence are two different lengths, and identical audio
+ * is what the muted preview was always supposed to be showing.
+ *
+ * Two minutes rather than the length of a broadcast, and a few takes rather
+ * than all of them: what has to be caught is the same line asked for by every
+ * renderer at once, and a line put back by a rewind a moment later. Anything
+ * older is a line being said a second time on purpose, and the whole file
+ * refuses to cache on the same grounds everywhere else does — see
+ * `serveStatic`, which will not let a browser hold anything at all.
+ */
+export const TAKE_TTL_MS = 120_000;
+export const TAKE_MAX = 16;
+export const TAKE_MAX_BYTES = 32 * 1024 * 1024;
+
 /** What the viewer asks for: a line, and how to pronounce it if that is known. */
 export interface SpeechRequest {
   text: string;
   reading?: string;
+}
+
+/**
+ * One answer to one line, held so that it can be given more than once.
+ *
+ * Errors are takes too, because a sidecar that is not running answers every
+ * renderer the same way and there is no reason for three of them to each find
+ * that out with their own round trip. They are shared while in flight and
+ * never kept afterwards: the sidecar coming up between one line and the next
+ * is the ordinary case on a machine where the model is still loading.
+ */
+export interface Take {
+  status: number;
+  contentType: string;
+  body: Buffer;
+  /** Whether this is audio. False for the JSON refusals below. */
+  ok: boolean;
+}
+
+interface HeldTake {
+  take: Take;
+  at: number;
+}
+
+const inFlight = new Map<string, Promise<Take>>();
+const held = new Map<string, HeldTake>();
+let heldBytes = 0;
+
+/**
+ * What the sidecar is actually asked for, which is what a take is worth reusing
+ * against.
+ *
+ * The reading wins upstream, so two lines written differently that spell the
+ * same pronunciation are one synthesis and not two. See `handleSpeech`.
+ */
+const takeKey = (request: SpeechRequest): string => request.reading ?? request.text;
+
+/** Drop everything held. For tests, and for nothing else. */
+export function forgetTakes(): void {
+  inFlight.clear();
+  held.clear();
+  heldBytes = 0;
+}
+
+function keepTake(key: string, take: Take): void {
+  if (take.body.length > TAKE_MAX_BYTES) return;
+  held.set(key, { take, at: Date.now() });
+  heldBytes += take.body.length;
+  // Insertion order is age order, so the oldest is the first key the map hands
+  // back. Both caps are enforced together: a handful of long lines can reach
+  // the byte budget well before the count.
+  while (held.size > TAKE_MAX || heldBytes > TAKE_MAX_BYTES) {
+    const oldest = held.keys().next();
+    if (oldest.done) break;
+    const dropped = held.get(oldest.value);
+    held.delete(oldest.value);
+    if (dropped) heldBytes -= dropped.take.body.length;
+  }
+}
+
+/**
+ * Ask for a line, once, however many renderers want it.
+ *
+ * A request that arrives while an identical one is in flight waits on that one
+ * rather than starting a second, which is the case this exists for: the
+ * renderers are all reading the same queue and reach the same line within a
+ * few hundred milliseconds of each other.
+ */
+export async function speak(request: SpeechRequest): Promise<Take> {
+  const key = takeKey(request);
+
+  const kept = held.get(key);
+  if (kept !== undefined) {
+    if (Date.now() - kept.at < TAKE_TTL_MS) return kept.take;
+    held.delete(key);
+    heldBytes -= kept.take.body.length;
+  }
+
+  const flying = inFlight.get(key);
+  if (flying !== undefined) return flying;
+
+  const attempt = synthesise(key)
+    .then((take) => {
+      if (take.ok) keepTake(key, take);
+      return take;
+    })
+    .finally(() => {
+      inFlight.delete(key);
+    });
+  inFlight.set(key, attempt);
+  return attempt;
+}
+
+/** One round trip to the sidecar. Never rejects: a failure is a take too. */
+async function synthesise(line: string): Promise<Take> {
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${SIDECAR}/speak`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: line }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch {
+    // Not running, or wedged. Expected rather than exceptional: the sidecar is
+    // optional, and the renderer's whole point is that it works without one.
+    return refusal(503, 'speech sidecar not reachable');
+  }
+
+  if (!upstream.ok) return refusal(502, `speech sidecar answered ${upstream.status}`);
+
+  let body: Buffer;
+  try {
+    body = Buffer.from(await upstream.arrayBuffer());
+  } catch {
+    return refusal(502, 'speech sidecar cut the audio short');
+  }
+
+  // The sidecar's `X-Speech-Seconds` is deliberately not forwarded. The viewer
+  // decodes the audio before it plays any of it, and the decoded buffer's own
+  // duration is the length that will actually be heard — measuring it there
+  // leaves one number where two could disagree.
+  return {
+    status: 200,
+    contentType: upstream.headers.get('content-type') ?? 'audio/wav',
+    body,
+    ok: true,
+  };
+}
+
+function refusal(status: number, error: string): Take {
+  return {
+    status,
+    contentType: 'application/json; charset=utf-8',
+    body: Buffer.from(JSON.stringify({ error }), 'utf8'),
+    ok: false,
+  };
 }
 
 const parse = (body: unknown): SpeechRequest | null => {
@@ -76,35 +244,17 @@ export async function handleSpeech(res: ServerResponse, body: unknown): Promise<
   const request = parse(body);
   if (!request) return fail(res, 400, 'speech needs a non-empty text');
 
-  let upstream: Response;
-  try {
-    upstream = await fetch(`${SIDECAR}/speak`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: request.reading ?? request.text }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-  } catch {
-    // Not running, or wedged. Expected rather than exceptional: the sidecar is
-    // optional, and the renderer's whole point is that it works without one.
-    return fail(res, 503, 'speech sidecar not reachable');
-  }
-
-  if (!upstream.ok) {
-    return fail(res, 502, `speech sidecar answered ${upstream.status}`);
-  }
-
-  // The sidecar's `X-Speech-Seconds` is deliberately not forwarded. The viewer
-  // decodes the audio before it plays any of it, and the decoded buffer's own
-  // duration is the length that will actually be heard — measuring it there
-  // leaves one number where two could disagree.
-  const audio = Buffer.from(await upstream.arrayBuffer());
-  res.writeHead(200, {
-    'Content-Type': upstream.headers.get('content-type') ?? 'audio/wav',
-    'Content-Length': String(audio.length),
+  const take = await speak(request);
+  // `no-store` still, and on the audio most of all. What is shared is one
+  // answer between the renderers asking for it at the same moment, inside this
+  // process; a browser holding onto a line would be a browser that keeps
+  // saying it after the voice was retuned.
+  res.writeHead(take.status, {
+    'Content-Type': take.contentType,
+    'Content-Length': String(take.body.length),
     'Cache-Control': 'no-store',
   });
-  res.end(audio);
+  res.end(take.body);
 }
 
 // --- watching ---------------------------------------------------------------
