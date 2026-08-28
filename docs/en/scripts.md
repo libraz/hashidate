@@ -59,7 +59,7 @@ Not out as `say` commands, and that is the reason `play` is worth having over a 
 
 The queue lives in the control server. It survives a viewer reload, it is editable from the panel while it plays, and it is deep enough for the renderer to prepare the next line's audio during the current one — a caller sending a line at a time and waiting for each pays about 1.2 s of silence between every pair of them. Handing the whole run over at once takes that to 0.3 s, and it only works because the staging travels on the lines.
 
-Every entry is stamped with the script's own name, so a queue holding a scripted segment, a comment somebody answered and a line typed by hand stays legible. See [Two surfaces](surfaces.md).
+Every entry is stamped with the script's own name, so a queue holding a scripted segment, a comment somebody answered and a line typed by hand stays legible. See [The surfaces](surfaces.md).
 
 ## `--check` is the loop
 
@@ -89,4 +89,4 @@ The deck it presents from, `show/slides/hashidate.pdf`, does ship: it is five pa
 
 - [Lines and cues](lines-and-cues.md) — what goes inside a line
 - [Commands](commands.md) — what can go in `setup`
-- [Two surfaces](surfaces.md) — the queue a script lands in
+- [The surfaces](surfaces.md) — the queue a script lands in

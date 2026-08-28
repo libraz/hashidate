@@ -48,7 +48,7 @@ yarn ctl perform sleepy
 
 ## 5. Running a broadcast by hand
 
-The panel on `/panel/` is a full operating surface: the script and its history, performances, voice, wardrobe, tuning and readouts, with the avatar, the framing, the set and the idle switch under a live preview. Everything it does goes through the control API, so anything an operator can do from it, an orchestrator can do too. See [Two surfaces](surfaces.md).
+The panel on `/panel/` is a full operating surface: the script and its history, performances, voice, wardrobe, tuning and readouts, with the avatar, the framing, the set and the idle switch under a live preview. Everything it does goes through the control API, so anything an operator can do from it, an orchestrator can do too. See [The surfaces](surfaces.md).
 
 ## 6. Checking a model you just rigged
 

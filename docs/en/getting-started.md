@@ -76,6 +76,8 @@ See [Scripts](scripts.md).
 
 `yarn build` produces a static viewer in `dist/`; `yarn start` serves it from the control server alone, without vite.
 
+`yarn shell` does both and opens the panel and the stage as native windows, with the control server and the speech sidecar started underneath and stopped again on quit. It is the same three pages on the same loopback addresses — what it adds is windows that come back where they were left, a stage allowed to start its audio without being clicked first, and one menu item deciding whether this machine hears the character. See [The surfaces](surfaces.md).
+
 ## Give her a voice
 
 For a character that is actually audible, put clips in `tools/tts/reference/clips/` and run `make voice` once — see [What you need](#to-hear-it). After that `make dev` brings the voice up with everything else, and `make tts` runs it on its own. It is optional in the real sense: without it a line is mouthed silently on the timing the text implies, which is what the tests do. See [Speech](speech.md).
@@ -91,6 +93,10 @@ http://127.0.0.1:8765/?size=1920x1080&backdrop=night
 ```
 
 Add `?transparent=1` to drop the background and let OBS composite the character over a game capture instead. See [The stage](stage.md).
+
+The panel composes that address for you, above the tabs: pick the size, the set, the document and where the character stands, and copy what comes out.
+
+To watch it yourself, open `/monitor/` — the same renderer letterboxed to 16:9 with nothing around it. That one is meant to be listened to: a browser source sends its audio to the stream and not to the desk, so on an ordinary setup it is the only way to hear the character in the room.
 
 ## Run the checks
 

@@ -28,7 +28,7 @@ Three processes and a page. A caller posts commands to the control server; the s
 
 **The engine does not know it is in a browser.** It depends on three.js and on nothing else — no `AudioContext`, no DOM, no `fetch`. It states what a spoken line is; the viewer, which has the audio, provides one. That is why the test suite can run the whole engine headlessly against a synthetic avatar.
 
-**The server holds the standing state.** The avatar, the costume, the shot, the set, the acoustic, the voice chain and the tuning are folded into a setup as they are chosen, and handed to a renderer the moment it attaches — along with the pending queue. Nothing about the show lives in the URL a browser source was configured with, and a reload mid-broadcast is survivable. See [Two surfaces](surfaces.md).
+**The server holds the standing state.** The avatar, the costume, the shot, the set, the acoustic, the voice chain and the tuning are folded into a setup as they are chosen, and handed to a renderer the moment it attaches — along with the pending queue. Nothing about the show lives in the URL a browser source was configured with, and a reload mid-broadcast is survivable. See [The surfaces](surfaces.md).
 
 **The MCP adapter holds no judgement.** Every tool is one of the HTTP endpoints, with the loaded avatar's own ids compiled into the schemas. It is a translation, not a second control plane. See [The MCP adapter](mcp.md).
 
@@ -38,4 +38,4 @@ Three processes and a page. A caller posts commands to the control server; the s
 
 - [The control API](control-api.md)
 - [Avatars](avatars.md)
-- [Two surfaces](surfaces.md)
+- [The surfaces](surfaces.md)
