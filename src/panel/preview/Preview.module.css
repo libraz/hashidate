@@ -53,10 +53,9 @@
 /*
  * A switch that is on.
  *
- * Worth marking on both of them, and most on the sound: it is the setting most
- * likely to be left on by accident and the one whose consequence — every line
- * heard twice — is easy to blame on the renderer instead. Full border plus
- * tint, never a stripe.
+ * Full border plus tint, never a stripe. The readout is deliberately the only
+ * stateful switch in this row besides showing the picture: the preview's
+ * audio is fixed by its `?mute=1` URL.
  */
 .armed {
   background: var(--accent-tint);

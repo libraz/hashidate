@@ -5,7 +5,6 @@ import styles from './App.module.css';
 import { initialAvatar, rememberAvatar } from './avatar-selection';
 import { Console } from './console/Console';
 import { ControlClient, type ControlStatus, type RendererControls } from './control-client';
-import { onMonitorMute } from './monitor-link';
 import { Hud } from './scene/Hud';
 import { AvatarRuntime, type RuntimeStatus } from './scene/runtime';
 import { Telemetry } from './scene/Telemetry';
@@ -108,19 +107,6 @@ export function App() {
       return true;
     },
   }).current;
-
-  /**
-   * The embedder's mute, when this page is the panel's preview.
-   *
-   * Bound to the runtime and not to the session: it is about which speakers the
-   * sound comes out of, which is a property of this renderer rather than of the
-   * performance. See `monitor-link.ts` — on a page nobody framed, this attaches
-   * nothing at all.
-   */
-  useEffect(() => {
-    if (!runtime) return;
-    return onMonitorMute((muted) => runtime.setMuted(muted));
-  }, [runtime]);
 
   /**
    * The tab's own name, which the document carries before React exists.

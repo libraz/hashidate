@@ -474,21 +474,6 @@ export class AvatarRuntime {
     this.current?.materials.apply(on);
   }
 
-  get muted(): boolean {
-    return this.voice.isMuted;
-  }
-
-  /**
-   * Silence the voice, or let it through. See `BrowserVoice.setMuted`.
-   *
-   * On the runtime rather than on the session because it is a property of this
-   * *page* — whether this renderer is the one being listened to — and not of the
-   * performance. It survives an avatar swap for the same reason the voice does.
-   */
-  setMuted(muted: boolean): void {
-    this.voice.setMuted(muted);
-  }
-
   get backdropId(): string | null {
     return this.backdrop.current;
   }

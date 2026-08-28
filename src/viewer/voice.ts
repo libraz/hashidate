@@ -252,7 +252,15 @@ interface Chain {
 
 export class BrowserVoice implements Voice {
   private readonly base: string;
-  private muted: boolean;
+  /**
+   * Read from the URL at construction and never moved afterwards.
+   *
+   * It was changeable once, over a message from the page that embedded this
+   * one. Now the address is the only thing that decides it, so a renderer that
+   * is silent is silent for a reason that is written down where an operator can
+   * read it. See `monitor-link.ts`.
+   */
+  private readonly muted: boolean;
   private ctx: AudioContext | null = null;
   private chainNodes: Chain | null = null;
   private silentUntil = 0;
@@ -370,25 +378,7 @@ export class BrowserVoice implements Voice {
     if (ctx) void ctx.close().catch(() => {});
   }
 
-  /**
-   * Silence the output, or let it through.
-   *
-   * One gain, changed live, rather than a reload: the panel's preview is muted
-   * most of the time and unmuted whenever the operator wants to hear what is
-   * being said, and rebuilding the page for that would cost a model download and
-   * two seconds of black picture every time.
-   *
-   * Nothing else in the graph moves. A line already playing goes silent or
-   * audible from this instant, mid-word, because the take is upstream of here
-   * and does not know the difference.
-   */
-  setMuted(muted: boolean): void {
-    this.muted = muted;
-    const chain = this.chainNodes;
-    if (chain) chain.output.gain.value = muted ? 0 : 1;
-  }
-
-  /** Whether the output is silenced. */
+  /** Whether the output is silenced. Fixed for the life of the page. */
   get isMuted(): boolean {
     return this.muted;
   }

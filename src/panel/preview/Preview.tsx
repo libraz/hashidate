@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { type Translator, useT } from '@/i18n';
 import type { CameraFrame, Shot, Snapshot } from '@/protocol';
 import { Segmented } from '@/ui/Segmented';
 import { Toggle } from '@/ui/Toggle';
-import { onMonitorShot, sendMonitorMute } from '@/viewer/monitor-link';
+import { onMonitorShot } from '@/viewer/monitor-link';
 import { CAMERA_FRAMES, CAMERA_LABELS } from '@/viewer/scene/framing';
 import {
   setBackdrop as sendBackdrop,
@@ -35,26 +35,20 @@ import styles from './Preview.module.css';
  * of the performance, not a frame-accurate program feed, and there is no way to
  * make it the latter.
  *
- * ## Silent by default, and not by declining to speak
+ * ## Always silent, and not by declining to speak
  *
  * The embedded viewer is opened with `?mute=1`, which zeroes the last gain in
- * its audio graph. It still asks for every line and still plays the take. That
- * costs a second synthesis per line and is worth it: a preview that skipped
- * synthesis would fall back to the text estimate, end its lines at different
- * moments, and drift out of step with the queue it exists to show.
+ * its audio graph. It still asks for every line and still plays the take: a
+ * preview that skipped synthesis would fall back to the text estimate, end its
+ * lines at different moments, and drift out of step with the queue it exists to
+ * show. It does not cost a second synthesis, because the control server answers
+ * every renderer asking for the same line with the same take — see
+ * `TAKE_TTL_MS`, which exists for this.
  *
- * It is silent by *default* rather than always, because whether the operator can
- * hear anything at all depends on a setting outside this program. OBS sends a
- * browser source's audio to the stream and not to the desk unless monitoring is
- * switched on for it, so on an ordinary setup nobody in the room hears the
- * character — and this preview is then the only way to. Switched the other way,
- * with OBS monitoring on, hearing both is every line twice a fraction of a
- * second apart, which is worse than hearing none.
- *
- * Only one of those is knowable from here, so it is a button. It moves a gain
- * over `postMessage` rather than reloading the frame: unmuting to check a
- * reading and muting again is a thing done constantly, and a model download and
- * two seconds of black picture each time would mean nobody does it.
+ * It is always silent now that the stage page is the sole in-app renderer
+ * allowed to play the voice. There is no local setting to override this, and
+ * the old audio preference is deliberately not read: a stale browser storage
+ * value cannot make a preview speak again.
  *
  * ## The staging lives here
  *
@@ -101,18 +95,20 @@ const describe = (shot: Required<Shot>, t: Translator['t']): string =>
     .filter(Boolean)
     .join(' ');
 
-/** Both survive a reload: turning either off is a deliberate choice. */
+/** Survives a reload: hiding the preview is a deliberate choice. */
 const SHOWN_KEY = 'hashidate.panel.preview';
-const HEARD_KEY = 'hashidate.panel.preview.audio';
 
 /**
  * How long a report of blocked audio keeps the warning up.
  *
- * Every renderer reports into the same slot, so with two of them — the preview
- * here and whatever is on air — a flag that is true for only one of them
- * alternates at the reporting interval. Held, the warning reads as a state
- * rather than flashing; it clears a few reports after the last blocked one, and
- * being a little late to disappear costs nothing next to being unreadable.
+ * Every renderer reports into the same slot, so with several of them — this
+ * preview, the stage window in the native shell, and whatever is on air — a
+ * flag that is true for only one of them alternates at the reporting interval.
+ * Held, the warning reads as a state rather than flashing; it clears a few
+ * reports after the last blocked one, and being a little late to disappear
+ * costs nothing next to being unreadable. It has to outlast one round of every
+ * attached renderer reporting, which is what the number is: a renderer reports
+ * about three times in this window.
  */
 const BLOCKED_HOLD_MS = 2500;
 
@@ -150,33 +146,18 @@ const store = (key: string, value: boolean): void => {
 export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: () => void }) {
   const { t, tx } = useT();
   const [on, setOn] = useState(() => readStored(SHOWN_KEY, true));
-  // Off by default: on an OBS setup with monitoring switched on, sound here is
-  // every line twice. The operator who cannot hear it any other way turns it on
-  // once and it stays on.
-  const [heard, setHeard] = useState(() => readStored(HEARD_KEY, false));
   /**
    * The measurements, held rather than followed, and not stored anywhere.
    *
    * Held for the reason the set below is: nothing reports it back. Not stored
-   * for a different one — the two settings above are how this operator likes
-   * the panel, and this is a thing switched on to answer a question. A panel
+   * because this is a thing switched on to answer a question. A panel
    * that came back from a reload still holding it would eventually be a panel
    * with a terminal drawn over the picture that nobody remembers asking for,
    * and the renderer on air would have gone back to clean without it.
    */
   const [measured, setMeasured] = useState(false);
-  const frame = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => store(SHOWN_KEY, on), [on]);
-  useEffect(() => store(HEARD_KEY, heard), [heard]);
-
-  // Also on every load of the frame, not only on a change: the iframe starts
-  // muted from its own URL, so an operator who left the sound on has to be given
-  // it back once the page inside is there to receive the message.
-  useEffect(() => {
-    if (!on) return;
-    sendMonitorMute(frame.current, !heard);
-  }, [on, heard]);
 
   const avatar = snapshot.vocabulary.avatar?.id ?? null;
   const speaking = snapshot.state.speaking ?? false;
@@ -263,16 +244,6 @@ export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: ()
         </button>
         <button
           type="button"
-          className={`${styles.toggle} ${heard ? styles.armed : ''}`}
-          aria-pressed={heard}
-          disabled={!on}
-          onClick={() => setHeard((v) => !v)}
-          title={t(heard ? 'panel.preview.audio.muteTitle' : 'panel.preview.audio.unmuteTitle')}
-        >
-          {t(heard ? 'panel.preview.audio.on' : 'panel.preview.audio.off')}
-        </button>
-        <button
-          type="button"
           className={styles.toggle}
           aria-pressed={on}
           onClick={() => setOn((v) => !v)}
@@ -290,12 +261,7 @@ export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: ()
             // viewer picks its avatar from its own stored selection, which is
             // only read at load.
             key={avatar ?? 'none'}
-            ref={frame}
             className={styles.canvas}
-            // The sound is restored after the page inside has loaded, not from
-            // the URL: it starts muted either way, so a frame that never finishes
-            // loading is silent rather than shouting.
-            onLoad={() => sendMonitorMute(frame.current, !heard)}
             // No `?size`: the canvas matches the element. A browser source is
             // pinned to a pixel size so nothing resamples it; a monitor on a
             // window somebody resizes wants the opposite.
