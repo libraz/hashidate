@@ -4,6 +4,7 @@ import type {
   PlacementReport,
   QueueEntry,
   ReportBody,
+  ServerRoots,
   SessionEvent,
   SessionState,
   SlideReport,
@@ -52,11 +53,41 @@ export const STATE_STALE_SECONDS = 3.0;
  * hub answers it by emptying the pending list — which, arriving just after a
  * rewind, would empty the list the rewind had only just filled.
  *
- * So an interrupt this server caused is expected once and then forgotten. The
- * window is long enough to cover a renderer that is a frame or two behind and
- * short enough that it cannot swallow a genuine interrupt the operator meant.
+ * The window is long enough to cover a renderer that is a frame or two behind
+ * and short enough that it cannot swallow a genuine interrupt the operator
+ * meant.
+ *
+ * **What is expected is a turn, not a report.** More than one renderer is the
+ * ordinary case rather than the odd one — the panel's preview and whatever is
+ * on air are two, and the native shell's stage window is a third — and one
+ * interrupt cuts the same line in all of them, so the same `turn.interrupted`
+ * comes back once per renderer. Expecting a single report and then forgetting
+ * meant the second renderer's echo read as the operator hitting stop, and the
+ * list the rewind had just filled was emptied by the rewind's own answer. So
+ * the first echo inside the window says which turn was cut, and every echo of
+ * that same turn is the one interrupt being reported again. An echo naming a
+ * *different* turn is somebody having pressed something, and still empties the
+ * list: a rewind has already cut the turn it named, so a later interrupt can
+ * only be about a line that came after it.
  */
 export const EXPECTED_INTERRUPT_SECONDS = 5.0;
+
+/**
+ * How long an event already logged stays the same event when it arrives again.
+ *
+ * Every renderer reports what it did, and they are all doing the same thing —
+ * so one line ending produces a `turn.end` per renderer, a fraction of a second
+ * apart. Logged as they arrive, a queue of ten lines reads as thirty turns to
+ * an orchestrator polling `/api/events`, and an LLM loop waiting for a line to
+ * finish is woken once per renderer instead of once per line.
+ *
+ * A repeat is only an echo when nothing has happened to that turn in between:
+ * a line put back by a rewind is said again under the same id, and its second
+ * `turn.end` is a second ending rather than a second report of the first. The
+ * `turn.start` that must sit between them is what tells the two apart, and the
+ * window is a second guard for the same distinction.
+ */
+export const ECHO_SECONDS = 2.0;
 
 /** One connected viewer's down-channel. */
 export type ViewerListener = (message: StreamMessage) => void;
@@ -79,6 +110,20 @@ function now(): number {
   return Date.now() / 1000;
 }
 
+/**
+ * What an event is about, or null when it is about nothing in particular.
+ *
+ * Only the turn lifecycle and a drop name something, and only those are worth
+ * matching a repeat against. `queue.empty` and `queue.replaced` say that a list
+ * reached a state rather than that a thing happened to a line, so a second
+ * renderer saying it too is left in the log.
+ */
+function eventSubject(event: SessionEvent): string | null {
+  if (event.turn !== undefined) return `turn:${event.turn}`;
+  if (event.turns !== undefined) return `turns:${event.turns.join(',')}`;
+  return null;
+}
+
 export class Hub {
   // The original guarded every field here with a re-entrant lock and woke
   // waiters through a condition variable. Node runs one thread and nothing
@@ -99,6 +144,14 @@ export class Hub {
   private stateAt = 0;
   /** See `EXPECTED_INTERRUPT_SECONDS`. Epoch seconds, zero for none pending. */
   private interruptExpectedUntil = 0;
+  /**
+   * Which turn the interrupt inside that window cut, once a renderer has said.
+   *
+   * Null until the first echo arrives, because the line on air is the
+   * renderer's to name: this hub knows it only from the last report, which may
+   * be a report behind by the time the interrupt lands.
+   */
+  private interruptExpectedTurn: string | null = null;
 
   /**
    * The pending turns, and the authority on what they are. See `queue.ts`.
@@ -127,10 +180,15 @@ export class Hub {
    * The speech watch arrives the same way and for the same reason: it is the
    * server's own observation of another process rather than anything a viewer
    * reported, and a hub built without one is a hub that was never told to look.
+   *
+   * The roots are the third of the same kind: paths belong to the process that
+   * parsed them, and a hub built without any is a hub that cannot say which
+   * checkout it is. See `serverRootsSchema` for who asks and why.
    */
   constructor(
     private readonly decks: DeckSource | null = null,
     private readonly speech: SpeechSource | null = null,
+    private readonly roots: ServerRoots | null = null,
   ) {}
 
   // --- downstream (server -> viewer) ----------------------------------------
@@ -195,6 +253,7 @@ export class Hub {
       // Before the send, not after: the report can come back inside the same
       // tick as the write on loopback.
       this.interruptExpectedUntil = now() + EXPECTED_INTERRUPT_SECONDS;
+      this.interruptExpectedTurn = null;
       commands.push({ cmd: 'interrupt' });
     }
     commands.push(this.queue.command());
@@ -202,11 +261,43 @@ export class Hub {
     return added;
   }
 
-  /** Whether this interrupt is one we asked for. True at most once per rewind. */
-  private consumeExpectedInterrupt(): boolean {
-    const expected = now() < this.interruptExpectedUntil;
-    this.interruptExpectedUntil = 0;
-    return expected;
+  /**
+   * Whether this interrupt is one we asked for. True for every renderer's echo
+   * of it, and false for an interrupt that names any other turn.
+   *
+   * See `EXPECTED_INTERRUPT_SECONDS` for why it is counted by turn rather than
+   * by report.
+   */
+  private isExpectedInterrupt(turn: string | undefined): boolean {
+    if (now() >= this.interruptExpectedUntil) return false;
+    // An interrupt that names nothing is still one interrupt, and every
+    // renderer answers it the same way, so the empty string is a turn like any
+    // other here.
+    const named = turn ?? '';
+    if (this.interruptExpectedTurn === null) {
+      this.interruptExpectedTurn = named;
+      return true;
+    }
+    return this.interruptExpectedTurn === named;
+  }
+
+  /**
+   * Whether another renderer already reported this. See `ECHO_SECONDS`.
+   *
+   * Only events that name a turn or a set of them are matched: those are the
+   * ones an orchestrator counts, and they are the ones with a subject to match
+   * on. The scan stops at the newest event about the same subject, so a repeat
+   * only counts as an echo while nothing has happened to that turn in between.
+   */
+  private isEcho(event: SessionEvent, at: number): boolean {
+    const subject = eventSubject(event);
+    if (subject === null) return false;
+    for (let i = this.events.length - 1; i >= 0; i -= 1) {
+      const logged = this.events[i];
+      if (eventSubject(logged) !== subject) continue;
+      return logged.type === event.type && at - (logged.at ?? 0) < ECHO_SECONDS;
+    }
+    return false;
   }
 
   /**
@@ -244,8 +335,14 @@ export class Hub {
     // than on the timer. Not cleared by a report that omits it.
     if (body.avatars) this.avatars = body.avatars;
     for (const event of body.events ?? []) {
+      const at = event.at ?? now();
+      // Dropped before anything acts on it, not merely kept out of the log:
+      // the second renderer's answer to one interrupt must not reach the kill
+      // switch below, and a turn that has already been filed does not need
+      // filing again. See `ECHO_SECONDS`.
+      if (this.isEcho(event, at)) continue;
       this.seq += 1;
-      this.events.push({ ...event, seq: this.seq, at: event.at ?? now() });
+      this.events.push({ ...event, seq: this.seq, at });
       // A line the renderer has finished with stops being pending and starts
       // being history. Driven off the event rather than off the reported
       // `queued` count, because the count says how many are left and not which
@@ -259,7 +356,7 @@ export class Hub {
       // be wanted back.
       if (event.type === 'turn.interrupted') {
         if (event.turn) this.queue.complete(event.turn, { interrupted: true });
-        if (!this.consumeExpectedInterrupt()) this.queue.clear();
+        if (!this.isExpectedInterrupt(event.turn)) this.queue.clear();
       }
       if (event.type === 'queue.dropped') for (const id of event.turns ?? []) this.queue.remove(id);
     }
@@ -303,6 +400,10 @@ export class Hub {
       // to "is the voice up" from a server that is not looking at it.
       speech: this.speech?.current ?? ('absent' satisfies SpeechState),
       queue: this.queue.list(),
+      // Omitted rather than sent as null when there are none: the field means
+      // "this server knows where it is serving from", and a key holding null
+      // would be a server claiming to know and answering nowhere.
+      ...(this.roots === null ? {} : { roots: this.roots }),
     };
   }
 

@@ -121,7 +121,10 @@ function main(): void {
   const decks = new Decks(slides);
   const motions = new Motions(motionsRoot);
   const speech = new SpeechWatch();
-  const hub = new Hub(decks, speech);
+  // The roots ride on the snapshot so that a launcher which finds this server
+  // already running can tell whether it is the one for its own checkout. See
+  // `serverRootsSchema`.
+  const hub = new Hub(decks, speech, { document: root, slides, motions: motionsRoot });
   // Null on an install without the library, which is not a reason to refuse to
   // start: a document whose fonts are all embedded — most of them — draws
   // perfectly without either directory.

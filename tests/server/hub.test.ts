@@ -9,7 +9,13 @@ import type {
   StreamMessage,
   Vocabulary,
 } from '@/protocol';
-import { EVENT_LOG_MAX, EXPECTED_INTERRUPT_SECONDS, Hub, STATE_STALE_SECONDS } from '@/server/hub';
+import {
+  ECHO_SECONDS,
+  EVENT_LOG_MAX,
+  EXPECTED_INTERRUPT_SECONDS,
+  Hub,
+  STATE_STALE_SECONDS,
+} from '@/server/hub';
 
 /**
  * Fan-out, the sequenced event log and the waiting.
@@ -702,9 +708,9 @@ describe('the history and rewinding', () => {
   });
 
   it('files the line that was cut off, and drops the rest of the list', () => {
-    const running = spoke('running', 'turn.interrupted');
+    const [running] = hub.queue.add([{ text: 'running' }]);
     hub.queue.add([{ text: 'pending' }]);
-    hub.report({ events: [event(running, 'turn.interrupted')] });
+    hub.report({ events: [event(running.id, 'turn.interrupted')] });
 
     // Everything pending goes: the operator killed the script. The line that was
     // being said is kept, because it was said, if only partly.
@@ -753,6 +759,42 @@ describe('the history and rewinding', () => {
     expect(second).not.toBe(first);
   });
 
+  /**
+   * The case the interrupt window is actually for.
+   *
+   * Every renderer answers one cut, so the same `turn.interrupted` comes back
+   * once per renderer — and read as a report each, the second one is the
+   * operator hitting stop and empties the list the rewind had just filled. The
+   * reports are spaced past `ECHO_SECONDS` on purpose: this is the window doing
+   * the work and not the echo filter, and both have to hold on their own.
+   */
+  it('takes one cut answered by three renderers as the one interrupt it caused', () => {
+    const said = spoke('a');
+    const running = hub.queue.add([{ text: 'on air' }])[0].id;
+    hub.queue.add([{ text: 'pending' }]);
+
+    hub.rewind(said, 'one', { interrupt: true });
+    for (let i = 0; i < 3; i += 1) {
+      hub.report({ events: [event(running, 'turn.interrupted')] });
+      vi.advanceTimersByTime(1_200);
+    }
+
+    expect(hub.queue.list().map((e) => e.text)).toEqual(['a', 'pending']);
+  });
+
+  it('empties it for an interrupt naming another turn, however late in the window', () => {
+    const said = spoke('a');
+    hub.rewind(said, 'one', { interrupt: true });
+    hub.report({ events: [event('on-air', 'turn.interrupted')] });
+    expect(hub.queue.list()).toHaveLength(1);
+
+    // Still inside the window, and still not ours: the rewind cut the turn it
+    // named, so anything after it is a line that came later.
+    vi.advanceTimersByTime((EXPECTED_INTERRUPT_SECONDS - 1) * 1000);
+    hub.report({ events: [event('the-next-one', 'turn.interrupted')] });
+    expect(hub.queue.list()).toEqual([]);
+  });
+
   it('expects one interrupt only, so the next genuine one still empties it', () => {
     const id = spoke('a');
     hub.rewind(id, 'one', { interrupt: true });
@@ -780,5 +822,88 @@ describe('the history and rewinding', () => {
     hub.subscribe((message) => frames.push(message));
     expect(hub.rewind('nope', 'from', { interrupt: true })).toBeNull();
     expect(frames).toEqual([]);
+  });
+});
+
+/**
+ * What the event log does with the same thing reported more than once.
+ *
+ * More than one renderer is the ordinary case — the panel's preview, the stage
+ * window, whatever OBS has open — and they are all doing the same thing, so one
+ * line ending arrives once per renderer. An orchestrator polling `/api/events`
+ * counts turns, and counting three of them per line is worse than useless: an
+ * LLM loop waiting for the character to stop talking is woken twice too often.
+ */
+describe('an event reported by more than one renderer', () => {
+  const ending = (turn: string) => hub.snapshot().events.filter((e) => e.turn === turn);
+
+  it('is logged once, however many renderers say it', () => {
+    const id = hub.queue.add([{ text: 'a' }])[0].id;
+    for (let i = 0; i < 3; i += 1) {
+      hub.report({ events: [event(id, 'turn.end')] });
+      vi.advanceTimersByTime(200);
+    }
+    expect(ending(id)).toHaveLength(1);
+  });
+
+  it('still files the turn, since the first of them did', () => {
+    const id = hub.queue.add([{ text: 'a' }])[0].id;
+    hub.report({ events: [event(id, 'turn.end')] });
+    hub.report({ events: [event(id, 'turn.end')] });
+    expect(hub.queue.list()).toEqual([]);
+    expect(hub.queue.history().map((e) => e.id)).toEqual([id]);
+  });
+
+  it('does not swallow a line said a second time under the same id', () => {
+    const id = hub.queue.add([{ text: 'a' }])[0].id;
+    hub.report({ events: [event(id, 'turn.end')] });
+    // Put back by a rewind and said again. The start between the two endings is
+    // what tells a second ending from a second report of the first.
+    hub.report({ events: [event(id, 'turn.start')] });
+    hub.report({ events: [event(id, 'turn.end')] });
+
+    expect(ending(id).map((e) => e.type)).toEqual(['turn.end', 'turn.start', 'turn.end']);
+  });
+
+  it('stops treating a repeat as an echo once it is old enough to be a second one', () => {
+    const id = hub.queue.add([{ text: 'a' }])[0].id;
+    hub.report({ events: [event(id, 'turn.end')] });
+    vi.advanceTimersByTime(ECHO_SECONDS * 1000);
+    hub.report({ events: [event(id, 'turn.end')] });
+
+    expect(ending(id)).toHaveLength(2);
+  });
+
+  it('leaves alone an event that is about no turn in particular', () => {
+    // `queue.empty` says a list reached a state rather than that something
+    // happened to a line, so there is nothing to match a repeat against.
+    hub.report({ events: [{ type: 'queue.empty' }] });
+    hub.report({ events: [{ type: 'queue.empty' }] });
+    expect(hub.snapshot().events.filter((e) => e.type === 'queue.empty')).toHaveLength(2);
+  });
+});
+
+/**
+ * Where the server says it is serving from.
+ *
+ * Read by the native shell, which finds a listener on the control port and has
+ * to decide whether it is this checkout's server or another one's. See
+ * `serverRootsSchema`.
+ */
+describe('the directories on the snapshot', () => {
+  const roots = {
+    document: '/work/hashidate/dist',
+    slides: '/work/hashidate/show/slides',
+    motions: '/work/hashidate/show/motions',
+  };
+
+  it('carries the three a server was started on', () => {
+    expect(new Hub(null, null, roots).snapshot().roots).toEqual(roots);
+  });
+
+  it('says nothing at all from a hub that was never told', () => {
+    // Absent rather than null: a key holding null would be a server claiming to
+    // know where it is serving from and answering nowhere.
+    expect(new Hub().snapshot()).not.toHaveProperty('roots');
   });
 });
