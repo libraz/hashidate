@@ -148,6 +148,19 @@ export class Session {
   readonly queue: Turn[] = [];
   turn: Turn | null = null;
 
+  /**
+   * Hold the queue where it is. The turn on air is not affected.
+   *
+   * Only `update` reads this, and only to decline to take the next turn off the
+   * queue. Everything upstream of that — the parse, the cue filter, the request
+   * to the voice — happens when a line *enters* the queue, so a held queue is
+   * one that is already being synthesised. That is the point of holding here
+   * rather than by simply not sending the list: a recording released against a
+   * queue full of prepared audio opens on the first word instead of on the wait
+   * for it.
+   */
+  paused = false;
+
   private _gap = 0;
   private _sinceBusy = 0;
   /** Seconds the head of the queue has been waiting on its voice. See `VOICE_WAIT`. */
@@ -428,8 +441,17 @@ export class Session {
     if (dropped.length) this.emit('queue.dropped', { turns: dropped });
   }
 
+  /**
+   * Whether something is happening that the idle must stay out of the way of.
+   *
+   * A held queue does not count. Lines waiting behind a hold are lines nobody
+   * has asked for yet — the operator is framing a shot, and this is the stretch
+   * where a character that holds perfectly still reads as a frozen stream. It
+   * is also the stretch a recording opens on, which is the one place that
+   * stillness would be kept.
+   */
   get busy(): boolean {
-    return !!this.turn || this.queue.length > 0 || this.d.mouth.speaking;
+    return !!this.turn || (this.queue.length > 0 && !this.paused) || this.d.mouth.speaking;
   }
 
   // --- direct control -----------------------------------------------------
@@ -768,7 +790,7 @@ export class Session {
         this.emit('turn.end', { turn: done.id });
         if (!this.queue.length) this.emit('queue.empty', {});
       }
-    } else if (this.queue.length) {
+    } else if (this.queue.length && !this.paused) {
       this._gap -= dt;
       // The gap runs down whether or not the voice has answered, so the wait
       // for a take and the beat between turns overlap instead of adding up.

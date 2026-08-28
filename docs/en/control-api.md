@@ -39,6 +39,11 @@ An axis left out of `stage` keeps what it had; `null` empties it — dry for a r
 | `GET /api/decks/<id>/text` | What a document says, page by page, `?from=` and `?to=`. Extracted without drawing anything. |
 | `GET /slides/<id>.pdf` | The bytes, for the renderer. Not under `/api/` because it is file serving rather than an API call. |
 | `GET /api/motions` | The gestures written into `show/motions/`, parsed and checked, with any file that would not parse listed beside them. Read by the renderer when it connects. |
+| `GET /api/scripts` | The scripts in `show/scripts/`, summarised — title, how many lines, when it was saved — with any file that would not parse listed beside them. Re-read rather than cached, because a script is edited in a text editor beside the panel. |
+| `POST /api/scripts/run` | Clear, setup, queue: the three steps a script needs, done here because the panel cannot read a file. Holds the queue by default; `pause: false` runs it live. |
+| `POST /api/record/start` | Open a take and tell the renderers to roll. `release: true` lets a held queue go once bytes are actually being written. |
+| `POST /api/record/stop` | End it. The file stays open for a moment afterwards while the encoder flushes what it is holding. |
+| `POST /api/record/chunk` | The renderer's encoded video, a second at a time. Not for callers, and the one route here whose body is not JSON. |
 | `GET /api/stream` | The viewer's SSE down-channel. |
 | `POST /api/report` | The viewer's up-channel, and its heartbeat. Not for callers. |
 | `POST /api/speech` | The viewer's route to the speech sidecar. Not for callers. 503 when there is no sidecar, which is a normal answer. |
@@ -59,8 +64,14 @@ Beside the state it carries three things the renderer reports about *itself* rat
 - `tuning` — what the set-once layer is actually running, so a remote fader can be drawn at the value in force rather than at the last one somebody sent.
 - `avatars` — which characters this renderer can load. Not the same question as what the loaded one can do.
 
+And two the *server* observes rather than any renderer, because they are about the file it has open and the setup it is holding:
+
+- `recording` — the take being written, with how many bytes have landed on disk. Null when there is none. It is the server's own figure because a recorder that has quietly stopped and one that is still going look identical from the page doing the recording.
+- `paused` — whether the queue is held. See [Recording](recording.md).
+
 ## Next
 
 - [Commands](commands.md) — the full table
+- [Recording](recording.md) — what the recording routes are for
 - [Performances](performances.md) — what a turn is usually delivered with
 - [The MCP adapter](mcp.md) — the same API, as tools

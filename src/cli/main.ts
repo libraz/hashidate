@@ -15,6 +15,7 @@ import {
   idleCommandSchema,
   lookCommandSchema,
   overlayCommandSchema,
+  pauseCommandSchema,
   performCommandSchema,
   placeCommandSchema,
   pointCommandSchema,
@@ -536,11 +537,20 @@ const place: Handler = async (client, args) => {
  * `--check` reads and validates without a server, which is what an author wants
  * between edits. It is also the only subcommand here that works with nothing
  * running.
+ *
+ * `--hold` loads the run without starting it, so the shot can be framed against
+ * a queue that is already being synthesised. Off by default here, and on by
+ * default in the panel's recording tab: this is the live path, and a `play`
+ * that stopped playing would be a different command.
  */
 const play: Handler = async (client, args) => {
   const { positionals, values } = parseArgs({
     args,
-    options: { check: { type: 'boolean' }, replace: { type: 'boolean' } },
+    options: {
+      check: { type: 'boolean' },
+      replace: { type: 'boolean' },
+      hold: { type: 'boolean' },
+    },
     allowPositionals: true,
   });
   const name = positionals[0];
@@ -560,7 +570,10 @@ const play: Handler = async (client, args) => {
     return;
   }
 
-  const result = await runScript(client, loaded, { replace: values.replace });
+  const result = await runScript(client, loaded, {
+    replace: values.replace,
+    hold: values.hold,
+  });
   if (result.setup !== undefined) {
     show(result.setup);
     // The two halves have different fates when no renderer is attached: the
@@ -584,6 +597,9 @@ const play: Handler = async (client, args) => {
   console.log(
     `${script.lines.length} queued from ${id}: ${result.queue.queue.length} pending, ${result.queue.viewers} viewer(s)`,
   );
+  // Said out loud for the same reason the setup failure above is: a held queue
+  // and a queue nothing is attached to look identical from a prompt.
+  if (values.hold) console.log('held — `yarn ctl resume` starts it');
 };
 
 /**
@@ -714,6 +730,21 @@ const idle: Handler = async (client, args) => {
   const on = positionals[0];
   if (on !== 'on' && on !== 'off') fail('idle on|off');
   show(await client.command(build(idleCommandSchema, { cmd: 'idle', on: on === 'on' })));
+};
+
+/**
+ * Hold the queue, and let it go again.
+ *
+ * Two names rather than `hold on|off`, because these are the two ends of one
+ * movement and each is typed in a hurry. Neither touches the line being spoken:
+ * that finishes, and nothing is discarded — `interrupt` cuts and `clear` drops.
+ */
+const hold: Handler = async (client) => {
+  show(await client.command(build(pauseCommandSchema, { cmd: 'pause', on: true })));
+};
+
+const resume: Handler = async (client) => {
+  show(await client.command(build(pauseCommandSchema, { cmd: 'pause', on: false })));
 };
 
 /**
@@ -849,6 +880,8 @@ const HANDLERS: Record<string, Handler> = {
   idle,
   look,
   debug,
+  hold,
+  resume,
   reset: bare('reset'),
   interrupt: bare('interrupt'),
   clear: bare('clear'),

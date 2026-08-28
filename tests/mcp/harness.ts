@@ -237,6 +237,10 @@ export const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
   // one more thing a model writing lines cannot act on.
   speech: 'ready',
   queue: [],
+  // Both dropped by the projection, on the same rule the two above are: a model
+  // writing lines does not decide when a take rolls or when the queue is let go.
+  paused: false,
+  recording: null,
   ...over,
 });
 

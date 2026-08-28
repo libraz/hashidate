@@ -8,7 +8,6 @@ import {
   loopbackURL,
   portFromEnvironment,
   stageURL,
-  ttsPort,
 } from '@/shell/config';
 
 /**
@@ -55,11 +54,11 @@ describe('reading a port from the environment', () => {
     expect(portFromEnvironment('80.5', 1)).toBe(80);
   });
 
-  it('defaults the two ports the runtime actually uses', () => {
+  it('defaults the one port the runtime actually opens', () => {
+    // One rather than two: the speech sidecar answers on a socket, and where
+    // that is comes from `speechEndpoint` rather than from here.
     expect(controlPort(undefined)).toBe(8765);
-    expect(ttsPort(undefined)).toBe(8770);
     expect(controlPort('9100')).toBe(9100);
-    expect(ttsPort('9101')).toBe(9101);
   });
 });
 
@@ -150,7 +149,9 @@ describe('the checkout', () => {
     expect(expectedRoots(paths)).toEqual({
       document: '/work/hashidate/dist',
       slides: '/work/hashidate/show/slides',
+      scripts: '/work/hashidate/show/scripts',
       motions: '/work/hashidate/show/motions',
+      recordings: '/work/hashidate/show/recordings',
     });
   });
 });

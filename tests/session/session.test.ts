@@ -397,6 +397,68 @@ describe('Session.clearQueue', () => {
   });
 });
 
+describe('a held queue', () => {
+  it('keeps the lines and does not start one', () => {
+    // The third thing that can be done to a run of turns, and the only one that
+    // keeps them: `interrupt` cuts and drops, `clear` drops, this drops nothing.
+    const { session, step } = build();
+    session.paused = true;
+    session.say({ id: 'a', text: 'あいうえお' });
+    session.say({ id: 'b', text: 'かきくけこ' });
+    step(120);
+
+    expect(session.turn).toBeNull();
+    expect(session.queue.map((t) => t.id)).toEqual(['a', 'b']);
+  });
+
+  it('starts the first line as soon as the hold comes off', () => {
+    const { session, step } = build();
+    session.paused = true;
+    session.say({ id: 'a', text: 'あいうえお' });
+    step(60);
+    expect(session.turn).toBeNull();
+
+    session.paused = false;
+    step(1);
+    expect(session.turn?.id).toBe('a');
+  });
+
+  it('lets the line on air finish rather than cutting it', () => {
+    const { session, step, runUntil } = build();
+    session.say({ id: 'a', text: 'あいうえお' });
+    session.say({ id: 'b', text: 'かきくけこ' });
+    step(4);
+    expect(session.turn?.id).toBe('a');
+
+    session.paused = true;
+    runUntil(() => session.turn === null, 30);
+    // 'a' ran to its end; 'b' is still waiting rather than dropped.
+    expect(session.queue.map((t) => t.id)).toEqual(['b']);
+  });
+
+  it('holds a line said directly, on the same footing as one from a script', () => {
+    // A `say` goes onto the same queue as anything else, and a hold some lines
+    // could walk past would not be one.
+    const { session, step } = build();
+    session.paused = true;
+    session.say({ id: 'a', text: 'あい' });
+    step(60);
+    expect(session.turn).toBeNull();
+  });
+
+  it('does not count as busy, so the character stays alive while a shot is framed', () => {
+    // This is the stretch a recording opens on, and it is the one place a
+    // character holding perfectly still would be kept.
+    const { session, step } = build({ idle: true });
+    session.paused = true;
+    session.say({ id: 'a', text: 'あい' });
+    step(1);
+    expect(session.busy).toBe(false);
+    step(Math.ceil((IDLE_AFTER + 0.2) / DT));
+    expect(session.d.auto).toBe(true);
+  });
+});
+
 describe('what a turn leaves behind', () => {
   it('keeps the emotion after the turn ends, because a mood outlives its sentence', () => {
     const { session, runUntil } = build();

@@ -45,6 +45,8 @@ export const EMPTY: Snapshot = {
   slides: null,
   speech: 'absent',
   queue: [],
+  paused: false,
+  recording: null,
 };
 
 export function useRuntime(): Runtime {

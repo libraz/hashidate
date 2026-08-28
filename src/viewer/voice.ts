@@ -263,6 +263,8 @@ export class BrowserVoice implements Voice {
   private readonly muted: boolean;
   private ctx: AudioContext | null = null;
   private chainNodes: Chain | null = null;
+  /** The recorder's tap off the end of the chain. See `captureStream`. */
+  private capture: MediaStreamAudioDestinationNode | null = null;
   private silentUntil = 0;
   /** See `isBlocked`. Set by `device`, which is the only thing that can know. */
   private blocked = false;
@@ -456,6 +458,36 @@ export class BrowserVoice implements Voice {
    */
   get isBlocked(): boolean {
     return this.blocked;
+  }
+
+  /**
+   * Everything this voice makes, as a stream something else can record.
+   *
+   * Tapped off the *output* — the node the mute is on — rather than upstream of
+   * it, and that is the whole of the decision: a take is what the frame sounded
+   * like, so a muted renderer taps silence. That is also what makes the rule in
+   * `recordCommandSchema` consistent rather than merely convenient. A monitor
+   * asked to record would record what it is: nothing.
+   *
+   * The graph is built here if it does not exist yet, which is the one place
+   * that legitimately wants a context before there is a line to play — a
+   * recorder that started before the first word would otherwise get no audio
+   * track at all, and a track cannot be added to a `MediaStream` that a
+   * `MediaRecorder` has already been built on.
+   *
+   * Null when the browser will not give this page an audio device. The take is
+   * then silent rather than absent, which is the same trade the mouth makes.
+   */
+  async captureStream(): Promise<MediaStream | null> {
+    const ctx = await this.device();
+    if (ctx === null) return null;
+    if (this.capture === null) {
+      // Made once and kept, like the chain it hangs off. A second destination
+      // per take would leave the first connected to an output nothing reads.
+      this.capture = ctx.createMediaStreamDestination();
+      this.chainFor(ctx).output.connect(this.capture);
+    }
+    return this.capture.stream;
   }
 
   /**

@@ -1,0 +1,8 @@
+# Recordings: what the runtime wrote, rather than what was brought to it.
+#
+# The one directory under `show/` this project produces instead of reading. A
+# take is minutes of video of a purchased avatar speaking in a cloned voice, so
+# it is the last thing that could belong in a repository — and it is large.
+# The directory ships and its contents never do.
+*
+!.gitignore

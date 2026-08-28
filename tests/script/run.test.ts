@@ -27,8 +27,10 @@ function control(
     calls.push('clear');
     return { queue: [], viewers: 1 };
   });
-  const commandCall = vi.fn(async (_command: CommandRequest) => {
-    calls.push('setup');
+  const commandCall = vi.fn(async (command: CommandRequest) => {
+    // The hold is a command too, and is always stated. Recorded separately so
+    // the order the two halves go out in stays legible.
+    calls.push('cmd' in command && command.cmd === 'pause' ? `hold ${command.on}` : 'setup');
     return setupResponse;
   });
   const queueAddCall = vi.fn(async (_turns: TurnRequest[], _options?: { source?: string }) => {
@@ -53,7 +55,7 @@ describe('runScript', () => {
 
     const result = await runScript(client, script, { replace: true });
 
-    expect(client.calls).toEqual(['clear', 'setup', 'queue']);
+    expect(client.calls).toEqual(['clear', 'setup', 'hold false', 'queue']);
     expect(client.clear).toHaveBeenCalledOnce();
     expect(client.commandCall).toHaveBeenCalledWith({ batch: script.script.setup });
     expect(client.queueAddCall).toHaveBeenCalledWith(script.script.lines, { source: 'opening' });
@@ -65,9 +67,11 @@ describe('runScript', () => {
 
     const result = await runScript(client, loaded([]));
 
-    expect(client.calls).toEqual(['queue']);
+    // The hold is the one command a run always sends. It is a standing setting,
+    // so a run that said nothing about it would load its lines into a queue
+    // held for an earlier take and never start.
+    expect(client.calls).toEqual(['hold false', 'queue']);
     expect(client.clear).not.toHaveBeenCalled();
-    expect(client.commandCall).not.toHaveBeenCalled();
     expect(result.setup).toBeUndefined();
   });
 
@@ -81,6 +85,14 @@ describe('runScript', () => {
     expect(result.setup).toBe(refused);
     expect(result.setup).toMatchObject({ ok: false });
     expect(client.queueAddCall).toHaveBeenCalledOnce();
-    expect(client.calls).toEqual(['setup', 'queue']);
+    expect(client.calls).toEqual(['setup', 'hold false', 'queue']);
+  });
+
+  it('holds the queue when asked, before the lines land in it', async () => {
+    // There is no arrangement of these in which a renderer holds a full queue
+    // with nothing yet telling it whether to start on it.
+    const client = control();
+    await runScript(client, loaded(), { hold: true });
+    expect(client.calls).toEqual(['hold true', 'queue']);
   });
 });

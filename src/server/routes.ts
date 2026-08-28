@@ -12,11 +12,18 @@ import {
   queueAddSchema,
   queueRewindSchema,
   queueUpdateSchema,
+  recordStartSchema,
+  recordStopSchema,
   reportBodySchema,
+  type ScriptRunResponse,
+  type ScriptsResponse,
+  scriptRunSchema,
 } from '../protocol';
+import { ScriptError } from '../script';
 import type { Decks } from './decks';
 import type { Hub } from './hub';
 import type { Motions } from './motions';
+import type { Scripts } from './scripts';
 import { handleSpeech } from './speech';
 
 /**
@@ -44,7 +51,16 @@ const EVENTS_WAIT_SECONDS = 30;
  * second for as long as it is open. Logging them buries the commands, which are
  * the only lines worth reading.
  */
-const QUIET = ['/api/stream', '/api/report', '/api/speech', '/api/state'];
+const QUIET = ['/api/stream', '/api/report', '/api/speech', '/api/state', '/api/record/chunk'];
+
+/**
+ * The most one chunk of a recording may be.
+ *
+ * The renderer posts about a second at a time, which at 1080p is a few hundred
+ * kilobytes. This is generous against that and still small enough that a
+ * request naming the chunk route by mistake cannot be a way to fill memory.
+ */
+export const RECORD_CHUNK_MAX_BYTES = 64 * 1024 * 1024;
 
 /**
  * The commands that spend `id` on their own payload id rather than on a
@@ -69,6 +85,21 @@ interface StampedCommand {
 let stampCounter = 0;
 
 /**
+ * The directory-backed stores a server was built with, if it was built with any.
+ *
+ * A bag rather than a run of positional arguments: they are all optional, they
+ * are all "the filesystem, as this server sees it", and a fourth nullable
+ * parameter in a row is how the third one ends up in the fourth one's place.
+ * The recordings store is deliberately not here — a take is driven from the
+ * hub, which is the thing that sees a line end.
+ */
+export interface Stores {
+  decks?: Decks | null;
+  motions?: Motions | null;
+  scripts?: Scripts | null;
+}
+
+/**
  * Route one request, or decline it.
  *
  * Returns false for anything outside `/api/`, which the caller then serves off
@@ -79,18 +110,24 @@ export function handleApi(
   req: IncomingMessage,
   res: ServerResponse,
   hub: Hub,
-  decks: Decks | null = null,
-  motions: Motions | null = null,
+  stores: Stores = {},
 ): boolean {
   const { pathname, params } = split(req.url ?? '/');
   if (!pathname.startsWith('/api/')) return false;
   logRequest(req, res, pathname);
   if (req.method === 'GET' || req.method === 'HEAD') {
-    get(res, hub, decks, motions, pathname, params);
+    get(res, hub, stores, pathname, params);
     return true;
   }
   if (req.method === 'POST') {
-    void post(req, res, hub, pathname, params);
+    // Before the JSON body reader, and the only route that goes round it. A
+    // chunk is the encoder's own bytes; everything else under `/api/` is JSON
+    // in and JSON out, and this stays JSON out.
+    if (pathname === '/api/record/chunk') {
+      void recordChunk(req, res, hub, params);
+      return true;
+    }
+    void post(req, res, hub, stores, pathname, params);
     return true;
   }
   json(res, { error: 'unknown endpoint' }, 404);
@@ -158,11 +195,11 @@ function logRequest(req: IncomingMessage, res: ServerResponse, pathname: string)
 function get(
   res: ServerResponse,
   hub: Hub,
-  decks: Decks | null,
-  motions: Motions | null,
+  stores: Stores,
   pathname: string,
   params: URLSearchParams,
 ): void {
+  const { decks = null, motions = null, scripts = null } = stores;
   switch (pathname) {
     case '/api/stream':
       stream(res, hub);
@@ -195,6 +232,13 @@ function get(
     case '/api/motions':
       void listMotions(res, motions);
       return;
+    // Read fresh for the reason the motion roster is, and one more: a script is
+    // edited in a text editor beside the panel, and the loop an operator runs
+    // is save, press the chip again. A cached roster would answer that with the
+    // run of turns from before the edit.
+    case '/api/scripts':
+      void listScripts(res, scripts);
+      return;
     default:
       // `/api/decks/<id>/text` is the one route here with a name in it, so it
       // cannot be a case above. Nothing else under `/api/` is patterned.
@@ -219,6 +263,12 @@ async function listDecks(res: ServerResponse, decks: Decks | null): Promise<void
 async function listMotions(res: ServerResponse, motions: Motions | null): Promise<void> {
   const listed = motions === null ? { motions: [], errors: [] } : await motions.list();
   json(res, listed satisfies MotionsResponse);
+}
+
+/** The runs of turns written down, and the files that were meant to be some. */
+async function listScripts(res: ServerResponse, scripts: Scripts | null): Promise<void> {
+  const listed = scripts === null ? { scripts: [], errors: [] } : await scripts.list();
+  json(res, listed satisfies ScriptsResponse);
 }
 
 /**
@@ -260,6 +310,7 @@ async function post(
   req: IncomingMessage,
   res: ServerResponse,
   hub: Hub,
+  stores: Stores,
   pathname: string,
   params: URLSearchParams,
 ): Promise<void> {
@@ -268,8 +319,162 @@ async function post(
   if (pathname === '/api/command') return command(res, hub, body.value, params);
   if (pathname === '/api/report') return report(res, hub, body.value);
   if (pathname === '/api/speech') return handleSpeech(res, body.value);
+  if (pathname === '/api/scripts/run')
+    return runScript(res, hub, stores.scripts ?? null, body.value);
+  if (pathname === '/api/record/start') return recordStart(res, hub, body.value);
+  if (pathname === '/api/record/stop') return recordStop(res, hub, body.value);
   if (pathname.startsWith('/api/queue')) return queue(res, hub, pathname, body.value);
   return json(res, { error: 'unknown endpoint' }, 404);
+}
+
+// --- scripts ----------------------------------------------------------------
+
+/**
+ * Put a script on the queue: clear, setup, queue — the order `runScript` uses.
+ *
+ * The same three steps a client makes over three requests, made here in one,
+ * and made here at all because the panel cannot read a file. See
+ * `scriptRunSchema` for why holding the queue is the default.
+ *
+ * The setup and the lines are answered on separately. A setup refused for want
+ * of a renderer is not a failed run — the lines are on the server's queue and
+ * will be delivered to whatever attaches next — but it does mean the avatar,
+ * the costume and the framing the script asked for did not happen, and a caller
+ * that is about to press record needs to know that before it does.
+ */
+async function runScript(
+  res: ServerResponse,
+  hub: Hub,
+  scripts: Scripts | null,
+  body: unknown,
+): Promise<void> {
+  const parsed = scriptRunSchema.safeParse(body);
+  if (!parsed.success) {
+    return json(res, { error: 'invalid run', detail: parsed.error.issues }, 400);
+  }
+  if (scripts === null) return json(res, { error: 'no script directory' }, 404);
+
+  let loaded: Awaited<ReturnType<Scripts['get']>>;
+  try {
+    loaded = await scripts.get(parsed.data.id);
+  } catch (error) {
+    // A file that is there and is not a script. Its own status, because the
+    // fix is to edit the file rather than to pick a different name.
+    return json(res, { error: error instanceof ScriptError ? error.message : String(error) }, 422);
+  }
+  if (loaded === null) return json(res, { error: 'no such script' }, 404);
+
+  if (parsed.data.replace) hub.queue.clear();
+  hub.queue.add(loaded.script.lines, { source: loaded.id });
+
+  const setup = loaded.script.setup ?? [];
+  const paused = parsed.data.pause ?? true;
+  // One frame, in the order `Hub.subscribe` uses and for the same reason: a
+  // script whose setup swaps the avatar makes the renderer hold everything
+  // behind the load, and a queue sent as a second frame would arrive after that
+  // hold ended and be applied to the scene it was not written for.
+  //
+  // The hold sits between them rather than after the queue so that there is no
+  // arrangement of these commands in which a renderer holds a full queue with
+  // nothing yet telling it not to start.
+  const commands: Command[] = [...setup, { cmd: 'pause', on: paused }, hub.queue.command()];
+  const viewers = hub.send({ type: 'command', commands });
+
+  const payload: ScriptRunResponse = {
+    queue: hub.queue.list(),
+    viewers,
+    id: loaded.id,
+    setup: setup.length,
+    setupDelivered: setup.length === 0 ? 0 : viewers,
+    paused,
+  };
+  return json(res, payload);
+}
+
+// --- recording --------------------------------------------------------------
+
+function recordStart(res: ServerResponse, hub: Hub, body: unknown): void {
+  const parsed = recordStartSchema.safeParse(body);
+  if (!parsed.success) {
+    json(res, { error: 'invalid recording', detail: parsed.error.issues }, 400);
+    return;
+  }
+  const opened = hub.startRecording(parsed.data);
+  if (opened === null) {
+    // Either there is no recordings directory or a take is already running, and
+    // the current one says which: null for the first, present for the second.
+    const running = hub.recording;
+    json(
+      res,
+      {
+        error: running === null ? 'no recordings directory' : 'a recording is already running',
+        recording: running,
+      },
+      409,
+    );
+    return;
+  }
+  json(res, { recording: opened });
+}
+
+function recordStop(res: ServerResponse, hub: Hub, body: unknown): void {
+  const parsed = recordStopSchema.safeParse(body);
+  if (!parsed.success) {
+    json(res, { error: 'invalid stop', detail: parsed.error.issues }, 400);
+    return;
+  }
+  const stopped = hub.stopRecording(parsed.data.session);
+  if (stopped === null) {
+    json(res, { error: 'no recording', recording: null }, 404);
+    return;
+  }
+  // Still open: the encoder's last second is on its way. See `Hub.stopRecording`.
+  json(res, { recording: stopped });
+}
+
+/**
+ * Take one chunk of an encoded recording.
+ *
+ * The only route here that reads a body which is not JSON. It still answers
+ * JSON, which is the part of the rule that matters: a caller that trusts every
+ * reply under `/api/` to parse can go on doing so.
+ *
+ * The session and the media type ride on the query string rather than in the
+ * body for the obvious reason — the body is the file.
+ */
+async function recordChunk(
+  req: IncomingMessage,
+  res: ServerResponse,
+  hub: Hub,
+  params: URLSearchParams,
+): Promise<void> {
+  const session = params.get('session') ?? '';
+  if (session === '') return json(res, { error: 'no session' }, 400);
+  const mime = params.get('mime') ?? 'application/octet-stream';
+  const final = params.get('final') === '1';
+
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  try {
+    for await (const chunk of req) {
+      bytes += (chunk as Buffer).byteLength;
+      if (bytes > RECORD_CHUNK_MAX_BYTES) {
+        req.destroy();
+        return json(res, { error: 'chunk too large' }, 413);
+      }
+      chunks.push(chunk as Buffer);
+    }
+  } catch {
+    // The page was closed mid-post. Nothing to report and nothing to write.
+    return json(res, { error: 'chunk was cut off' }, 400);
+  }
+
+  const took = await hub.recordChunk(session, mime, Buffer.concat(chunks), { final });
+  // 409 rather than 404: the session is not wrong so much as no longer the one
+  // running, which is what a renderer flushing into a take that has already
+  // been stopped and replaced looks like.
+  if (!took) return json(res, { error: 'not the recording in flight' }, 409);
+  return json(res, { ok: true, recording: hub.recording });
 }
 
 // --- the queue --------------------------------------------------------------

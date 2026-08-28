@@ -1,7 +1,13 @@
 import { loadMotions } from '@/engine/motion';
 import type { Session } from '@/engine/session';
 import type { LabelledId, SessionEvent } from '@/engine/types';
-import { type Command, motionsResponseSchema, parseCommand, type ReportBody } from '@/protocol';
+import {
+  type Command,
+  motionsResponseSchema,
+  parseCommand,
+  RECORD_DEFAULTS,
+  type ReportBody,
+} from '@/protocol';
 
 /**
  * Control channel.
@@ -44,21 +50,34 @@ export type ControlStatus = 'online' | 'offline';
  *
  * Every other command in the set is one session call, which is what keeps the
  * command set honest — a verb that cannot be expressed as one means the session
- * is missing something. These two genuinely cannot be: `avatar` *replaces* the
- * session along with the scene, the rig and the wardrobe underneath it, and
+ * is missing something. These three genuinely cannot be: `avatar` *replaces*
+ * the session along with the scene, the rig and the wardrobe underneath it,
  * `debug` reaches nothing in the scene at all — it is a readout the page draws
- * over itself. So they are named here as exceptions rather than smuggled in as
- * special cases.
+ * over itself — and `record` is about the composed picture rather than about
+ * anything in it. So they are named here as exceptions rather than smuggled in
+ * as special cases.
  *
  * Absent on a renderer that loads one avatar and stays on it, which is every
  * test: `avatar` then does nothing, the roster it reports is empty, and a
- * `debug` arriving on a page with no readout to draw is dropped.
+ * `debug` or a `record` arriving on a page with nothing to draw over or capture
+ * is dropped.
  */
 export interface RendererControls {
   /** Every avatar this renderer can load, including the one it has. */
   readonly avatars: LabelledId[];
   /** Print the measurements over the frame, or stop. */
   setDebug(on: boolean): void;
+  /**
+   * Start or stop recording the composed frame.
+   *
+   * Whether *this* renderer is the one that should is decided by whoever
+   * implements this and not here: the command goes to every viewer attached and
+   * only one of them is going to air. See `recordCommandSchema`.
+   */
+  setRecording(
+    on: boolean,
+    take: { session: string; width: number; height: number; fps: number },
+  ): void;
   /**
    * Start loading one. Answers whether anything is actually going to happen.
    *
@@ -388,6 +407,19 @@ export class ControlClient {
       this.renderer?.setDebug(c.on ?? true);
       return;
     }
+    // Ahead of the hold for the same reason, and one of its own: a take is
+    // started to capture what happens next, and an avatar arriving is part of
+    // what happens next. Held behind the load, the recording would open after
+    // the thing it was started to record.
+    if (c.cmd === 'record') {
+      this.renderer?.setRecording(c.on, {
+        session: c.session,
+        width: c.width ?? RECORD_DEFAULTS.width,
+        height: c.height ?? RECORD_DEFAULTS.height,
+        fps: c.fps ?? RECORD_DEFAULTS.fps,
+      });
+      return;
+    }
     if (this.held) {
       this.held.push(c);
       if (this.held.length > HELD_MAX) this.held.splice(0, this.held.length - HELD_MAX);
@@ -429,6 +461,11 @@ export class ControlClient {
         return;
       case 'clear':
         s.clearQueue();
+        return;
+      // Held rather than emptied, and the line on air is left alone. See
+      // `pauseCommandSchema`.
+      case 'pause':
+        s.paused = c.on ?? true;
         return;
       case 'emotion':
         s.setEmotion(c.vec ?? c.emotion ?? { neutral: 1 });

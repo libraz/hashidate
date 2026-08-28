@@ -6,11 +6,13 @@ There are three pages, and the difference between them is not what they can do �
 
 Where a broadcast is run. It holds no renderer and no `AudioContext`: every control goes out through the control API, which means a control that works there is a control a language model can drive.
 
-Seven tabs — Queue (the script, its history, and rewinding into it), Perform, Voice, Slides, Dress, Tune, Inspect — with the avatar, the framing, the set and the idle switch under a preview, because those four are chosen by looking at the picture.
+Eight tabs — Queue (the script, its history, and rewinding into it), Recording (loading a script, holding it, and writing a take), Perform, Voice, Slides, Dress, Tune, Inspect — with the avatar, the framing, the set and the idle switch under a preview, because those four are chosen by looking at the picture.
 
 The preview *is* the camera control: drag to swing round the character, wheel to come in. The embedded viewer reads its own camera back and hands it up to the panel, which sends the ordinary `camera` command an orchestrator could have sent — so the renderer on air swings with it, and nothing about the shot lives in one page rather than the other.
 
 The preview is silent, always. It is a second renderer of the same commands, and it asks for every line and plays every take so that its mouth runs on the clock the queue is actually on — into a gain of zero. Hearing it as well as the source going to air is every line twice, a fraction of a second apart, which is worse than hearing neither.
+
+That silence is also what decides which page records. A take is what the room heard, so the renderer that is not muted is the one that writes it — see [Recording](recording.md).
 
 Above the tabs is the one address OBS needs, composed rather than typed: size, set, document, where the character stands in the frame, and whether the background is transparent. What comes out is a `/?size=…` URL to paste into a browser source. Nothing about it is application state — OBS owns that setting the moment it is pasted there.
 
@@ -57,5 +59,6 @@ What is *not* replayed is anything that was a moment rather than a setting. A ge
 
 ## Next
 
+- [Recording](recording.md) — which of these pages writes the file
 - [Architecture](architecture.md) — where the standing state lives
 - [The control API](control-api.md) — what the panel is sending

@@ -3,6 +3,7 @@ import type {
   LabelledId,
   PlacementReport,
   QueueEntry,
+  Recording,
   ReportBody,
   ServerRoots,
   SessionEvent,
@@ -17,6 +18,7 @@ import type {
 } from '../protocol';
 import type { DeckSource } from './decks';
 import { type RewindMode, TurnQueue } from './queue';
+import type { OpenOptions, RecordingStore } from './recordings';
 import type { SpeechSource } from './speech';
 import { Standing } from './standing';
 
@@ -43,6 +45,33 @@ export const EVENT_LOG_MAX = 512;
  * orchestrator the avatar is still mid-sentence forever.
  */
 export const STATE_STALE_SECONDS = 3.0;
+
+/**
+ * How long a recording keeps rolling after the last line of a script.
+ *
+ * A take that cuts on the same frame the last syllable ends reads as a
+ * dropped connection rather than as an ending — the mouth is still closing and
+ * the character is still coming back to rest. This is long enough for both and
+ * short enough that nobody trims it.
+ *
+ * It is a delay rather than a fixed tail because the queue can refill inside
+ * it: a line queued while this is counting down cancels the stop, and the
+ * recording carries straight on.
+ */
+export const RECORD_TAIL_SECONDS = 1.2;
+
+/**
+ * How long a stopped recording waits for the renderer's last chunk.
+ *
+ * `stop` goes down the same one-way channel every command does, so the file
+ * cannot be closed on the send: the encoder still has a second of frames in it
+ * and posts them after it has wound down. Normally the flush arrives flagged as
+ * the last one and closes the file immediately; this is the answer for the case
+ * where it never arrives at all, because the renderer was closed or reloaded
+ * between the stop and the flush. A file left open forever would be worse than
+ * one missing its final second.
+ */
+export const RECORD_FLUSH_SECONDS = 6.0;
 
 /**
  * How long an interrupt this server sent stays expected.
@@ -184,12 +213,38 @@ export class Hub {
    * The roots are the third of the same kind: paths belong to the process that
    * parsed them, and a hub built without any is a hub that cannot say which
    * checkout it is. See `serverRootsSchema` for who asks and why.
+   *
+   * The recordings store is the fourth, and is here rather than beside the
+   * routes for the reason the queue is: what a take has to know about — a line
+   * ending, a renderer attaching, the hold coming off — are all things this
+   * already sees.
    */
   constructor(
     private readonly decks: DeckSource | null = null,
     private readonly speech: SpeechSource | null = null,
     private readonly roots: ServerRoots | null = null,
+    private readonly recordings: RecordingStore | null = null,
   ) {}
+
+  /**
+   * The stop scheduled for the end of the script, if one is counting down.
+   * See `RECORD_TAIL_SECONDS`.
+   */
+  private tailTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** The watchdog on a stopped recording's last chunk. See `RECORD_FLUSH_SECONDS`. */
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * A hold waiting on proof that the recording is rolling.
+   *
+   * Set by a `start` that asked for it and spent by the first chunk that
+   * arrives. Releasing on a timer instead would be releasing on a guess about
+   * how long an encoder takes to produce its first second — and a guess that is
+   * short by anything at all clips the front of the first line, which is
+   * exactly the frame the take opens on.
+   */
+  private releaseOn: string | null = null;
 
   // --- downstream (server -> viewer) ----------------------------------------
 
@@ -318,6 +373,156 @@ export class Hub {
     return this.clients.size;
   }
 
+  // --- recording ------------------------------------------------------------
+
+  /**
+   * Open a take and tell the renderers to roll.
+   *
+   * Null when one is already running, or when this server was built without a
+   * recordings directory. Both are refusals rather than errors and the caller
+   * says which; see `Recordings.open`.
+   *
+   * `release` is the recording flow's whole point. A script is loaded into a
+   * held queue so the shot can be framed, and the hold has to come off at the
+   * moment the take is genuinely rolling — not when the command was sent. See
+   * `releaseOn`.
+   */
+  startRecording(options: OpenOptions & { release?: boolean }): Recording | null {
+    if (this.recordings === null) return null;
+    const opened = this.recordings.open(options);
+    if (opened === null) return null;
+    this.clearTimers();
+    this.releaseOn = options.release ? opened.session : null;
+    this.send({
+      type: 'command',
+      commands: [
+        {
+          cmd: 'record',
+          on: true,
+          session: opened.session,
+          width: opened.width,
+          height: opened.height,
+          fps: opened.fps,
+        },
+      ],
+    });
+    return opened;
+  }
+
+  /**
+   * Tell the renderers to stop, and start the watchdog on the flush.
+   *
+   * The file is not closed here. What is still to come is the second or so the
+   * encoder is holding, and closing on the send would truncate every take by
+   * exactly that much. See `RECORD_FLUSH_SECONDS`.
+   */
+  stopRecording(session?: string): Recording | null {
+    const live = this.recordings?.current ?? null;
+    if (live === null) return null;
+    if (session !== undefined && session !== live.session) return null;
+    this.clearTail();
+    this.releaseOn = null;
+    this.send({
+      type: 'command',
+      commands: [{ cmd: 'record', on: false, session: live.session }],
+    });
+    if (this.flushTimer === null) {
+      this.flushTimer = setTimeout(() => {
+        this.flushTimer = null;
+        void this.recordings?.close(live.session);
+      }, RECORD_FLUSH_SECONDS * 1000);
+      this.flushTimer.unref?.();
+    }
+    return live;
+  }
+
+  /**
+   * Take one chunk from the renderer. Answers whether it was ours.
+   *
+   * The first chunk is the proof the take is rolling, and is what releases a
+   * hold that was waiting for it. The last one closes the file, because the
+   * renderer is the only thing that knows its encoder has finished.
+   */
+  async recordChunk(
+    session: string,
+    mime: string,
+    chunk: Buffer,
+    { final = false }: { final?: boolean } = {},
+  ): Promise<boolean> {
+    if (this.recordings === null) return false;
+    const first = this.recordings.current?.mime === null;
+    if (!this.recordings.append(session, mime, chunk)) return false;
+    if (first && this.releaseOn === session) {
+      this.releaseOn = null;
+      this.send({ type: 'command', commands: [{ cmd: 'pause', on: false }] });
+    }
+    if (final) {
+      this.clearFlush();
+      await this.recordings.close(session);
+    }
+    return true;
+  }
+
+  /** The take in flight, as the snapshot reports it. */
+  get recording(): Recording | null {
+    return this.recordings?.current ?? null;
+  }
+
+  /**
+   * Wind everything down. For a server shutting down with a take still open,
+   * which would otherwise leave a truncated file with no moov box in it.
+   */
+  async closeRecording(): Promise<void> {
+    this.clearTimers();
+    await this.recordings?.close();
+  }
+
+  /**
+   * Arm the end-of-script stop, or stand it down.
+   *
+   * Called from `report` whenever the queue has just changed length. The stop
+   * is scheduled rather than immediate — see `RECORD_TAIL_SECONDS` — and the
+   * schedule is dropped the moment there is another line to say, which is what
+   * makes a comment queued during the tail extend the take instead of ending
+   * it early.
+   */
+  private considerTail(): void {
+    const live = this.recordings?.current ?? null;
+    if (live === null || !live.autoStop || this.queue.length > 0) {
+      this.clearTail();
+      return;
+    }
+    if (this.tailTimer !== null) return;
+    this.tailTimer = setTimeout(() => {
+      this.tailTimer = null;
+      // Re-read rather than trusting the schedule: the queue may have been
+      // refilled and drained again inside the tail, and a turn may have been
+      // started by a `say` that never touched the queue length this saw.
+      const still = this.recordings?.current ?? null;
+      if (still === null || !still.autoStop) return;
+      if (this.queue.length > 0 || this.state.speaking) return;
+      this.stopRecording(still.session);
+    }, RECORD_TAIL_SECONDS * 1000);
+    this.tailTimer.unref?.();
+  }
+
+  private clearTail(): void {
+    if (this.tailTimer === null) return;
+    clearTimeout(this.tailTimer);
+    this.tailTimer = null;
+  }
+
+  private clearFlush(): void {
+    if (this.flushTimer === null) return;
+    clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+  }
+
+  private clearTimers(): void {
+    this.clearTail();
+    this.clearFlush();
+  }
+
   // --- upstream (viewer -> server) ------------------------------------------
 
   /** Take one report from a viewer. Returns the newest sequence number. */
@@ -363,6 +568,9 @@ export class Hub {
     if (this.events.length > EVENT_LOG_MAX) {
       this.events.splice(0, this.events.length - EVENT_LOG_MAX);
     }
+    // After the events, because every one of them above can be the thing that
+    // emptied the queue. See `considerTail`.
+    this.considerTail();
     this.wake();
     return this.seq;
   }
@@ -400,6 +608,11 @@ export class Hub {
       // to "is the voice up" from a server that is not looking at it.
       speech: this.speech?.current ?? ('absent' satisfies SpeechState),
       queue: this.queue.list(),
+      // Read off the setup rather than held beside it. See `Standing.paused`.
+      paused: this.standing.paused,
+      // The server's own, like `speech` and for the same reason: the bytes are
+      // arriving here. See `recordingSchema`.
+      recording: this.recordings?.current ?? null,
       // Omitted rather than sent as null when there are none: the field means
       // "this server knows where it is serving from", and a key holding null
       // would be a server claiming to know and answering nowhere.

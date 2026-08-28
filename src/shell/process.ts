@@ -2,7 +2,8 @@ import { type ChildProcess, type SpawnOptions, spawn as spawnProcess } from 'nod
 import { closeSync, constants as fsConstants, openSync } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { type ServerRoots, snapshotSchema } from '../protocol';
-import { controlPort, controlURL, type ShellPaths, ttsPort } from './config';
+import { askSidecar, type SpeechEndpoint, speechEndpoint } from '../speech/sidecar';
+import { controlPort, controlURL, type ShellPaths } from './config';
 
 const DEFAULT_READY_TIMEOUT_MS = 20_000;
 const DEFAULT_PROBE_TIMEOUT_MS = 1_000;
@@ -30,10 +31,10 @@ export interface ControlProcessOptions {
 
 export interface TtsProcessOptions {
   paths: ShellPaths;
-  port?: number;
+  /** Where the sidecar answers. Defaults to this checkout's socket. */
+  endpoint?: SpeechEndpoint;
   logFile?: string;
   spawn?: SpawnLike;
-  fetch?: FetchLike;
   probeTimeoutMs?: number;
   stopTimeoutMs?: number;
 }
@@ -404,19 +405,22 @@ export class ControlProcess {
       this.paths.dist,
       '--slides',
       this.paths.slides,
+      '--scripts',
+      this.paths.scripts,
       '--motions',
       this.paths.motions,
+      '--recordings',
+      this.paths.recordings,
     ];
   }
 }
 
 /** A sidecar child is optional and is also never claimed when already running. */
 export class TtsProcess {
-  readonly port: number;
+  readonly endpoint: SpeechEndpoint;
   private readonly paths: ShellPaths;
   private readonly logFile: string | undefined;
   private readonly spawn: SpawnLike;
-  private readonly fetch: FetchLike;
   private readonly probeTimeoutMs: number;
   private readonly stopTimeoutMs: number;
   private child: ChildProcess | null = null;
@@ -427,10 +431,9 @@ export class TtsProcess {
 
   constructor(options: TtsProcessOptions) {
     this.paths = options.paths;
-    this.port = options.port ?? ttsPort();
+    this.endpoint = options.endpoint ?? speechEndpoint();
     this.logFile = options.logFile;
     this.spawn = options.spawn ?? spawnProcess;
-    this.fetch = options.fetch ?? fetch;
     this.probeTimeoutMs = options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
     this.stopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
   }
@@ -446,7 +449,7 @@ export class TtsProcess {
   /** Start only when the checkout has the private Python environment. */
   async start(): Promise<void> {
     if (!(await executable(this.paths.ttsPython))) return;
-    if (await ttsAPIReady(this.port, this.fetch, this.probeTimeoutMs)) return;
+    if (await ttsAPIReady(this.endpoint, this.probeTimeoutMs)) return;
     // Model loading takes the better part of a minute, so this one is started
     // and never awaited — which leaves a longer gap than the control server's
     // between a quit and the spawn it has to beat.
@@ -455,9 +458,13 @@ export class TtsProcess {
     const log = logStdio(this.logFile);
     let child: ChildProcess;
     try {
-      child = this.spawn(this.paths.ttsPython, ['server.py', '--port', String(this.port)], {
+      child = this.spawn(this.paths.ttsPython, ['server.py', ...sidecarArgs(this.endpoint)], {
         cwd: this.paths.tts,
-        env: childEnv({ HASHIDATE_TTS_PORT: String(this.port) }),
+        // Told on the command line and in the environment both. The argument is
+        // what this child binds; the variable is what a process it starts would
+        // read, and it is also what makes a `ps` line say where the voice is
+        // rather than only that there is one.
+        env: childEnv(sidecarEnv(this.endpoint)),
         stdio: log.stdio,
         windowsHide: true,
       });
@@ -494,17 +501,28 @@ export class TtsProcess {
   }
 }
 
-async function ttsAPIReady(
-  port: number,
-  fetchImpl: FetchLike,
-  timeoutMs: number,
-): Promise<boolean> {
+/** How the sidecar is told where to answer, on its own command line. */
+function sidecarArgs(endpoint: SpeechEndpoint): string[] {
+  return endpoint.kind === 'socket' ? ['--uds', endpoint.path] : ['--port', String(endpoint.port)];
+}
+
+/** The same thing as an environment, for a child that reads it that way. */
+function sidecarEnv(endpoint: SpeechEndpoint): Record<string, string> {
+  return endpoint.kind === 'socket'
+    ? { HASHIDATE_TTS_SOCKET: endpoint.path }
+    : { HASHIDATE_TTS_PORT: String(endpoint.port) };
+}
+
+/**
+ * Whether a sidecar is already answering, which is the only reason this shell
+ * does not start one. A socket file with nothing behind it fails to connect and
+ * is therefore not one — the sidecar clears it on the way up.
+ */
+async function ttsAPIReady(endpoint: SpeechEndpoint, timeoutMs: number): Promise<boolean> {
   try {
-    const response = await fetchImpl(`http://127.0.0.1:${port}/health`, {
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!response.ok) return false;
-    const body: unknown = await response.json();
+    const reply = await askSidecar(endpoint, '/health', { timeoutMs });
+    if (reply.status < 200 || reply.status > 299) return false;
+    const body: unknown = JSON.parse(reply.body.toString('utf8'));
     return typeof body === 'object' && body !== null && 'ready' in body;
   } catch {
     return false;

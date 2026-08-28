@@ -21,6 +21,7 @@ import { getLocale, pick } from '@/i18n/locale';
 import type { MessageKey } from '@/i18n/messages';
 import { translate } from '@/i18n/translate';
 import { sendMonitorShot } from '../monitor-link';
+import { StageRecorder } from '../record';
 import { stageMode } from '../stage-mode';
 import { BrowserVoice } from '../voice';
 import { BackdropStage } from './backdrop';
@@ -75,6 +76,36 @@ export interface LoadedAvatar {
   materials: MaterialSet;
   /** Everything the profile, wardrobe or sway layer could not resolve. */
   problems: string[];
+}
+
+/**
+ * The composed picture, described so that something else can draw it.
+ *
+ * What is on screen is not one canvas and cannot be captured as one: the
+ * document layer is DOM canvases the browser composites *behind* a WebGL canvas
+ * — see `SlideStage` for why the page is not a textured quad — and the flat
+ * colour behind both is CSS. Anything that has to produce a single frame of
+ * this, which so far means the recorder, has to be told where the pieces are.
+ *
+ * Every rectangle is in the stage's own CSS pixels, so a consumer drawing at
+ * some other size scales all of them by one factor and nothing moves relative
+ * to anything else.
+ */
+export interface StageFrame {
+  /** The box every rectangle here is stated against. */
+  stage: StageSize;
+  /** The character's picture: the WebGL canvas, and where it sits. */
+  avatar: { canvas: HTMLCanvasElement; rect: Rect };
+  /** The document layer, or null when none is up. See `SlideStage.layers`. */
+  slides: { rect: Rect; canvases: Array<{ canvas: HTMLCanvasElement; opacity: number }> } | null;
+  /**
+   * What fills the frame under both layers, as a CSS colour.
+   *
+   * `rgba(0, 0, 0, 0)` on a source opened transparent, which is the honest
+   * answer: there is nothing behind it here, and what a recording puts there is
+   * whatever it started the frame with. See `StageMode.transparent`.
+   */
+  background: string;
 }
 
 export type RuntimeStatus =
@@ -155,6 +186,19 @@ export class AvatarRuntime {
    */
   private readonly voice = new BrowserVoice({ muted: stageMode().muted });
 
+  /**
+   * One recorder for the page, on the same reasoning the voice is one.
+   *
+   * It lives here rather than beside the control channel because it needs both
+   * halves of what this class owns and nothing else has either: the frame, at
+   * the one moment in the loop it can be read, and the node the voice is coming
+   * out of. See `src/viewer/record.ts`.
+   */
+  private readonly recorder = new StageRecorder({
+    onFrame: (fn) => this.onFrame(fn),
+    openAudio: () => this.voice.captureStream(),
+  });
+
   private framings: Framings | null = null;
   private frame: CameraFrame = 'bust';
   /** How far the camera has been moved off the framing. See `Shot`. */
@@ -184,6 +228,17 @@ export class AvatarRuntime {
   private readonly statusListeners = new Set<Listener<RuntimeStatus>>();
   private readonly hudListeners = new Set<Listener<Hud>>();
   private readonly cameraListeners = new Set<Listener<CameraFrame>>();
+  /**
+   * Called at the end of every frame, with the render still on the buffer.
+   *
+   * A separate set from the three above because it is not a readout: the others
+   * are sampled and this one is not allowed to miss a frame. A WebGL canvas is
+   * only readable between the draw and the browser's next composite, so a
+   * listener that wanted to copy the picture and was told about it a moment
+   * later would get an empty one — which is why this is called from inside the
+   * loop rather than promised on a timer, and why nothing here is throttled.
+   */
+  private readonly frameListeners = new Set<Listener<StageFrame>>();
 
   private fpsAcc = 0;
   private fpsFrames = 0;
@@ -330,6 +385,71 @@ export class AvatarRuntime {
     this.cameraListeners.add(fn);
     fn(this.frame);
     return () => this.cameraListeners.delete(fn);
+  }
+
+  /**
+   * Every frame, immediately after it is drawn. See `frameListeners`.
+   *
+   * Nothing subscribes to this in the ordinary course of a broadcast; it exists
+   * for the recorder, and costs one empty loop a frame while nobody is
+   * recording.
+   */
+  onFrame(fn: Listener<StageFrame>): () => void {
+    this.frameListeners.add(fn);
+    return () => this.frameListeners.delete(fn);
+  }
+
+  /**
+   * Where the pieces of the picture are, right now. See `StageFrame`.
+   *
+   * Built per call rather than kept, because every field of it is derived from
+   * something that moves — a placement command, a page turn, a resize — and a
+   * cached copy would be a fourth thing that has to be invalidated by all
+   * three.
+   */
+  stageFrame(): StageFrame {
+    const el = this.renderer.domElement;
+    return {
+      stage: { ...this.stage },
+      avatar: {
+        canvas: el,
+        // Read off the element rather than recomputed: `resize` is the one path
+        // that places it, and asking it twice is how the two answers come to
+        // differ. See `resize`.
+        rect: {
+          left: Number.parseFloat(el.style.left) || 0,
+          top: Number.parseFloat(el.style.top) || 0,
+          width: el.clientWidth,
+          height: el.clientHeight,
+        },
+      },
+      slides: this.slides.layers(),
+      // Read off the element rather than restated from `flat`. What is behind
+      // both layers is CSS — `--bg`, or nothing at all on a transparent source
+      // — and this is the same string the browser is painting with, including
+      // the `rgba(0, 0, 0, 0)` that a transparent source computes to and that a
+      // 2D context correctly draws as nothing.
+      background: getComputedStyle(this.host).backgroundColor,
+    };
+  }
+
+  /**
+   * Start or stop recording this renderer's composed frame.
+   *
+   * Whether this page should be the one recording is settled before the call
+   * gets here; see `RendererControls.setRecording`.
+   */
+  setRecording(
+    on: boolean,
+    take: { session: string; width: number; height: number; fps: number },
+  ): void {
+    if (on) void this.recorder.start(take);
+    else void this.recorder.stop();
+  }
+
+  /** Why the last take would not start, or null. Rides on the report. */
+  get recordingError(): string | null {
+    return this.recorder.error;
   }
 
   private setStatus(status: RuntimeStatus): void {
@@ -834,6 +954,11 @@ export class AvatarRuntime {
     this.renderer.setAnimationLoop(null);
     this.resizeObserver.disconnect();
     this.timer.dispose();
+    // Before the voice, which is where the take's audio track comes from, and
+    // before the loop stops feeding it frames. A page closed mid-take still
+    // posts its last chunk, so the file on the server is closed rather than
+    // left for the watchdog.
+    void this.recorder.stop();
     this.voice.dispose();
     this.unmount();
     this.slides.dispose();
@@ -844,6 +969,7 @@ export class AvatarRuntime {
     this.statusListeners.clear();
     this.hudListeners.clear();
     this.cameraListeners.clear();
+    this.frameListeners.clear();
   }
 
   // --- frame loop -----------------------------------------------------------
@@ -884,6 +1010,15 @@ export class AvatarRuntime {
     }
 
     this.renderer.render(this.scene, this.camera);
+
+    // After the render and inside the same frame, which is the whole contract:
+    // the drawing buffer is readable here and is gone by the next tick. See
+    // `frameListeners`. The frame is built only when somebody is listening,
+    // because assembling it reads a computed style.
+    if (this.frameListeners.size > 0) {
+      const frame = this.stageFrame();
+      for (const fn of this.frameListeners) fn(frame);
+    }
   }
 
   private publishHud(cur: LoadedAvatar): void {

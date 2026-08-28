@@ -22,6 +22,8 @@ import {
   emotionVectorSchema,
   fingerNameSchema,
   placementSchema,
+  RECORD_DEFAULTS,
+  RECORD_LIMITS,
   sideSchema,
   slidePlacementSchema,
   turnSchema,
@@ -310,6 +312,84 @@ export const deckTextResponseSchema = z.object({
 });
 
 export type DeckTextResponse = z.infer<typeof deckTextResponseSchema>;
+
+/**
+ * One script on disk, as much of it as a picker needs.
+ *
+ * Not the script itself. A run of turns is the largest thing in `show/` that is
+ * text, and the panel draws a row per file — so what travels is what a row
+ * shows and what a decision is made on: what it is called, how long it is, and
+ * when it was saved. The turns arrive by being queued, which is the only thing
+ * anybody does with them.
+ *
+ * `title` is the script's own, a plain string rather than a `Localized`, on the
+ * rule `scriptSchema` states: a script is written in one language because its
+ * lines are. Absent when the file gives none, and then the id is the name.
+ */
+export const scriptSummarySchema = z.object({
+  /** The filename without its extension. See `loadScript`. */
+  id: z.string(),
+  title: z.string().optional(),
+  /** How many turns it queues, and how many commands it sets up first. */
+  lines: z.number(),
+  setup: z.number(),
+  bytes: z.number(),
+  /** Epoch seconds of the file's last modification, as a document's is. */
+  at: z.number(),
+});
+
+export type ScriptSummary = z.infer<typeof scriptSummarySchema>;
+
+/**
+ * The reply to `GET /api/scripts`: what is there, and what would not parse.
+ *
+ * Both halves, on the same rule the motion roster follows. A file an operator
+ * saved into the directory and that is not a script has to be visible as
+ * exactly that — a name missing from a list reads as a name typed wrong, which
+ * is the one thing it is not.
+ */
+export const scriptsResponseSchema = z.object({
+  scripts: z.array(scriptSummarySchema),
+  errors: z.array(z.object({ id: z.string(), error: z.string() })),
+});
+
+export type ScriptsResponse = z.infer<typeof scriptsResponseSchema>;
+
+/**
+ * The recording the server has open, if there is one.
+ *
+ * The server's own observation rather than a viewer's report, on the same
+ * footing as `speech`: the bytes are arriving here and the file is open here,
+ * so this is the one process that can say whether a recording is actually
+ * being written. A renderer that believed it was recording into a file that
+ * was never opened is the failure this shape exists to make impossible.
+ *
+ * `bytes` is what has landed on disk. It is the only honest progress figure —
+ * a recorder that has silently stopped producing chunks looks exactly like one
+ * that is still going until this stops climbing.
+ */
+export const recordingSchema = z.object({
+  session: z.string(),
+  /** Absolute path of the file being written. */
+  file: z.string(),
+  /**
+   * What the renderer's encoder actually chose, or null before the first chunk.
+   * The container decides the extension, so this is what says whether the
+   * result is the mp4 that was asked for.
+   */
+  mime: z.string().nullable(),
+  /** Epoch seconds the recording was opened. */
+  since: z.number(),
+  bytes: z.number(),
+  /** Whether the end of the queue ends the recording. See `Recordings`. */
+  autoStop: z.boolean(),
+  /** The output frame, as the renderer was asked for it. */
+  width: z.number(),
+  height: z.number(),
+  fps: z.number(),
+});
+
+export type Recording = z.infer<typeof recordingSchema>;
 
 /**
  * What the set-once layer is running, so a remote fader can be drawn at the
@@ -602,6 +682,117 @@ export const historyResponseSchema = z.object({
 
 export type HistoryResponse = z.infer<typeof historyResponseSchema>;
 
+/**
+ * The body of `POST /api/scripts/run`: put a script on the queue.
+ *
+ * Doing on the server what `runScript` does from a client — clear, setup, queue
+ * — so that a panel can run a file it cannot read. The panel has no filesystem;
+ * the alternative was shipping the whole script to the browser so it could send
+ * the turns back, which is the same run of turns crossing the wire twice for
+ * nothing.
+ *
+ * `pause` is why this exists as more than a convenience. A script queued to be
+ * *recorded* must not start on arrival: the shot is framed after the lines are
+ * loaded and before the first one is said. Holding is therefore the default,
+ * and a caller that wants the old behaviour — an orchestrator running a segment
+ * live — says `pause: false`.
+ *
+ * `replace` is not the default, on the rule the queue follows everywhere else:
+ * dropping what somebody else queued is a decision, not a side effect of
+ * loading a file.
+ */
+export const scriptRunSchema = z.object({
+  id: z.string(),
+  /** Empty the queue first. Absent adds to the end of it. */
+  replace: z.boolean().optional(),
+  /** Hold the queue rather than letting it start. Absent holds. */
+  pause: z.boolean().optional(),
+});
+
+export type ScriptRun = z.infer<typeof scriptRunSchema>;
+
+/**
+ * The reply to `POST /api/scripts/run`.
+ *
+ * The queue as it now stands, plus what was run and whether the setup got
+ * anywhere. Those last two are separate because they have separate fates: the
+ * lines belong to the server's queue and survive having no renderer attached,
+ * while the setup is live commands and is simply refused when there is nothing
+ * to apply them to. A caller told only "ok" would have no way to know that the
+ * avatar, the costume and the framing its script asked for never happened.
+ */
+export const scriptRunResponseSchema = queueResponseSchema.extend({
+  id: z.string(),
+  /** How many setup commands were sent, and how many viewers took them. */
+  setup: z.number(),
+  setupDelivered: z.number(),
+  /** Whether the queue was left held. See `pauseCommandSchema`. */
+  paused: z.boolean(),
+});
+
+export type ScriptRunResponse = z.infer<typeof scriptRunResponseSchema>;
+
+/**
+ * The body of `POST /api/record/start`.
+ *
+ * The size is the output frame and is unrelated to the size of the window the
+ * stage happens to be in; see `recordCommandSchema`. The defaults are applied
+ * here rather than in the renderer so that what the panel asked for and what
+ * the server has open are the same numbers.
+ */
+export const recordStartSchema = z.object({
+  /** What to call the file. A script id, usually. Timestamped either way. */
+  name: z.string().optional(),
+  width: z
+    .number()
+    .int()
+    .min(RECORD_LIMITS.width.min)
+    .max(RECORD_LIMITS.width.max)
+    .default(RECORD_DEFAULTS.width),
+  height: z
+    .number()
+    .int()
+    .min(RECORD_LIMITS.height.min)
+    .max(RECORD_LIMITS.height.max)
+    .default(RECORD_DEFAULTS.height),
+  fps: z
+    .number()
+    .int()
+    .min(RECORD_LIMITS.fps.min)
+    .max(RECORD_LIMITS.fps.max)
+    .default(RECORD_DEFAULTS.fps),
+  /** End the take when the queue runs out. See `RECORD_TAIL_SECONDS`. */
+  autoStop: z.boolean().default(true),
+  /**
+   * Let a held queue go once the recording is actually rolling, rather than
+   * when this request is answered. The whole reason the two are one call.
+   */
+  release: z.boolean().default(false),
+});
+
+export type RecordStart = z.infer<typeof recordStartSchema>;
+
+/**
+ * The body of `POST /api/record/stop`.
+ *
+ * `session` is optional and is a guard rather than a selector — there is only
+ * ever one take open. Given, it refuses to stop a take that is not the one the
+ * caller was looking at, which is the case an operator hits by leaving a stale
+ * panel open on a second screen.
+ */
+export const recordStopSchema = z.object({
+  session: z.string().optional(),
+});
+
+export type RecordStop = z.infer<typeof recordStopSchema>;
+
+/** The reply to either recording route: the take, or null once it has closed. */
+export const recordResponseSchema = z.object({
+  recording: recordingSchema.nullable(),
+});
+
+export type RecordResponse = z.infer<typeof recordResponseSchema>;
+
 // --- server -> orchestrator -------------------------------------------------
 
 /**
@@ -624,16 +815,15 @@ export const speechStateSchema = z.enum(['absent', 'loading', 'ready', 'down']);
 export type SpeechState = z.infer<typeof speechStateSchema>;
 
 /**
- * The three directories a control server was started on.
+ * The directories a control server was started on.
  *
  * Here because a listener on the port is not the same thing as *this* server.
  * Two checkouts of this project answer `/api/state` identically, and a launcher
  * that finds one already running has to decide whether to use it or to start
  * its own — a decision that cannot be made from a port number. The document
  * root is the one that decides it, since it is the build the windows would be
- * loaded from; the other two are here because a launcher that opens the show
- * directories in a file manager would otherwise open its own while driving
- * somebody else's.
+ * loaded from; the show directories are here because a launcher that opens them
+ * in a file manager would otherwise open its own while driving somebody else's.
  *
  * Absolute paths, and loopback-only by the same licence condition as the rest
  * of this API. See `src/shell/process.ts` for the only consumer.
@@ -642,7 +832,9 @@ export const serverRootsSchema = z.object({
   /** What `/` is served from. `dist` unless `--root` said otherwise. */
   document: z.string(),
   slides: z.string(),
+  scripts: z.string(),
   motions: z.string(),
+  recordings: z.string(),
 });
 
 export type ServerRoots = z.infer<typeof serverRootsSchema>;
@@ -688,6 +880,20 @@ export const snapshotSchema = z.object({
   speech: speechStateSchema,
   /** The pending turns, in the order they will be said. See `queue.ts`. */
   queue: z.array(queueEntrySchema),
+  /**
+   * Whether the queue is held. See `pauseCommandSchema`.
+   *
+   * The server's own, read off the setup it re-delivers on connect rather than
+   * off a viewer's report — it is a standing setting, and a renderer that has
+   * not attached yet has no opinion about it. That is what makes a script
+   * loaded into a held queue stay held through a reload of the stage.
+   */
+  paused: z.boolean(),
+  /**
+   * The recording being written, or null. See `recordingSchema` for why this
+   * is the server's observation rather than a renderer's.
+   */
+  recording: recordingSchema.nullable(),
   /**
    * Where this server is serving from. See `serverRootsSchema`.
    *

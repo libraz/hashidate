@@ -86,6 +86,35 @@
   background: var(--ok);
 }
 
+/*
+ * A take is being written.
+ *
+ * Deliberately not `--live`, which the token file reserves for the character
+ * speaking: those two are true at different times and the header is read at a
+ * glance from across a room, so a second thing in the same colour would make
+ * both unreadable. The record light is its own mark, and it is only ever on the
+ * page while bytes are actually landing on disk.
+ */
+.taking {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  height: var(--control-height);
+  border: 1px solid var(--bad);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bad) 12%, var(--surface-raised));
+  color: var(--bad);
+  font-size: var(--text-xs);
+}
+
+.takingDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--bad);
+}
+
 /* --- transport ------------------------------------------------------------ */
 
 .transport {

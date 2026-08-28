@@ -34,6 +34,7 @@ describe('what counts as standing', () => {
     ['voice', { cmd: 'voice', preset: 'bright' }],
     ['idle', { cmd: 'idle', on: true }],
     ['look', { cmd: 'look', amount: 0.5 }],
+    ['pause', { cmd: 'pause', on: true }],
     ['emotion', { cmd: 'emotion', vec: { joy: 1 } }],
   ])('keeps %s, because its effect outlives the moment it arrived', (verb, command) => {
     expect(standing.record(command)).toBe(true);
@@ -52,6 +53,7 @@ describe('what counts as standing', () => {
     ['gesture', { cmd: 'gesture', id: 'wave' }],
     ['hop', { cmd: 'hop' }],
     ['point', { cmd: 'point', azimuth: 30 }],
+    ['record', { cmd: 'record', on: true, session: 'r1' }],
   ])('drops %s, which is a moment rather than a setup', (_verb, command) => {
     expect(standing.record(command)).toBe(false);
     expect(standing.commands()).toEqual([]);
@@ -65,6 +67,19 @@ describe('what counts as standing', () => {
     expect(standing.record({ cmd: 'debug', on: true })).toBe(false);
     expect(standing.commands()).toEqual([]);
     expect(standing.empty).toBe(true);
+  });
+
+  it('keeps the hold, so a stage reloaded mid-setup comes back held', () => {
+    expect(standing.paused).toBe(false);
+    standing.record({ cmd: 'pause', on: true });
+    expect(standing.paused).toBe(true);
+    standing.record({ cmd: 'pause', on: false });
+    expect(standing.paused).toBe(false);
+  });
+
+  it('reads a hold with no argument as a hold, as the schema states', () => {
+    standing.record({ cmd: 'pause' });
+    expect(standing.paused).toBe(true);
   });
 
   it('starts empty and says so', () => {

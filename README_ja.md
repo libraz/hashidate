@@ -30,10 +30,11 @@ hashidate はアプリケーションではなくアダプタです。依存関�
 | **ゲーム画面の上での実況** | 背景を置かずにキャプチャの上へ。合成は OBS の仕事です。 | `?transparent=1&place=bottom-right:0.32x0.6` |
 | **スライドを使った説明** | 後ろに PDF を出し、ページ送りを行に載せます。スライドはテキストとして読めるので、モデルがその台本を書けます。 | `deck`、`say --slide 2` |
 | **台本どおりの進行** | モデルはどこにも要りません。シェルスクリプトも立派なオーケストレータです。 | `yarn ctl say …` |
+| **一本撮って動画にする** | 台本を読み込み、合成が進んでいるキューを抱えたまま画角を決め、録画を押します。mp4 が `show/recordings/` に落ちます。 | パネルの録画タブ |
 | **手で回す配信** | パネルが操作面の全部で、その操作はすべて同じ API を通ります。 | `/panel/` |
 | **組んだモデルの確認** | そのアバターに何を頼めるかは、モデル自身のシェイプとメッシュから発見します。 | `yarn ctl vocab` |
 
-6 つとも実際のコマンド付きで：[使いどころ](docs/ja/use-cases.md)。
+7 つとも実際のコマンド付きで：[使いどころ](docs/ja/use-cases.md)。
 
 ## 動かすのに必要なもの
 
@@ -56,7 +57,7 @@ Python 環境が無ければ作り、クリップを検査し、サイドカー�
 
 声が無くても全部動きます。テキストから組み立てた尺で、無音のまま口だけが動きます。テストが走っているのもこの状態です。動くと知っておく価値はありますが、配信に出したい状態ではありません。
 
-声を差し替えられるのは、モデルを差し替えられるのと同じ理由です。レンダラは自分のオリジンに音声を求め、サーバが `127.0.0.1:8770` へ中継するので、`POST /speak` に `{ text, reading? }` を受けて WAV を返し `GET /health` に答えるものなら何でも代わりになります。向き先は `HASHIDATE_TTS_PORT` で動かせます。[音声](docs/ja/speech.md)を参照してください。
+声を差し替えられるのは、モデルを差し替えられるのと同じ理由です。レンダラは自分のオリジンに音声を求め、サーバが UNIX ソケットへ中継するので、`POST /speak` に `{ text, reading? }` を受けて WAV を返し `GET /health` に答えるものなら何でも代わりになります。向き先は `HASHIDATE_TTS_SOCKET` で動かせますし、ポートで話す代役なら `HASHIDATE_TTS_PORT` で指せます。[音声](docs/ja/speech.md)を参照してください。
 
 詳細と初回の流れ：[はじめかた](docs/ja/getting-started.md)。
 
@@ -68,7 +69,7 @@ yarn install
 make dev
 ```
 
-ビューアが `127.0.0.1:5173`、制御 API が `127.0.0.1:8765`、音声サイドカーは環境が作ってあれば `127.0.0.1:8770` に立ちます。`yarn dev` なら前の 2 つだけです。
+ビューアが `127.0.0.1:5173`、制御 API が `127.0.0.1:8765`、音声サイドカーは環境が作ってあれば `tools/tts/.run/speech.sock` のソケットに立ちます。`yarn dev` なら前の 2 つだけです。
 
 別のターミナルから動かします。
 
@@ -93,7 +94,7 @@ yarn ctl watch                                  # 発話のイベントを追う
 
 動かす：[制御 API](docs/ja/control-api.md)、[コマンド](docs/ja/commands.md)、[プリセット](docs/ja/performances.md)、[原稿と演出](docs/ja/lines-and-cues.md)、[台本](docs/ja/scripts.md)、[MCP アダプタ](docs/ja/mcp.md)。
 
-絵と音：[音声](docs/ja/speech.md)、[ステージ](docs/ja/stage.md)、[スライド](docs/ja/slides.md)、[モーション](docs/ja/motions.md)、[2 つの面](docs/ja/surfaces.md)。
+絵と音：[音声](docs/ja/speech.md)、[ステージ](docs/ja/stage.md)、[スライド](docs/ja/slides.md)、[モーション](docs/ja/motions.md)、[録画](docs/ja/recording.md)、[操作面](docs/ja/surfaces.md)。
 
 その下：[構成](docs/ja/architecture.md)、[アバター](docs/ja/avatars.md)。
 

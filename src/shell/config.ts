@@ -8,9 +8,6 @@ export const LOOPBACK_HOST = '127.0.0.1';
 /** The control server's command-line default. */
 export const DEFAULT_CONTROL_PORT = 8765;
 
-/** The optional speech sidecar's command-line default. */
-export const DEFAULT_TTS_PORT = 8770;
-
 export const CONTROL_TITLE = 'hashidate — Control';
 export const STAGE_TITLE = 'hashidate — Stage';
 
@@ -31,6 +28,7 @@ export interface ShellPaths {
   slides: string;
   scripts: string;
   motions: string;
+  recordings: string;
   tts: string;
   ttsPython: string;
   /**
@@ -58,6 +56,7 @@ export function checkoutPaths(sourceFile = fileURLToPath(import.meta.url)): Shel
     slides: resolve(root, 'show/slides'),
     scripts: resolve(root, 'show/scripts'),
     motions: resolve(root, 'show/motions'),
+    recordings: resolve(root, 'show/recordings'),
     tts,
     ttsPython: resolve(tts, '.venv/bin/python'),
     tsx: resolve(root, 'node_modules/tsx/dist/loader.mjs'),
@@ -76,19 +75,21 @@ export function controlPort(value = process.env.HASHIDATE_CONTROL_PORT): number 
   return portFromEnvironment(value, DEFAULT_CONTROL_PORT);
 }
 
-export function ttsPort(value = process.env.HASHIDATE_TTS_PORT): number {
-  return portFromEnvironment(value, DEFAULT_TTS_PORT);
-}
-
 /**
- * The three directories a server started on this checkout would report.
+ * The directories a server started on this checkout would report.
  *
  * The mirror of what `src/server/main.ts` hands its hub, and the thing a probe
  * compares against before deciding that a server already on the port is this
  * checkout's rather than another one's. See `serverRootsSchema`.
  */
 export function expectedRoots(paths: ShellPaths): ServerRoots {
-  return { document: paths.dist, slides: paths.slides, motions: paths.motions };
+  return {
+    document: paths.dist,
+    slides: paths.slides,
+    scripts: paths.scripts,
+    motions: paths.motions,
+    recordings: paths.recordings,
+  };
 }
 
 export function loopbackURL(port: number, path: string): string {

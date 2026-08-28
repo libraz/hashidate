@@ -27,6 +27,8 @@ function build() {
   const loads: string[] = [];
   /** Every readout switch that reached the page, in order. */
   const readout: boolean[] = [];
+  /** Every recording instruction that reached the page, in order. */
+  const takes: Array<{ on: boolean; session: string }> = [];
   /** What the renderer is showing, so a redundant swap can answer false. */
   let standing = 'a';
   const renderer: RendererControls = {
@@ -36,6 +38,9 @@ function build() {
     ],
     setDebug: (on) => {
       readout.push(on);
+    },
+    setRecording: (on, take) => {
+      takes.push({ on, session: take.session });
     },
     load: (id) => {
       if (!renderer.avatars.some((avatar) => avatar.id === id)) return false;
@@ -47,7 +52,7 @@ function build() {
   };
 
   const client = new ControlClient(session, { renderer });
-  return { client, session, renderer, loads, readout };
+  return { client, session, renderer, loads, readout, takes };
 }
 
 /** A second session, standing in for the one a swap would build. */
@@ -71,6 +76,36 @@ describe('ControlClient.apply', () => {
   it('turns a tune into a moved fader', () => {
     harness.client.apply({ cmd: 'tune', idle: { breathDepth: 1.9 } });
     expect(harness.session.tuning().idle.breathDepth).toBe(1.9);
+  });
+
+  it('turns a pause into a held queue, without touching the line on air', () => {
+    harness.client.apply({ cmd: 'say', id: 'turn-1', text: 'あ' });
+    harness.client.apply({ cmd: 'pause', on: true });
+    expect(harness.session.paused).toBe(true);
+    expect(harness.session.queue.map((turn) => turn.id)).toEqual(['turn-1']);
+    harness.client.apply({ cmd: 'pause', on: false });
+    expect(harness.session.paused).toBe(false);
+  });
+
+  it('reads a pause with no argument as a hold, as the schema states', () => {
+    harness.client.apply({ cmd: 'pause' });
+    expect(harness.session.paused).toBe(true);
+  });
+
+  it('hands a record straight to the page, since it reaches nothing in the scene', () => {
+    harness.client.apply({
+      cmd: 'record',
+      on: true,
+      session: 'r1',
+      width: 1280,
+      height: 720,
+      fps: 60,
+    });
+    harness.client.apply({ cmd: 'record', on: false, session: 'r1' });
+    expect(harness.takes).toEqual([
+      { on: true, session: 'r1' },
+      { on: false, session: 'r1' },
+    ]);
   });
 
   it('ignores a verb it has no case for rather than throwing', () => {
@@ -158,6 +193,12 @@ describe('an avatar swap', () => {
   it('asks the renderer to load rather than touching the session', () => {
     harness.client.apply({ cmd: 'avatar', id: 'b' });
     expect(harness.loads).toEqual(['b']);
+  });
+
+  it('does not hold a record behind it, since the load is part of what is being recorded', () => {
+    harness.client.apply({ cmd: 'avatar', id: 'b' });
+    harness.client.apply({ cmd: 'record', on: true, session: 'r1' });
+    expect(harness.takes).toEqual([{ on: true, session: 'r1' }]);
   });
 
   it('holds what arrives behind it until the new session is bound', () => {

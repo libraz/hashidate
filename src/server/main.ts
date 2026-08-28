@@ -6,7 +6,9 @@ import type { SpeechState } from '../protocol';
 import { Decks } from './decks';
 import { Hub } from './hub';
 import { Motions } from './motions';
+import { Recordings } from './recordings';
 import { handleApi } from './routes';
+import { Scripts } from './scripts';
 import { SIDECAR, SpeechWatch } from './speech';
 import { serveStatic } from './static';
 
@@ -29,7 +31,9 @@ import { serveStatic } from './static';
  * either — the viewer is same-origin, so allowing another origin would only
  * ever serve a page that is not ours.
  *
- * usage: yarn start [--port 8765] [--root dist] [--slides show/slides] [--motions show/motions]
+ * usage: yarn start [--port 8765] [--root dist] [--slides show/slides]
+ *                   [--scripts show/scripts] [--motions show/motions]
+ *                   [--recordings show/recordings]
  */
 
 const BIND = '127.0.0.1'; // do not change; see the module docstring
@@ -62,6 +66,29 @@ const SLIDES_PREFIX = '/slides';
  * stays on the machine it was written on. See `src/server/motions.ts`.
  */
 const DEFAULT_MOTIONS = 'show/motions';
+
+/**
+ * Where the runs of turns written down in advance are.
+ *
+ * Beside the documents and the gestures, and read the same way: the directory
+ * is the roster, a file dropped into it mid-broadcast is in the next listing,
+ * and nothing is served as bytes. A script reaches the runtime by being queued,
+ * never by being sent — see `src/server/scripts.ts`.
+ *
+ * The same default the CLI uses, so `yarn ctl play demo` and the panel's own
+ * picker are looking at one directory rather than two that happen to agree.
+ */
+const DEFAULT_SCRIPTS = 'show/scripts';
+
+/**
+ * Where a recorded take lands.
+ *
+ * The one directory under `show/` that this process writes rather than reads.
+ * It is still the same kind of thing as the others — material that belongs to a
+ * broadcast rather than to the build — which is why it lives with them and not
+ * under the document root, where the next `vite build` would delete it.
+ */
+const DEFAULT_RECORDINGS = 'show/recordings';
 
 /**
  * The two data directories pdf.js needs to draw a document it was not given the
@@ -105,7 +132,9 @@ function main(): void {
       port: { type: 'string' },
       root: { type: 'string' },
       slides: { type: 'string' },
+      scripts: { type: 'string' },
       motions: { type: 'string' },
+      recordings: { type: 'string' },
     },
   });
 
@@ -116,21 +145,36 @@ function main(): void {
   }
   const root = resolve(values.root ?? DEFAULT_ROOT);
   const slides = resolve(values.slides ?? DEFAULT_SLIDES);
+  const scriptsRoot = resolve(values.scripts ?? DEFAULT_SCRIPTS);
   const motionsRoot = resolve(values.motions ?? DEFAULT_MOTIONS);
+  const recordingsRoot = resolve(values.recordings ?? DEFAULT_RECORDINGS);
 
   const decks = new Decks(slides);
+  const scripts = new Scripts(scriptsRoot);
   const motions = new Motions(motionsRoot);
+  const recordings = new Recordings(recordingsRoot);
   const speech = new SpeechWatch();
   // The roots ride on the snapshot so that a launcher which finds this server
   // already running can tell whether it is the one for its own checkout. See
   // `serverRootsSchema`.
-  const hub = new Hub(decks, speech, { document: root, slides, motions: motionsRoot });
+  const hub = new Hub(
+    decks,
+    speech,
+    {
+      document: root,
+      slides,
+      scripts: scriptsRoot,
+      motions: motionsRoot,
+      recordings: recordingsRoot,
+    },
+    recordings,
+  );
   // Null on an install without the library, which is not a reason to refuse to
   // start: a document whose fonts are all embedded — most of them — draws
   // perfectly without either directory.
   const pdfjs = pdfjsRoot();
   const server = createServer((req, res) => {
-    if (handleApi(req, res, hub, decks, motions)) return;
+    if (handleApi(req, res, hub, { decks, motions, scripts })) return;
     if (req.method === 'GET' || req.method === 'HEAD') {
       // Same guard, same refusal to cache — the only difference is which root
       // the path is resolved against. See `serveStatic`.
@@ -168,15 +212,29 @@ function main(): void {
     process.exit(1);
   });
 
+  // A take is a file with a header that is only complete once it is closed, so
+  // a server killed mid-recording leaves one that will not open. This is the
+  // only thing here worth interrupting a shutdown for.
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    process.once(signal, () => {
+      void hub.closeRecording().finally(() => process.exit(0));
+    });
+  }
+
   server.listen(port, BIND, () => {
     console.log(`viewer   http://${BIND}:${port}/`);
     console.log(`control  http://${BIND}:${port}/api/`);
     // Printed whether or not the directory exists: the line an operator needs
     // is where to put a document, and that is most useful before there is one.
     console.log(`slides   ${slides}`);
-    // And where a motion goes, on the same reasoning: the line is worth most
-    // before the directory has anything in it.
+    // And where a script goes, and where a motion goes, on the same reasoning:
+    // the line is worth most before the directory has anything in it.
+    console.log(`scripts  ${scriptsRoot}`);
     console.log(`motions  ${motionsRoot}`);
+    // This one is where a take will be written rather than where anything is
+    // read from, which is worth saying before the first one is recorded into a
+    // directory the operator then has to go and find.
+    console.log(`takes    ${recordingsRoot}`);
     // And whether or not there is a voice, for the same reason. A sidecar that
     // was meant to be running and is not looks exactly like one that was never
     // installed until somebody says which of the two this is, and the moment to

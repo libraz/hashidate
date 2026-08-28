@@ -26,7 +26,6 @@ import {
   STAGE_TITLE,
   stageURL,
   TTS_LOG_NAME,
-  ttsPort,
 } from './config';
 import { ControlProcess, TtsProcess } from './process';
 import { type DisplayBounds, ShellState, STATE_FILE_NAME } from './state';
@@ -65,9 +64,12 @@ const singleInstance = app.requestSingleInstanceLock();
 const paths = checkoutPaths();
 const port = controlPort();
 const logs = logDirectory();
+// Where the sidecar answers is deliberately not passed to the control child.
+// Both work it out from their own copy of this checkout — see `speechEndpoint`
+// — so the launcher has nothing to keep in step, and a server an operator
+// started themselves reaches the same voice as one started from here.
 const tts = new TtsProcess({
   paths,
-  port: ttsPort(),
   ...(logs === null ? {} : { logFile: join(logs, TTS_LOG_NAME) }),
 });
 const control = new ControlProcess({
@@ -317,6 +319,10 @@ function buildMenu(): Menu {
     { label: 'Open Slides Folder', click: () => void openDirectory(paths.slides) },
     { label: 'Open Scripts Folder', click: () => void openDirectory(paths.scripts) },
     { label: 'Open Motions Folder', click: () => void openDirectory(paths.motions) },
+    // The one of the four that is an output rather than something brought to
+    // the broadcast, and the one an operator goes looking for straight after a
+    // take rather than before one.
+    { label: 'Open Recordings Folder', click: () => void openDirectory(paths.recordings) },
     { type: 'separator' },
     disabled(status.control),
     disabled(status.speech),

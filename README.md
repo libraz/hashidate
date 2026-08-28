@@ -30,10 +30,11 @@ Swap the model, the provider or the framework: nothing on the right-hand side ch
 | **Commentary over a game** | She stands on the game capture with nothing behind her; OBS composites. | `?transparent=1&place=bottom-right:0.32x0.6` |
 | **A talk given from slides** | A PDF behind her, page turns riding on the lines. The deck is readable as text, so a model can write the script for it. | `deck`, `say --slide 2` |
 | **A scripted segment** | No model anywhere. A shell script is a perfectly good orchestrator. | `yarn ctl say …` |
+| **A segment recorded to a file** | Load a script, frame the shot against a queue that is already synthesising, press record. The mp4 lands in `show/recordings/`. | The panel's Recording tab |
 | **A broadcast run by hand** | The panel is a full operating surface, and everything it does goes through the same API. | `/panel/` |
 | **Checking a model you rigged** | What the avatar can be asked for is discovered from its own shapes and meshes. | `yarn ctl vocab` |
 
-Worked versions of all six: [Use cases](docs/en/use-cases.md).
+Worked versions of all seven: [Use cases](docs/en/use-cases.md).
 
 ## What you need
 
@@ -56,7 +57,7 @@ That builds the Python environment if there is not one, inspects the clips, and 
 
 Without a voice everything still runs: the line is mouthed silently on the timing the text implies, which is what the tests do. It is worth knowing that this works, and it is not what you want on a stream.
 
-The voice is swappable for the same reason the model is. The renderer asks its own origin for audio and the server proxies to `127.0.0.1:8770`, so anything that answers `POST /speak` with `{ text, reading? }` → WAV and `GET /health` can stand in — `HASHIDATE_TTS_PORT` moves the target. See [Speech](docs/en/speech.md).
+The voice is swappable for the same reason the model is. The renderer asks its own origin for audio and the server proxies to a UNIX socket, so anything that answers `POST /speak` with `{ text, reading? }` → WAV and `GET /health` can stand in — `HASHIDATE_TTS_SOCKET` moves the target, and `HASHIDATE_TTS_PORT` points it at a stand-in that speaks over a port instead. See [Speech](docs/en/speech.md).
 
 The details, and what a first run looks like: [Getting started](docs/en/getting-started.md).
 
@@ -68,7 +69,7 @@ yarn install
 make dev
 ```
 
-The viewer comes up on `127.0.0.1:5173`, the control API on `127.0.0.1:8765` and the speech sidecar — if its environment has been built — on `127.0.0.1:8770`. `yarn dev` starts the first two alone.
+The viewer comes up on `127.0.0.1:5173`, the control API on `127.0.0.1:8765` and the speech sidecar — if its environment has been built — on a socket at `tools/tts/.run/speech.sock`. `yarn dev` starts the first two alone.
 
 Drive it from another terminal:
 
@@ -93,7 +94,7 @@ Start here: [Introduction](docs/en/introduction.md), [Use cases](docs/en/use-cas
 
 Driving it: [The control API](docs/en/control-api.md), [Commands](docs/en/commands.md), [Performances](docs/en/performances.md), [Lines and cues](docs/en/lines-and-cues.md), [Scripts](docs/en/scripts.md), [The MCP adapter](docs/en/mcp.md).
 
-The picture and the sound: [Speech](docs/en/speech.md), [The stage](docs/en/stage.md), [Slides](docs/en/slides.md), [Motions](docs/en/motions.md), [Two surfaces](docs/en/surfaces.md).
+The picture and the sound: [Speech](docs/en/speech.md), [The stage](docs/en/stage.md), [Slides](docs/en/slides.md), [Motions](docs/en/motions.md), [Recording](docs/en/recording.md), [The surfaces](docs/en/surfaces.md).
 
 Under it: [Architecture](docs/en/architecture.md), [Avatars](docs/en/avatars.md).
 

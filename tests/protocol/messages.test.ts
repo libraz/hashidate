@@ -524,6 +524,8 @@ describe('snapshotSchema', () => {
       slides: SLIDES,
       speech: 'ready',
       queue: [],
+      paused: false,
+      recording: null,
     };
     const result = snapshotSchema.safeParse(snapshot);
     expect(result.error?.issues ?? []).toEqual([]);
@@ -546,6 +548,8 @@ describe('snapshotSchema', () => {
       slides: null,
       speech: 'absent',
       queue: [],
+      paused: false,
+      recording: null,
     });
     expect(result.error?.issues ?? []).toEqual([]);
   });
@@ -569,6 +573,8 @@ describe('snapshotSchema', () => {
       slides: null,
       speech: 'absent',
       queue: [],
+      paused: false,
+      recording: null,
     });
     expect(result.error?.issues ?? []).toEqual([]);
     expect(result.data?.decks).toEqual(decks);
@@ -593,6 +599,8 @@ describe('snapshotSchema', () => {
       slides: null,
       speech: 'absent',
       queue: [],
+      paused: false,
+      recording: null,
     };
     expect(snapshotSchema.safeParse(base).success).toBe(true);
     for (const key of ['decks', 'slides', 'placement', 'speech'] as const) {
@@ -620,6 +628,8 @@ describe('snapshotSchema', () => {
       slides: null,
       speech: 'absent',
       queue: [],
+      paused: false,
+      recording: null,
     };
     expect(snapshotSchema.safeParse(base).data?.placement).toBeNull();
     const reported = snapshotSchema.safeParse({ ...base, placement: PLACEMENT });
@@ -643,6 +653,8 @@ describe('snapshotSchema', () => {
         slides: null,
         speech: 'absent',
         queue: [],
+        paused: false,
+        recording: null,
         events: [],
       }).success,
     ).toBe(true);

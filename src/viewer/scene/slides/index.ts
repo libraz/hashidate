@@ -167,6 +167,32 @@ export class SlideStage implements Slides {
     return this.placement;
   }
 
+  /**
+   * The layer as something else could draw it: where it sits, and the two
+   * canvases with the opacity each is actually being composited at.
+   *
+   * For the recorder, which has to put this and the character into one frame
+   * because the browser is the only thing that composites them here. Null when
+   * nothing is up, which is the same answer `up` gives and means "leave the
+   * background alone".
+   *
+   * The opacity is read off the computed style rather than off `style.opacity`.
+   * The two disagree for exactly the length of a page turn — the inline value
+   * is where the crossfade is going and the computed one is where it has got to
+   * — and a recording that took the first would cut every page turn into a jump
+   * while the picture on screen dissolved.
+   */
+  layers(): { rect: Rect; canvases: Array<{ canvas: HTMLCanvasElement; opacity: number }> } | null {
+    if (!this.up) return null;
+    return {
+      rect: this.rect,
+      canvases: this.canvases.map((canvas) => ({
+        canvas,
+        opacity: Number.parseFloat(getComputedStyle(canvas).opacity) || 0,
+      })),
+    };
+  }
+
   /** Move or resize the layer. Redrawing at the new size is debounced. */
   setPlacement(placement: SlidePlacement): void {
     this.placement = resolvePlacement(this.placement, placement);

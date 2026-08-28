@@ -11,6 +11,7 @@ import styles from './Panel.module.css';
 import { PerformTab } from './perform/PerformTab';
 import { Preview } from './preview/Preview';
 import { QueueTab } from './queue/QueueTab';
+import { RecordTab } from './record/RecordTab';
 import { SlidesTab } from './slides/SlidesTab';
 import { StageSource } from './stage/StageSource';
 import { TuneTab } from './tune/TuneTab';
@@ -40,16 +41,19 @@ import { VoiceTab } from './voice/VoiceTab';
 /**
  * The tabs, in the order a broadcast uses them.
  *
- * The first four are touched during one: the script, the acting, the voice, and
- * the document being presented — a page is turned between two sentences, which
- * puts the slides with the live half rather than with the setup half. The
- * last three are set before it and looked at when something is wrong — a
- * costume, the layer underneath the character, and the readouts. The four names
- * borrowed from the console are the console's, deliberately: an operator moving
- * between the two screens should not have to learn a second vocabulary for the
- * same jobs.
+ * The first five are touched during one: the script, the take being recorded,
+ * the acting, the voice, and the document being presented — a page is turned
+ * between two sentences, which puts the slides with the live half rather than
+ * with the setup half. The last three are set before it and looked at when
+ * something is wrong — a costume, the layer underneath the character, and the
+ * readouts. The four names borrowed from the console are the console's,
+ * deliberately: an operator moving between the two screens should not have to
+ * learn a second vocabulary for the same jobs.
+ *
+ * Recording sits second because it is where a segment *begins*: a script is
+ * loaded there, and what it puts on the queue is what the first tab then shows.
  */
-type Tab = 'queue' | 'perform' | 'voice' | 'slides' | 'dress' | 'tune' | 'inspect';
+type Tab = 'queue' | 'record' | 'perform' | 'voice' | 'slides' | 'dress' | 'tune' | 'inspect';
 
 /**
  * What the header says about the voice, per state, and null for the two states
@@ -71,6 +75,7 @@ const SPEECH_NOTICE: Record<SpeechState, MessageKey | null> = {
 
 const TAB_LABELS: Array<{ value: Tab; key: MessageKey }> = [
   { value: 'queue', key: 'panel.tabs.queue' },
+  { value: 'record', key: 'panel.tabs.record' },
   { value: 'perform', key: 'panel.tabs.perform' },
   { value: 'voice', key: 'panel.tabs.voice' },
   { value: 'slides', key: 'panel.tabs.slides' },
@@ -117,6 +122,17 @@ export function Panel() {
             ? t('panel.status.connected', { viewers: data.viewers })
             : t('panel.status.disconnected')}
         </span>
+
+        {/* In the header rather than only in its own tab, because a take runs
+            for minutes and the operator spends them in the Slides tab turning
+            pages. A recording nobody can see is a recording that gets left
+            running into the next segment. */}
+        {data.recording !== null ? (
+          <span className={styles.taking} title={t('panel.recording.title')}>
+            <span className={styles.takingDot} aria-hidden="true" />
+            {t('panel.recording')}
+          </span>
+        ) : null}
 
         {/* Beside the link readout rather than in a tab: it is set once by
             whoever opens the panel, and a setting nobody can find is a panel
@@ -176,6 +192,7 @@ export function Panel() {
         </div>
         <div className={styles.controls}>
           {tab === 'queue' ? <QueueTab snapshot={data} refresh={refresh} /> : null}
+          {tab === 'record' ? <RecordTab snapshot={data} refresh={refresh} /> : null}
           {tab === 'perform' ? <PerformTab snapshot={data} refresh={refresh} /> : null}
           {tab === 'voice' ? <VoiceTab snapshot={data} refresh={refresh} /> : null}
           {tab === 'slides' ? <SlidesTab snapshot={data} refresh={refresh} /> : null}

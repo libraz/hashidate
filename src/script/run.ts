@@ -23,17 +23,25 @@ export interface ScriptRunResult {
  * lines still belong to the server's queue. The raw setup response is returned
  * so each caller can explain that distinction without making this shared layer
  * choose its presentation.
+ *
+ * The hold is always stated, never left alone. It is a standing setting, so a
+ * queue held for an earlier take is still held now — a run that said nothing
+ * about it would load its lines into a queue that never starts, and look
+ * exactly like a run that failed silently.
  */
 export async function runScript(
   control: ScriptControl,
   loaded: LoadedScript,
-  { replace = false }: { replace?: boolean } = {},
+  { replace = false, hold = false }: { replace?: boolean; hold?: boolean } = {},
 ): Promise<ScriptRunResult> {
   if (replace) await control.queueClear();
 
   const setup = loaded.script.setup?.length
     ? await control.command({ batch: loaded.script.setup })
     : undefined;
+  // Before the lines, so there is no moment in which a renderer holds a full
+  // queue with nothing yet telling it whether to start on it.
+  await control.command({ cmd: 'pause', on: hold });
   const queue = await control.queueAdd(loaded.script.lines, { source: loaded.id });
 
   return { setup, queue };

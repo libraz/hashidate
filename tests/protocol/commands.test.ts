@@ -32,6 +32,11 @@ const SWITCH_CASES: Record<CommandName, Command[]> = {
   ],
   interrupt: [{ cmd: 'interrupt' }, { cmd: 'interrupt', id: 'c-1' }],
   clear: [{ cmd: 'clear' }, { cmd: 'clear', id: 'c-2' }],
+  pause: [{ cmd: 'pause' }, { cmd: 'pause', on: false }, { cmd: 'pause', on: true, id: 'c-3' }],
+  record: [
+    { cmd: 'record', on: true, session: 'r1', width: 1920, height: 1080, fps: 30 },
+    { cmd: 'record', on: false, session: 'r1' },
+  ],
   emotion: [
     { cmd: 'emotion', vec: { anger: 1 } },
     { cmd: 'emotion', emotion: { sadness: 0.5 } },

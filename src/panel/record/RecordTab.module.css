@@ -1,0 +1,166 @@
+/*
+ * The recording tab.
+ *
+ * Two controls the shared widgets do not cover, and they are the two the whole
+ * tab is about: the button that lets a held script go, and the one that starts
+ * a take. Both are deliberately larger than anything else here — they are
+ * pressed once each per segment, by somebody who has just spent two minutes
+ * framing a shot and is now looking at the render rather than at the panel.
+ *
+ * Everything else is built from the same tokens the rest of the panel uses.
+ */
+
+.empty {
+  margin: 0;
+  padding: var(--space-5) var(--space-4);
+  text-align: center;
+  color: var(--fg-faint);
+  font-size: var(--text-sm);
+  line-height: 1.8;
+  border: 1px dashed var(--line-soft);
+  border-radius: var(--radius-md);
+}
+
+/*
+ * A fault nothing sent from here can clear: the file was moved, the server is
+ * not answering, or a take could not be opened. The measurement colour, because
+ * it is a readout rather than a control that went wrong.
+ */
+.error {
+  margin: var(--space-3) 0 0;
+  color: var(--bad);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+}
+
+/*
+ * Files in the directory that are not scripts.
+ *
+ * Under the roster rather than instead of it, and never in place of the chip
+ * that would have been there: a name missing from a list reads as a name typed
+ * wrong, which is the one thing it is not.
+ */
+.broken {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  line-height: 1.8;
+}
+
+.broken code {
+  margin-right: var(--space-2);
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+}
+
+/* --- the two buttons ------------------------------------------------------- */
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.go,
+.roll {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 128px;
+  height: calc(var(--control-height) + 6px);
+  padding: 0 var(--space-4);
+  justify-content: center;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-size: var(--text-md);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease);
+}
+
+.go:hover:not(:disabled),
+.roll:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent-edge);
+}
+
+.go:disabled,
+.roll:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/*
+ * The queue is held, so this button is the one that starts the segment.
+ *
+ * Full border plus tint, per the token file: never a stripe down one side.
+ */
+.armed {
+  background: var(--accent-tint);
+  border-color: var(--accent-edge);
+  color: var(--accent);
+}
+
+/* Tabular figures: the pending count changes line by line and must not shift
+   the button beside it. */
+.count {
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The dot is the record light, and it is only ever coloured while a take is
+ * actually being written. `--live` is reserved for the character speaking, so
+ * this uses the fault colour's sibling rather than borrowing that meaning —
+ * see the token file. Grey and hollow the rest of the time, so the button reads
+ * as a record button before it has ever been pressed.
+ */
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid var(--fg-faint);
+}
+
+.rolling {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.rolling .dot {
+  background: var(--bad);
+  border-color: var(--bad);
+}
+
+/* --- what is being written ------------------------------------------------- */
+
+/*
+ * A two-column readout rather than a paragraph. Every row is a fact about the
+ * file on disk, and the one that matters — how much of it there is — has to be
+ * findable without reading a sentence.
+ */
+.readout {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-xs);
+}
+
+.readout dt {
+  color: var(--fg-faint);
+}
+
+.readout dd {
+  margin: 0;
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}

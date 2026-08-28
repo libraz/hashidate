@@ -25,21 +25,26 @@ import {
 const OURS: ServerRoots = {
   document: '/work/hashidate/dist',
   slides: '/work/hashidate/show/slides',
+  scripts: '/work/hashidate/show/scripts',
   motions: '/work/hashidate/show/motions',
+  recordings: '/work/hashidate/show/recordings',
 };
 
 const THEIRS: ServerRoots = {
   document: '/elsewhere/hashidate/dist',
   slides: '/elsewhere/hashidate/show/slides',
+  scripts: '/elsewhere/hashidate/show/scripts',
   motions: '/elsewhere/hashidate/show/motions',
+  recordings: '/elsewhere/hashidate/show/recordings',
 };
 
 const PATHS: ShellPaths = {
   root: '/work/hashidate',
   dist: OURS.document,
   slides: OURS.slides,
-  scripts: '/work/hashidate/show/scripts',
+  scripts: OURS.scripts,
   motions: OURS.motions,
+  recordings: OURS.recordings,
   tts: '/work/hashidate/tools/tts',
   ttsPython: '/work/hashidate/tools/tts/.venv/bin/python',
   tsx: '/work/hashidate/node_modules/tsx/dist/loader.mjs',
@@ -62,6 +67,8 @@ const snapshot = (roots?: ServerRoots): Snapshot => ({
   slides: null,
   speech: 'absent',
   queue: [],
+  paused: false,
+  recording: null,
   ...(roots === undefined ? {} : { roots }),
 });
 
@@ -289,8 +296,12 @@ describe('starting the control server', () => {
       PATHS.dist,
       '--slides',
       PATHS.slides,
+      '--scripts',
+      PATHS.scripts,
       '--motions',
       PATHS.motions,
+      '--recordings',
+      PATHS.recordings,
     ]);
   });
 
@@ -379,7 +390,9 @@ describe('starting the control server', () => {
 describe('the optional speech sidecar', () => {
   const options = (over = {}) => ({
     paths: PATHS,
-    port: 8770,
+    // A path that nothing can be listening on, so the probe cannot adopt a
+    // sidecar that happens to be running on the machine the tests are on.
+    endpoint: { kind: 'socket', path: '/nonexistent/speech.sock' } as const,
     probeTimeoutMs: 5,
     stopTimeoutMs: 20,
     ...over,
@@ -389,7 +402,7 @@ describe('the optional speech sidecar', () => {
     // Which is most of them: the model is another three gigabytes and the
     // recordings behind the voice are not ours.
     const { calls, spawn } = spawner();
-    const tts = new TtsProcess(options({ spawn, fetch: closed }));
+    const tts = new TtsProcess(options({ spawn }));
 
     await tts.start();
 
@@ -399,7 +412,7 @@ describe('the optional speech sidecar', () => {
 
   it('does not start one after a quit has already been asked for', async () => {
     const { calls, spawn } = spawner();
-    const tts = new TtsProcess(options({ spawn, fetch: closed }));
+    const tts = new TtsProcess(options({ spawn }));
 
     await tts.stop();
     await tts.start();

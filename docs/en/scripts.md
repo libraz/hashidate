@@ -10,8 +10,11 @@ Scripts live in `show/scripts/`. Only `demo.yaml` is tracked; anything else you 
 yarn ctl play demo --check     # read and validate it, with no server running
 yarn ctl play demo            # setup, then its lines onto the queue
 yarn ctl play demo --replace  # drop what is pending first
+yarn ctl play demo --hold     # load it without starting it
 yarn ctl play show/scripts/opening.yaml
 ```
+
+The panel has the same list, on its Recording tab. There it holds by default, because that is where a script is loaded to be recorded rather than to go straight out — see [Recording](recording.md).
 
 A name is looked for in `show/scripts/`, under `.yaml`, `.yml` and `.json` in that order when it carries no extension of its own. Anything with a separator in it, or an absolute path, is read exactly where it says — so a script in the working directory is `./opening.yaml`, spelled out.
 
@@ -61,6 +64,14 @@ The queue lives in the control server. It survives a viewer reload, it is editab
 
 Every entry is stamped with the script's own name, so a queue holding a scripted segment, a comment somebody answered and a line typed by hand stays legible. See [The surfaces](surfaces.md).
 
+## Holding a run
+
+`--hold` loads the lines without starting them, and `yarn ctl resume` lets them go. The line being spoken when a hold arrives finishes normally; nothing is discarded.
+
+A held queue is still being prepared. A line's audio is made when it *enters* the queue rather than when it is played, so the whole script is being synthesised while the hold is on — and the first line comes out the moment the hold comes off, rather than after the second or so it would have taken to make it.
+
+That is what a recorded segment needs, and the panel builds the whole sequence out of it. It is also useful on its own: a script queued a minute before a segment starts is a script whose first line does not open with a wait.
+
 ## `--check` is the loop
 
 It reads the file, validates every line against the same schema the wire uses, and prints what would be sent. It needs no server and no renderer, which makes it the thing to run between edits.
@@ -87,6 +98,7 @@ The deck it presents from, `show/slides/hashidate.pdf`, does ship: it is five pa
 
 ## Next
 
+- [Recording](recording.md) — loading a script to write a take from it
 - [Lines and cues](lines-and-cues.md) — what goes inside a line
 - [Commands](commands.md) — what can go in `setup`
 - [The surfaces](surfaces.md) — the queue a script lands in

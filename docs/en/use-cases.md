@@ -46,11 +46,24 @@ yarn ctl say "[hello]Good evening. [explain]Tonight I want to talk about this." 
 yarn ctl perform sleepy
 ```
 
-## 5. Running a broadcast by hand
+## 5. A segment recorded to a file
+
+The other shape a scripted segment takes: not broadcast, recorded once. The panel's Recording tab lists what is in `show/scripts/`, and pressing one loads the run **without starting it** — so the shot gets framed against a queue whose audio is already being made. Record then starts the take and lets the queue go, in that order, so the file opens on the first word rather than on the wait for it.
+
+It stops itself a moment after the last line and the mp4 is in `show/recordings/`. The renderer that is not muted is the one that writes it, which on an ordinary desk is the stage rather than the panel's preview.
+
+```sh
+yarn ctl play opening --hold   # the same hold, from a prompt
+yarn ctl resume
+```
+
+See [Recording](recording.md).
+
+## 6. Running a broadcast by hand
 
 The panel on `/panel/` is a full operating surface: the script and its history, performances, voice, wardrobe, tuning and readouts, with the avatar, the framing, the set and the idle switch under a live preview. Everything it does goes through the control API, so anything an operator can do from it, an orchestrator can do too. See [The surfaces](surfaces.md).
 
-## 6. Checking a model you just rigged
+## 7. Checking a model you just rigged
 
 What the avatar can be asked for is discovered from its own shapes and meshes, so the vocabulary endpoint is a report on the model.
 

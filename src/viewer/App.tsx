@@ -92,6 +92,17 @@ export function App() {
   const rendererControls = useRef<RendererControls>({
     avatars: AVATARS.map((a) => ({ id: a.id, label: a.label })),
     setDebug,
+    /**
+     * A `record` command reaches every renderer attached, and only one of them
+     * is the one going to air. The mute is what tells them apart, and it is not
+     * a proxy for the answer — it *is* the answer: a monitor is a page that
+     * makes no sound, and what a take is supposed to contain is what the room
+     * heard. See `recordCommandSchema`.
+     */
+    setRecording: (on, take) => {
+      if (MODE.muted) return;
+      runtimeRef.current?.setRecording(on, take);
+    },
     load: (id) => {
       const next = getAvatar(id);
       const rt = runtimeRef.current;

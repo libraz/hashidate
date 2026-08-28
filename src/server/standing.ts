@@ -77,6 +77,7 @@ type Persistent = Extract<
       | 'voice'
       | 'idle'
       | 'look'
+      | 'pause'
       | 'emotion';
   }
 >;
@@ -109,6 +110,9 @@ const ORDER = [
   'idle',
   'look',
   'emotion',
+  // Last, because it is the only one here that is not about the scene. It says
+  // whether the run of turns this renderer is about to be handed may start.
+  'pause',
 ] as const satisfies readonly Persistent['cmd'][];
 
 /** The page a document opens on, and the floor a page counter is clamped at. */
@@ -237,6 +241,7 @@ export class Standing {
       case 'room':
       case 'idle':
       case 'look':
+      case 'pause':
       case 'emotion':
         this.last.set(command.cmd, command);
         return true;
@@ -262,6 +267,20 @@ export class Standing {
   /** Whether anything has been set at all. Nothing to say is not a frame to send. */
   get empty(): boolean {
     return this.last.size === 0 && this.wardrobe.length === 0;
+  }
+
+  /**
+   * Whether the queue is held, read back rather than tracked separately.
+   *
+   * This is already the authority — it is what a renderer attaching is handed,
+   * so it is what the hold *is* — and a second copy beside it would be the one
+   * the panel drew while the renderers ran on this one.
+   */
+  get paused(): boolean {
+    const command = this.last.get('pause') as Of<'pause'> | undefined;
+    if (command === undefined) return false;
+    // Absent `on` means hold, as the schema states.
+    return command.on ?? true;
   }
 
   private dress(command: Of<'wear'>): void {

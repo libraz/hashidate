@@ -7,6 +7,10 @@ import type {
   QueueEntry,
   QueueResponse,
   QueueRewind,
+  RecordResponse,
+  RecordStart,
+  ScriptRunResponse,
+  ScriptsResponse,
   Shot,
   Snapshot,
   TuningPatch,
@@ -101,6 +105,63 @@ export const readState = (): Promise<Snapshot | Failure> => request<Snapshot>('/
  * would have looked on.
  */
 export const readDecks = (): Promise<DecksResponse | Failure> => request<DecksResponse>('/decks');
+
+/**
+ * The scripts on disk, as the server finds them now.
+ *
+ * Unlike the document roster this does not ride on the snapshot, and that is
+ * deliberate: a script's summary is read by parsing the file, and doing that to
+ * every file in the directory twice a second to answer a picker nobody is
+ * looking at would be the most expensive thing this server does. So it is read
+ * when the tab that shows it is opened, and again when the operator asks.
+ */
+export const readScripts = (): Promise<ScriptsResponse | Failure> =>
+  request<ScriptsResponse>('/scripts');
+
+// --- running a script -------------------------------------------------------
+
+/**
+ * Put a script on the queue.
+ *
+ * Held by default, which is the whole reason this is one call rather than three:
+ * a script being loaded to record is loaded *before* the shot is framed, and
+ * the lines must not start on the way in. See `scriptRunSchema`.
+ */
+export const runScript = (
+  id: string,
+  { replace = true, pause = true }: { replace?: boolean; pause?: boolean } = {},
+): Promise<ScriptRunResponse | Failure> =>
+  post<ScriptRunResponse>('/scripts/run', { id, replace, pause });
+
+/**
+ * Hold the queue where it is, or let it move again.
+ *
+ * A command like any other, so it goes through the same door — see `send`. The
+ * turn on air is not affected either way; cutting that off is `interrupt`.
+ */
+export const setPaused = (on: boolean): Promise<unknown> => send({ cmd: 'pause', on });
+
+// --- recording --------------------------------------------------------------
+
+/**
+ * Open a take and tell the renderer to roll.
+ *
+ * `release` is what makes the record button also the play button: the hold
+ * comes off when the recording is genuinely producing bytes rather than when
+ * this request is answered, so the first line is not clipped. See
+ * `recordStartSchema`.
+ */
+export const recordStart = (
+  options: Partial<RecordStart> = {},
+): Promise<RecordResponse | Failure> => post<RecordResponse>('/record/start', options);
+
+/**
+ * Stop the take. The file stays open for a moment afterwards while the encoder
+ * flushes what it is holding; the snapshot's `recording` is what says when it
+ * has actually closed. See `Hub.stopRecording`.
+ */
+export const recordStop = (session?: string): Promise<RecordResponse | Failure> =>
+  post<RecordResponse>('/record/stop', session === undefined ? {} : { session });
 
 // --- the queue --------------------------------------------------------------
 
