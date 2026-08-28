@@ -6,12 +6,16 @@ OBS is the right answer for a broadcast, and it stays the right answer. This is 
 
 ## The order it happens in
 
-1. **Load a script.** The Recording tab lists what is in `show/scripts/`. Pressing one replaces the queue and loads it — and it does not start.
+1. **Load a script.** The Queue tab lists what is in `show/scripts/`, above the queue it fills. Pressing one replaces the queue and loads it — and it does not start. The lines appear underneath, which is how you know it worked.
 2. **Frame the shot.** The character is standing there with the whole run of lines loaded. Drag the preview, set where the document sits, pick the room.
-3. **Press Record.** The take starts, and the queue is let go the moment bytes are actually being written.
+3. **Press Record**, on the Recording tab. The take starts, and the queue is let go the moment bytes are actually being written.
 4. **It stops itself** a moment after the last line, and the file is in `show/recordings/`.
 
 Step 1 is the part that makes the rest work. A script that started on arrival would mean framing the shot during the first two lines, or loading it blind and hoping.
+
+**Load without starting**, beside the picker, is what holds it. On by default, because that is what a take needs. Turned off, the picker is what it reads like: press a script and it plays — the same thing `yarn ctl play` does from a prompt, and what an operator running a segment live wants.
+
+The hold itself is on the on-air readout, as **Start** and **Hold**. That is where it belongs: a held queue with twenty lines in it and an idle one with none are different answers to "is anything happening", and that readout is the question.
 
 ## Held is not paused-and-stalled
 

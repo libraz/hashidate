@@ -30,7 +30,7 @@ Swap the model, the provider or the framework: nothing on the right-hand side ch
 | **Commentary over a game** | She stands on the game capture with nothing behind her; OBS composites. | `?transparent=1&place=bottom-right:0.32x0.6` |
 | **A talk given from slides** | A PDF behind her, page turns riding on the lines. The deck is readable as text, so a model can write the script for it. | `deck`, `say --slide 2` |
 | **A scripted segment** | No model anywhere. A shell script is a perfectly good orchestrator. | `yarn ctl say …` |
-| **A segment recorded to a file** | Load a script, frame the shot against a queue that is already synthesising, press record. The mp4 lands in `show/recordings/`. | The panel's Recording tab |
+| **A segment recorded to a file** | Load a script, frame the shot against a queue that is already synthesising, press record. The mp4 lands in `show/recordings/`. | The panel's Queue and Recording tabs |
 | **A broadcast run by hand** | The panel is a full operating surface, and everything it does goes through the same API. | `/panel/` |
 | **Checking a model you rigged** | What the avatar can be asked for is discovered from its own shapes and meshes. | `yarn ctl vocab` |
 

@@ -6,7 +6,7 @@ There are three pages, and the difference between them is not what they can do �
 
 Where a broadcast is run. It holds no renderer and no `AudioContext`: every control goes out through the control API, which means a control that works there is a control a language model can drive.
 
-Eight tabs — Queue (the script, its history, and rewinding into it), Recording (loading a script, holding it, and writing a take), Perform, Voice, Slides, Dress, Tune, Inspect — with the avatar, the framing, the set and the idle switch under a preview, because those four are chosen by looking at the picture.
+Eight tabs — Queue (which script is loaded, the pending lines, the history, and rewinding into it), Recording (writing a take to a file), Perform, Voice, Slides, Dress, Tune, Inspect — with the avatar, the framing, the set and the idle switch under a preview, because those four are chosen by looking at the picture.
 
 The preview *is* the camera control: drag to swing round the character, wheel to come in. The embedded viewer reads its own camera back and hands it up to the panel, which sends the ordinary `camera` command an orchestrator could have sent — so the renderer on air swings with it, and nothing about the shot lives in one page rather than the other.
 

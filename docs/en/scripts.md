@@ -14,7 +14,7 @@ yarn ctl play demo --hold     # load it without starting it
 yarn ctl play show/scripts/opening.yaml
 ```
 
-The panel has the same list, on its Recording tab. There it holds by default, because that is where a script is loaded to be recorded rather than to go straight out — see [Recording](recording.md).
+The panel has the same list, at the top of its Queue tab — above the queue a script fills, so the lines appear underneath the moment one is pressed. There it holds by default, and the toggle beside the list is what decides that; see [Recording](recording.md).
 
 A name is looked for in `show/scripts/`, under `.yaml`, `.yml` and `.json` in that order when it carries no extension of its own. Anything with a separator in it, or an absolute path, is read exactly where it says — so a script in the working directory is `./opening.yaml`, spelled out.
 

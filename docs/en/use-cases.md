@@ -48,7 +48,7 @@ yarn ctl perform sleepy
 
 ## 5. A segment recorded to a file
 
-The other shape a scripted segment takes: not broadcast, recorded once. The panel's Recording tab lists what is in `show/scripts/`, and pressing one loads the run **without starting it** — so the shot gets framed against a queue whose audio is already being made. Record then starts the take and lets the queue go, in that order, so the file opens on the first word rather than on the wait for it.
+The other shape a scripted segment takes: not broadcast, recorded once. The panel lists what is in `show/scripts/` at the top of its Queue tab, and pressing one loads the run **without starting it** — the lines appear underneath, and the shot gets framed against a queue whose audio is already being made. Record, on the Recording tab, then starts the take and lets the queue go, in that order, so the file opens on the first word rather than on the wait for it.
 
 It stops itself a moment after the last line and the mp4 is in `show/recordings/`. The renderer that is not muted is the one that writes it, which on an ordinary desk is the stage rather than the panel's preview.
 
