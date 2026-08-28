@@ -9,6 +9,8 @@ import {
   eventsResponseSchema,
   type HistoryResponse,
   historyResponseSchema,
+  type MotionsResponse,
+  motionsResponseSchema,
   type QueueResponse,
   queueResponseSchema,
   type Snapshot,
@@ -205,6 +207,19 @@ export class ControlClient {
    */
   async decks(): Promise<DecksResponse> {
     return expect(decksResponseSchema, await this.request('/decks'));
+  }
+
+  /**
+   * The motions the control server can see, and the files that were meant to be
+   * some.
+   *
+   * A directory listing, like `decks` above and for the same reason. The
+   * renderer reads this on connect and registers what is in it; a caller asking
+   * here is asking what the *next* renderer to connect would get, which is the
+   * question worth asking after editing a file.
+   */
+  async motions(): Promise<MotionsResponse> {
+    return expect(motionsResponseSchema, await this.request('/motions'));
   }
 
   /**

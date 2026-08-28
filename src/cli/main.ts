@@ -25,6 +25,7 @@ import {
   type Vocabulary,
   wearCommandSchema,
 } from '../protocol';
+import { loadScript, outline, ScriptError } from '../script';
 import { ControlClient, DEFAULT_BASE, fail } from './client';
 
 /**
@@ -60,6 +61,7 @@ const localized = (text: Localized): string => pick(text, getLocale());
  *     yarn ctl camera bust
  *     yarn ctl backdrop dusk
  *     yarn ctl wear --preset stream
+ *     yarn ctl play demo
  *     yarn ctl watch
  *
  * Every command is built through the protocol schemas before it goes on the
@@ -221,6 +223,8 @@ const say: Handler = async (client, args) => {
       camera: { type: 'string' },
       backdrop: { type: 'string' },
       room: { type: 'string' },
+      deck: { type: 'string' },
+      slide: { type: 'string' },
       wait: { type: 'string' },
     },
     allowPositionals: true,
@@ -236,14 +240,26 @@ const say: Handler = async (client, args) => {
   // distinction by having an argument or not, which a flag cannot do.
   const empty = (v: string | undefined): string | null | undefined =>
     v === undefined ? undefined : v === '' ? null : v;
-  const stage =
-    values.camera === undefined && values.backdrop === undefined && values.room === undefined
-      ? undefined
-      : {
-          camera: values.camera,
-          backdrop: empty(values.backdrop),
-          room: empty(values.room),
-        };
+  // `--deck ''` takes the document down, matching `--room ''` beside it and
+  // deliberately unlike the standalone `deck`, whose word for that is `none`.
+  // There the id is a required positional and a bare command would far more
+  // often be a name that went missing than an instruction to clear the screen;
+  // a flag left off already says "leave it", so the empty value is free.
+  //
+  // A layout is not here. It is four numbers and an anchor, which is a page of
+  // flags for the one thing this client is worst at — an operator moving the
+  // character by hand runs `place` and watches it. A line carrying one is a
+  // script, and a script has room to write it out; see `src/script`.
+  const staged = ['camera', 'backdrop', 'room', 'deck', 'slide'] as const;
+  const stage = staged.every((key) => values[key] === undefined)
+    ? undefined
+    : {
+        camera: values.camera,
+        backdrop: empty(values.backdrop),
+        room: empty(values.room),
+        deck: empty(values.deck),
+        slide: values.slide === undefined ? undefined : Number(values.slide),
+      };
   const command = build(sayCommandSchema, {
     cmd: 'say',
     text,
@@ -506,6 +522,93 @@ const place: Handler = async (client, args) => {
   show(await client.command(build(placeCommandSchema, { cmd: 'place', [layer]: placement })));
 };
 
+/**
+ * Run a script: the setup once, then its lines onto the queue.
+ *
+ * The lines go on the server's queue rather than out as `say` commands, and
+ * that is the whole reason this is worth having over a shell script. The queue
+ * survives a viewer reload, is editable from the panel while it plays, and is
+ * deep enough for the renderer to prepare the next line's audio during the
+ * current one — sending a script a line at a time costs about a second of
+ * silence between every pair of them.
+ *
+ * `--check` reads and validates without a server, which is what an author wants
+ * between edits. It is also the only subcommand here that works with nothing
+ * running.
+ */
+const play: Handler = async (client, args) => {
+  const { positionals, values } = parseArgs({
+    args,
+    options: { check: { type: 'boolean' }, replace: { type: 'boolean' } },
+    allowPositionals: true,
+  });
+  const name = positionals[0];
+  if (name === undefined) fail('play needs a script: a name in show/scripts/, or a path to one');
+
+  const loaded = await loadScript(name).catch((error: unknown) =>
+    fail(error instanceof ScriptError ? error.message : String(error)),
+  );
+  const { id, path, script } = loaded;
+
+  if (values.check) {
+    console.log(`${script.title ?? id}  —  ${path}`);
+    if (script.note) console.log(script.note);
+    if (script.setup?.length) console.log(`setup   ${script.setup.map((c) => c.cmd).join(', ')}`);
+    console.log(`lines   ${script.lines.length}`);
+    for (const line of outline(script)) console.log(line);
+    return;
+  }
+
+  // Cleared before the setup rather than after it, so that a script which
+  // replaces the queue and then puts the camera somewhere cannot have a line
+  // left over from the last run go out in the new shot.
+  if (values.replace) await client.queueClear();
+  if (script.setup?.length) {
+    const sent = await client.command({ batch: script.setup });
+    show(sent);
+    // The two halves have different fates when no renderer is attached: the
+    // lines wait on the server's queue and play when one arrives, the setup was
+    // a live command and is simply gone. Said out loud, because the difference
+    // is invisible in a run that otherwise looks like it worked.
+    if (typeof sent === 'object' && sent !== null && (sent as { ok?: unknown }).ok === false) {
+      console.error('setup was not delivered: no viewer is connected');
+      console.error(
+        'the lines still queue, but they will play against whatever state a renderer comes up in',
+      );
+    }
+  }
+  // Stamped with the script's own name. A queue holding a scripted segment, a
+  // comment somebody answered and a line typed by hand is only legible if each
+  // row says which it is.
+  const result = await client.queueAdd(script.lines, { source: id });
+  console.log(
+    `${script.lines.length} queued from ${id}: ${result.queue.length} pending, ${result.viewers} viewer(s)`,
+  );
+};
+
+/**
+ * The motions the server can see. Not avatar data and not in the vocabulary;
+ * see `Motions` — this is a directory, and only the process with a filesystem
+ * can answer what is in it.
+ */
+const motions: Handler = async (client) => {
+  const { motions: found, errors } = await client.motions();
+  if (found.length === 0 && errors.length === 0) {
+    console.log('no motions (put a YAML file in show/motions/)');
+    return;
+  }
+  for (const item of found) {
+    const held = item.sustain ? ' *' : '';
+    const runs = item.loop ? ' loop' : '';
+    console.log(
+      `  ${item.id.padEnd(16)} ${localized(item.label).padEnd(16)} [${item.group}] ${item.frames.length}f${runs}${held}`,
+    );
+  }
+  // Beside the ones that worked rather than instead of them: a file that will
+  // not parse has to be visible, or it reads as a filename typed wrong.
+  for (const { id, error } of errors) console.log(`  ${id.padEnd(16)} ${error}`);
+};
+
 /** What the server can see in the document directory. Not avatar data; see `deckSchema`. */
 const decks: Handler = async (client) => {
   const { decks: found } = await client.decks();
@@ -738,6 +841,8 @@ const HANDLERS: Record<string, Handler> = {
   slide,
   place,
   decks,
+  play,
+  motions,
   wear,
   avatar,
   tune,
@@ -769,6 +874,8 @@ function usage(): never {
       '  yarn ctl tune sway.stiffness=2 idle.breathDepth=1.2',
       '  yarn ctl deck intro --page 3',
       '  yarn ctl slide next',
+      '  yarn ctl play demo --check   # read show/scripts/demo.yaml without a server',
+      '  yarn ctl play demo --replace # drop what is pending and run it',
       '  yarn ctl place avatar --anchor bottom-right --width 0.32 --height 0.6 --margin 0.02',
     ].join('\n'),
   );
