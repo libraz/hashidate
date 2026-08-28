@@ -1,0 +1,19 @@
+# The documents the character presents from.
+#
+# Somebody else's slides, usually, and large either way — nothing that lands
+# here is ours to publish. The control server reads this directory while it is
+# running, so a file saved mid-broadcast appears without a restart; see
+# `--slides` and `src/server/decks.ts`.
+#
+# The directory itself is tracked, which is the point of keeping it here rather
+# than behind a path somebody has to be told about: a checkout arrives with
+# somewhere to put a deck.
+#
+# `hashidate.pdf` is the exception, on the same footing as `demo.yaml` next
+# door: it is the deck the demo script presents from, it is about this project,
+# and it is ours to publish. It is built elsewhere and lands here finished, so
+# what is tracked is the artefact rather than a step. Keep it under the size
+# `make check-assets` allows.
+*
+!.gitignore
+!hashidate.pdf

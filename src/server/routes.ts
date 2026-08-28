@@ -6,6 +6,7 @@ import {
   type DecksResponse,
   type EventsResponse,
   type HistoryResponse,
+  type MotionsResponse,
   parseCommand,
   type QueueResponse,
   queueAddSchema,
@@ -15,6 +16,7 @@ import {
 } from '../protocol';
 import type { Decks } from './decks';
 import type { Hub } from './hub';
+import type { Motions } from './motions';
 import { handleSpeech } from './speech';
 
 /**
@@ -78,12 +80,13 @@ export function handleApi(
   res: ServerResponse,
   hub: Hub,
   decks: Decks | null = null,
+  motions: Motions | null = null,
 ): boolean {
   const { pathname, params } = split(req.url ?? '/');
   if (!pathname.startsWith('/api/')) return false;
   logRequest(req, res, pathname);
   if (req.method === 'GET' || req.method === 'HEAD') {
-    get(res, hub, decks, pathname, params);
+    get(res, hub, decks, motions, pathname, params);
     return true;
   }
   if (req.method === 'POST') {
@@ -156,6 +159,7 @@ function get(
   res: ServerResponse,
   hub: Hub,
   decks: Decks | null,
+  motions: Motions | null,
   pathname: string,
   params: URLSearchParams,
 ): void {
@@ -184,6 +188,13 @@ function get(
     case '/api/decks':
       void listDecks(res, decks);
       return;
+    // Read fresh rather than off the snapshot, unlike the document roster. A
+    // renderer asks for this once when it connects and then plays what it was
+    // given for the life of the page, so there is nothing for a cached copy to
+    // save and one stale read would be a motion edited and apparently ignored.
+    case '/api/motions':
+      void listMotions(res, motions);
+      return;
     default:
       // `/api/decks/<id>/text` is the one route here with a name in it, so it
       // cannot be a case above. Nothing else under `/api/` is patterned.
@@ -202,6 +213,12 @@ function get(
 async function listDecks(res: ServerResponse, decks: Decks | null): Promise<void> {
   const listed = decks === null ? [] : await decks.list();
   json(res, { decks: listed } satisfies DecksResponse);
+}
+
+/** The operator's own gestures, and the files that were meant to be some. */
+async function listMotions(res: ServerResponse, motions: Motions | null): Promise<void> {
+  const listed = motions === null ? { motions: [], errors: [] } : await motions.list();
+  json(res, listed satisfies MotionsResponse);
 }
 
 /**

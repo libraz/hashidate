@@ -1,0 +1,9 @@
+# Scripts: a run of turns, written out in advance.
+#
+# What a character says on a given night is the operator's, not this
+# repository's, so nothing here is tracked — except `demo.yaml`, which says
+# what the runtime is and is the one script that belongs to the project rather
+# than to a broadcast.
+*
+!.gitignore
+!demo.yaml

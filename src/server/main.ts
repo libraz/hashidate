@@ -5,6 +5,7 @@ import { parseArgs } from 'node:util';
 import type { SpeechState } from '../protocol';
 import { Decks } from './decks';
 import { Hub } from './hub';
+import { Motions } from './motions';
 import { handleApi } from './routes';
 import { SIDECAR, SpeechWatch } from './speech';
 import { serveStatic } from './static';
@@ -28,7 +29,7 @@ import { serveStatic } from './static';
  * either — the viewer is same-origin, so allowing another origin would only
  * ever serve a page that is not ours.
  *
- * usage: yarn start [--port 8765] [--root dist] [--slides slides]
+ * usage: yarn start [--port 8765] [--root dist] [--slides show/slides] [--motions show/motions]
  */
 
 const BIND = '127.0.0.1'; // do not change; see the module docstring
@@ -48,8 +49,19 @@ const DEFAULT_ROOT = 'dist';
  * answers JSON and only JSON, and a route that broke that rule would have to be
  * excepted in every caller that trusts it.
  */
-const DEFAULT_SLIDES = 'slides';
+const DEFAULT_SLIDES = 'show/slides';
 const SLIDES_PREFIX = '/slides';
+
+/**
+ * Where the operator's own gestures are.
+ *
+ * Beside the documents under `show/`, because they are the same kind of thing:
+ * material somebody brought to a broadcast rather than anything the build
+ * produced. Read on request and never served as bytes — a motion reaches the
+ * renderer as JSON on `/api/motions`, parsed and checked, and the file itself
+ * stays on the machine it was written on. See `src/server/motions.ts`.
+ */
+const DEFAULT_MOTIONS = 'show/motions';
 
 /**
  * The two data directories pdf.js needs to draw a document it was not given the
@@ -93,6 +105,7 @@ function main(): void {
       port: { type: 'string' },
       root: { type: 'string' },
       slides: { type: 'string' },
+      motions: { type: 'string' },
     },
   });
 
@@ -103,8 +116,10 @@ function main(): void {
   }
   const root = resolve(values.root ?? DEFAULT_ROOT);
   const slides = resolve(values.slides ?? DEFAULT_SLIDES);
+  const motionsRoot = resolve(values.motions ?? DEFAULT_MOTIONS);
 
   const decks = new Decks(slides);
+  const motions = new Motions(motionsRoot);
   const speech = new SpeechWatch();
   const hub = new Hub(decks, speech);
   // Null on an install without the library, which is not a reason to refuse to
@@ -112,7 +127,7 @@ function main(): void {
   // perfectly without either directory.
   const pdfjs = pdfjsRoot();
   const server = createServer((req, res) => {
-    if (handleApi(req, res, hub, decks)) return;
+    if (handleApi(req, res, hub, decks, motions)) return;
     if (req.method === 'GET' || req.method === 'HEAD') {
       // Same guard, same refusal to cache — the only difference is which root
       // the path is resolved against. See `serveStatic`.
@@ -156,6 +171,9 @@ function main(): void {
     // Printed whether or not the directory exists: the line an operator needs
     // is where to put a document, and that is most useful before there is one.
     console.log(`slides   ${slides}`);
+    // And where a motion goes, on the same reasoning: the line is worth most
+    // before the directory has anything in it.
+    console.log(`motions  ${motionsRoot}`);
     // And whether or not there is a voice, for the same reason. A sidecar that
     // was meant to be running and is not looks exactly like one that was never
     // installed until somebody says which of the two this is, and the moment to

@@ -1,0 +1,10 @@
+# Motions written for one avatar, on top of the built-in gesture table.
+#
+# Each file adds one gesture under its own filename. They are the operator's
+# own, tuned against a model this repository does not ship, so they are not
+# tracked — but the directory is, so there is somewhere to put one.
+#
+# What the format is, and why it is keyframes rather than the procedural form
+# the built-in table uses, is in `docs/en/motions.md`.
+*
+!.gitignore
