@@ -16,6 +16,7 @@ import type {
   SpineSlot,
   Vec3Tuple,
 } from '../types';
+import { gestureDef } from './custom';
 import { DirFollower, ScalarFollower } from './follow';
 import { Gaze } from './gaze';
 import { BASE_FINGERS, BASE_PALM, BASE_POSE, GESTURES, pointHand } from './gestures';
@@ -36,7 +37,13 @@ import { FINGER_ONSET, LINK_ONSET, minJerk, onset, reachEnvelope } from './timin
 const ARM_SLOTS: ArmSlot[] = ['shoulder', 'upperArm', 'lowerArm', 'hand'];
 const FINGER_NAMES: FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
 
-/** The gesture table, looked up by an id that arrives as a plain string. */
+/**
+ * The built-in gesture table.
+ *
+ * What `play` looks up is `gestureDef`, which is this plus whatever motions the
+ * renderer loaded. This name is for the one thing that must stay built-in only:
+ * the autopilot's pool. See `pickGesture`.
+ */
 const GESTURE_TABLE: Record<string, GestureDef> = GESTURES;
 
 /**
@@ -918,7 +925,7 @@ export class Body {
   }
 
   play(id: string): void {
-    const def = GESTURE_TABLE[id];
+    const def = gestureDef(id);
     if (!def) return;
     this.playDef(def, id);
   }
@@ -1016,7 +1023,14 @@ export class Body {
     this.gesture.time = Math.max(this.gesture.time, lead + def.hold);
   }
 
-  /** Pick a gesture appropriate to what the character is currently doing. */
+  /**
+   * Pick a gesture appropriate to what the character is currently doing.
+   *
+   * Built-ins only, deliberately. This is the autopilot: nobody asked for the
+   * gesture it returns, so it may only draw from the set that was watched on a
+   * render. A motion loaded off disk is played when it is named and never by
+   * itself — the first time one appears on air should be a decision.
+   */
   pickGesture(groups: GestureGroup[]): string | null {
     const pool = Object.keys(GESTURE_TABLE).filter((id) =>
       groups.includes(GESTURE_TABLE[id].group),

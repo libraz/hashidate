@@ -24,7 +24,7 @@
 import { parseLine } from './cues';
 import type { Director } from './director';
 import { EMOTION_LABELS, EMOTIONS } from './face';
-import { GESTURES, HOP_IDS, HOPS } from './motion';
+import { gestureEntries, HOP_IDS, HOPS } from './motion';
 import { holdsUntilReleased, PERFORMANCE_IDS, PERFORMANCE_TABLE } from './performance';
 import type { Wardrobe } from './scene';
 import type { Tuning, TuningPatch } from './tuning';
@@ -34,7 +34,6 @@ import type {
   EmotionVector,
   FingerName,
   GazeLimits,
-  GestureDef,
   Placement,
   Scenery,
   SessionEvent,
@@ -783,7 +782,7 @@ export class Session {
     // bearing — an axis the caller left out keeps what it had, an axis set to
     // null is emptied. `??` here would quietly turn the first into the second.
     if (turn.stage) {
-      const { camera, backdrop, room, deck, slide } = turn.stage;
+      const { camera, backdrop, room, deck, slide, place } = turn.stage;
       // The framing only: a line names how much of the character is in shot,
       // and where the operator is standing is not a property of a sentence.
       if (camera !== undefined) this.setCamera({ frame: camera });
@@ -801,6 +800,12 @@ export class Session {
       // and started again on the same page.
       if (deck !== undefined) this.setDeck(deck, slide);
       else if (slide !== undefined) this.setSlide(slide);
+      // Last of the five, and after the document rather than before it. Both
+      // orders show a wrong frame for an instant; this one shows the character
+      // still where she was over a document that has arrived, which reads as
+      // her stepping aside. The other shows her already gone from a frame that
+      // has nothing in it yet, which reads as a dropped frame.
+      if (place !== undefined) this.setPlacement(place);
     }
     // The autopilot has to be off before anything goes in. Its own timer would
     // otherwise cut the gesture short on the very next frame, and switching it
@@ -916,7 +921,11 @@ export class Session {
           sustain: holdsUntilReleased(def),
         };
       }),
-      gestures: (Object.entries(GESTURES) as Array<[string, GestureDef]>).map(([id, g]) => ({
+      // Built-in and loaded together, and not marked apart. What an
+      // orchestrator does with the list is send one of the ids back, and where
+      // a gesture was defined does not change that — the distinction belongs to
+      // whoever put the file in the directory.
+      gestures: gestureEntries().map(([id, g]) => ({
         id,
         label: g.label,
         group: g.group,

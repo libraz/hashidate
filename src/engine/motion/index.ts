@@ -12,6 +12,14 @@
 
 export type { ActiveGesture, BodyContext, PointCommand } from './body';
 export { Body } from './body';
+export type { MotionArm, MotionDef, MotionFrame, MotionLoad, MotionRejection } from './custom';
+export {
+  clearMotions,
+  compileMotion,
+  gestureDef,
+  gestureEntries,
+  loadMotions,
+} from './custom';
 export { DirFollower, OMEGA_PER_RATE, ScalarFollower } from './follow';
 export { Gaze } from './gaze';
 export * from './gestures';

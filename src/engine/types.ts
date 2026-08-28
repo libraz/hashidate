@@ -555,6 +555,21 @@ export interface Staging {
    * document away is `deck: null`.
    */
   slide?: number;
+  /**
+   * Where the two layers sit in the broadcast frame, as `place` states it.
+   *
+   * Here because a document and a layout are one decision made at one moment: a
+   * deck that fills the frame wants the character small in a corner, and the
+   * line that puts the deck up is the line that wants her moved. Sent as a
+   * separate command it lands at some other time, and the frame is briefly
+   * wrong in the most visible way there is — two things on top of each other.
+   *
+   * A partial merge, like the command it mirrors, and persistent like every
+   * other axis on this interface: absent means "leave it", never "reset it", so
+   * the line that takes the deck down is the line that says where she stands
+   * without one.
+   */
+  place?: { avatar?: Placement; slide?: SlidePlacement };
 }
 
 /**

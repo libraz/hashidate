@@ -1884,6 +1884,47 @@ describe('a turn that stages a document', () => {
     expect(slides.calls).toEqual([]);
   });
 
+  /**
+   * The reason a layout is on the turn at all. A deck that fills the frame
+   * wants the character out of the middle of it, and the two sent separately
+   * arrive at different moments — with her standing over the page in between.
+   */
+  it('moves the character aside on the same line that puts the document up', () => {
+    const slides = new FakeSlides();
+    const composition = new FakeComposition();
+    const { session, runUntil } = build({ slides, composition });
+    const place = { avatar: { anchor: 'bottom-right' as const, width: 0.26 } };
+
+    session.say({ text: 'いち', stage: { deck: 'intro', slide: 1, place } });
+    runUntil(() => session.turn?.text === 'いち');
+
+    expect(slides.calls).toEqual([{ call: 'setDeck', id: 'intro', page: 1 }]);
+    // Forwarded verbatim, exactly as the standalone command forwards it: absent
+    // has to stay absent all the way down or a line that moves her sideways
+    // resets her size too.
+    expect(composition.placements).toEqual([place]);
+  });
+
+  it('leaves the layout alone when the staging does not name one', () => {
+    const composition = new FakeComposition();
+    const { session, runUntil } = build({ composition });
+    session.say({ text: 'いち', stage: { camera: 'full' } });
+    runUntil(() => session.turn?.text === 'いち');
+    expect(composition.placements).toEqual([]);
+  });
+
+  it('leaves the layout where the line put it after the turn ends', () => {
+    const composition = new FakeComposition();
+    const { session, runUntil } = build({ composition });
+    session.say({ text: 'いち', stage: { place: { avatar: { width: 0.3 } } } });
+    runUntil(() => session.turn?.text === 'いち');
+    runUntil(() => !session.busy);
+    // Where the picture sits in the broadcast frame is a property of the
+    // stream, not of a sentence. A turn that put it back would drop the
+    // character into the middle of the document on the next line.
+    expect(composition.placements).toEqual([{ avatar: { width: 0.3 } }]);
+  });
+
   it('leaves the document up after the turn ends, like the camera and the backdrop', () => {
     const slides = new FakeSlides();
     const { session, runUntil } = build({ slides });
