@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Director } from '@/engine/director';
 import { textToVisemes } from '@/engine/face';
+import { HOPS, planJump } from '@/engine/motion';
+import { CROUCH_T, RECOVER_T } from '@/engine/motion/jump';
+import { PERFORMANCE_TABLE } from '@/engine/performance';
 import { buildProfile } from '@/engine/profile';
 import { Wardrobe } from '@/engine/scene';
 import { Session } from '@/engine/session';
@@ -1042,16 +1045,28 @@ describe('a turn that names a performance', () => {
   });
 
   it('drops a held pose the autopilot was in before the line starts', () => {
-    // The autopilot picks sustained poses, and a line delivered with the arms
-    // still folded from the last idle pick is the bug this ordering removes.
+    // The autopilot picks performances, and a line delivered with the arms
+    // still held from the last idle pick is the bug this ordering removes.
     const { session, director, step } = build({ idle: true });
     step(Math.ceil((IDLE_AFTER + 1) / DT));
-    director.perform('guarded');
-    step(2);
-    expect(director.body.gesture?.id).toBe('armCross');
-    session.say({ id: 'a', text: 'あいうえお' });
-    step(2);
-    expect(director.body.gesture?.released).toBe(true);
+    const random = vi.spyOn(Math, 'random').mockReturnValue(11 / 35 + 0.001);
+    try {
+      const limit = 10;
+      let elapsed = 0;
+      while (director.performance !== 'agree' && elapsed < limit) {
+        step(1);
+        elapsed += DT;
+      }
+      expect(director.performance).toBe('agree');
+      expect(director.body.gesture?.id).toBe('nod');
+
+      session.say({ id: 'a', text: 'あいうえお' });
+      step(2);
+      expect(director.body.gesture?.id).toBe('nod');
+      expect(director.body.gesture?.released).toBe(true);
+    } finally {
+      random.mockRestore();
+    }
   });
 });
 
@@ -1065,16 +1080,204 @@ describe('the autopilot picking performances', () => {
     expect(session.state().performance).toBe(id);
     // Whatever it picked, the mood it set is the one that entry declares — the
     // point of the layer being that the two are never chosen apart.
-    expect(Object.keys(director.target).length).toBeGreaterThan(0);
+    expect(director.effectiveTarget).toEqual(
+      PERFORMANCE_TABLE[id as keyof typeof PERFORMANCE_TABLE].emotion,
+    );
   });
 
   it('lets go of a held pose when the autopilot is switched off', () => {
-    const { session, director, step, runUntil } = build({ idle: true });
-    step(Math.ceil((IDLE_AFTER + 1) / DT));
-    runUntil(() => !!director.performance, 40);
+    const { session, director, step } = build({ idle: true });
+    const random = vi.spyOn(Math, 'random').mockReturnValue(31 / 35 + 0.001);
+    try {
+      step(Math.ceil((IDLE_AFTER + 1) / DT));
+      let elapsed = 0;
+      while (director.performance !== 'guarded' && elapsed < 10) {
+        step(1);
+        elapsed += DT;
+      }
+      expect(director.body.gesture?.id).toBe('armCross');
+
+      session.setIdle(false);
+      step(2);
+      expect(director.performance).toBeNull();
+      expect(director.body.gesture?.released).toBe(true);
+    } finally {
+      random.mockRestore();
+    }
+  });
+});
+
+describe('idle ownership', () => {
+  it('keeps baseline mood and a manual expression untouched through an idle cycle', () => {
+    const { session, director, step } = build({ idle: true });
+    session.setEmotion({ joy: 0.8 });
+    session.setExpression('F_DOYA');
+    const target = { ...director.target };
+
+    step(Math.ceil(6 / DT));
+
+    expect(director.auto).toBe(true);
+    expect(director.performance).not.toBeNull();
+    expect(director.target).toEqual(target);
+    expect(director.pickedExpression).toBe('F_DOYA');
+
     session.setIdle(false);
+    step(1);
+    expect(director.target).toEqual(target);
+    expect(director.pickedExpression).toBe('F_DOYA');
+  });
+
+  it('drops idle face and mood when a turn starts without either field', () => {
+    const { session, director, step } = build({ idle: true });
+    const random = vi.spyOn(Math, 'random').mockReturnValue(32 / 35 + 0.001);
+    try {
+      step(Math.ceil((IDLE_AFTER + 1) / DT));
+      let elapsed = 0;
+      while (director.performance !== 'nice' && elapsed < 10) {
+        step(1);
+        elapsed += DT;
+      }
+      step(120);
+      expect(director.auto).toBe(true);
+      expect(director.expression).toBe('F_DOYA');
+
+      session.say({ id: 'plain', text: 'あい' });
+      step(1);
+
+      expect(director.auto).toBe(false);
+      expect(session.state().emotion).toEqual({ neutral: 1 });
+      expect(director.expression).toBeNull();
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('gives a direct face or body command a grace period without disabling idle', () => {
+    const { session, director, step } = build({ idle: true });
+    step(Math.ceil((IDLE_AFTER + 1) / DT));
+    expect(director.auto).toBe(true);
+
+    session.setEmotion({ joy: 1 });
+    expect(session.idleEnabled).toBe(true);
+    expect(director.auto).toBe(false);
+    step(Math.ceil((IDLE_AFTER - DT) / DT));
+    expect(director.auto).toBe(false);
     step(2);
-    expect(director.performance).toBeNull();
+    expect(director.auto).toBe(true);
+  });
+
+  it.each(['guarded', 'doze'] as const)(
+    'keeps the caller-owned held performance %s ahead of idle',
+    (id) => {
+      const { session, director, step } = build({ idle: true });
+      session.perform(id);
+      director.auto = true;
+      step(Math.ceil((IDLE_AFTER + 1) / DT));
+
+      expect(director.baselinePerformanceHeld).toBe(true);
+      expect(director.auto).toBe(false);
+      expect(session.state().performance).toBe(id);
+      expect(director.body.gesture?.id).toBe(id === 'guarded' ? 'armCross' : 'doze');
+      expect(director.body.gesture?.released).toBe(false);
+    },
+  );
+
+  it('releases a held performance, waits the grace period, then resumes idle', () => {
+    const { session, director, step } = build({ idle: true });
+    session.perform('guarded');
+    step(Math.ceil((IDLE_AFTER + 1) / DT));
+    expect(director.auto).toBe(false);
+
+    session.perform(null);
+    expect(director.baselinePerformanceHeld).toBe(false);
+    expect(director.body.gesture?.released).toBe(true);
+    step(Math.ceil(IDLE_AFTER / DT));
+    expect(director.auto).toBe(false);
+    step(2);
+    expect(director.auto).toBe(true);
+  });
+
+  it('releases an unowned held gesture when a face-only idle act starts', () => {
+    const { session, director, step } = build({ idle: true });
+    session.gesture('armCross');
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      step(Math.ceil((IDLE_AFTER + 1) / DT));
+      expect(director.auto).toBe(true);
+
+      let elapsed = 0;
+      while (director.performance !== 'calm' && elapsed < 10) {
+        step(1);
+        elapsed += DT;
+      }
+      expect(director.performance).toBe('calm');
+      const gesture = director.body.gesture;
+      expect(gesture === null || (gesture.id === 'armCross' && gesture.released)).toBe(true);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('finishes an idle bounce at its current hop when a turn takes over', () => {
+    const { session, director, step, now } = build({ idle: true });
+    const bouncy = PERFORMANCE_TABLE.bouncy;
+    const priorHop = bouncy.hop;
+    const random = vi.spyOn(Math, 'random').mockReturnValue(27 / 35 + 0.001);
+    bouncy.hop = 'bounce';
+    try {
+      step(Math.ceil((IDLE_AFTER + 1) / DT));
+      let elapsed = 0;
+      while (director.performance !== 'bouncy' && elapsed < 10) {
+        step(1);
+        elapsed += DT;
+      }
+      expect(director.performance).toBe('bouncy');
+      expect(director.body.jumping).toBe(true);
+
+      const one = planJump(HOPS.bounce.height, director.body.gravity, 1);
+      const cycle = one.push + one.flight + one.brake;
+      // Move just into the second bounce. `finishHop` must keep this one so the
+      // hips still land continuously, while dropping the third from the run.
+      step(Math.ceil((CROUCH_T + cycle) / DT));
+      expect(director.body.jumping).toBe(true);
+
+      session.say({ id: 'plain', text: 'あ' });
+      const releaseAt = now();
+      step(1);
+      const settle = cycle + RECOVER_T + 3 * DT;
+      while (director.body.jumping && now() - releaseAt < settle) step(1);
+      expect(director.body.jumping).toBe(false);
+      expect(now() - releaseAt).toBeLessThan(settle);
+    } finally {
+      bouncy.hop = priorHop;
+      random.mockRestore();
+    }
+  });
+
+  it('composes idle overlays over the caller weight and restores it on wake', () => {
+    const { session, director, step } = build({ idle: true });
+    session.setOverlay('FX_BLUSH', 0.4);
+    const calm = PERFORMANCE_TABLE.calm;
+    const prior = calm.overlay;
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    calm.overlay = ['FX_BLUSH'];
+    try {
+      step(Math.ceil((IDLE_AFTER + 1) / DT));
+      let elapsed = 0;
+      while (director.performance !== 'calm' && elapsed < 10) {
+        step(1);
+        elapsed += DT;
+      }
+      expect(director.performance).toBe('calm');
+      expect(session.state().overlays).toEqual({ FX_BLUSH: 1 });
+
+      session.setIdle(false);
+      expect(director.auto).toBe(false);
+      expect(session.state().overlays).toEqual({ FX_BLUSH: 0.4 });
+    } finally {
+      calm.overlay = prior;
+      random.mockRestore();
+    }
   });
 });
 

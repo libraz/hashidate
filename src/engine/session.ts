@@ -437,27 +437,46 @@ export class Session {
   // For everything that is not a turn: the state an orchestrator sets between
   // lines, or a control surface pokes at directly.
 
+  /**
+   * Give a direct face/body command a quiet window before idle resumes.
+   *
+   * This does not disable idle. It only restarts the same grace period used
+   * after a turn, and it is intentionally called by the public wrappers only;
+   * turn-internal release paths call the director directly so they cannot wake
+   * idle by accident.
+   */
+  private wake(): void {
+    this._sinceBusy = 0;
+    this.d.auto = false;
+  }
+
   setEmotion(vec: EmotionVector): void {
+    this.wake();
     this.d.setEmotion(vec);
   }
 
   setExpression(id: string | null): void {
+    this.wake();
     this.d.setExpression(id);
   }
 
   setOverlay(id: string, weight?: number): void {
+    this.wake();
     this.d.setOverlay(id, weight);
   }
 
   resetExpression(): void {
+    this.wake();
     this.d.resetExpression();
   }
 
   gesture(id: string): void {
+    this.wake();
     this.d.gesture(id);
   }
 
   stopGesture(): void {
+    this.wake();
     this.d.body.stopGesture();
   }
 
@@ -469,11 +488,13 @@ export class Session {
    * finer ones below it exist for what the table has no name for.
    */
   perform(id: string | null): void {
+    this.wake();
     this.d.perform(id);
   }
 
   /** A run of hops. Runs alongside whatever the arms are doing. */
   hop(id?: string): void {
+    this.wake();
     this.d.hop(id);
   }
 
@@ -491,15 +512,18 @@ export class Session {
     extent = 0.8,
     finger = 'index',
   }: PointOptions = {}): void {
+    this.wake();
     this.d.point(side, { azimuth, elevation, extent, finger });
   }
 
   lookAt(v: number): void {
+    this.wake();
     this.d.lookAt(v);
   }
 
   setIdle(on: boolean): void {
     this.idleEnabled = !!on;
+    if (!this.idleEnabled) this.d.auto = false;
   }
 
   /**
@@ -759,7 +783,7 @@ export class Session {
     // so the autopilot cannot overwrite the emotion the orchestrator just set
     // or throw a gesture into the middle of a line.
     this._sinceBusy = this.busy ? 0 : this._sinceBusy + dt;
-    d.auto = this.idleEnabled && this._sinceBusy > IDLE_AFTER;
+    d.auto = this.idleEnabled && !d.baselinePerformanceHeld && this._sinceBusy > IDLE_AFTER;
   }
 
   private start(turn: Turn): void {
@@ -984,7 +1008,7 @@ export class Session {
       idle: d.auto,
       idleEnabled: this.idleEnabled,
       emotion: Object.fromEntries(
-        (Object.entries(d.target) as Array<[EmotionName, number]>)
+        (Object.entries(d.effectiveTarget) as Array<[EmotionName, number]>)
           .filter(([, v]) => v > 0.01)
           .map(([k, v]) => [k, +v.toFixed(2)]),
       ) as EmotionVector,

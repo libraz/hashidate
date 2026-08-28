@@ -21,7 +21,7 @@ import { DirFollower, ScalarFollower } from './follow';
 import { Gaze } from './gaze';
 import { BASE_FINGERS, BASE_PALM, BASE_POSE, GESTURES, pointHand } from './gestures';
 import { breathCurve, DEFAULT_VARIATION, saturate, settle } from './idle';
-import { type HopSpec, type JumpArc, planJump, sampleJump } from './jump';
+import { CROUCH_T, type HopSpec, type JumpArc, planJump, sampleJump } from './jump';
 import { FINGER_ONSET, LINK_ONSET, minJerk, onset, reachEnvelope } from './timing';
 
 /**
@@ -1045,6 +1045,16 @@ export class Body {
   hop({ height = this.jumpHeight, count = 1 }: Partial<HopSpec> = {}): void {
     this._jump = planJump(height, this.gravity, count);
     this._jumpT = 0;
+  }
+
+  /** Finish the current hop, dropping any later cycles from a run. */
+  finishHop(): void {
+    const jump = this._jump;
+    if (!jump) return;
+    const cycle = jump.push + jump.flight + jump.brake;
+    const elapsed = Math.max(0, this._jumpT - CROUCH_T);
+    const current = Math.min(jump.count, Math.floor(elapsed / cycle) + 1);
+    jump.count = current;
   }
 
   /** Whether a hop is in flight. Read by the panel. */

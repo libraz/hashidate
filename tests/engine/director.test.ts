@@ -147,6 +147,67 @@ describe('Director / the composed expression underneath', () => {
   });
 });
 
+describe('Director / authored mouth opening while speaking', () => {
+  function buildMouth() {
+    const rig = buildRig({
+      groups: [[FACE_GROUP, ['F_OPEN']]],
+      deltas: { mouthClose: 4e-3, F_OPEN: -2e-3 },
+    });
+    const profile = buildProfile(rig.root, {
+      ...rig.descriptor,
+      presets: { group: FACE_GROUP },
+    });
+    const director = new Director(profile);
+    const face = rig.meshes.get('Face');
+    if (!face) throw new Error('the synthetic rig built no face');
+    const weight = (id: string): number => {
+      const index = face.morphTargetDictionary?.[id];
+      return index === undefined ? 0 : (face.morphTargetInfluences?.[index] ?? 0);
+    };
+    const step = (frames: number): void => {
+      for (let i = 0; i < frames; i++) director.update(DT);
+    };
+    return { director, weight, step };
+  }
+
+  it('keeps the authored open face at rest and adds close plus viseme while speaking', () => {
+    const { director, weight, step } = buildMouth();
+    director.setExpression('F_OPEN');
+    step(120);
+    expect(weight('F_OPEN')).toBeCloseTo(1, 3);
+    expect(weight('mouthClose')).toBe(0);
+
+    director.speak('あいうえお');
+    step(2);
+    expect(weight('F_OPEN')).toBeCloseTo(1, 3);
+    expect(weight('mouthClose')).toBeGreaterThan(0);
+    expect(weight('vrc.v_aa')).toBeGreaterThan(0);
+
+    director.mouth.stop();
+    step(1);
+    expect(weight('F_OPEN')).toBeCloseTo(1, 3);
+    expect(weight('mouthClose')).toBeGreaterThan(0);
+    step(120);
+    expect(weight('mouthClose')).toBeLessThan(0.001);
+  });
+
+  it('leaves the authored face unchanged when mouthClose is unavailable', () => {
+    const rig = buildRig({ arkit: false, groups: [[FACE_GROUP, ['F_OPEN']]] });
+    const profile = buildProfile(rig.root, {
+      ...rig.descriptor,
+      presets: { group: FACE_GROUP },
+    });
+    const director = new Director(profile);
+    const face = rig.meshes.get('Face');
+    if (!face) throw new Error('the synthetic rig built no face');
+    director.setExpression('F_OPEN');
+    director.speak('あ');
+    for (let i = 0; i < 2; i++) director.update(DT);
+    const close = face.morphTargetDictionary?.mouthClose;
+    expect(close).toBeUndefined();
+  });
+});
+
 describe('buildRig / stated deltas', () => {
   it('writes the delta a shape was given and the default for the rest', () => {
     const rig = buildRig({ groups: [[FACE_GROUP, ['F_SWAP', 'F_PLAIN']]], deltas: DELTAS });

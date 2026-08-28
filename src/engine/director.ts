@@ -131,9 +131,15 @@ export class Director {
   private _manualPreset: string | null = null;
   /** the autopilot reaching for an unmapped face */
   private _autoPreset: string | null = null;
+  /** The transient emotion the idle layer is easing toward. */
+  private _idleTarget: EmotionVector;
+  /** The transient emotion currently shown by the idle layer. */
+  private _idleEmotion: EmotionVector;
   /** the one currently faded in */
   private _preset: string | null = null;
   private _presetW = 0;
+  /** Whether the currently visible preset belongs to the idle layer. */
+  private _presetAuto = false;
 
   private readonly _extraFaces: string[];
   private _faceTimer = 0;
@@ -142,10 +148,18 @@ export class Director {
   /** autopilot: performances, and the avatar's own faces between them */
   private _auto = false;
 
-  /** The performance in flight, and what it will have to put back. */
+  /** The baseline performance in flight, and what it will have to put back. */
   private _act: string | null = null;
   private _actOverlays: string[] = [];
   private _lookBefore: number | null = null;
+
+  /** The idle performance in flight, kept separate from caller-owned state. */
+  private _autoAct: string | null = null;
+  private _autoLookBefore: number | null = null;
+  private _autoDroopBefore: number | null = null;
+
+  /** Effects raised by idle, kept apart from caller-owned overlays. */
+  private readonly _autoOverlay = new Map<string, number>();
 
   /** mesh -> Map<index, value> for this frame */
   private _morphs = new Map<THREE.Mesh, Map<number, number>>();
@@ -173,6 +187,8 @@ export class Director {
 
     this.emotion = { neutral: 1 };
     this.target = { neutral: 1 };
+    this._idleEmotion = { neutral: 1 };
+    this._idleTarget = { neutral: 1 };
     this.emotionRate = 3.5;
 
     this.useArkit = profile.arkit.supported;
@@ -214,8 +230,45 @@ export class Director {
 
   set auto(on: boolean) {
     if (on === this._auto) return;
+    if (on && this.baselinePerformanceHeld) return;
     this._auto = on;
-    if (!on) this.releaseAct();
+    if (on) {
+      // Idle starts from what the baseline has actually reached. The baseline
+      // continues easing underneath it, so turning idle off reveals the state
+      // the caller has been driving rather than the mood idle happened to pick.
+      this._idleEmotion = { ...this.emotion };
+      this._idleTarget = { ...this.emotion };
+      return;
+    }
+
+    // Idle owns all of its transient channels. Drop them together so one stale
+    // face, overlay or held pose cannot survive after the layer has yielded.
+    this.releaseAutoAct();
+    this._autoPreset = null;
+    this._autoOverlay.clear();
+    if (this._presetAuto) {
+      this._preset = null;
+      this._presetW = 0;
+      this._presetAuto = false;
+    }
+    this._idleEmotion = { ...this.emotion };
+    this._idleTarget = { ...this.target };
+  }
+
+  /** Whether the caller's current performance owns a held channel. */
+  get baselinePerformanceHeld(): boolean {
+    const def = this._act ? performanceDef(this._act) : null;
+    return !!def && holdsUntilReleased(def);
+  }
+
+  /** The emotion currently used by the face and tail for this frame. */
+  get effectiveEmotion(): EmotionVector {
+    return this._auto ? this._idleEmotion : this.emotion;
+  }
+
+  /** The target reported while idle is in control, otherwise the baseline one. */
+  get effectiveTarget(): EmotionVector {
+    return this._auto ? this._idleTarget : this.target;
   }
 
   /** Current blink weight, 0..1. Read by the HUD. */
@@ -263,9 +316,6 @@ export class Director {
    */
   setExpression(id: string | null): void {
     this._manualPreset = id && this.presetById.has(id) ? id : null;
-    // Clearing a pick is a clear: drop the autopilot's face too, or the caller
-    // asks for nothing and the face does not change.
-    if (!this._manualPreset) this._autoPreset = null;
   }
 
   /**
@@ -281,7 +331,13 @@ export class Director {
 
   /** Everything currently raised, as `{ id: weight }`. */
   get overlayState(): Record<string, number> {
-    return Object.fromEntries(this._overlay);
+    const out = new Map(this._overlay);
+    if (this._auto) {
+      for (const [id, weight] of this._autoOverlay) {
+        out.set(id, Math.max(out.get(id) ?? 0, weight));
+      }
+    }
+    return Object.fromEntries(out);
   }
 
   /**
@@ -294,10 +350,17 @@ export class Director {
     // gaze are part of "the expression" to whoever is watching, and a reset
     // that leaves the eyes shut is not one.
     this.releaseAct();
+    this.releaseAutoAct();
     this._manualPreset = null;
     this._autoPreset = null;
+    this._presetAuto = false;
     this._overlay.clear();
+    this._autoOverlay.clear();
     this.setEmotion({ neutral: 1 });
+    if (this._auto) {
+      this._idleEmotion = { ...this.emotion };
+      this._idleTarget = { neutral: 1 };
+    }
     // Hold off the autopilot briefly, or it repoints on the very next frame and
     // the reset never becomes visible.
     this._faceTimer = 3 + Math.random() * 3;
@@ -344,12 +407,14 @@ export class Director {
    * Play a named performance: a face and a movement together. `null` releases
    * the current one.
    *
-   * This is the API an orchestrator is meant to use, and the one the autopilot
-   * uses. The pieces underneath it stay reachable — an orchestrator that wants
-   * an emotion this table has no name for still sets the vector directly — but
-   * everything a character routinely does has a name here.
+   * This is the API an orchestrator is meant to use. The pieces underneath it
+   * stay reachable — an orchestrator that wants an emotion this table has no
+   * name for still sets the vector directly — but everything a character
+   * routinely does has a name here. Idle uses a transient counterpart so it
+   * cannot rewrite this caller-owned state.
    */
   perform(id: string | null): void {
+    if (this._auto) this.auto = false;
     this.releaseAct();
     if (!id) return;
     const def = performanceDef(id);
@@ -378,7 +443,7 @@ export class Director {
 
   /** Which performance is up, or null. Cleared as soon as one is released. */
   get performance(): string | null {
-    return this._act;
+    return this._auto ? (this._autoAct ?? this._act) : this._act;
   }
 
   /**
@@ -407,6 +472,34 @@ export class Director {
   }
 
   /**
+   * Put back the idle performance's transient changes only.
+   *
+   * The baseline performance belongs to the caller and may be showing again as
+   * soon as idle yields. Its overlays and gaze are therefore left alone when an
+   * idle act happens to use the same channel.
+   */
+  private releaseAutoAct(): void {
+    const id = this._autoAct;
+    const def: PerformanceDef | null = id ? performanceDef(id) : null;
+    this._autoAct = null;
+    this._autoOverlay.clear();
+    if (!id) return;
+    if (this._autoDroopBefore !== null) {
+      this.#blink.droop = this._autoDroopBefore;
+      this._autoDroopBefore = null;
+    }
+    if (this._autoLookBefore !== null) {
+      this.body.lookAt = this._autoLookBefore;
+      this._autoLookBefore = null;
+    }
+    if (!def) return;
+    if (def.gesture && this.body.gesture?.id === def.gesture) {
+      this.body.stopGesture();
+    }
+    if (def.hop) this.body.finishHop();
+  }
+
+  /**
    * Aim a fingertip at a bearing and hold it. See `Body.point` for the
    * coordinate; the arm is back-solved from it, so nothing above this line
    * names a joint.
@@ -430,19 +523,12 @@ export class Director {
   // --- per-frame ---------------------------------------------------------
 
   update(dt: number, ctx?: DirectorContext): void {
-    // Emotion vector eases toward the target so switches are not instant.
+    // The baseline emotion vector always eases toward its target, including
+    // while idle is drawing another one. This keeps a caller's mood current
+    // underneath the transient layer.
     const k = 1 - Math.exp(-dt * this.emotionRate);
-    const keys = new Set<EmotionName>([
-      ...(Object.keys(this.emotion) as EmotionName[]),
-      ...(Object.keys(this.target) as EmotionName[]),
-    ]);
-    for (const key of keys) {
-      const cur = this.emotion[key] ?? 0;
-      const to = this.target[key] ?? 0;
-      const next = cur + (to - cur) * k;
-      if (next < 0.001 && to === 0) delete this.emotion[key];
-      else this.emotion[key] = next;
-    }
+    this.easeEmotion(this.emotion, this.target, k);
+    if (this._auto) this.easeEmotion(this._idleEmotion, this._idleTarget, k);
 
     this.mouth.update(dt);
     this.updatePreset(dt);
@@ -467,13 +553,28 @@ export class Director {
 
     // Poses the base of the tail for this frame. It writes a rest pose rather
     // than a bone, so it belongs before the simulation reads one.
-    this.tail.update(dt, this.emotion, this.body.speechEnergy);
+    this.tail.update(dt, this.effectiveEmotion, this.body.speechEnergy);
 
     // Last, and it has to be last. Hair and cloth are driven by where the body
     // ended up this frame, so anything that moves a bone after this point is a
     // frame the secondary motion never saw — which does not read as lag, it
     // reads as hair that is attached to the head one frame ago.
     this.spring.update(dt);
+  }
+
+  /** Ease one emotion channel without changing the ownership of either map. */
+  private easeEmotion(current: EmotionVector, target: EmotionVector, k: number): void {
+    const keys = new Set<EmotionName>([
+      ...(Object.keys(current) as EmotionName[]),
+      ...(Object.keys(target) as EmotionName[]),
+    ]);
+    for (const key of keys) {
+      const cur = current[key] ?? 0;
+      const to = target[key] ?? 0;
+      const next = cur + (to - cur) * k;
+      if (next < 0.001 && to === 0) delete current[key];
+      else current[key] = next;
+    }
   }
 
   // --- autopilot ---------------------------------------------------------
@@ -517,10 +618,42 @@ export class Director {
       this._autoTimer = 1.2;
       return;
     }
-    this.perform(pickOne(AUTO_ACTS));
+    this.autoPerform(pickOne(AUTO_ACTS));
     // Long enough that a pose is a pose rather than a flicker, uneven enough
     // that the rotation does not become a beat the viewer can count along with.
     this._autoTimer = 5.5 + Math.random() * 7;
+  }
+
+  /**
+   * Start an idle performance without touching caller-owned face state.
+   *
+   * `perform()` is intentionally the public/baseline path: it changes the
+   * persistent mood and clears an explicit expression. Idle needs the same
+   * authored movement and transient effects, but none of those baseline writes.
+   */
+  private autoPerform(id: string): void {
+    this.releaseAutoAct();
+    const def = performanceDef(id);
+    if (!def) return;
+    this._autoAct = id;
+    this._idleTarget = { ...def.emotion };
+    this._autoPreset = null;
+
+    for (const overlay of def.overlay ?? []) {
+      if (!this.overlayIds.has(overlay)) continue;
+      this._autoOverlay.set(overlay, 1);
+    }
+    if (def.droop !== undefined) {
+      this._autoDroopBefore = this.#blink.droop;
+      this.#blink.droop = def.droop;
+    }
+    if (def.look !== undefined) {
+      this._autoLookBefore = this.body.lookAt;
+      this.body.lookAt = def.look;
+    }
+    if (def.gesture) this.body.play(def.gesture);
+    else if (this.body.gesture?.def.sustain && !this.body.gesture.released) this.body.stopGesture();
+    if (def.hop) this.hop(def.hop);
   }
 
   /**
@@ -559,8 +692,9 @@ export class Director {
     if (!this.useNativePresets) return null;
     // The emotion vector blends, an authored face does not, so only the
     // dominant emotion can claim one — and only once it is clearly dominant.
-    const name = dominantEmotion(this.emotion);
-    const w = this.emotion[name] ?? 0;
+    const emotion = this.effectiveEmotion;
+    const name = dominantEmotion(emotion);
+    const w = emotion[name] ?? 0;
     const id = this._emotionPreset[name];
     if (!(id && w > 0.35 && this.presetById.has(id))) return null;
     // How strongly an emotion is felt decides whether a drawing that replaces
@@ -586,21 +720,25 @@ export class Director {
       if (this.swapsTheEye(this._preset)) {
         this._presetW = 0;
         this._preset = null;
+        this._presetAuto = false;
         return;
       }
       this._presetW -= this._presetW * k;
       if (this._presetW < 0.02) {
         this._presetW = 0;
         this._preset = null;
+        this._presetAuto = false;
       }
       return;
     }
     if (!this._preset) {
       if (!want) {
         this._presetW = 0;
+        this._presetAuto = false;
         return;
       }
       this._preset = want.id;
+      this._presetAuto = this._auto && !this._manualPreset;
     }
     if (this.swapsTheEye(this._preset)) {
       this._presetW = want?.w ?? 0;
@@ -632,6 +770,7 @@ export class Director {
 
   private writeFace(dt: number): void {
     const { p, mouth } = this;
+    const emotion = this.effectiveEmotion;
     this._morphs.clear();
 
     // An authored face goes down first and the composed one yields to it in
@@ -640,7 +779,18 @@ export class Director {
     // brows, the lids and the mouth.
     const preset = this._preset ? this.presetById.get(this._preset) : null;
     const pw = preset ? this._presetW : 0;
-    if (preset) this.set(preset.id, pw);
+    if (preset) {
+      this.set(preset.id, pw);
+      // Authored faces may carry an open mouth of their own. During speech,
+      // project that travel back through the canonical close shape first, then
+      // leave the viseme layer on top. At rest the authored drawing is untouched.
+      // `busy` supplies both edges. In particular, an interrupt drops
+      // `speaking` immediately but lets this correction decay with the visemes,
+      // instead of popping the authored open mouth back in one frame.
+      if (preset.mouthClose > 0) {
+        this.set('mouthClose', pw * preset.mouthClose * mouth.busy);
+      }
+    }
     const composed = 1 - pw;
 
     // Expression, in order of preference: the portable ARKit composition, the
@@ -652,10 +802,10 @@ export class Director {
     // vertices — and it is what an avatar gets when nobody has written a
     // profile for it yet.
     if (this.useArkit && p.arkit.supported) {
-      const arkit = composeArkit(this.emotion, { mouthBusy: mouth.busy });
+      const arkit = composeArkit(emotion, { mouthBusy: mouth.busy });
       for (const [shape, v] of Object.entries(arkit)) this.set(shape, v * composed);
     } else if (this.a.emotionShapes && composed > 0.02) {
-      const native = composeNative(this.emotion, this.a.emotionShapes, {
+      const native = composeNative(emotion, this.a.emotionShapes, {
         mouthBusy: mouth.busy,
         mouthShapes: this.a.mouthShapePattern ?? null,
       });
@@ -665,19 +815,21 @@ export class Director {
       // over the same vertices, so layering "joy 0.55 + relaxed 0.45" distorts
       // the face instead of blending it — which is the reason ARKit is the
       // primary channel. The fallback keeps the dominant one and drops the rest.
-      const name = dominantEmotion(this.emotion);
+      const name = dominantEmotion(emotion);
       // `thinking` and `shy` have no VRM preset of their own; the lookup misses
       // and `set` drops it, which is the whole of what this channel can do.
-      this.set(
-        p.vrmEmotion[name as VrmEmotionName],
-        Math.min(1, this.emotion[name] ?? 1) * composed,
-      );
+      this.set(p.vrmEmotion[name as VrmEmotionName], Math.min(1, emotion[name] ?? 1) * composed);
     }
 
     // Drawn effects go on top and are not scaled by `composed`: an overlay is
     // meant to sit over whatever face is showing, and a heart pupil that fades
     // out as the smile underneath it grows is not the effect the author drew.
     for (const [id, w] of this._overlay) this.set(id, w);
+    if (this._auto) {
+      for (const [id, w] of this._autoOverlay) {
+        this.set(id, Math.max(this._overlay.get(id) ?? 0, w));
+      }
+    }
 
     // Mouth: explicit viseme shapes take priority over composed ones.
     for (const [v, w] of Object.entries(mouth.weights) as Array<[MouthViseme, number]>) {
@@ -700,7 +852,7 @@ export class Director {
     this.#blink.update(dt, {
       speaking: this.mouth.speaking,
       // Surprise holds the eyes open; blinking through it looks wrong.
-      suppressed: (this.emotion.surprise ?? 0) > 0.4,
+      suppressed: (emotion.surprise ?? 0) > 0.4,
     });
     const blink = this.#blink.weight;
     if (blink > 0.001) {
