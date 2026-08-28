@@ -21,6 +21,38 @@ function framings() {
   return { rig, framings: buildFramings(rig.root, buildProfile(rig.root, rig.descriptor), FOV) };
 }
 
+function shortTorso() {
+  const rig = buildRig({ arkit: false });
+  const profile = buildProfile(rig.root, rig.descriptor);
+  const spine = profile.bones.spine;
+  const chest = profile.bones.chest;
+  const chestParent = chest?.parent;
+  if (!(spine && chest && chestParent instanceof THREE.Bone)) {
+    throw new Error('synthetic rig has no trunk bones');
+  }
+
+  // Keep the purchased-model proportion that exposed the bug: chest and hips
+  // are close enough that the old upper lower edge crossed the bust edge.
+  spine.position.y = 0.01;
+  chestParent.position.y = 0.01;
+  chest.position.y = 0.01;
+  rig.root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(rig.root);
+  const size = box.getSize(new THREE.Vector3());
+  const chestY = chest.getWorldPosition(new THREE.Vector3()).y;
+  const hips = profile.bones.hips;
+  if (!hips) throw new Error('synthetic rig has no hips');
+  const hipsY = hips.getWorldPosition(new THREE.Vector3()).y;
+  return {
+    rig,
+    profile,
+    size,
+    chestY,
+    hipsY,
+    framings: buildFramings(rig.root, profile, FOV),
+  };
+}
+
 describe('buildFramings', () => {
   it('opens out from the face to the upper body', () => {
     // `full` is left out: it is measured from the model's own lower bound, and
@@ -29,6 +61,28 @@ describe('buildFramings', () => {
     const { framings: f } = framings();
     expect(f.face.height).toBeLessThan(f.bust.height);
     expect(f.bust.height).toBeLessThan(f.upper.height);
+  });
+
+  it('keeps upper below bust for a short torso without changing the bust edge', () => {
+    const { framings: f, size, chestY, hipsY } = shortTorso();
+    const bustBottom = chestY - size.y * 0.17;
+    const upperByHips = hipsY - size.y * 0.12;
+    const minimum = bustBottom - size.y * 0.04;
+    const oldUpperBottom = hipsY - size.y * 0.05;
+    const bustTop = f.bust.target.y + f.bust.height / 2;
+    const renderedBustBottom = f.bust.target.y - f.bust.height / 2;
+    const upperTop = f.upper.target.y + f.upper.height / 2;
+    const upperBottom = f.upper.target.y - f.upper.height / 2;
+
+    // The short chest-to-hip interval is the case where the old lower edge was
+    // above the bust edge, reversing the intended nesting. The 4% opening is
+    // the measured minimum that keeps upper useful without moving bust.
+    expect(oldUpperBottom).toBeGreaterThan(bustBottom);
+    expect(upperByHips).toBeGreaterThan(minimum);
+    expect(renderedBustBottom).toBeCloseTo(bustBottom, 12);
+    expect(f.upper.height).toBeGreaterThan(f.bust.height);
+    expect(upperBottom).toBeCloseTo(minimum, 12);
+    expect(upperTop).toBeCloseTo(bustTop, 12);
   });
 
   it('stands the camera where that height fills the frame', () => {

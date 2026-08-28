@@ -107,13 +107,18 @@ export function buildFramings(
 
   const crown = box.max.y; // includes hair and ears
   const headroom = size.y * 0.03;
+  const bustBottom = chest.y - size.y * 0.17;
+  // Upper body includes the waist, not only the space below the chest. The
+  // 0.12 proportion follows the real models; keep at least 4% of the full
+  // height below bust so a short torso cannot reverse or collapse the shots.
+  const upperBottom = Math.min(hips.y - size.y * 0.12, bustBottom - size.y * 0.04);
 
   return {
     face: frame(crown + headroom * 0.5, head.y - size.y * 0.1, head.z),
     // Crown with headroom down past the chest. Wide enough that a raised hand
     // stays in shot, which is what the gestures are authored against.
-    bust: frame(crown + headroom, chest.y - size.y * 0.17, head.z * 0.5),
-    upper: frame(crown + headroom, hips.y - size.y * 0.05, 0),
+    bust: frame(crown + headroom, bustBottom, head.z * 0.5),
+    upper: frame(crown + headroom, upperBottom, 0),
     full: frame(crown + headroom, box.min.y - headroom, 0),
   };
 }
