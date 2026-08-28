@@ -128,18 +128,41 @@ export const pointHand = (finger: FingerName = 'index'): Record<FingerName, numb
 /** The index-pointing hand, which is what most callers mean by pointing. */
 export const POINT_HAND: Record<FingerName, number> = pointHand('index');
 const PEACE_HAND: Record<FingerName, number> = {
-  thumb: 0.8,
+  thumb: 1.0,
   index: 0.02,
   middle: 0.02,
   ring: 0.95,
   little: 0.95,
 };
+/**
+ * A peace sign needs motion in the palm plane as well as finger curl.
+ *
+ * Six degrees each way leaves a clear V on both validation avatars; their bind
+ * poses separate index and middle by only 2.8 and 0.5 degrees. The thumb's 28
+ * degrees carries its fully curled tip in over the palm — curl alone left a
+ * round thumb sticking out beside the fist on the front-facing hand.
+ */
+const PEACE_SPREAD: FingerSpec = {
+  thumb: THREE.MathUtils.degToRad(28),
+  index: THREE.MathUtils.degToRad(-6),
+  middle: THREE.MathUtils.degToRad(6),
+};
+const PEACE_PALM = V(0, 0.05, 1);
 const FIST: Record<FingerName, number> = {
   thumb: 0.7,
   index: 0.92,
   middle: 0.94,
   ring: 0.95,
   little: 0.96,
+};
+/**
+ * A promise keeps the fist closed except for the little finger. Derive it from
+ * the eye-tuned fist: `pointHand('little')` left its thumb at 0.35, which read
+ * as a second extended finger on the raised hand rather than as a closed fist.
+ */
+const PINKY_PROMISE_HAND: Record<FingerName, number> = {
+  ...FIST,
+  little: 0.02,
 };
 const PAW: Record<FingerName, number> = {
   thumb: 0.68,
@@ -195,17 +218,25 @@ const one = (
   arm: ArmPose,
   fingers: FingerSpec,
   spine?: SpineOffsets,
+  fingerSpread?: FingerSpec,
 ): Pose => ({
   arms: { [H(v)]: arm },
   fingers: { [H(v)]: fingers },
   ...(spine ? { spine } : {}),
+  ...(fingerSpread ? { fingerSpread: { [H(v)]: fingerSpread } } : {}),
 });
 
 /** Two-handed result helper. */
-const both = (arm: ArmPose, fingers: FingerSpec, spine?: SpineOffsets): Pose => ({
+const both = (
+  arm: ArmPose,
+  fingers: FingerSpec,
+  spine?: SpineOffsets,
+  fingerSpread?: FingerSpec,
+): Pose => ({
   arms: { L: arm, R: arm },
   fingers: { L: fingers, R: fingers },
   ...(spine ? { spine } : {}),
+  ...(fingerSpread ? { fingerSpread: { L: fingerSpread, R: fingerSpread } } : {}),
 });
 
 /**
@@ -565,10 +596,12 @@ export const GESTURES = {
           upperArm: V(0.38, -0.58, 0.36),
           lowerArm: V(0.14, 0.92 + b, 0.34),
           hand: V(0.1, 0.96, 0.22),
+          palm: PEACE_PALM,
           twist: 0.15,
         },
         PEACE_HAND,
         { head: [0.01, 0.03, 0.035] },
+        PEACE_SPREAD,
       );
     },
   },
@@ -1038,10 +1071,12 @@ export const GESTURES = {
           upperArm: V(0.44, -0.52, 0.34),
           lowerArm: V(0.18, 0.9, 0.36),
           hand: V(0.14, 0.95, 0.24),
+          palm: PEACE_PALM,
           twist: 0.15,
         },
         PEACE_HAND,
         { head: [-0.02, 0, 0] },
+        PEACE_SPREAD,
       );
     },
   },
@@ -1096,15 +1131,13 @@ export const GESTURES = {
           upperArm: V(0.32, 0.06, 0.95),
           lowerArm: V(0.3, 0.1 + b, 0.95),
           hand: V(0.28, 0.7 + b, 0.66),
-          // Rolled the opposite way from `thumbsUp`, which is the whole of the
-          // difference between the two hands. The thumb and the little finger
-          // are on opposite edges, so the roll that stands one of them up out of
-          // the cuff buries the other against the knuckles.
-          palm: V(0.96, -0.1, 0.26),
+          // Roll the ulnar/little-finger edge toward the viewer. The previous
+          // palm target put that edge away from the shot; reversing it makes
+          // hand × palm point forward, so the raised little finger reads at
+          // the edge of the fist instead of disappearing behind it.
+          palm: V(-0.96, 0.1, -0.26),
         },
-        // The same shaping rule as pointing, and for a stronger reason here:
-        // the extended little finger *is* the gesture.
-        pointHand('little'),
+        PINKY_PROMISE_HAND,
         { head: [0.02, 0.06 * v.side, 0.06 * v.side], chest: [0, 0.03 * v.side, 0] },
       );
     },

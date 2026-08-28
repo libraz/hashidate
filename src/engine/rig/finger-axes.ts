@@ -16,6 +16,8 @@ const FINGERS: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'lit
 export interface FingerAxes {
   /** Curl axis per finger bone, in that bone's own space. */
   axes: Map<THREE.Bone, THREE.Vector3>;
+  /** Splay axis for each proximal finger bone, in that bone's own space. */
+  splayAxes: Map<THREE.Bone, THREE.Vector3>;
   /** Palm normal per hand, in the hand bone's own space. */
   palmLocal: Partial<Record<Side, THREE.Vector3>>;
 }
@@ -28,6 +30,7 @@ export interface FingerAxes {
  */
 export function solveFingerAxes(p: Profile): FingerAxes {
   const axes = new Map<THREE.Bone, THREE.Vector3>();
+  const splayAxes = new Map<THREE.Bone, THREE.Vector3>();
   const palmLocal: Partial<Record<Side, THREE.Vector3>> = {};
   const { fingerBones, bones, restDir } = p;
   const wp = (o: THREE.Object3D) => o.getWorldPosition(new THREE.Vector3());
@@ -79,6 +82,20 @@ export function solveFingerAxes(p: Profile): FingerAxes {
       .applyQuaternion(hand.getWorldQuaternion(new THREE.Quaternion()).invert())
       .normalize();
 
+    // Splay is a turn in the palm plane, so its axis is the palm normal. The
+    // sign is settled from the rest-pose finger bases rather than world X:
+    // positive always fans toward the little finger, even when a hand or the
+    // whole character is rotated. A single little-minus-index vector gives
+    // the semantic lateral direction for every proximal phalanx.
+    const index = fingerBones[`index.${side}`]?.[0];
+    const little = fingerBones[`little.${side}`]?.[0];
+    let towardLittle = index && little ? wp(little).sub(wp(index)) : null;
+    if (towardLittle) {
+      towardLittle.addScaledVector(palmNormal, -towardLittle.dot(palmNormal));
+      if (towardLittle.lengthSq() > 1e-10) towardLittle.normalize();
+      else towardLittle = null;
+    }
+
     for (const f of FINGERS) {
       const chain = fingerBones[`${f}.${side}`];
       if (!chain) continue;
@@ -87,6 +104,15 @@ export function solveFingerAxes(p: Profile): FingerAxes {
         const boneQ = bone.getWorldQuaternion(new THREE.Quaternion());
         const nLocal = palmNormal.clone().applyQuaternion(boneQ.clone().invert()).normalize();
         const dir = restDir[`${f}.${side}.${i}`] ?? new THREE.Vector3(0, 1, 0);
+
+        if (i === 0 && towardLittle) {
+          const splay = nLocal.clone();
+          const dirWorld = dir.clone().applyQuaternion(boneQ).normalize();
+          const positiveTurn = new THREE.Vector3().crossVectors(palmNormal, dirWorld);
+          if (positiveTurn.dot(towardLittle) < 0) splay.negate();
+          splayAxes.set(bone, splay);
+        }
+
         const axis = new THREE.Vector3().crossVectors(dir, nLocal);
         if (axis.lengthSq() > 1e-10) axis.normalize();
         else axis.set(1, 0, 0);
@@ -108,5 +134,5 @@ export function solveFingerAxes(p: Profile): FingerAxes {
       }
     }
   }
-  return { axes, palmLocal };
+  return { axes, splayAxes, palmLocal };
 }

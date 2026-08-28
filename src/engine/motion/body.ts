@@ -247,6 +247,22 @@ const mkFingerState = (): Record<FingerName, ScalarFollower> => ({
   little: new ScalarFollower(BASE_FINGERS.little),
 });
 
+const mkFingerSpread = (): Record<FingerName, number> => ({
+  thumb: 0,
+  index: 0,
+  middle: 0,
+  ring: 0,
+  little: 0,
+});
+
+const mkFingerSpreadState = (): Record<FingerName, ScalarFollower> => ({
+  thumb: new ScalarFollower(0),
+  index: new ScalarFollower(0),
+  middle: new ScalarFollower(0),
+  ring: new ScalarFollower(0),
+  little: new ScalarFollower(0),
+});
+
 const mkEnv = (): Envelope => ({ entrance: 0, exit: 1 });
 
 const mkArmEnv = (): Record<ArmSlot, Envelope> => ({
@@ -332,6 +348,8 @@ export class Body {
   private _armState: Record<Side, Record<ArmSlot, DirFollower>>;
   private _fingerSpec: Record<Side, Record<FingerName, number>>;
   private _fingerState: Record<Side, Record<FingerName, ScalarFollower>>;
+  private _fingerSpreadSpec: Record<Side, Record<FingerName, number>>;
+  private _fingerSpreadState: Record<Side, Record<FingerName, ScalarFollower>>;
   private _twist: Record<Side, ScalarFollower>;
   private _reach: { cur: Record<Side, ArmSolution>; prev: Record<Side, ArmSolution> };
 
@@ -455,6 +473,8 @@ export class Body {
       L: mkFingerState(),
       R: mkFingerState(),
     };
+    this._fingerSpreadSpec = { L: mkFingerSpread(), R: mkFingerSpread() };
+    this._fingerSpreadState = { L: mkFingerSpreadState(), R: mkFingerSpreadState() };
     this._twist = { L: new ScalarFollower(0), R: new ScalarFollower(0) };
 
     this._env = mkEnv();
@@ -1599,7 +1619,10 @@ export class Body {
 
       const pf = gPrev?.fingers?.[side];
       const cf = g?.fingers?.[side];
+      const pfSpread = gPrev?.fingerSpread?.[side];
+      const cfSpread = g?.fingerSpread?.[side];
       const spec = this._fingerSpec[side];
+      const spread = this._fingerSpreadSpec[side];
       const fw = plain(this._fingerEnv);
       for (const f of FINGER_NAMES) {
         let val = BASE_FINGERS[f];
@@ -1608,8 +1631,15 @@ export class Body {
         if (pv !== undefined) val += (pv - val) * this.prevBlend;
         if (cv !== undefined) val += (cv - val) * fw;
         spec[f] = this._fingerState[side][f].step(val, dt, FINGER_FOLLOW);
+
+        let spreadVal = 0;
+        const pvSpread = pfSpread?.[f];
+        const cvSpread = cfSpread?.[f];
+        if (pvSpread !== undefined) spreadVal += pvSpread * this.prevBlend;
+        if (cvSpread !== undefined) spreadVal += (cvSpread - spreadVal) * fw;
+        spread[f] = this._fingerSpreadState[side][f].step(spreadVal, dt, FINGER_FOLLOW);
       }
-      rig.curlHand(side, spec);
+      rig.curlHand(side, spec, spread);
     }
   }
 }

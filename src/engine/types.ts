@@ -320,6 +320,8 @@ export type SpineOffsets = Partial<Record<SpineSlot, Vec3Tuple>>;
 export interface Pose {
   arms?: Partial<Record<Side, ArmDirections>>;
   fingers?: Partial<Record<Side, FingerSpec>>;
+  /** Internal procedural layer only: per-finger splay in radians. */
+  fingerSpread?: Partial<Record<Side, FingerSpec>>;
   reach?: Partial<Record<Side, ReachSpec>>;
   point?: Partial<Record<Side, PointSpec>>;
   spine?: SpineOffsets;

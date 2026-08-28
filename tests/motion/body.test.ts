@@ -133,6 +133,21 @@ function twistGesture(twist: number): GestureDef {
   };
 }
 
+function spreadGesture(spread: number): GestureDef {
+  return {
+    label: { en: 'Finger spread', ja: '指の開き' },
+    group: 'pose',
+    sustain: true,
+    lead: 0.2,
+    hold: 1,
+    build: () => ({
+      fingerSpread: {
+        R: { index: spread, middle: -spread },
+      },
+    }),
+  };
+}
+
 function handOrientation(h: Harness, side: Side): { axis: THREE.Vector3; palm: THREE.Vector3 } {
   const hand = h.profile.bones[`hand.${side}`];
   const palmLocal = h.rig.palmLocal[side];
@@ -279,6 +294,64 @@ describe('gesture entrance', () => {
     const crosses = (which: 0 | 1) => turned.findIndex((t) => t[which] > total[which] * 0.15);
 
     expect(crosses(0)).toBeLessThan(crosses(1));
+  });
+
+  it('crossfades finger spread from zero and returns to zero on release', () => {
+    const chain = h.profile.fingerBones['index.R'];
+    if (!chain?.[0]) throw new Error('synthetic rig has no index.R proximal bone');
+    const orientation = () => chain[0].quaternion.clone();
+
+    h.rig.reset();
+    h.body.update(DT);
+    const baseline = orientation();
+    h.body.playDef(spreadGesture(0.55), 'spread');
+
+    const entrance: number[] = [];
+    let previous = baseline;
+    let maxStep = 0;
+    for (let i = 0; i < 90; i++) {
+      h.rig.reset();
+      h.body.update(DT);
+      const current = orientation();
+      entrance.push(baseline.angleTo(current));
+      maxStep = Math.max(maxStep, previous.angleTo(current));
+      previous = current;
+    }
+    const peak = Math.max(...entrance);
+    expect(peak).toBeGreaterThan(0.02);
+    expect(entrance[0]).toBeLessThan(peak * 0.5);
+    expect(maxStep).toBeLessThan(peak * 0.5);
+
+    // Switching between two poses that ask for the same fan may close slightly
+    // while the outgoing envelope yields to the incoming one, but it must not
+    // open wider than either settled endpoint. Adding the two weights made it
+    // open about 18% wider even though neither pose asked it to do so.
+    h.body.playDef(spreadGesture(0.55), 'spread-again');
+    const transition: number[] = [];
+    for (let i = 0; i < 90; i++) {
+      h.rig.reset();
+      h.body.update(DT);
+      transition.push(baseline.angleTo(orientation()));
+    }
+    const beforeSwitch = entrance.at(-1);
+    const afterSwitch = transition.at(-1);
+    if (beforeSwitch === undefined || afterSwitch === undefined) {
+      throw new Error('spread transition has no frames');
+    }
+    expect(Math.max(...transition)).toBeLessThanOrEqual(Math.max(beforeSwitch, afterSwitch) * 1.01);
+
+    h.body.stopGesture();
+    let releaseStep = 0;
+    previous = orientation();
+    for (let i = 0; i < 300; i++) {
+      h.rig.reset();
+      h.body.update(DT);
+      const current = orientation();
+      if (i === 0) releaseStep = previous.angleTo(current);
+      previous = current;
+    }
+    expect(releaseStep).toBeLessThan(peak * 0.5);
+    expect(baseline.angleTo(previous)).toBeLessThan(1e-4);
   });
 });
 
@@ -569,6 +642,47 @@ describe('character-space arm directions', () => {
         h.body.update(DT);
       }
       expect(shared.distanceTo(before)).toBeLessThan(1e-12);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('turns the promise ulnar edge toward live body forward', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      const edgeForward = (yaw: number, side: Side): number => {
+        const h = harness(yaw);
+        const base = GESTURES.promise;
+        const sign = side === 'R' ? 1 : -1;
+        const def: GestureDef = {
+          ...base,
+          build: (t, v) => base.build(t, { ...v, side: sign }),
+        };
+        h.rig.reset();
+        h.body.update(DT);
+        h.body.playDef(def, `promise.${side}.${yaw}`);
+        for (let i = 0; i < 180; i++) {
+          h.rig.reset();
+          h.body.update(DT);
+        }
+
+        const index = h.profile.fingerBones[`index.${side}`]?.[0];
+        const little = h.profile.fingerBones[`little.${side}`]?.[0];
+        if (!(index && little)) throw new Error(`synthetic rig has no ${side} promise fingers`);
+        h.profile.root.updateMatrixWorld(true);
+        const edge = little
+          .getWorldPosition(new THREE.Vector3())
+          .sub(index.getWorldPosition(new THREE.Vector3()))
+          .normalize();
+        h.rig.anat.update();
+        return edge.dot(h.rig.anat.fwd);
+      };
+
+      for (const yaw of [0, 0.6, -0.6]) {
+        for (const side of ['L', 'R'] as const) {
+          expect(edgeForward(yaw, side), `promise ${side} yaw ${yaw}`).toBeGreaterThan(0.25);
+        }
+      }
     } finally {
       random.mockRestore();
     }

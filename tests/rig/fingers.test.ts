@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { JOINTS } from '@/engine/anatomy';
+import { fingerCurl, JOINTS } from '@/engine/anatomy';
 import { buildProfile } from '@/engine/profile';
 import { Rig, solveFingerAxes } from '@/engine/rig';
 import type { FingerName, Profile, Side } from '@/engine/types';
@@ -88,6 +88,12 @@ describe('solveFingerAxes', () => {
     for (const [bone, axis] of standalone.axes) {
       expect(need(rig.fingerAxis.get(bone), 'axis').distanceTo(axis)).toBeLessThan(EXACT);
     }
+    expect(standalone.splayAxes.size).toBe(rig.fingerSplayAxis.size);
+    for (const [bone, axis] of standalone.splayAxes) {
+      expect(need(rig.fingerSplayAxis.get(bone), 'splay axis').distanceTo(axis)).toBeLessThan(
+        EXACT,
+      );
+    }
   });
 
   it('mirrors the two palms about the midline instead of deciding each alone', () => {
@@ -126,6 +132,25 @@ describe('solveFingerAxes', () => {
     // Bind poses hang the palms down, and both of them do.
     expect(left.dot(rig.anat.up)).toBeLessThan(0);
     expect(right.dot(rig.anat.up)).toBeLessThan(0);
+  });
+
+  it('derives splay axes for proximal bones only', () => {
+    const { profile, rig } = buildHands();
+    let proximal = 0;
+
+    for (const side of SIDES) {
+      for (const finger of FINGERS) {
+        const chain = need(profile.fingerBones[`${finger}.${side}`], `${finger}.${side}`);
+        const axis = rig.fingerSplayAxis.get(chain[0]);
+        expect(axis, `${finger}.${side} splay axis`).toBeDefined();
+        expect(Math.abs((axis as THREE.Vector3).length() - 1)).toBeLessThan(EXACT);
+        proximal++;
+        for (const bone of chain.slice(1)) {
+          expect(rig.fingerSplayAxis.has(bone), `${finger}.${side} distal splay`).toBe(false);
+        }
+      }
+    }
+    expect(rig.fingerSplayAxis.size).toBe(proximal);
   });
 });
 
@@ -275,6 +300,85 @@ describe('curlHand', () => {
       const right = need(profile.fingerBones[`${finger}.R`], `${finger}.R`);
       expect(left.some((bone) => turnedBy(rig, bone) > 0.1)).toBe(true);
       for (const bone of right) expect(turnedBy(rig, bone)).toBeLessThan(EXACT);
+    }
+  });
+
+  it('fans a positive spread toward the little finger on both hands', () => {
+    const { profile, rig } = buildHands();
+    const displacement: Record<Side, number> = { L: 0, R: 0 };
+
+    const segment = (finger: FingerName, side: Side): THREE.Vector3 => {
+      const chain = need(profile.fingerBones[`${finger}.${side}`], `${finger}.${side}`);
+      chain[0].updateWorldMatrix(true, false);
+      chain[1].updateWorldMatrix(true, false);
+      return chain[1]
+        .getWorldPosition(new THREE.Vector3())
+        .sub(chain[0].getWorldPosition(new THREE.Vector3()))
+        .normalize();
+    };
+
+    for (const side of SIDES) {
+      rig.reset();
+      profile.root.updateMatrixWorld(true);
+      const index = need(profile.fingerBones[`index.${side}`], `index.${side}`)[0];
+      const little = need(profile.fingerBones[`little.${side}`], `little.${side}`)[0];
+      const towardLittle = little
+        .getWorldPosition(new THREE.Vector3())
+        .sub(index.getWorldPosition(new THREE.Vector3()))
+        .normalize();
+      const before = segment('index', side);
+
+      rig.curlHand(side, {}, { index: 0.4, little: 0.4 });
+      profile.root.updateMatrixWorld(true);
+      const after = segment('index', side);
+      displacement[side] = after.clone().sub(before).dot(towardLittle);
+      expect(displacement[side], `${side} positive spread`).toBeGreaterThan(0);
+    }
+
+    expect(displacement.L).toBeCloseTo(displacement.R, 9);
+  });
+
+  it('composes proximal splay before curl and leaves distal splay off', () => {
+    const { profile, rig } = buildHands();
+    const chain = need(profile.fingerBones['index.R'], 'index.R');
+    const spread = 0.24;
+    const curl = 0.55;
+    rig.reset();
+    rig.curlHand('R', { index: curl }, { index: spread });
+
+    const splayAxis = need(rig.fingerSplayAxis.get(chain[0]), 'index.R splay axis');
+    const curlAxis = need(rig.fingerAxis.get(chain[0]), 'index.R curl axis');
+    const want = need(rig.rest.get(chain[0]), 'index.R rest')
+      .clone()
+      .multiply(new THREE.Quaternion().setFromAxisAngle(splayAxis, spread))
+      .multiply(
+        new THREE.Quaternion().setFromAxisAngle(curlAxis, fingerCurl(rig.joints.finger, 0, curl)),
+      );
+    expect(chain[0].quaternion.angleTo(want)).toBeLessThan(1e-7);
+
+    for (let i = 1; i < chain.length; i++) {
+      const axis = need(rig.fingerAxis.get(chain[i]), `index.R curl axis ${i}`);
+      const expected = need(rig.rest.get(chain[i]), `index.R rest ${i}`)
+        .clone()
+        .multiply(
+          new THREE.Quaternion().setFromAxisAngle(axis, fingerCurl(rig.joints.finger, i, curl)),
+        );
+      expect(chain[i].quaternion.angleTo(expected), `index.R segment ${i}`).toBeLessThan(1e-7);
+    }
+  });
+
+  it('keeps omitted and zero spread identical to curl-only', () => {
+    const omitted = buildHands();
+    const zero = buildHands();
+    omitted.rig.curlHand('R', { index: 0.55 });
+    zero.rig.curlHand('R', { index: 0.55 }, { index: 0 });
+
+    const chain = need(omitted.profile.fingerBones['index.R'], 'index.R');
+    const same = need(zero.profile.fingerBones['index.R'], 'index.R');
+    for (let i = 0; i < chain.length; i++) {
+      expect(chain[i].quaternion.angleTo(same[i].quaternion), `index.R segment ${i}`).toBeLessThan(
+        1e-7,
+      );
     }
   });
 });

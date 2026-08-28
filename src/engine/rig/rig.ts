@@ -259,6 +259,8 @@ export class Rig {
 
   /** Curl axis per finger bone, in that bone's own space. */
   readonly fingerAxis: Map<THREE.Bone, THREE.Vector3>;
+  /** Splay axis for proximal finger bones, in that bone's own space. */
+  readonly fingerSplayAxis: Map<THREE.Bone, THREE.Vector3>;
   /** Palm normal in hand-bone space. */
   readonly palmLocal: Partial<Record<Side, THREE.Vector3>>;
   /** Total pronation, both bones. */
@@ -336,6 +338,7 @@ export class Rig {
 
     const fingers = solveFingerAxes(profile);
     this.fingerAxis = fingers.axes;
+    this.fingerSplayAxis = fingers.splayAxes;
     this.palmLocal = fingers.palmLocal;
 
     // Anatomy has to be built after the finger axes: it reads the same rest
@@ -1170,9 +1173,27 @@ export class Rig {
     }
   }
 
-  curlHand(side: Side, spec: FingerSpec): void {
+  curlHand(side: Side, spec: FingerSpec, spread: FingerSpec = {}): void {
     for (const f of FINGERS) {
-      this.curlFinger(f, side, spec[f] ?? 0);
+      const chain = this.p.fingerBones[`${f}.${side}`];
+      if (!chain) continue;
+      const joints = this.joints[f === 'thumb' ? 'thumb' : 'finger'];
+      for (let i = 0; i < chain.length; i++) {
+        const bone = chain[i];
+        const curlAxis = this.fingerAxis.get(bone);
+        if (!curlAxis) continue;
+        bone.quaternion.copy(this.restOf(bone));
+        if (i === 0) {
+          const splayAxis = this.fingerSplayAxis.get(bone);
+          const splay = spread[f] ?? 0;
+          if (splayAxis && splay !== 0) {
+            bone.quaternion.multiply(_q.setFromAxisAngle(splayAxis, splay));
+          }
+        }
+        bone.quaternion.multiply(
+          _q.setFromAxisAngle(curlAxis, fingerCurl(joints, i, spec[f] ?? 0)),
+        );
+      }
     }
   }
 }

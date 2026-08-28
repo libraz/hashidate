@@ -403,6 +403,54 @@ describe('the rest pose the table is authored against', () => {
   });
 });
 
+describe('peace hand articulation', () => {
+  it('adds the measured thumb, fan and palm to peace', () => {
+    const pose = TABLE.peace.build(0, RIGHT);
+    const arm = pose.arms?.R;
+    const spread = pose.fingerSpread?.R;
+    if (!(arm?.palm && spread)) throw new Error('peace omitted palm or spread');
+
+    expect(pose.fingers?.R?.thumb).toBe(1);
+    expect(spread.thumb).toBeCloseTo(THREE.MathUtils.degToRad(28), 12);
+    expect(spread.index).toBeCloseTo(THREE.MathUtils.degToRad(-6), 12);
+    expect(spread.middle).toBeCloseTo(THREE.MathUtils.degToRad(6), 12);
+    expect(arm.palm.distanceTo(new THREE.Vector3(0, 0.05, 1).normalize())).toBeLessThan(1e-12);
+  });
+
+  it('applies the same fan and palm to both hands of bothPeace', () => {
+    const pose = TABLE.bothPeace.build(0, RIGHT);
+    for (const side of SIDES) {
+      const arm = pose.arms?.[side];
+      const spread = pose.fingerSpread?.[side];
+      if (!(arm?.palm && spread)) throw new Error(`bothPeace omitted ${side} hand data`);
+      expect(pose.fingers?.[side]?.thumb).toBe(1);
+      expect(spread.thumb).toBeCloseTo(THREE.MathUtils.degToRad(28), 12);
+      expect(spread.index).toBeCloseTo(THREE.MathUtils.degToRad(-6), 12);
+      expect(spread.middle).toBeCloseTo(THREE.MathUtils.degToRad(6), 12);
+      expect(arm.palm.distanceTo(new THREE.Vector3(0, 0.05, 1).normalize())).toBeLessThan(1e-12);
+    }
+  });
+});
+
+describe('pinky promise articulation', () => {
+  it('keeps a fist while presenting only the little finger', () => {
+    const pose = TABLE.promise.build(0, RIGHT);
+    const arm = pose.arms?.R;
+    const fingers = pose.fingers?.R;
+    if (!(arm?.hand && arm.palm && fingers)) throw new Error('promise omitted hand data');
+
+    expect(fingers.little).toBeLessThan(0.1);
+    expect(fingers.thumb).toBeCloseTo(0.7, 12);
+    expect(fingers.index).toBeCloseTo(0.92, 12);
+    expect(fingers.middle).toBeCloseTo(0.94, 12);
+    expect(fingers.ring).toBeCloseTo(0.95, 12);
+    expect(pose.fingerSpread).toBeUndefined();
+    // Both directions are normalised by V, leaving the measured component just
+    // under the rounded 0.7 target; the old thumb-side roll is negative.
+    expect(new THREE.Vector3().crossVectors(arm.hand, arm.palm).z).toBeGreaterThan(0.69);
+  });
+});
+
 describe('pointHand', () => {
   each(FINGERS)('extends the %s and closes the rest', (finger) => {
     // The bug this pins: the aim used the index-pointing shape whatever finger
