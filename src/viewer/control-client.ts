@@ -1,6 +1,7 @@
+import { loadMotions } from '@/engine/motion';
 import type { Session } from '@/engine/session';
 import type { LabelledId, SessionEvent } from '@/engine/types';
-import { type Command, parseCommand, type ReportBody } from '@/protocol';
+import { type Command, motionsResponseSchema, parseCommand, type ReportBody } from '@/protocol';
 
 /**
  * Control channel.
@@ -216,8 +217,11 @@ export class ControlClient {
     src.onopen = () => {
       this.setStatus('online');
       // The vocabulary is discovered from the avatar, so the server cannot know
-      // it until a viewer has loaded one. Push it on every connect.
-      void this.report(true);
+      // it until a viewer has loaded one. Push it on every connect — but after
+      // the motions, because they are part of what it lists and a vocabulary
+      // sent before them would advertise a shorter gesture set than the one
+      // that is actually playable.
+      void this.motions().then(() => this.report(true));
     };
 
     src.onmessage = (e) => {
@@ -248,6 +252,45 @@ export class ControlClient {
       if (this.retry !== null) clearTimeout(this.retry);
       this.retry = setTimeout(() => this.connect(), RETRY_DELAY);
     };
+  }
+
+  /**
+   * Read the operator's own gestures off the control server and register them.
+   *
+   * On every connect rather than once for the life of the page. The directory
+   * is read afresh at the other end, so restarting the server is how an edited
+   * motion reaches a renderer that is already running — and a page that cached
+   * the first answer would keep playing the version from before the edit with
+   * nothing on screen saying so.
+   *
+   * Every failure is quiet in the same way: no server, no directory, a reply
+   * that does not parse, all leave the built-in gesture table exactly as it is.
+   * The set this project ships is complete on its own, and a renderer that
+   * refused to come up because a file somebody was editing had a typo in it
+   * would be trading a missing gesture for a missing stream.
+   */
+  private async motions(): Promise<void> {
+    try {
+      const response = await fetch(`${this.base}/motions`);
+      if (!response.ok) return;
+      const parsed = motionsResponseSchema.safeParse(await response.json());
+      if (!parsed.success) return;
+      for (const { id, error } of parsed.data.errors) {
+        console.warn(`motion ${id}: ${error}`);
+      }
+      const { rejected } = loadMotions(parsed.data.motions);
+      for (const { id, reason } of rejected) {
+        console.warn(
+          reason === 'reserved'
+            ? `motion ${id}: a built-in gesture already has that name`
+            : `motion ${id}: listed twice`,
+        );
+      }
+    } catch {
+      // The stream is up and the motions are not, which is a server that has
+      // just started and a directory it cannot read. Nothing to do about it
+      // here; the next connect asks again.
+    }
   }
 
   /**
