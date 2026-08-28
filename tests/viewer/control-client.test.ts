@@ -255,6 +255,25 @@ describe('an avatar swap', () => {
     expect(harness.session.queue).toHaveLength(1);
   });
 
+  it('carries a hold onto the new session, since it belongs to the run of turns', () => {
+    // A swap builds a whole new session and a fresh one starts moving. Without
+    // this, a segment loaded and held for framing plays itself out the moment
+    // somebody changes avatar — and the queue survives the swap, so there would
+    // be a full run of lines for it to play.
+    harness.client.apply({ cmd: 'pause', on: true });
+    harness.client.apply({ cmd: 'avatar', id: 'b' });
+    const next = nextSession();
+    harness.client.bind(next, 'b');
+    expect(next.paused).toBe(true);
+  });
+
+  it('does not invent a hold for a swap made while the queue was moving', () => {
+    harness.client.apply({ cmd: 'avatar', id: 'b' });
+    const next = nextSession();
+    harness.client.bind(next, 'b');
+    expect(next.paused).toBe(false);
+  });
+
   it('holds a second swap behind the first rather than racing it', () => {
     harness.client.apply({ cmd: 'avatar', id: 'b' });
     harness.client.apply({ cmd: 'avatar', id: 'a' });

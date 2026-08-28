@@ -158,6 +158,16 @@ export class ControlClient {
    */
   bind(session: Session, avatar: string | null = null): void {
     this.unbind?.();
+    // A hold belongs to the run of turns, not to the character saying them, so
+    // it survives a swap the way the queue itself does. The queue comes back
+    // from the server — it is re-delivered on the next edit or on the next
+    // connect — and without this the instruction not to start on it would not:
+    // a fresh session begins moving, and a segment held for framing plays
+    // itself out to nobody the moment somebody changes avatar.
+    //
+    // Carried here because this is the only place that can see both sessions.
+    // The constructor binds the session it was given, where this is a no-op.
+    session.paused = this.session.paused;
     this.session = session;
     this.unbind = session.on((ev) => {
       this.pending.push(ev);
