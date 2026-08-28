@@ -344,25 +344,22 @@ export const GESTURES = {
     hold: 3.0,
     build(t, v) {
       const b = Math.sin(t * 1.4 * v.rate) * 0.05;
-      // Knuckle to the chin, the way a hand rests there while thinking.
+      // Knuckle to the chin, the way a hand rests there while thinking. The
+      // wrist stays in front while the fingertips and index return toward the
+      // chin and cheek; the rounded entrance keeps that relationship visible.
       return reach(
         v,
         {
           at: 'chin',
-          offset: [0.12, 0.78 + b, 0.22],
-          hand: [-0.22, 0.86, 0.46],
-          // The palm was rolled far enough down that the forearm had to run out
-          // of pronation to deliver it, and the humerus took up the rest by
-          // turning nearly half a circle. Levelled, it costs the wrist nothing.
-          palm: [0.59, -0.05, -0.81],
-          // Elbow carried out to the side rather than in front. This is the one
-          // pose in the table that keeps its elbow forward of the shoulder, and
-          // it can: the finger goes to the chin, low enough that the forearm
-          // still rises to meet it. What was wrong was the width — tucked in at
-          // 0.35 the whole arm lay across the chest, which reads as guarded
-          // rather than as thinking, and left the humerus turned to its stop.
-          pole: [0.85, -0.75, 0.4],
-          twist: 0.6,
+          // The old positive-forward hand bearing buried the wrist behind the
+          // face, making torso clearance consume the elbow, forearm and
+          // shoulder ranges. This rounded bearing keeps the hand in front.
+          offset: [0.1, 0.66 + b, 0.62],
+          hand: [-0.48, 0.65, -0.6],
+          // The palm target distributes the roll through the arm; a separate
+          // twist only spent more of the wrist and shoulder ranges.
+          palm: [0.51, -0.79, 0.21],
+          pole: [0.57, -0.93, 0.32],
         },
         { thumb: 0.4, index: 0.15, middle: 0.7, ring: 0.85, little: 0.9 },
         { head: [0.05, 0.13 * v.side, 0.07 * v.side], chest: [0, 0.05 * v.side, 0] },
@@ -429,13 +426,16 @@ export const GESTURES = {
       const o = Math.min(1, t / 0.9);
       const b = Math.sin(t * 1.6 * v.rate) * 0.03;
       // The palm has to be stated. Aiming the hand forward leaves the roll
-      // free, and an invitation with the palms rolled over is a shove.
+      // free, and an invitation with the palms rolled over is a shove. The
+      // fully skyward target pinned one shoulder at its stop; this diagonal
+      // upward normal keeps the invitation readable while leaving range in
+      // both models.
       return both(
         {
           upperArm: V(0.3 + 0.08 * o, -0.76 + 0.12 * o + b, 0.54 + 0.18 * o),
           lowerArm: V(0.14 + 0.08 * o, 0.24 + b, 0.95),
           hand: V(0.14, 0.2, 0.97),
-          palm: V(-0.16, 0.94, -0.3),
+          palm: V(-0.68, 0.48, -0.16),
         },
         { thumb: 0.18, index: 0.14, middle: 0.16, ring: 0.2, little: 0.26 },
         { head: [-0.03, 0, 0], chest: [0.02, 0, 0] },
@@ -593,7 +593,10 @@ export const GESTURES = {
           space: 'body',
           at: 'sternum',
           offset: [gap, 0.02, 0.2],
-          hand: [0.06, 0.34, 0.94],
+          // Fingers angle upward along the converging forearm. The old
+          // near-forward bearing hit both wrist-deviation stops instead of
+          // letting the forearm carry the beat.
+          hand: [-0.2, 0.6, 0.77],
           palm: [-1, 0, 0],
         },
         OPEN_HAND,
@@ -922,7 +925,10 @@ export const GESTURES = {
           space: 'body',
           at: 'navel',
           offset: [0.06, 0.08, 0.22],
-          hand: [-0.16, 0.3, 0.92],
+          // The hand follows the forearms as they converge. The old
+          // upward-forward bearing pinned both wrist-deviation stops before
+          // the hands could meet.
+          hand: [-0.5, 0, 0.87],
           palm: [-0.6, 0.5, -0.6],
         },
         CLASP_HAND,
@@ -942,11 +948,16 @@ export const GESTURES = {
         v,
         {
           at: 'cheek',
-          offset: [0.2, -0.05, 0.4],
-          hand: [-0.34, 0.78, 0.52],
-          palm: [-0.62, 0.55, -0.56],
+          // The wrist stays in front while the fingers return toward the jaw.
+          // The old positive-z bearing buried the wrist and put the fingers
+          // over the eye, driving both elbow and shoulder stops. Leaving the
+          // palm free preserved the silhouette but pinned the forearm at its
+          // stop, so this diagonal normal distributes roll through the
+          // shoulder and forearm instead.
+          offset: [0.4, -0.45, 0.8],
+          hand: [-0.4, 0.8, -0.45],
+          palm: [-0.69, 0.41, -0.73],
           pole: [0.26, -0.92, 0.3],
-          twist: 0.55,
         },
         { thumb: 0.3, index: 0.5, middle: 0.7, ring: 0.8, little: 0.85 },
         {
