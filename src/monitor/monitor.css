@@ -1,0 +1,43 @@
+/*
+ * The monitor is a letterboxed 16:9 stage around the same viewer page OBS
+ * opens. The bars are outside the iframe, so the viewer receives the exact
+ * source aspect ratio even when the window is portrait or ultrawide.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: #000;
+}
+
+#root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+}
+
+.viewer {
+  width: 100%;
+  max-width: 177.777778vh;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  display: block;
+  background: #000;
+  /* Camera controls must never receive pointer or wheel input here. */
+  pointer-events: none;
+}

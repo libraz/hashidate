@@ -5,31 +5,38 @@ import { defineConfig, type Plugin } from 'vite';
 const CONTROL_PORT = Number(process.env.HASHIDATE_CONTROL_PORT ?? 8765);
 
 /**
- * Print the panel's address next to the viewer's on startup.
+ * Print the other two entry points next to the viewer's on startup.
  *
- * The dev server has two entries but only announces the one at the root, and
- * the panel is the page an operator spends the broadcast in — leaving its
- * address as something you had to already know made the second surface look
- * like it was not running.
+ * The dev server has three entries and announces only the one at the root. The
+ * panel is the page an operator spends the broadcast in and the stage is the
+ * one that makes a sound, so leaving either address as something you had to
+ * already know made both look like they were not running.
  */
-function announcePanel(): Plugin {
+function announceSurfaces(): Plugin {
+  // The arrow and the bold label vite prints for its own lines, written out
+  // rather than imported — its colour helper is internal. Dropped when stdout
+  // is not a terminal, which is how `yarn dev` runs it: the child of
+  // `concurrently` is a pipe, vite prints its own lines uncoloured there, and
+  // an escape sequence nothing interprets is left on screen as text.
+  const label = (name: string): string =>
+    process.stdout.isTTY ? `  \x1b[32m➜\x1b[39m  \x1b[1m${name}\x1b[22m` : `  ➜  ${name}`;
+  // Padded to the width of vite's own labels so the colons line up.
+  const SURFACES: readonly [string, string][] = [
+    ['Panel', 'panel/'],
+    ['Stage', 'monitor/'],
+  ];
+
   return {
-    name: 'hashidate:announce-panel',
+    name: 'hashidate:announce-surfaces',
     apply: 'serve',
     configureServer(server) {
       const printUrls = server.printUrls.bind(server);
-      // The arrow and the bold label vite prints for its own lines, written out
-      // rather than imported — its colour helper is internal. Dropped when
-      // stdout is not a terminal, which is how `yarn dev` runs it: the child of
-      // `concurrently` is a pipe, vite prints its own lines uncoloured there,
-      // and an escape sequence nothing interprets is left on screen as text.
-      const arrow = process.stdout.isTTY
-        ? '  \x1b[32m➜\x1b[39m  \x1b[1mPanel\x1b[22m'
-        : '  ➜  Panel';
       server.printUrls = () => {
         printUrls();
         for (const url of server.resolvedUrls?.local ?? []) {
-          server.config.logger.info(`${arrow}:   ${url}panel/`);
+          for (const [name, path] of SURFACES) {
+            server.config.logger.info(`${label(name)}:   ${url}${path}`);
+          }
         }
       };
     },
@@ -37,7 +44,7 @@ function announcePanel(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), announcePanel()],
+  plugins: [react(), announceSurfaces()],
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
@@ -87,18 +94,20 @@ export default defineConfig({
     assetsInlineLimit: 4096,
     rollupOptions: {
       /*
-       * Two pages, and the split is the point rather than a build detail.
+       * Three pages, and the split is the point rather than a build detail.
        *
        * `index.html` renders the character; `panel/` drives it and renders
-       * nothing. Separate entries mean the panel ships none of three.js and the
-       * stage ships none of the queue editor — which matters most in the
-       * direction nobody expects: the panel is the page left open on a second
-       * monitor for six hours, and a WebGL context it never uses is a context
-       * competing with the one that is on air.
+       * nothing; `monitor/` frames the character without either application's
+       * code. Separate entries mean the panel and monitor ship none of three.js
+       * and the monitor ships none of the queue editor — which matters most in
+       * the direction nobody expects: the panel is the page left open on a
+       * second monitor for six hours, and a WebGL context it never uses is a
+       * context competing with the one that is on air.
        */
       input: {
         viewer: fileURLToPath(new URL('./index.html', import.meta.url)),
         panel: fileURLToPath(new URL('./panel/index.html', import.meta.url)),
+        monitor: fileURLToPath(new URL('./monitor/index.html', import.meta.url)),
       },
     },
   },
