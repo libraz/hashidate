@@ -12,7 +12,9 @@ make tts           # or run the voice on its own
 
 The clips are the one part that cannot be automated: they are recordings of whoever the voice is supposed to be, and nobody else's are a substitute. A minute or two of clean single-speaker speech is enough — the model conditions on a reference rather than training on a corpus. `make tts-vet` reports on a set without building anything, and `HASHIDATE_VOICE_DIR` moves the whole directory, including out of the repository.
 
-The sidecar listens on `127.0.0.1:8770`. The control server prints what it found of the voice at startup and says so again if that changes, and the panel carries the same warning: a sidecar that stops answering mid-broadcast is otherwise invisible, because the queue still drains and the mouth still moves.
+The sidecar answers on a UNIX socket at `tools/tts/.run/speech.sock`, in a directory it creates with mode `0700`, and opens no port at all. Its only caller is the control server on this machine — see [Using a different voice](#using-a-different-voice) — so the voice is reachable by this user and nobody else, which is the strongest form of the rule the rest of the runtime follows by binding loopback.
+
+The control server prints what it found of the voice at startup and says so again if that changes, and the panel carries the same warning: a sidecar that stops answering mid-broadcast is otherwise invisible, because the queue still drains and the mouth still moves.
 
 ## Why the audio is in hand before the turn opens
 
@@ -51,7 +53,7 @@ The acoustic is a separate axis from the set the character is *seen* in. A backd
 
 ## Using a different voice
 
-The renderer never talks to the synthesiser. It asks its own origin for audio and the control server proxies to `127.0.0.1:8770`, so the synthesiser is behind an interface rather than wired in — the same arrangement that keeps the language model out of the runtime.
+The renderer never talks to the synthesiser. It asks its own origin for audio and the control server proxies to the socket, so the synthesiser is behind an interface rather than wired in — the same arrangement that keeps the language model out of the runtime.
 
 The contract is two routes:
 
@@ -60,7 +62,9 @@ The contract is two routes:
 | `POST /speak` | `{ text, reading? }` → a WAV body. |
 | `GET /health` | Whether the model is loaded, and what it is running on. |
 
-Anything that answers those can stand in, and `HASHIDATE_TTS_PORT` moves the target — which is also how you run a second one beside the first while comparing voices. Nothing above the proxy knows or cares which one answered.
+Anything that answers those can stand in. `HASHIDATE_TTS_SOCKET` moves the target, which is how you run a second one beside the first while comparing voices, and `HASHIDATE_TTS_PORT` points the proxy at `127.0.0.1` on that port instead — a stand-in written as an ordinary HTTP service will want one. Nothing above the proxy knows or cares which of the two answered.
+
+Both variables are read by the control server and by `tools/tts/server.py`, in that order of precedence and without either being told by the other: neither has a way to ask, so the socket has to be somewhere both can work out alone.
 
 What the renderer does with the answer is the same either way: it measures the buffer, stretches the viseme track onto the real length, and drives the mouth off the measurement. A synthesiser that returns a plain WAV gets all of that for free.
 

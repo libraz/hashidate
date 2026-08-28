@@ -44,7 +44,7 @@ make glb        # FBX            → public/models/*.glb
 
 ## Licensing is why the runtime is loopback-only
 
-The avatars used for validation are commercial models that may not be republished. The viewer and the control API bind to `127.0.0.1` and send no CORS header **because of that**, not out of caution. The speech sidecar binds the same way for a second and stronger reason: the voice is cloned from recordings of a real person.
+The avatars used for validation are commercial models that may not be republished. The viewer and the control API bind to `127.0.0.1` and send no CORS header **because of that**, not out of caution. The speech sidecar goes further and binds no port at all — a UNIX socket in a directory only its own user can enter — for a second and stronger reason: the voice is cloned from recordings of a real person. It can afford to, because its only caller is the control server proxying for the renderer.
 
 There is no `--host` flag, no CORS header and no tunnel. If exposing the renderer ever becomes necessary, it is a licensing decision first and a code change second.
 

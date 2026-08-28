@@ -8,16 +8,21 @@ RES      = backup/resource
 OUT      = public/models
 TOOLS    = tools/blender
 
-# The three ports `make dev` brings up, named once so that `help` and `stop`
-# cannot drift apart. Control and speech honour the same environment variables
-# the runtime reads, so moving a port moves `stop` with it; the numbers here are
-# only the fallbacks, and mirror the defaults in vite.config.ts, src/server and
-# tools/tts/server.py. The viewer's is vite's own and is not configurable.
+# The two ports `make dev` brings up, named once so that `help` and `stop`
+# cannot drift apart. Control honours the same environment variable the runtime
+# reads, so moving it moves `stop` with it; the number here is only the
+# fallback, and mirrors the default in src/server. The viewer's is vite's own
+# and is not configurable.
 VIEWER_PORT  = 5173
 CONTROL_PORT = $(if $(HASHIDATE_CONTROL_PORT),$(HASHIDATE_CONTROL_PORT),8765)
-TTS_PORT     = $(if $(HASHIDATE_TTS_PORT),$(HASHIDATE_TTS_PORT),8770)
 
 TTS      = tools/tts
+# Speech is the third thing `make dev` starts and the one that opens no port:
+# its only caller is the control server on this machine, so it answers on a
+# socket that no other user can reach. Mirrors `SOCKET_DIR`/`SOCKET_NAME` in
+# src/speech/sidecar.ts and tools/tts/server.py, and HASHIDATE_TTS_SOCKET moves
+# all three together.
+TTS_SOCK = $(if $(HASHIDATE_TTS_SOCKET),$(HASHIDATE_TTS_SOCKET),$(TTS)/.run/speech.sock)
 # Where a voice is made from: clips in, latents out. Ships empty and keeps its
 # own .gitignore, and matches `config.VOICE` on the Python side —
 # HASHIDATE_VOICE_DIR moves both together.
@@ -33,7 +38,7 @@ help:
 	@echo ""
 	@echo "-- Run"
 	@echo "  dev              start viewer, control and speech at once"
-	@echo "  stop             free :$(VIEWER_PORT), :$(CONTROL_PORT) and :$(TTS_PORT) if something is left holding one"
+	@echo "  stop             free :$(VIEWER_PORT), :$(CONTROL_PORT) and the speech socket if something is left holding one"
 	@echo "-- Tabimakura Yoka"
 	@echo "  extract          pull the FBX and unitypackage out of the purchased zip"
 	@echo "  textures         pull the textures out of the unitypackage"
@@ -48,7 +53,7 @@ help:
 	@echo "  tts-setup        build the speech sidecar's Python environment (first time only)"
 	@echo "  tts-vet          inspect the reference clips (does not build latents)"
 	@echo "  tts-refs         re-encode the clips after changing them"
-	@echo "  tts              start the speech server (127.0.0.1:$(TTS_PORT))"
+	@echo "  tts              start the speech server ($(TTS_SOCK))"
 	@echo "-- Common"
 	@echo "  all              take both avatars through to GLB (assumes they are unpacked)"
 	@echo "  check-assets     check that no huge file has crept into what git tracks"
@@ -85,12 +90,18 @@ dev:
 	fi; \
 	exit 0
 
-# Free the three ports when something is still holding one.
+# Free the two ports and the speech socket when something is still holding one.
 #
 # Ctrl-C on `make dev` already stops all three, so this is for the case where
 # that never happened: a terminal closed, an SSH session dropped, a task runner
-# killed from elsewhere. The child keeps the port bound, and the next `make dev`
-# fails to bind rather than saying anything useful about why.
+# killed from elsewhere. The child keeps the address bound, and the next
+# `make dev` fails to bind rather than saying anything useful about why.
+#
+# The socket has a second half to it. A sidecar that was killed rather than
+# stopped leaves its path in the filesystem with nothing behind it, and a bind
+# onto that fails as loudly as a real collision — so once nothing holds it, the
+# file goes too. The sidecar clears it on the way up as well; this is for the
+# operator who ran `make stop` and then looked at the directory.
 #
 # It asks the OS what is bound rather than reading a pid file it wrote earlier.
 # A pid file goes stale, and a stale one either lies about there being nothing
@@ -112,12 +123,17 @@ dev:
 # process before anything is signalled and the surprising case stays visible.
 stop:
 	@self=$$(ps -o pgid= -p $$$$ 2>/dev/null | tr -d ' '); \
-	ports="$(VIEWER_PORT) $(CONTROL_PORT) $(TTS_PORT)"; \
+	ports="$(VIEWER_PORT) $(CONTROL_PORT)"; \
+	sock="$(TTS_SOCK)"; \
 	groups=""; pids=""; \
-	for p in $$ports; do \
-		for pid in $$(lsof -nP -iTCP:$$p -sTCP:LISTEN -t 2>/dev/null); do \
+	for a in $$ports $$sock; do \
+		case $$a in \
+			''|*[!0-9]*) holders=$$(lsof -nP -t -- "$$a" 2>/dev/null); label="$$a";; \
+			*)           holders=$$(lsof -nP -iTCP:$$a -sTCP:LISTEN -t 2>/dev/null); label=":$$a";; \
+		esac; \
+		for pid in $$holders; do \
 			pgid=$$(ps -o pgid= -p $$pid 2>/dev/null | tr -d ' '); \
-			echo "  :$$p  pid $$pid  group $$pgid  $$(ps -o command= -p $$pid 2>/dev/null | cut -c1-64)"; \
+			echo "  $$label  pid $$pid  group $$pgid  $$(ps -o command= -p $$pid 2>/dev/null | cut -c1-64)"; \
 			if [ -z "$$pgid" ] || [ "$$pgid" = "$$self" ] || [ "$$pgid" = 1 ]; then \
 				pids="$$pids $$pid"; \
 			else \
@@ -125,7 +141,10 @@ stop:
 			fi; \
 		done; \
 	done; \
-	if [ -z "$$groups$$pids" ]; then echo "nothing listening on the dev ports"; exit 0; fi; \
+	if [ -z "$$groups$$pids" ]; then \
+		rm -f "$$sock"; \
+		echo "nothing listening on the dev addresses"; exit 0; \
+	fi; \
 	for g in $$groups; do kill -TERM -$$g 2>/dev/null || true; done; \
 	if [ -n "$$pids" ]; then kill -TERM $$pids 2>/dev/null || true; fi; \
 	sleep 2; \
@@ -136,6 +155,7 @@ stop:
 	for p in $$ports; do \
 		if lsof -nP -iTCP:$$p -sTCP:LISTEN -t >/dev/null 2>&1; then held="$$held :$$p"; fi; \
 	done; \
+	if lsof -nP -t -- "$$sock" >/dev/null 2>&1; then held="$$held $$sock"; else rm -f "$$sock"; fi; \
 	if [ -n "$$held" ]; then echo "still held:$$held"; exit 1; fi; \
 	echo "stopped"
 

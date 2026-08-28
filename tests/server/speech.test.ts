@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hub } from '@/server/hub';
 import { forgetTakes, SpeechWatch, speak, TAKE_MAX, TAKE_TTL_MS } from '@/server/speech';
+import { askSidecar, type SidecarReply } from '@/speech/sidecar';
 
 /**
  * Whether the server can tell a machine with no voice from a voice that died.
@@ -9,19 +10,39 @@ import { forgetTakes, SpeechWatch, speak, TAKE_MAX, TAKE_TTL_MS } from '@/server
  * machine — it wants a purchased voice and three gigabytes of PyTorch — so a
  * server that warned about every absence would be warning permanently, and the
  * one time it mattered nobody would be reading. What has to be caught is the
- * narrower case: something answered on that port and stopped, which on air is
- * invisible from the panel because the queue still drains and the mouth still
- * moves.
+ * narrower case: something answered and stopped, which on air is invisible from
+ * the panel because the queue still drains and the mouth still moves.
+ *
+ * The round trip is stubbed at the transport rather than at `fetch`, because
+ * the sidecar answers on a UNIX socket and there is no URL anywhere in this.
+ * See `askSidecar`.
  */
 
-/** A `/health` reply, as `fetch` would hand it over. */
-const health = (ready: boolean): Response =>
-  ({ ok: true, json: async () => ({ ready }) }) as unknown as Response;
+vi.mock('@/speech/sidecar', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/speech/sidecar')>()),
+  askSidecar: vi.fn(),
+}));
 
-/** Nothing listening: what `fetch` does to a closed port. */
+const asked = vi.mocked(askSidecar);
+
+/** A `/health` reply, as the sidecar hands it over. */
+const health = (ready: boolean): SidecarReply => ({
+  status: 200,
+  contentType: 'application/json',
+  body: Buffer.from(JSON.stringify({ ready }), 'utf8'),
+});
+
+/** Nothing behind the socket: what a connection to it does. */
 const refused = (): never => {
-  throw new Error('connect ECONNREFUSED 127.0.0.1:8770');
+  throw new Error('connect ENOENT tools/tts/.run/speech.sock');
 };
+
+/** Something answering that is not the voice. */
+const wrongService = (): SidecarReply => ({
+  status: 404,
+  contentType: 'text/plain',
+  body: Buffer.from('not found', 'utf8'),
+});
 
 let watch: SpeechWatch;
 let log: ReturnType<typeof vi.spyOn>;
@@ -30,78 +51,61 @@ let warn: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   watch = new SpeechWatch();
   forgetTakes();
+  asked.mockReset();
   log = vi.spyOn(console, 'log').mockImplementation(() => {});
   warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
 afterEach(() => {
   watch.stop();
-  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
 describe('what the watch makes of an answer', () => {
   it('is ready when the sidecar says its model is loaded', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => health(true)),
-    );
+    asked.mockResolvedValue(health(true));
     expect(await watch.start()).toBe('ready');
     expect(watch.current).toBe('ready');
   });
 
   it('is loading while the model is still coming up, which is not a fault', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => health(false)),
-    );
+    asked.mockResolvedValue(health(false));
     expect(await watch.start()).toBe('loading');
   });
 
   it('is absent when nothing has ever answered', async () => {
-    vi.stubGlobal('fetch', vi.fn(refused));
+    asked.mockImplementation(refused);
     expect(await watch.start()).toBe('absent');
   });
 
-  it('is absent when something else holds the port', async () => {
+  it('is absent when something else is answering there', async () => {
     // Not a voice, and the only thing worth reporting about that is the same
-    // thing as an empty port: there is no speech here.
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({ ok: false, status: 404 }) as unknown as Response),
-    );
+    // thing as a socket nobody holds: there is no speech here.
+    asked.mockResolvedValue(wrongService());
     expect(await watch.start()).toBe('absent');
   });
 
   it('is absent when the answer is not JSON', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        async () =>
-          ({
-            ok: true,
-            json: async () => {
-              throw new SyntaxError('Unexpected token');
-            },
-          }) as unknown as Response,
-      ),
-    );
+    asked.mockResolvedValue({
+      status: 200,
+      contentType: 'text/html',
+      body: Buffer.from('<html>', 'utf8'),
+    });
     expect(await watch.start()).toBe('absent');
   });
 });
 
 describe('the difference between never here and gone', () => {
   it('calls it down once it has answered and then stops', async () => {
-    const fetcher = vi.fn(async () => health(true));
-    vi.stubGlobal('fetch', fetcher);
+    asked.mockResolvedValue(health(true));
     await watch.start();
 
-    fetcher.mockImplementation(refused);
+    asked.mockImplementation(refused);
     expect(await watch.check()).toBe('down');
   });
 
   it('stays absent through any number of silent probes', async () => {
-    vi.stubGlobal('fetch', vi.fn(refused));
+    asked.mockImplementation(refused);
     await watch.start();
     expect(await watch.check()).toBe('absent');
     expect(await watch.check()).toBe('absent');
@@ -109,29 +113,27 @@ describe('the difference between never here and gone', () => {
   });
 
   it('comes back to ready when the sidecar is started again', async () => {
-    const fetcher = vi.fn(refused as () => Promise<Response>);
-    vi.stubGlobal('fetch', fetcher);
+    asked.mockImplementation(refused);
     await watch.start();
 
-    fetcher.mockImplementation(async () => health(true));
+    asked.mockResolvedValue(health(true));
     expect(await watch.check()).toBe('ready');
   });
 });
 
 describe('what reaches the console', () => {
   it('says nothing about the first answer, which the banner already carries', async () => {
-    vi.stubGlobal('fetch', vi.fn(refused));
+    asked.mockImplementation(refused);
     await watch.start();
     expect(log).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
   });
 
   it('warns once when the voice goes, not once per probe', async () => {
-    const fetcher = vi.fn(async () => health(true));
-    vi.stubGlobal('fetch', fetcher);
+    asked.mockResolvedValue(health(true));
     await watch.start();
 
-    fetcher.mockImplementation(refused);
+    asked.mockImplementation(refused);
     await watch.check();
     await watch.check();
     await watch.check();
@@ -140,10 +142,9 @@ describe('what reaches the console', () => {
   });
 
   it('logs the recovery rather than leaving the warning as the last word', async () => {
-    const fetcher = vi.fn(refused as () => Promise<Response>);
-    vi.stubGlobal('fetch', fetcher);
+    asked.mockImplementation(refused);
     await watch.start();
-    fetcher.mockImplementation(async () => health(true));
+    asked.mockResolvedValue(health(true));
 
     await watch.check();
     expect(String(log.mock.calls[0]?.[0])).toContain('answering');
@@ -152,10 +153,7 @@ describe('what reaches the console', () => {
 
 describe('what the panel is told', () => {
   it('reads the watch through the snapshot', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => health(true)),
-    );
+    asked.mockResolvedValue(health(true));
     const hub = new Hub(null, watch);
     await watch.start();
     expect(hub.snapshot().speech).toBe('ready');
@@ -179,17 +177,15 @@ describe('what the panel is told', () => {
  */
 
 /** A take, as the sidecar would hand it over. `size` distinguishes two of them. */
-const take = (size = 8): Response =>
-  ({
-    ok: true,
-    headers: { get: () => 'audio/wav' },
-    arrayBuffer: async () => new ArrayBuffer(size),
-  }) as unknown as Response;
+const take = (size = 8): SidecarReply => ({
+  status: 200,
+  contentType: 'audio/wav',
+  body: Buffer.alloc(size),
+});
 
 describe('asking the sidecar for a line', () => {
   it('asks once for the renderers that all want it at the same moment', async () => {
-    const fetcher = vi.fn(async () => take());
-    vi.stubGlobal('fetch', fetcher);
+    asked.mockResolvedValue(take());
 
     const answers = await Promise.all([
       speak({ text: 'こんばんは' }),
@@ -197,7 +193,7 @@ describe('asking the sidecar for a line', () => {
       speak({ text: 'こんばんは' }),
     ]);
 
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(asked).toHaveBeenCalledTimes(1);
     // The same take, not merely an equal one: the model samples, so two passes
     // over one sentence are two different lengths, and a preview showing a
     // different length is a preview that drifts out of step.
@@ -207,21 +203,19 @@ describe('asking the sidecar for a line', () => {
   });
 
   it('hands the same one back to a renderer that asks a moment later', async () => {
-    const fetcher = vi.fn(async () => take());
-    vi.stubGlobal('fetch', fetcher);
+    asked.mockResolvedValue(take());
 
     const first = await speak({ text: 'a' });
     const second = await speak({ text: 'a' });
 
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(asked).toHaveBeenCalledTimes(1);
     expect(second).toBe(first);
   });
 
   it('goes back to the sidecar for a line it no longer holds', async () => {
     vi.useFakeTimers();
     try {
-      const fetcher = vi.fn(async () => take());
-      vi.stubGlobal('fetch', fetcher);
+      asked.mockResolvedValue(take());
 
       await speak({ text: 'a' });
       vi.advanceTimersByTime(TAKE_TTL_MS + 1);
@@ -229,26 +223,24 @@ describe('asking the sidecar for a line', () => {
 
       // Anything this old is a line being said again on purpose, and the voice
       // may have been retuned in between.
-      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(asked).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
   });
 
   it('forgets the oldest once it is holding more than it will', async () => {
-    const fetcher = vi.fn(async () => take());
-    vi.stubGlobal('fetch', fetcher);
+    asked.mockResolvedValue(take());
 
     await speak({ text: 'first' });
     for (let i = 0; i < TAKE_MAX; i += 1) await speak({ text: `line ${i}` });
     await speak({ text: 'first' });
 
-    expect(fetcher).toHaveBeenCalledTimes(TAKE_MAX + 2);
+    expect(asked).toHaveBeenCalledTimes(TAKE_MAX + 2);
   });
 
   it('keys on what actually goes upstream, which is the reading when there is one', async () => {
-    const fetcher = vi.fn(async (_url: unknown, _init: unknown) => take());
-    vi.stubGlobal('fetch', fetcher);
+    asked.mockResolvedValue(take());
 
     // Two lines written differently that spell the same pronunciation are one
     // synthesis, because the reading is the only thing the sidecar is told.
@@ -256,55 +248,48 @@ describe('asking the sidecar for a line', () => {
     await speak({ text: '１２３', reading: 'ひふみ' });
     await speak({ text: 'ひふみ' });
 
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({
+    expect(asked).toHaveBeenCalledTimes(1);
+    expect(asked.mock.calls[0]?.[1]).toBe('/speak');
+    expect(asked.mock.calls[0]?.[2]).toMatchObject({
       body: JSON.stringify({ text: 'ひふみ' }),
     });
   });
 
   it('tells two different lines apart', async () => {
-    const fetcher = vi.fn(async (_url: unknown, init: unknown) =>
-      take(String((init as { body: string }).body).length),
-    );
-    vi.stubGlobal('fetch', fetcher);
+    asked.mockImplementation(async (_endpoint, _path, ask) => take(String(ask.body).length));
 
     const a = await speak({ text: 'short' });
     const b = await speak({ text: 'a considerably longer line' });
 
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(asked).toHaveBeenCalledTimes(2);
     expect(a.body.length).not.toBe(b.body.length);
   });
 });
 
 describe('a sidecar that is not there', () => {
   it('shares one refusal rather than one round trip each', async () => {
-    const fetcher = vi.fn(refused as () => Promise<Response>);
-    vi.stubGlobal('fetch', fetcher);
+    asked.mockImplementation(refused);
 
     const answers = await Promise.all([speak({ text: 'a' }), speak({ text: 'a' })]);
 
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(asked).toHaveBeenCalledTimes(1);
     expect(answers.map((r) => r.status)).toEqual([503, 503]);
     expect(answers[0].ok).toBe(false);
   });
 
   it('does not keep the refusal, so a voice that comes up is reached', async () => {
-    const fetcher = vi.fn(refused as () => Promise<Response>);
-    vi.stubGlobal('fetch', fetcher);
+    asked.mockImplementation(refused);
     expect((await speak({ text: 'a' })).status).toBe(503);
 
     // The model finished loading between one line and the next, which on a
     // machine that has a voice at all is the ordinary case at the top of a run.
-    fetcher.mockImplementation(async () => take());
+    asked.mockResolvedValue(take());
     expect((await speak({ text: 'a' })).status).toBe(200);
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(asked).toHaveBeenCalledTimes(2);
   });
 
-  it('reports something else on the port as the sidecar answering badly', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({ ok: false, status: 404 }) as unknown as Response),
-    );
+  it('reports something else answering there as the sidecar answering badly', async () => {
+    asked.mockResolvedValue(wrongService());
     const answer = await speak({ text: 'a' });
     expect(answer.status).toBe(502);
     expect(JSON.parse(answer.body.toString('utf8'))).toMatchObject({ error: expect.any(String) });

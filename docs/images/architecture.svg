@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 404" width="960" height="404" role="img" aria-labelledby="ttl dsc">
   <title id="ttl">hashidate architecture</title>
-  <desc id="dsc">Any orchestrator — a script, an app or an LLM loop — posts commands to the local control server and reads state back, either as HTTP or as MCP tools. The server streams commands to the viewer over SSE and the viewer reports back. The viewer runs the engine, which reads an avatar descriptor, and reaches the speech sidecar through the server. OBS points at the viewer's page. Nothing inside the boundary holds a model, an SDK or a provider, and everything binds to 127.0.0.1.</desc>
+  <desc id="dsc">Any orchestrator — a script, an app or an LLM loop — posts commands to the local control server and reads state back, either as HTTP or as MCP tools. The server streams commands to the viewer over SSE and the viewer reports back. The viewer runs the engine, which reads an avatar descriptor, and reaches the speech sidecar through the server. OBS points at the viewer's page. Nothing inside the boundary holds a model, an SDK or a provider; nothing binds beyond 127.0.0.1, and the speech sidecar not even that — it answers on a UNIX socket.</desc>
 
   <style>
     .bg    { fill:#f7f5f1 }

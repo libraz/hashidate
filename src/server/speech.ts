@@ -1,17 +1,19 @@
 import type { ServerResponse } from 'node:http';
 import type { SpeechState } from '../protocol';
+import { askSidecar, describeEndpoint, type SidecarReply, speechEndpoint } from '../speech/sidecar';
 
 /**
  * The speech sidecar, reached from the browser through this server.
  *
- * The renderer needs audio and the synthesiser is a Python process on another
- * port. The viewer could in principle call it directly; it must not, and the
- * reason is the same one that governs everything else here. `tools/tts/` binds
- * loopback and sends no CORS header, because the voice is cloned from
- * recordings of a real person — so a browser page served from this origin
- * cannot reach that one, and the only ways to make it work would be to add a
- * CORS header to the sidecar or to move the voice off loopback. Both are
- * licensing decisions and neither is available.
+ * The renderer needs audio and the synthesiser is a Python process of its own.
+ * The viewer could in principle call it directly; it must not, and the reason
+ * is the same one that governs everything else here. `tools/tts/` answers on a
+ * UNIX socket that no page can name, because the voice is cloned from
+ * recordings of a real person — and before it was a socket it was loopback with
+ * no CORS header, which refused the same page for the same reason. The only
+ * ways to make a direct call work would be to put the voice back on a port and
+ * add a header to it, or to move it off this machine. Both are licensing
+ * decisions and neither is available.
  *
  * Proxying is the third way and it costs nothing: the viewer asks its own
  * origin, this server asks the sidecar, and nothing about either binding
@@ -28,11 +30,14 @@ import type { SpeechState } from '../protocol';
  */
 
 /**
- * Where the sidecar listens. Matches `DEFAULT_PORT` in `tools/tts/server.py`;
- * the environment variable is for running a second one beside it while
- * comparing voices.
+ * Where the sidecar is, worked out the same way `tools/tts/server.py` works out
+ * where to bind — neither is told by the other. `HASHIDATE_TTS_SOCKET` and
+ * `HASHIDATE_TTS_PORT` move both together; see `speechEndpoint`.
  */
-export const SIDECAR = `http://127.0.0.1:${process.env.HASHIDATE_TTS_PORT ?? 8770}`;
+const ENDPOINT = speechEndpoint();
+
+/** The same place, as it is written in a banner or a warning. */
+export const SIDECAR = describeEndpoint(ENDPOINT);
 
 /**
  * Long enough for the slowest line the model will accept.
@@ -170,27 +175,22 @@ export async function speak(request: SpeechRequest): Promise<Take> {
 
 /** One round trip to the sidecar. Never rejects: a failure is a take too. */
 async function synthesise(line: string): Promise<Take> {
-  let upstream: Response;
+  let upstream: SidecarReply;
   try {
-    upstream = await fetch(`${SIDECAR}/speak`, {
+    upstream = await askSidecar(ENDPOINT, '/speak', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: line }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      timeoutMs: TIMEOUT_MS,
     });
   } catch {
-    // Not running, or wedged. Expected rather than exceptional: the sidecar is
-    // optional, and the renderer's whole point is that it works without one.
+    // Not running, or wedged, or the socket is a file left behind by one that
+    // was killed. Expected rather than exceptional: the sidecar is optional,
+    // and the renderer's whole point is that it works without one.
     return refusal(503, 'speech sidecar not reachable');
   }
 
-  if (!upstream.ok) return refusal(502, `speech sidecar answered ${upstream.status}`);
-
-  let body: Buffer;
-  try {
-    body = Buffer.from(await upstream.arrayBuffer());
-  } catch {
-    return refusal(502, 'speech sidecar cut the audio short');
+  if (upstream.status < 200 || upstream.status > 299) {
+    return refusal(502, `speech sidecar answered ${upstream.status}`);
   }
 
   // The sidecar's `X-Speech-Seconds` is deliberately not forwarded. The viewer
@@ -199,8 +199,8 @@ async function synthesise(line: string): Promise<Take> {
   // leaves one number where two could disagree.
   return {
     status: 200,
-    contentType: upstream.headers.get('content-type') ?? 'audio/wav',
-    body,
+    contentType: upstream.contentType,
+    body: upstream.body,
     ok: true,
   };
 }
@@ -269,7 +269,7 @@ export async function handleSpeech(res: ServerResponse, body: unknown): Promise<
  *
  * Five seconds is chosen against the operator rather than the machine. A voice
  * that dies on air is worth naming before the next line is written, and the
- * cost of asking is a loopback round trip to a port that is doing nothing.
+ * cost of asking is a round trip to a socket that is doing nothing.
  */
 const HEALTH_INTERVAL_MS = 5_000;
 const HEALTH_TIMEOUT_MS = 2_000;
@@ -283,16 +283,14 @@ export interface SpeechSource {
  * Ask the sidecar how it is. `null` means it did not answer, for any reason.
  *
  * A reply that is not `/health`'s counts as no answer rather than as a fault of
- * its own: something else is on the port, and the one thing worth reporting
+ * its own: something else is answering there, and the one thing worth reporting
  * about that is the same thing — there is no voice here.
  */
 async function ask(): Promise<'ready' | 'loading' | null> {
   try {
-    const res = await fetch(`${SIDECAR}/health`, {
-      signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    const body = (await res.json()) as { ready?: unknown };
+    const res = await askSidecar(ENDPOINT, '/health', { timeoutMs: HEALTH_TIMEOUT_MS });
+    if (res.status < 200 || res.status > 299) return null;
+    const body = JSON.parse(res.body.toString('utf8')) as { ready?: unknown };
     // `ready` is false for the sixteen seconds the model takes to load, which
     // is a real state and not a failure: a line sent during it comes back 503.
     return body.ready === true ? 'ready' : 'loading';

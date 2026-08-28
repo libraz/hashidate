@@ -48,9 +48,9 @@ yarn install
 make dev
 ```
 
-`make dev` starts the viewer on `127.0.0.1:5173`, the control API on `127.0.0.1:8765` and the speech sidecar on `127.0.0.1:8770`, and proxies `/api` from the first to the second. The sidecar is left out when its environment is not built, which is the usual case; `yarn dev` starts the first two alone.
+`make dev` starts the viewer on `127.0.0.1:5173`, the control API on `127.0.0.1:8765` and the speech sidecar on a UNIX socket, and proxies `/api` from the first to the second. The sidecar is left out when its environment is not built, which is the usual case; `yarn dev` starts the first two alone.
 
-Ctrl-C stops all three. When it never got the chance — a closed terminal, a dropped connection — the old processes keep the ports and the next `make dev` fails to bind; `make stop` frees them. It goes by port rather than by anything it remembers, so it clears a listener left by any project, and prints each one before ending it.
+Ctrl-C stops all three. When it never got the chance — a closed terminal, a dropped connection — the old processes keep the two ports and the socket, and the next `make dev` fails to bind; `make stop` frees them. It goes by address rather than by anything it remembers, so it clears a listener left by any project, and prints each one before ending it. A socket file left behind by a sidecar that was killed rather than stopped is removed too, since a bind onto one of those fails exactly as a real collision does.
 
 Drive it from another terminal:
 

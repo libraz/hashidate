@@ -7,10 +7,18 @@ measured duration together, and the caller drives the mouth off the measurement.
 
     orchestrator ──POST /speak──► this ──wav + X-Speech-Seconds──► viewer
 
-**Binds to 127.0.0.1 only, on the same licence condition as the control API.**
-The voice is cloned from recordings that are not ours to republish, which is a
-stronger reason than the avatar's, not a weaker one. There is no CORS header
-here either, and adding one is a licensing decision before it is a code change.
+**Binds a UNIX socket, on a stronger form of the licence condition that governs
+the control API.** The voice is cloned from recordings that are not ours to
+republish, which is a stronger reason than the avatar's, not a weaker one — and
+the only caller is the control server on this machine, which proxies for the
+renderer. A loopback port would be reachable by every process and every user
+here; the socket sits in a directory this user owns, mode 0700, so nobody else
+can reach the path at all. Putting the voice back on a port and adding a CORS
+header to it is a licensing decision before it is a code change.
+
+`--port` is kept for the other direction: a different synthesiser standing in
+for this one may well be an HTTP service, so the control server can be pointed
+at a port. Nothing about this one has to be.
 
 The model is loaded once and stays resident: loading costs about sixteen
 seconds, and a process that pays that per line is not a voice, it is a batch
@@ -19,14 +27,17 @@ at once — so the time to the first sample is the time to the last one. At the
 default step count that is roughly half a second for a normal line, which is
 why the caller is expected to send one line at a time rather than a paragraph.
 
-usage: .venv/bin/python server.py [--port 8770]
+usage: .venv/bin/python server.py [--uds .run/speech.sock] [--port 8770]
 """
 
 import argparse
 import io
+import os
+import socket
 import threading
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 
 import soundfile as sf
 import uvicorn
@@ -47,8 +58,26 @@ from config import (
 import watermark
 from repair import clean_take, close_tail, trim
 
-BIND = "127.0.0.1"  # do not change; see the module docstring
+BIND = "127.0.0.1"  # only reached with --port; do not change. See the docstring.
 DEFAULT_PORT = 8770
+
+# Where the socket goes, matching `SOCKET_DIR`/`SOCKET_NAME` in
+# src/speech/sidecar.ts. Neither side is told by the other: the control server
+# and this one are separate commands, so each works the path out from where its
+# own source file is. Beside the sidecar rather than in a temporary directory,
+# so that two checkouts running at once get two sockets without arranging it.
+#
+# The directory is the permission boundary and is made 0700 below. macOS
+# honours the mode on the socket file too, but the directory is what makes that
+# a detail rather than the whole defence.
+SOCKET_DIR = Path(__file__).resolve().parent / ".run"
+SOCKET_NAME = "speech.sock"
+
+# A UNIX socket path is copied into a fixed-size field in the kernel — 104 bytes
+# on this platform, and the failure at bind names none of that. A checkout deep
+# enough to overflow it is unusual and worth saying plainly, because the answer
+# is to put the socket somewhere else rather than to move the checkout.
+SOCKET_PATH_MAX = 100
 
 # One line at a time through the model, whatever arrives.
 #
@@ -199,11 +228,109 @@ def speak(req: SpeakRequest) -> Response:
     )
 
 
+def env_port() -> int | None:
+    """A port from the environment, or None for anything that is not one."""
+    raw = os.environ.get("HASHIDATE_TTS_PORT", "")
+    try:
+        port = int(raw)
+    except ValueError:
+        return None
+    return port if 1 <= port <= 65535 else None
+
+
+def endpoint(args: argparse.Namespace) -> Path | int:
+    """
+    Where to bind: a socket path, or a port when one was asked for.
+
+    The same order as `speechEndpoint` in src/speech/sidecar.ts, and it has to
+    stay the same order. Nothing tells this process where the control server is
+    looking, so agreement rests entirely on both of them reading the two
+    variables the same way.
+    """
+    if args.port is not None:
+        return args.port
+    if args.uds is not None:
+        return args.uds.expanduser().resolve()
+    override = os.environ.get("HASHIDATE_TTS_SOCKET", "")
+    if override:
+        return Path(override).expanduser().resolve()
+    port = env_port()
+    return port if port is not None else SOCKET_DIR / SOCKET_NAME
+
+
+def clear_stale(path: Path) -> None:
+    """
+    Drop a socket file that nothing is behind.
+
+    A sidecar killed rather than stopped leaves its path in the filesystem, and
+    a bind onto that fails with "address already in use" — which is true of the
+    file and false of the service, and is the one startup failure here that
+    reads as somebody else's fault. Connecting is the only way to tell the two
+    apart, so it is asked rather than assumed: a refused connection means the
+    file is a leftover, and a successful one means there is a voice here
+    already and this process has nothing to add.
+    """
+    if not path.exists():
+        return
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    probe.settimeout(0.5)
+    try:
+        probe.connect(str(path))
+    except OSError:
+        path.unlink(missing_ok=True)
+        return
+    finally:
+        probe.close()
+    raise SystemExit(f"a speech sidecar is already answering at {path}")
+
+
+def listen(path: Path) -> socket.socket:
+    """Bind the socket this process owns, and nobody else can reach."""
+    if len(str(path).encode()) > SOCKET_PATH_MAX:
+        raise SystemExit(
+            f"the socket path is too long for the kernel to hold ({path}); "
+            "set HASHIDATE_TTS_SOCKET to a shorter one"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.chmod(0o700)
+    clear_stale(path)
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.bind(str(path))
+    # Before anything is listening on it, so there is no window in which the
+    # socket exists and is open to the machine. uvicorn would set 0o666 here if
+    # it were binding this itself, which is why it is handed a socket instead.
+    path.chmod(0o600)
+    sock.listen(16)
+    return sock
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    args = parser.parse_args()
-    uvicorn.run(app, host=BIND, port=args.port, log_level="warning")
+    parser.add_argument("--uds", type=Path, default=None, help="socket path to bind")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help=f"bind {BIND} on this port instead of a socket (default {DEFAULT_PORT})",
+    )
+    where = endpoint(parser.parse_args())
+
+    if isinstance(where, int):
+        uvicorn.run(app, host=BIND, port=where, log_level="warning")
+        return
+
+    sock = listen(where)
+    print(f"speech listening at {where}", flush=True)
+    try:
+        uvicorn.run(app, fd=sock.fileno(), log_level="warning")
+    finally:
+        # uvicorn removes a socket it bound itself; this one it was handed, and
+        # it works on a duplicate of the descriptor — so both ends are closed
+        # here, quietly. A stop is not the moment for a traceback about which
+        # of the two got there first.
+        with suppress(OSError):
+            sock.close()
+        where.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,10 @@ coverage/
 .venv/
 __pycache__/
 
+# Where the sidecar binds. The directory is made 0700 at startup and the socket
+# in it is removed on the way out — neither is anything a checkout arrives with.
+tools/tts/.run/
+
 # Purchased assets, extracted intermediates and internal specs. Never tracked.
 backup/
 

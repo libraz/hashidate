@@ -32,7 +32,7 @@ Three processes and a page. A caller posts commands to the control server; the s
 
 **The MCP adapter holds no judgement.** Every tool is one of the HTTP endpoints, with the loaded avatar's own ids compiled into the schemas. It is a translation, not a second control plane. See [The MCP adapter](mcp.md).
 
-**The speech sidecar is proxied, not called.** The viewer reaches it through `POST /api/speech` rather than directly, for the same reason everything here is loopback: the sidecar sends no CORS header, so a page served from this origin cannot reach that one. The two ways to make a direct call work would be to add a CORS header to the voice or to move it off loopback, and both are licensing decisions.
+**The speech sidecar is proxied, not called.** The viewer reaches it through `POST /api/speech` rather than directly, and having one caller is what lets the voice answer on a UNIX socket instead of a port — no page can name a socket, and nothing outside this machine can reach one. That is the same rule the rest of the runtime follows by binding loopback, applied where it can be applied more strictly. Putting the voice back on a port to make a direct call work is a licensing decision before it is a code change.
 
 ## Next
 
