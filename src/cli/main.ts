@@ -26,6 +26,7 @@ import {
   wearCommandSchema,
 } from '../protocol';
 import { loadScript, outline, ScriptError } from '../script';
+import { runScript } from '../script/run';
 import { ControlClient, DEFAULT_BASE, fail } from './client';
 
 /**
@@ -559,18 +560,18 @@ const play: Handler = async (client, args) => {
     return;
   }
 
-  // Cleared before the setup rather than after it, so that a script which
-  // replaces the queue and then puts the camera somewhere cannot have a line
-  // left over from the last run go out in the new shot.
-  if (values.replace) await client.queueClear();
-  if (script.setup?.length) {
-    const sent = await client.command({ batch: script.setup });
-    show(sent);
+  const result = await runScript(client, loaded, { replace: values.replace });
+  if (result.setup !== undefined) {
+    show(result.setup);
     // The two halves have different fates when no renderer is attached: the
     // lines wait on the server's queue and play when one arrives, the setup was
     // a live command and is simply gone. Said out loud, because the difference
     // is invisible in a run that otherwise looks like it worked.
-    if (typeof sent === 'object' && sent !== null && (sent as { ok?: unknown }).ok === false) {
+    if (
+      typeof result.setup === 'object' &&
+      result.setup !== null &&
+      (result.setup as { ok?: unknown }).ok === false
+    ) {
       console.error('setup was not delivered: no viewer is connected');
       console.error(
         'the lines still queue, but they will play against whatever state a renderer comes up in',
@@ -580,9 +581,8 @@ const play: Handler = async (client, args) => {
   // Stamped with the script's own name. A queue holding a scripted segment, a
   // comment somebody answered and a line typed by hand is only legible if each
   // row says which it is.
-  const result = await client.queueAdd(script.lines, { source: id });
   console.log(
-    `${script.lines.length} queued from ${id}: ${result.queue.length} pending, ${result.viewers} viewer(s)`,
+    `${script.lines.length} queued from ${id}: ${result.queue.queue.length} pending, ${result.queue.viewers} viewer(s)`,
   );
 };
 
