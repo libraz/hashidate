@@ -1,0 +1,142 @@
+title: hashidate はこういうものです
+note: |
+  The one script that belongs to the project rather than to a broadcast: the
+  runtime introducing itself, in about two minutes.
+
+  It is also a worked example. Every feature it talks about it also uses — the
+  cue markup is demonstrated mid-sentence, the shot changes on the line that
+  mentions shots, the acoustic changes on the line that mentions acoustics. A
+  line that only described one of those would not tell you whether it worked.
+
+  Nothing here names an avatar, a drawn expression or an overlay. Those are one
+  model's data and a checkout has no model in it, so a demo that used them
+  would be a demo that runs on one machine. The deck is the one thing it does
+  name, and that one ships: `show/slides/hashidate.pdf`.
+
+  yarn ctl play demo --check     read it without a server
+  yarn ctl play demo --replace   drop what is pending and run it
+
+# The state the script assumes, applied once before the first line. Spelled as
+# commands because that is what they are; see src/script/index.ts.
+setup:
+  - cmd: reset
+  - cmd: idle
+    on: true
+  - cmd: look
+    amount: 1
+
+lines:
+  # The opening shot travels with the line rather than being sent ahead of it.
+  # Sent separately it would land while the previous segment was still on air.
+  - text: "[hello]こんばんは。今日は、わたしが動いている仕組みそのものの話をします。"
+    stage:
+      camera: bust
+      backdrop: dusk
+      room: room
+
+  - text: "[explain]この土台は hashidate といいます。ブラウザの中にわたしを描いて、外から一手ずつ指示を受け取る。やっていることはそれだけです。"
+    reading: "このどだいははしだてといいます。ブラウザのなかにわたしをえがいて、そとからひとてずつしじをうけとる。やっていることはそれだけです。"
+
+  - text: "[wonder]それだけ、という顔をしましたね。"
+
+  - text: "[agree]それだけなんです。何を喋るかは、ここでは決めません。"
+
+  - text: "[explain]台詞を考えるのは外側にいる誰かの仕事で、わたしの側が引き受けるのは、その台詞をどう言うか。"
+
+  - text: "[notice]この線がはっきりしていることが、いちばん大事なところです。"
+
+  # The emotion on a turn persists after it, unlike everything else on a line.
+  # Left at joy here on purpose: it carries into the next two lines.
+  - text: "[explain]受け取る単位は「ターン」と呼んでいます。喋る言葉と、そのときの顔と、体の動きが、ひとまとまりで届く。"
+    emotion:
+      neutral: 0.6
+      joy: 0.3
+
+  - text: "[present]動きには名前がついていて、たとえば今のこれは present、こちらへどうぞ、です。"
+    reading: "うごきにはなまえがついていて、たとえばいまのこれはプレゼント、こちらへどうぞ、です。"
+
+  # The cue markup demonstrating itself. Three performances inside one sentence,
+  # each starting where it is written — which is the only place a caller can put
+  # one, since a second turn would break the clause in half.
+  - text: "[explain]名前は台詞の途中にも書けます。[happy]ここで嬉しくなって、[gloomy]ここでしょんぼりして、[calm]また戻ってくる。全部ひとつの台詞です。"
+
+  - text: "[explain]絵と音の置き場所も、台詞に付けて渡せます。"
+
+  # Said in the shot it is talking about. The camera and the backdrop move as
+  # this line starts, so what is described and what is seen are the same frame.
+  - text: "[refresh]たとえば——引きの絵にして、外を夜にしました。"
+    stage:
+      camera: full
+      backdrop: night
+
+  - text: "[explain]声が響く場所も別に選べます。今いるのは、ホールということになっています。"
+    stage:
+      room: hall
+
+  - text: "[giggle]ちょっと大げさでしたね。戻します。"
+    stage:
+      camera: bust
+      room: room
+
+  # --- 資料 ---------------------------------------------------------------
+  #
+  # The deck goes up and the character steps aside on the *same line*. Sent as a
+  # separate `place` command the layout lands at some other moment, and the
+  # frame is briefly wrong in the most visible way there is — the character
+  # standing in the middle of the page she is talking about.
+  #
+  # The deck is `show/slides/hashidate.pdf`, which ships with this repository.
+  # Without it these lines still run: an id the renderer cannot open is reported
+  # and the stream carries on, so what is lost is the picture, not the segment.
+  - text: "[present]資料を出すこともできます。PDF を置いておくと、後ろに映ります。"
+    reading: "しりょうをだすこともできます。ピーディーエフをおいておくと、うしろにうつります。"
+    stage:
+      camera: upper
+      deck: hashidate
+      slide: 1
+      place:
+        # Measured against this deck rather than picked: wider or taller than
+        # this and she covers the last column of the page on slide 3.
+        avatar: { anchor: bottom-right, width: 0.26, height: 0.54, margin: 0.015 }
+
+  - text: "[explain]さっきの境界の話も、こうして図にしておけます。"
+    stage: { slide: 2 }
+
+  - text: "[explain]ターンの中身。台詞と、その読みと、演技と、ショット。この四つです。"
+    stage: { slide: 3 }
+
+  - text: "[present]置き方も三通りあって、今わたしが右下にいるのが、真ん中のこれです。"
+    stage: { slide: 4 }
+
+  - text: "[interested]しかも中の文章は読めるので、資料を見て台本を書くところまで、外側の誰かに任せられます。"
+    stage: { slide: 5 }
+
+  # Down and back to the middle in one line, for the same reason as going up.
+  - text: "[explain]下ろすのも、戻るのも、一行です。"
+    stage:
+      camera: bust
+      deck: null
+      place:
+        avatar: { anchor: center, width: 1, height: 1, margin: 0 }
+
+  - text: "[secret]それから、ここだけの話。"
+
+  - text: "[explain]この仕組みは 127.0.0.1、つまりこの機械の中からしか届きません。"
+    reading: "このしくみは、いちにーななのぜろのぜろのいち、つまりこのきかいのなかからしかとどきません。"
+
+  - text: "[calm]わたしの見た目も声も借りものだからです。外に出さないのは、遠慮ではなくて約束のほう。"
+    emotion:
+      relaxed: 0.7
+      neutral: 0.3
+
+  - text: "[explain]動きは自分で足せます。ファイルを一枚置くと、それがそのまま名前のついた動きになります。"
+
+  - text: "[nice]今喋っているこれも、置いてある台本を一枚流しているだけ。"
+
+  # `hold` keeps the face up after the line. Used once, at the end, where the
+  # character is meant to still be standing there when the words stop.
+  - text: "[happy]だいたい、そんなところです。"
+    hold: true
+
+  - text: "見てくれてありがとう。また。"
+    perform: thanks
