@@ -624,6 +624,30 @@ export const speechStateSchema = z.enum(['absent', 'loading', 'ready', 'down']);
 export type SpeechState = z.infer<typeof speechStateSchema>;
 
 /**
+ * The three directories a control server was started on.
+ *
+ * Here because a listener on the port is not the same thing as *this* server.
+ * Two checkouts of this project answer `/api/state` identically, and a launcher
+ * that finds one already running has to decide whether to use it or to start
+ * its own — a decision that cannot be made from a port number. The document
+ * root is the one that decides it, since it is the build the windows would be
+ * loaded from; the other two are here because a launcher that opens the show
+ * directories in a file manager would otherwise open its own while driving
+ * somebody else's.
+ *
+ * Absolute paths, and loopback-only by the same licence condition as the rest
+ * of this API. See `src/shell/process.ts` for the only consumer.
+ */
+export const serverRootsSchema = z.object({
+  /** What `/` is served from. `dist` unless `--root` said otherwise. */
+  document: z.string(),
+  slides: z.string(),
+  motions: z.string(),
+});
+
+export type ServerRoots = z.infer<typeof serverRootsSchema>;
+
+/**
  * The reply to `GET /api/state`.
  *
  * `state` and `vocabulary` are partial because the server genuinely may have
@@ -664,6 +688,15 @@ export const snapshotSchema = z.object({
   speech: speechStateSchema,
   /** The pending turns, in the order they will be said. See `queue.ts`. */
   queue: z.array(queueEntrySchema),
+  /**
+   * Where this server is serving from. See `serverRootsSchema`.
+   *
+   * Optional because a hub can be built without them — every test does, and so
+   * does anything embedding the hub for a purpose that has no directories. A
+   * launcher deciding whether to adopt a running server reads the absence as
+   * "not the one I was looking for", which is the safe answer.
+   */
+  roots: serverRootsSchema.optional(),
 });
 
 export type Snapshot = z.infer<typeof snapshotSchema>;
