@@ -47,6 +47,23 @@ describe('what a turn leaves behind', () => {
     session.interrupt();
     expect(director.pickedExpression).toBeNull();
   });
+
+  it('releases a cued expression by its pick during a crossfade', () => {
+    const { session, director, step, runUntil } = build();
+    session.setExpression('F_DOYA');
+    step(60);
+    expect(director.expression).toBe('F_DOYA');
+
+    session.say({ id: 'cued', text: '[@expression F_JITO]あ' });
+    step(1);
+    // The old face is still visible while the new pick is fading in. Comparing
+    // against `expression` here would miss the turn's own face and leave it
+    // selected after the line ends.
+    expect(director.expression).toBe('F_DOYA');
+    expect(director.pickedExpression).toBe('F_JITO');
+    runUntil(() => !session.busy);
+    expect(director.pickedExpression).toBeNull();
+  });
 });
 
 describe('a turn with no text', () => {

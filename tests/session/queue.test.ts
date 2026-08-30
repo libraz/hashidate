@@ -483,6 +483,29 @@ describe('Session.replaceQueue', () => {
     expect(session.queue.map((turn) => turn.id)).toEqual(['next']);
   });
 
+  it('does not reinsert a running id from a queue snapshot', () => {
+    const { session, step, runUntil } = build();
+    const started: string[] = [];
+    const ended: string[] = [];
+    session.on((event) => {
+      if (event.type === 'turn.start' && event.turn) started.push(event.turn);
+      if (event.type === 'turn.end' && event.turn) ended.push(event.turn);
+    });
+    session.say({ id: 'running', text: 'いま' });
+    step(2);
+    expect(session.turn?.id).toBe('running');
+
+    session.replaceQueue([
+      { id: 'running', text: 'いま' },
+      { id: 'next', text: 'つぎ' },
+    ]);
+
+    expect(session.queue.map((turn) => turn.id)).toEqual(['next']);
+    runUntil(() => !session.busy);
+    expect(started).toEqual(['running', 'next']);
+    expect(ended).toEqual(['running', 'next']);
+  });
+
   it('reports the resulting depth on queue.replaced', () => {
     const { session } = build();
     session.say({ id: 'a' });

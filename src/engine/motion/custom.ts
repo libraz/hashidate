@@ -14,7 +14,7 @@ import type {
   SpineSlot,
   Vec3Tuple,
 } from '../types';
-import { GESTURES } from './gestures';
+import { GESTURES, isBuiltInGestureName } from './gestures';
 
 /**
  * Motions an operator wrote, on top of the gesture table this project ships.
@@ -297,7 +297,7 @@ export function loadMotions(motions: MotionDef[]): MotionLoad {
   loaded.clear();
   const result: MotionLoad = { loaded: [], rejected: [] };
   for (const motion of motions) {
-    if (Object.hasOwn(GESTURES, motion.id)) {
+    if (isBuiltInGestureName(motion.id)) {
       result.rejected.push({ id: motion.id, reason: 'reserved' });
       continue;
     }
@@ -326,7 +326,8 @@ const BUILT_IN: Record<string, GestureDef> = GESTURES;
  * the refusal hold even if something ever puts one in the map another way.
  */
 export function gestureDef(id: string): GestureDef | null {
-  return BUILT_IN[id] ?? loaded.get(id) ?? null;
+  const builtIn = Object.hasOwn(BUILT_IN, id) ? BUILT_IN[id] : undefined;
+  return builtIn ?? loaded.get(id) ?? null;
 }
 
 /**

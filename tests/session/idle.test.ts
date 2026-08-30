@@ -1,8 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
-import { HOPS, planJump } from '@/engine/motion';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { clearMotions, GESTURES, HOPS, loadMotions, planJump } from '@/engine/motion';
 import { CROUCH_T, RECOVER_T } from '@/engine/motion/jump';
 import { PERFORMANCE_TABLE } from '@/engine/performance';
 import { build, DT, IDLE_AFTER } from './harness';
+
+afterEach(() => {
+  clearMotions();
+});
 
 /**
  * The idle autopilot: when it is allowed to take over, and what it may not
@@ -77,6 +81,40 @@ describe('the autopilot picking performances', () => {
     expect(director.effectiveTarget).toEqual(
       PERFORMANCE_TABLE[id as keyof typeof PERFORMANCE_TABLE].emotion,
     );
+  });
+
+  it('keeps loaded motions out of the idle performance and gesture pools', () => {
+    const loadedId = 'fileOnlyIdle';
+    loadMotions([
+      {
+        id: loadedId,
+        label: { en: 'File only', ja: 'ファイル専用' },
+        group: 'greeting',
+        lead: 0.2,
+        hold: 0.8,
+        frames: [
+          { at: 0, arms: { R: { upperArm: [0, -1, 0] } } },
+          { at: 0.5, arms: { R: { upperArm: [0, 1, 0] } } },
+        ],
+      },
+    ]);
+
+    const { director, step, runUntil } = build({ idle: true });
+    step(Math.ceil((IDLE_AFTER + 1) / DT));
+    runUntil(() => !!director.performance, 12);
+
+    const performances = new Set<string>();
+    const gestures = new Set<string>();
+    for (let i = 0; i < Math.ceil(18 / DT); i++) {
+      step(1);
+      if (director.performance) performances.add(director.performance);
+      if (director.body.gesture) gestures.add(director.body.gesture.id);
+    }
+
+    expect(performances.size).toBeGreaterThan(0);
+    for (const id of performances) expect(Object.hasOwn(PERFORMANCE_TABLE, id)).toBe(true);
+    expect(gestures).not.toContain(loadedId);
+    for (const id of gestures) expect(Object.hasOwn(GESTURES, id)).toBe(true);
   });
 
   it('lets go of a held pose when the autopilot is switched off', () => {

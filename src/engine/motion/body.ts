@@ -4,7 +4,6 @@ import type {
   ArmSlot,
   FingerName,
   GestureDef,
-  GestureGroup,
   GestureVariation,
   PointSpec,
   Pose,
@@ -18,7 +17,7 @@ import { gestureDef } from './custom';
 import { DirFollower, ScalarFollower } from './follow';
 import { CharacterFrame, sideMirror } from './frame';
 import { Gaze } from './gaze';
-import { BASE_FINGERS, BASE_PALM, BASE_POSE, GESTURES, pointHand } from './gestures';
+import { BASE_FINGERS, BASE_PALM, BASE_POSE, pointHand } from './gestures';
 import { DEFAULT_VARIATION } from './idle';
 import { CROUCH_T, type HopSpec, type JumpArc, planJump, sampleJump } from './jump';
 import { aimGaze } from './look';
@@ -28,7 +27,7 @@ import { FINGER_ONSET, LINK_ONSET, minJerk, onset, reachEnvelope } from './timin
 
 /**
  * Body layer: base pose, idle life (breathing / sway / head / gaze), and the
- * playback of the gestures defined in `gestures.ts`.
+ * playback of built-in or loaded gesture definitions.
  *
  * Directions are authored in "character space" — x outward from the midline,
  * y up, z forward — and mirrored per side at apply time. Authoring this way
@@ -38,15 +37,6 @@ import { FINGER_ONSET, LINK_ONSET, minJerk, onset, reachEnvelope } from './timin
 
 const ARM_SLOTS: ArmSlot[] = ['shoulder', 'upperArm', 'lowerArm', 'hand'];
 const FINGER_NAMES: FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
-
-/**
- * The built-in gesture table.
- *
- * What `play` looks up is `gestureDef`, which is this plus whatever motions the
- * renderer loaded. This name is for the one thing that must stay built-in only:
- * the autopilot's pool. See `pickGesture`.
- */
-const GESTURE_TABLE: Record<string, GestureDef> = GESTURES;
 
 /**
  * Idle drift grows toward the extremity: a shoulder barely moves, a hand is
@@ -486,7 +476,7 @@ export class Body {
     const D = Math.PI / 180;
     const az = (spec.azimuth ?? 0) * D;
     const el = (spec.elevation ?? 0) * D;
-    const extent = spec.extent ?? 0.8;
+    const extent = THREE.MathUtils.clamp(spec.extent ?? 0.8, 0.1, 1);
     const finger = spec.finger ?? 'index';
     const at: PointSpec = {
       azimuth: az,
@@ -611,21 +601,6 @@ export class Body {
     this.gesture.released = true;
     const { def, lead } = this.gesture;
     this.gesture.time = Math.max(this.gesture.time, lead + def.hold);
-  }
-
-  /**
-   * Pick a gesture appropriate to what the character is currently doing.
-   *
-   * Built-ins only, deliberately. This is the autopilot: nobody asked for the
-   * gesture it returns, so it may only draw from the set that was watched on a
-   * render. A motion loaded off disk is played when it is named and never by
-   * itself — the first time one appears on air should be a decision.
-   */
-  pickGesture(groups: GestureGroup[]): string | null {
-    const pool = Object.keys(GESTURE_TABLE).filter((id) =>
-      groups.includes(GESTURE_TABLE[id].group),
-    );
-    return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
   }
 
   /**

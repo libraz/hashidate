@@ -75,6 +75,10 @@ const pickOne = <T>(xs: T[]): T => xs[Math.floor(Math.random() * xs.length)];
  * went to `blank` and `wonder`, so the amount of standing is unchanged and only
  * what is being felt while standing moved. `sleepy` stays: a yawn that arrives
  * and passes is a punctuation mark, which is the row it sits in.
+ *
+ * This is also the idle movement pool. It names built-in performances only;
+ * motions loaded from `show/motions/` are absent here and can run only when a
+ * caller names them through the gesture command.
  */
 // biome-ignore format: the repetition is the weighting, and the rows show it
 const AUTO_ACTS: PerformanceId[] = [
@@ -606,7 +610,7 @@ export class Director {
   }
 
   /**
-   * One channel, one pick.
+   * One channel, one pick from the fixed performance pool.
    *
    * Face and body used to be chosen on two independent timers, which is what
    * made the idle read as two unrelated animations sharing a body. A
@@ -632,6 +636,8 @@ export class Director {
       this._autoTimer = 1.2;
       return;
     }
+    // Resolve the selected built-in performance before its gesture is played.
+    // Loaded motion ids never enter this path: they are not performance rows.
     this.autoPerform(pickOne(AUTO_ACTS));
     // Long enough that a pose is a pose rather than a flicker, uneven enough
     // that the rotation does not become a beat the viewer can count along with.

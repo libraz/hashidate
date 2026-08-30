@@ -6,6 +6,7 @@ import {
   GESTURES,
   gestureDef,
   gestureEntries,
+  isBuiltInGestureName,
   loadMotions,
   type MotionDef,
 } from '@/engine/motion';
@@ -126,10 +127,23 @@ describe('compileMotion', () => {
 });
 
 describe('loadMotions', () => {
+  it('uses the built-in gesture table as the reservation source', () => {
+    expect(isBuiltInGestureName('wave')).toBe(true);
+    expect(isBuiltInGestureName('testWave')).toBe(false);
+  });
+
   it('makes a motion playable by name', () => {
     expect(gestureDef('testWave')).toBeNull();
     expect(loadMotions([motion()]).loaded).toEqual(['testWave']);
     expect(gestureDef('testWave')?.label.en).toBe('Test');
+  });
+
+  it.each(['toString', 'constructor'])('keeps prototype names playable', (id) => {
+    const result = loadMotions([motion({ id })]);
+
+    expect(result.loaded).toEqual([id]);
+    expect(result.rejected).toEqual([]);
+    expect(gestureDef(id)?.label.en).toBe('Test');
   });
 
   it('refuses to take the name of a built-in gesture', () => {

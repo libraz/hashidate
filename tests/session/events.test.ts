@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SESSION_EVENT_BUFFER_MAX, SessionEvents } from '@/engine/session/events';
 import type { SessionEvent } from '@/engine/types';
 import { build } from './harness';
 
@@ -40,5 +41,22 @@ describe('events', () => {
     off();
     session.say({ id: 'a' });
     expect(kept).toEqual(['a']);
+  });
+
+  it('bounds the unread buffer while listeners receive every event', () => {
+    const events = new SessionEvents();
+    const seen: SessionEvent[] = [];
+    events.on((event) => seen.push(event));
+
+    const total = SESSION_EVENT_BUFFER_MAX + 7;
+    for (let i = 0; i < total; i += 1) {
+      events.emit('turn.queued', { turn: `t${i}` });
+    }
+
+    expect(seen).toHaveLength(total);
+    expect(events.take().map((event) => event.turn)).toEqual(
+      Array.from({ length: SESSION_EVENT_BUFFER_MAX }, (_, i) => `t${i + 7}`),
+    );
+    expect(events.take()).toEqual([]);
   });
 });

@@ -62,6 +62,11 @@ export const GESTURES = {
   ...POSE,
 } satisfies Record<string, GestureDef>;
 
+/** Whether a name belongs to the built-in table and cannot be shadowed. */
+export function isBuiltInGestureName(id: string): boolean {
+  return Object.hasOwn(GESTURES, id);
+}
+
 export type GestureId = keyof typeof GESTURES;
 
 /** One group, with the ids that belong to it. */

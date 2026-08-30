@@ -65,8 +65,8 @@ export class TurnQueue {
   paused = false;
 
   private _gap = 0;
-  /** Seconds the head of the queue has been waiting on its voice. See `VOICE_WAIT`. */
-  private _waited = 0;
+  /** The queue head currently waiting on its voice, and how long it has waited. */
+  private _waiting: { turn: Turn; seconds: number } | null = null;
   /**
    * The running turn's cues, in order, resolved to seconds and shortened from
    * the front as they fire.
@@ -106,9 +106,8 @@ export class TurnQueue {
    * single part of it.
    *
    * `reading` is the kana pronunciation of `text` and drives the mouth in its
-   * place. It is not defaulted here: absent means "no reading was supplied",
-   * which is different from an empty one, and the mouth needs to be able to
-   * tell those apart to fall back to the text.
+   * place. It is not defaulted here: an omitted reading falls back to the text,
+   * while wire and script validation keep an empty reading out of the queue.
    *
    * The line is parsed *here*, on the way into the queue, rather than at the
    * moment it is played. Its cue markup comes out and the turn carries what is
@@ -207,7 +206,12 @@ export class TurnQueue {
    */
   replaceQueue(requests: TurnRequest[]): void {
     const held = new Map(this.queue.map((turn) => [turn.id, turn]));
-    const next = requests.map((request) => {
+    const next: Turn[] = [];
+    for (const request of requests) {
+      // The current turn is already on air. A server-side queue snapshot can
+      // briefly contain its id while a start event is in flight, but publishing
+      // that id back here must not create a second pending turn.
+      if (request.id !== undefined && request.id === this.turn?.id) continue;
       const existing = request.id === undefined ? undefined : held.get(request.id);
       const line = parseLine(request.text ?? '');
       if (existing && existing.text === line.text) {
@@ -218,7 +222,7 @@ export class TurnQueue {
           existing.cues = this.playableCues(line.cues);
           // Everything outside the line itself is applied at `start`, so it can
           // be updated in place without costing the take.
-          return Object.assign(existing, {
+          Object.assign(existing, {
             emotion: request.emotion ?? null,
             expression: request.expression ?? null,
             gesture: request.gesture ?? null,
@@ -227,10 +231,12 @@ export class TurnQueue {
             hold: request.hold ?? false,
             stage: request.stage,
           });
+          next.push(existing);
+          continue;
         }
       }
-      return this.build(request);
-    });
+      next.push(this.build(request));
+    }
 
     // Whatever the new list did not claim is gone. Its take has to be stopped
     // even though it never played: a take still being synthesised arrives a
@@ -260,8 +266,20 @@ export class TurnQueue {
       .prepare(turn.text, turn.reading)
       .catch(() => null)
       .then((take) => {
-        turn.take = take;
-        if (take && this.turn !== turn && !this.queue.includes(turn)) take.stop();
+        if (this.turn === turn) {
+          // VOICE_WAIT may have started this line silently. A late take must
+          // not be assigned after the line opened: it has never been played,
+          // and making it the clock would leave the turn running on a clock
+          // that cannot advance.
+          if (take) take.stop();
+          turn.take = null;
+        } else if (this.queue.includes(turn)) {
+          turn.take = take;
+        } else {
+          // The turn was removed while synthesis was in flight. Do not let a
+          // late answer resurrect audio for a line the queue no longer owns.
+          take?.stop();
+        }
       });
   }
 
@@ -349,9 +367,21 @@ export class TurnQueue {
       this._gap -= dt;
       // The gap runs down whether or not the voice has answered, so the wait
       // for a take and the beat between turns overlap instead of adding up.
-      this._waited = this.queue[0].take === undefined ? this._waited + dt : 0;
-      if (this._gap <= 0 && (this.queue[0].take !== undefined || this._waited > VOICE_WAIT)) {
-        this._waited = 0;
+      const head = this.queue[0];
+      let waited = 0;
+      if (head.take === undefined) {
+        let waiting = this._waiting;
+        if (waiting?.turn !== head) {
+          waiting = { turn: head, seconds: 0 };
+          this._waiting = waiting;
+        }
+        waiting.seconds += dt;
+        waited = waiting.seconds;
+      } else {
+        this._waiting = null;
+      }
+      if (this._gap <= 0 && (head.take !== undefined || waited > VOICE_WAIT)) {
+        this._waiting = null;
         this.start(this.queue.shift() as Turn);
       }
     }
@@ -477,7 +507,7 @@ export class TurnQueue {
     }
     const expression = this._cuedExpression;
     this._cuedExpression = null;
-    if (expression && !turn.hold && this.d.expression === expression) {
+    if (expression && !turn.hold && this.d.pickedExpression === expression) {
       this.d.setExpression(null);
     }
   }

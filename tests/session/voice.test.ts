@@ -185,6 +185,74 @@ describe('a turn with a voice', () => {
     void voice;
   });
 
+  it('starts a new voice wait after an unanswered queue is interrupted', () => {
+    const { session, step } = build({
+      voice: (now) => new FakeVoice(now, { defer: true }),
+    });
+    session.say({ id: 'old', text: 'ふるい' });
+    step(Math.ceil((VOICE_WAIT - 0.01) / DT));
+    session.interrupt();
+    session.say({ id: 'new', text: 'あたらしい' });
+
+    // The old head was almost at its deadline. One frame must not spend that
+    // wait on the new head and open it silently.
+    step(1);
+    expect(session.turn).toBeNull();
+    expect(session.queue.map((turn) => turn.id)).toEqual(['new']);
+  });
+
+  it('starts a new voice wait after an unanswered queue is cleared', () => {
+    const { session, step } = build({
+      voice: (now) => new FakeVoice(now, { defer: true }),
+    });
+    session.say({ id: 'old', text: 'ふるい' });
+    step(Math.ceil((VOICE_WAIT - 0.01) / DT));
+    session.clearQueue();
+    session.say({ id: 'new', text: 'あたらしい' });
+
+    step(1);
+    expect(session.turn).toBeNull();
+    expect(session.queue.map((turn) => turn.id)).toEqual(['new']);
+  });
+
+  it('starts a new voice wait after an unanswered queue is replaced', () => {
+    const { session, step } = build({
+      voice: (now) => new FakeVoice(now, { defer: true }),
+    });
+    session.say({ id: 'old', text: 'ふるい' });
+    step(Math.ceil((VOICE_WAIT - 0.01) / DT));
+    session.replaceQueue([{ id: 'new', text: 'あたらしい' }]);
+
+    step(1);
+    expect(session.turn).toBeNull();
+    expect(session.queue.map((turn) => turn.id)).toEqual(['new']);
+  });
+
+  it('stops a voice answer that arrives after the silent fallback', async () => {
+    let voice: FakeVoice | null = null;
+    const ended: string[] = [];
+    const { session, step, runUntil } = build({
+      voice: (now) => {
+        voice = new FakeVoice(now, { defer: true });
+        return voice;
+      },
+    });
+    session.on((event) => {
+      if (event.type === 'turn.end' && event.turn) ended.push(event.turn);
+    });
+    session.say({ id: 'late', text: 'あいうえお' });
+    step(Math.ceil((VOICE_WAIT + 0.2) / DT));
+    expect(session.turn?.id).toBe('late');
+    expect(session.turn?.take).toBeUndefined();
+
+    await (voice as unknown as FakeVoice).answer();
+    expect((voice as unknown as FakeVoice).takes[0].stopped).toBe(true);
+    expect(session.turn?.take).toBeNull();
+
+    runUntil(() => !session.busy);
+    expect(ended).toEqual(['late']);
+  });
+
   it('plays the line silently when synthesis fails, rather than dropping the turn', async () => {
     const { session, step } = build({ voice: (now) => new FakeVoice(now, { fail: true }) });
     session.say({ text: 'あいうえお' });
