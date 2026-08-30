@@ -1,6 +1,6 @@
 /**
- * The preview beside the controls — the renderer this panel embeds, and the
- * shot an operator drags on it.
+ * The preview beside the controls — the renderer this panel embeds, the shot an
+ * operator drags on it, and the line being said under it.
  */
 
 export const previewEn = {
@@ -19,6 +19,8 @@ export const previewEn = {
     'Preview stopped. No second WebGL context is open, so the renderer going to air has more to work with.',
   'panel.preview.blocked':
     'Audio is blocked. Click the viewer window once and the next line will be heard.',
+  'panel.preview.speaking': 'On air',
+  'panel.preview.speaking.standingBy': 'Standing by',
   'panel.preview.avatarAria': 'Avatar',
   'panel.preview.cameraAria': 'Camera',
   'panel.preview.backdropAria': 'Backdrop',
@@ -51,6 +53,8 @@ export const previewJa: Record<keyof typeof previewEn, string> = {
     'プレビュー停止中。二つ目の WebGL コンテキストを開かないので、配信側の描画が軽くなります。',
   'panel.preview.blocked':
     '音声ブロック中。ビューアの画面を一度クリックすると次の行から声が出ます。',
+  'panel.preview.speaking': '発話中',
+  'panel.preview.speaking.standingBy': '待機',
   'panel.preview.avatarAria': 'アバター',
   'panel.preview.cameraAria': 'カメラ',
   'panel.preview.backdropAria': '背景',

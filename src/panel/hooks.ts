@@ -72,6 +72,7 @@ export const EMPTY: Snapshot = {
   slides: null,
   speech: 'absent',
   queue: [],
+  airing: [],
   paused: false,
   recording: null,
   bgm: EMPTY_BGM,

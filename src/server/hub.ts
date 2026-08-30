@@ -880,6 +880,10 @@ export class Hub {
       // to "is the voice up" from a server that is not looking at it.
       speech: this.speech?.current ?? ('absent' satisfies SpeechState),
       queue: this.queue.list(),
+      // Beside the pending list rather than folded into it: these have started
+      // and are no longer editable, and a panel reading one is reading what is
+      // being said right now. See `airing` on the schema.
+      airing: this.queue.airing(),
       // Read off the setup rather than held beside it. See `Standing.paused`.
       paused: this.standing.paused,
       // The server's own, like `speech` and for the same reason: the bytes are

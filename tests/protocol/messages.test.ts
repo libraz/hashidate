@@ -797,6 +797,57 @@ describe('snapshotSchema', () => {
     expect(result.data?.avatar).toBeUndefined();
   });
 
+  it('carries the words of the line on air, which the pending list no longer has', () => {
+    // `state.turn` names the line and this is what it says: a started turn is
+    // out of `queue` and does not reach the history until it is over, so
+    // without this a panel has an id and no words for the whole of it.
+    const airing = [{ id: 'q7', text: '[hello]こんばんは。', at: 1_800_000_000 }];
+    const result = snapshotSchema.safeParse({
+      connected: true,
+      viewers: 1,
+      seq: 4,
+      state: { speaking: true, turn: 'q7' },
+      vocabulary: {},
+      events: [],
+      voice: null,
+      tuning: null,
+      placement: null,
+      avatars: [],
+      decks: [],
+      slides: null,
+      speech: 'ready',
+      queue: [],
+      airing,
+      paused: false,
+      recording: null,
+    });
+    expect(result.error?.issues ?? []).toEqual([]);
+    expect(result.data?.airing).toEqual(airing);
+  });
+
+  it('accepts a server that does not report what is on air, since the shell adopts older ones', () => {
+    const result = snapshotSchema.safeParse({
+      connected: true,
+      viewers: 1,
+      seq: 4,
+      state: { speaking: true, turn: 'q7' },
+      vocabulary: {},
+      events: [],
+      voice: null,
+      tuning: null,
+      placement: null,
+      avatars: [],
+      decks: [],
+      slides: null,
+      speech: 'ready',
+      queue: [],
+      paused: false,
+      recording: null,
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.airing).toBeUndefined();
+  });
+
   it('carries the documents on disk, which are a listing rather than vocabulary', () => {
     // They change when somebody saves a file, so they ride on the snapshot the
     // panel already polls and come from the only process that can see the disk.

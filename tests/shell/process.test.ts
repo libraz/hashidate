@@ -73,6 +73,7 @@ const snapshot = (roots?: ServerRoots): Snapshot => ({
   slides: null,
   speech: 'absent',
   queue: [],
+  airing: [],
   paused: false,
   recording: null,
   ...(roots === undefined ? {} : { roots }),

@@ -1,0 +1,83 @@
+/*
+ * What is being said, under the picture saying it.
+ *
+ * The one string on this page meant to be *read* rather than scanned, which is
+ * why it is set larger than a queue row: the operator is looking at the render
+ * above it and takes this in beside it.
+ */
+
+.strip {
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+/*
+ * `--live`, and a full border plus a tint rather than a stripe down one side.
+ * The token file reserves this colour for the character speaking, and this is
+ * one of the two places on the page allowed to spend it.
+ */
+.live {
+  background: var(--live-tint);
+  border-color: color-mix(in srgb, var(--live) 34%, var(--line));
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 14px;
+}
+
+.label {
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  letter-spacing: 0.04em;
+}
+
+.live .label {
+  color: var(--live);
+  font-weight: 500;
+}
+
+/* Unlit while nothing is coming out, on the same idiom as the header's link
+   dot. It is the voice rather than the turn: a line waiting on its audio is on
+   air with silence going to the stream. */
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--fg-faint);
+  transition: background var(--dur) var(--ease);
+}
+
+.voiced .dot {
+  background: var(--live);
+}
+
+/*
+ * Three lines tall whatever is in it.
+ *
+ * The staging controls are immediately below and are pressed by feel while the
+ * operator watches the picture; a readout that grew with the line would move
+ * them on every turn. A longer line scrolls here instead of being cut off with
+ * an ellipsis, because unlike a queue row this exists to be read to the end.
+ */
+.line {
+  margin: var(--space-2) 0 0;
+  block-size: calc(var(--text-lg) * 1.6 * 3);
+  overflow-y: auto;
+  font-size: var(--text-lg);
+  line-height: 1.6;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.silent {
+  color: var(--fg-faint);
+  font-size: var(--text-sm);
+}

@@ -115,6 +115,29 @@ export const snapshotSchema = z.object({
   /** The pending turns, in the order they will be said. See `queue.ts`. */
   queue: z.array(queueEntrySchema),
   /**
+   * The turns a renderer has started and not yet reported an end for.
+   *
+   * `state.turn` says *which* line is being said and this says *what it says* —
+   * a panel otherwise has an id and no words, because a started line is out of
+   * `queue` by then and does not reach the history until it is over.
+   *
+   * A list rather than a single entry, because that is what the server holds:
+   * a start is filed per turn id, and an end that never arrives leaves its
+   * entry here. A reader after the line on air matches `state.turn` against it
+   * rather than taking the first.
+   *
+   * Only what went through this server's queue is here. A `say` posted straight
+   * to `/api/command` never enters it, so its text is not the server's to
+   * report — the same boundary the history draws.
+   *
+   * Optional, like the fields added after it were: the shell probes a port and
+   * adopts whatever control server answers, which may have been started from an
+   * older checkout. Absent has to read as "this server does not say", because a
+   * required field would make that server fail the probe and stop being usable
+   * at all over one readout.
+   */
+  airing: z.array(queueEntrySchema).optional(),
+  /**
    * Whether the queue is held. See `pauseCommandSchema`.
    *
    * The server's own, read off the setup it re-delivers on connect rather than

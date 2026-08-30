@@ -51,6 +51,20 @@ describe('the pending queue', () => {
     expect(hub.queue.history().map((entry) => entry.id)).toEqual([running.id]);
   });
 
+  it('puts the words of the line on air on the snapshot, and takes them off at the end', () => {
+    // The panel has an id from `state.turn` and nothing to read: a started line
+    // is out of the pending list and does not reach the history until it is
+    // over. This is the only place its text exists in between.
+    const [running] = hub.queue.add([{ text: '[hello]こんばんは。' }, { text: 'pending' }]);
+    hub.report({ events: [event(running.id, 'turn.start')] });
+
+    expect(hub.snapshot().airing).toEqual([expect.objectContaining({ id: running.id })]);
+    expect(hub.snapshot().airing?.[0].text).toBe('[hello]こんばんは。');
+
+    hub.report({ events: [event(running.id, 'turn.end')] });
+    expect(hub.snapshot().airing).toEqual([]);
+  });
+
   it('hands the queue to a viewer the moment it attaches', () => {
     hub.queue.add([{ text: 'あ' }, { text: 'い' }]);
     const seen: StreamMessage[] = [];
