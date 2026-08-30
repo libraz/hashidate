@@ -20,6 +20,37 @@ afterEach(() => {
 });
 
 describe('the pending queue', () => {
+  it('removes a started line from every pending republish', () => {
+    const [running, pending] = hub.queue.add([{ text: 'running' }, { text: 'pending' }]);
+    hub.report({ events: [event(running.id, 'turn.start')] });
+
+    const frames: StreamMessage[] = [];
+    hub.subscribe((message) => frames.push(message));
+    hub.queue.update(pending.id, { text: 'edited' });
+    hub.publishQueue();
+
+    const queues = frames.flatMap((frame) =>
+      frame.type === 'command' ? frame.commands.filter((command) => command.cmd === 'queue') : [],
+    );
+    expect(queues).not.toHaveLength(0);
+    for (const command of queues) {
+      if (command.cmd === 'queue')
+        expect(command.turns.map((turn) => turn.id)).not.toContain(running.id);
+    }
+    expect(hub.queue.airing().map((entry) => entry.id)).toEqual([running.id]);
+    expect(hub.queue.list().map((entry) => entry.id)).toEqual([pending.id]);
+  });
+
+  it('files an airing line on end and keeps pending lines separate', () => {
+    const [running, pending] = hub.queue.add([{ text: 'running' }, { text: 'pending' }]);
+    hub.report({ events: [event(running.id, 'turn.start')] });
+    hub.report({ events: [event(running.id, 'turn.end')] });
+
+    expect(hub.queue.airing()).toEqual([]);
+    expect(hub.queue.list().map((entry) => entry.id)).toEqual([pending.id]);
+    expect(hub.queue.history().map((entry) => entry.id)).toEqual([running.id]);
+  });
+
   it('hands the queue to a viewer the moment it attaches', () => {
     hub.queue.add([{ text: 'あ' }, { text: 'い' }]);
     const seen: StreamMessage[] = [];
@@ -30,10 +61,27 @@ describe('the pending queue', () => {
     expect(seen[0].commands[0]).toMatchObject({ cmd: 'queue' });
   });
 
-  it('says nothing to a viewer attaching to an empty queue', () => {
+  it('replaces a stale local queue with an empty list on reconnect', () => {
+    const [running, pending] = hub.queue.add([{ text: 'running' }, { text: 'pending' }]);
     const seen: StreamMessage[] = [];
-    hub.subscribe((message) => seen.push(message));
-    expect(seen).toEqual([]);
+    const detach = hub.subscribe((message) => seen.push(message));
+    expect(seen[0]).toMatchObject({
+      type: 'command',
+      commands: [{ cmd: 'queue', turns: [{ id: running.id }, { id: pending.id }] }],
+    });
+
+    // This renderer is gone before it hears the start and clear. Its local
+    // queue still has both rows, so a reconnect must receive the authoritative
+    // empty replacement rather than silence.
+    detach();
+    hub.report({ events: [event(running.id, 'turn.start')] });
+    hub.queue.clear();
+    hub.publishQueue();
+
+    const reconnect: StreamMessage[] = [];
+    hub.subscribe((message) => reconnect.push(message));
+    expect(reconnect).toEqual([{ type: 'command', commands: [{ cmd: 'queue', turns: [] }] }]);
+    expect(hub.queue.airing().map((entry) => entry.id)).toEqual([running.id]);
   });
 
   it('drops an entry when the renderer reports its turn ended', () => {
@@ -203,11 +251,11 @@ describe('the history and rewinding', () => {
     expect(hub.queue.list()).toEqual([]);
   });
 
-  it('answers null for an id the history does not have, and sends nothing', () => {
+  it('answers null for an id the history does not have, after the initial queue sync', () => {
     const frames: StreamMessage[] = [];
     hub.subscribe((message) => frames.push(message));
     expect(hub.rewind('nope', 'from', { interrupt: true })).toBeNull();
-    expect(frames).toEqual([]);
+    expect(frames).toEqual([{ type: 'command', commands: [{ cmd: 'queue', turns: [] }] }]);
   });
 });
 

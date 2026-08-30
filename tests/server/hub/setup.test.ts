@@ -40,11 +40,12 @@ describe('the setup, replayed on connect', () => {
       { cmd: 'wear', slot: 'top', item: 'coat' },
       { cmd: 'camera', frame: 'full' },
       { cmd: 'backdrop', id: 'night' },
+      { cmd: 'queue', turns: [] },
     ]);
   });
 
-  it('says nothing to a viewer attaching before anything has been set', () => {
-    expect(attach()).toEqual([]);
+  it('clears a viewer queue when it attaches before anything has been set', () => {
+    expect(attach()).toEqual([{ cmd: 'queue', turns: [] }]);
   });
 
   it('leaves out the commands that were a moment rather than a setting', () => {
@@ -57,7 +58,10 @@ describe('the setup, replayed on connect', () => {
         { cmd: 'perform', id: 'hello' },
       ],
     });
-    expect(attach()).toEqual([{ cmd: 'camera', frame: 'face' }]);
+    expect(attach()).toEqual([
+      { cmd: 'camera', frame: 'face' },
+      { cmd: 'queue', turns: [] },
+    ]);
   });
 
   it('sends the setup and the queue in one frame, setup first', () => {
@@ -75,20 +79,32 @@ describe('the setup, replayed on connect', () => {
 
   it('keeps the setup for every later viewer, not just the first', () => {
     hub.send({ type: 'command', commands: [{ cmd: 'room', id: 'hall' }] });
-    expect(attach()).toEqual([{ cmd: 'room', id: 'hall' }]);
-    expect(attach()).toEqual([{ cmd: 'room', id: 'hall' }]);
+    expect(attach()).toEqual([
+      { cmd: 'room', id: 'hall' },
+      { cmd: 'queue', turns: [] },
+    ]);
+    expect(attach()).toEqual([
+      { cmd: 'room', id: 'hall' },
+      { cmd: 'queue', turns: [] },
+    ]);
   });
 
   it('does not record what it replays, so a reconnect cannot double an outfit', () => {
     hub.send({ type: 'command', commands: [{ cmd: 'wear', slot: 'top', item: 'coat' }] });
     attach();
-    expect(attach()).toEqual([{ cmd: 'wear', slot: 'top', item: 'coat' }]);
+    expect(attach()).toEqual([
+      { cmd: 'wear', slot: 'top', item: 'coat' },
+      { cmd: 'queue', turns: [] },
+    ]);
   });
 
   it('carries the newest value of a setting that was changed twice', () => {
     hub.send({ type: 'command', commands: [{ cmd: 'camera', frame: 'face' }] });
     hub.send({ type: 'command', commands: [{ cmd: 'camera', frame: 'bust' }] });
-    expect(attach()).toEqual([{ cmd: 'camera', frame: 'bust' }]);
+    expect(attach()).toEqual([
+      { cmd: 'camera', frame: 'bust' },
+      { cmd: 'queue', turns: [] },
+    ]);
   });
 
   it('is not disturbed by the queue frames the hub sends on its own', () => {

@@ -37,8 +37,14 @@ describe('subscription', () => {
     const delivered = hub.send(frame('wave'));
 
     expect(delivered).toBe(2);
-    expect(a).toEqual([frame('wave')]);
-    expect(b).toEqual([frame('wave')]);
+    expect(a).toEqual([
+      { type: 'command', commands: [{ cmd: 'queue', turns: [] }] },
+      frame('wave'),
+    ]);
+    expect(b).toEqual([
+      { type: 'command', commands: [{ cmd: 'queue', turns: [] }] },
+      frame('wave'),
+    ]);
   });
 
   it('returns zero from send when nothing is attached', () => {
@@ -51,12 +57,21 @@ describe('subscription', () => {
     hub.send(frame('nod'));
     detach();
     expect(hub.send(frame('wave'))).toBe(0);
-    expect(seen).toEqual([frame('nod')]);
+    expect(seen).toEqual([
+      { type: 'command', commands: [{ cmd: 'queue', turns: [] }] },
+      frame('nod'),
+    ]);
   });
 
   it('unsubscribe drops only the listener it names', () => {
     const kept: StreamMessage[] = [];
-    const gone = (): void => {
+    const gone = (message: StreamMessage): void => {
+      if (
+        message.type === 'command' &&
+        message.commands.every((command) => command.cmd === 'queue')
+      ) {
+        return;
+      }
       throw new Error('an unsubscribed viewer was still delivered to');
     };
     hub.subscribe(gone);
@@ -65,7 +80,10 @@ describe('subscription', () => {
     hub.unsubscribe(gone);
 
     expect(hub.send(frame('wave'))).toBe(1);
-    expect(kept).toEqual([frame('wave')]);
+    expect(kept).toEqual([
+      { type: 'command', commands: [{ cmd: 'queue', turns: [] }] },
+      frame('wave'),
+    ]);
   });
 
   it('detaching twice is harmless', () => {
@@ -188,12 +206,25 @@ describe('an event reported by more than one renderer', () => {
     expect(hub.queue.history().map((e) => e.id)).toEqual([id]);
   });
 
+  it('deduplicates a renderer batch containing start and end together', () => {
+    const id = hub.queue.add([{ text: 'a' }])[0].id;
+    hub.report({ events: [event(id, 'turn.start'), event(id, 'turn.end')] });
+    hub.report({ events: [event(id, 'turn.start'), event(id, 'turn.end')] });
+
+    const events = ending(id);
+    expect(events.filter((entry) => entry.type === 'turn.start')).toHaveLength(1);
+    expect(events.filter((entry) => entry.type === 'turn.end')).toHaveLength(1);
+  });
+
   it('does not swallow a line said a second time under the same id', () => {
     const id = hub.queue.add([{ text: 'a' }])[0].id;
     hub.report({ events: [event(id, 'turn.end')] });
     // Put back by a rewind and said again. The start between the two endings is
-    // what tells a second ending from a second report of the first.
+    // what tells a second ending from a second report of the first. The replay
+    // is delayed past the echo window; an event with the same subject and type
+    // inside that window is deliberately treated as another renderer's echo.
     hub.report({ events: [event(id, 'turn.start')] });
+    vi.advanceTimersByTime(ECHO_SECONDS * 1000);
     hub.report({ events: [event(id, 'turn.end')] });
 
     expect(ending(id).map((e) => e.type)).toEqual(['turn.end', 'turn.start', 'turn.end']);

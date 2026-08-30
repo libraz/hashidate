@@ -2,19 +2,20 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   type BgmResponse,
   type Command,
-  type CommandName,
   type CommandResponse,
+  commandRequestSchema,
   type DecksResponse,
   type EventsResponse,
   type HistoryResponse,
+  isPayloadIdCommand,
   type MotionsResponse,
-  parseCommand,
   type QueueResponse,
   queueAddSchema,
   queueRewindSchema,
   queueUpdateSchema,
   recordStartSchema,
   recordStopSchema,
+  rendererIdSchema,
   reportBodySchema,
   type ScriptRunResponse,
   type ScriptsResponse,
@@ -64,21 +65,6 @@ const QUIET = ['/api/stream', '/api/report', '/api/speech', '/api/state', '/api/
  */
 export const RECORD_CHUNK_MAX_BYTES = 64 * 1024 * 1024;
 
-/**
- * The commands that spend `id` on their own payload id rather than on a
- * correlation id. Stamping one of those would change which expression is shown,
- * which effect is raised, which gesture is played, which avatar is loaded, which
- * document is up — so their correlation id is reported back to the caller and
- * never written onto the command.
- */
-const PAYLOAD_ID_COMMANDS = new Set<CommandName>([
-  'expression',
-  'overlay',
-  'gesture',
-  'avatar',
-  'deck',
-]);
-
 interface StampedCommand {
   command: Command;
   id: string;
@@ -127,10 +113,10 @@ export function handleApi(
     // chunk is the encoder's own bytes; everything else under `/api/` is JSON
     // in and JSON out, and this stays JSON out.
     if (pathname === '/api/record/chunk') {
-      void recordChunk(req, res, hub, params);
+      launch(res, recordChunk(req, res, hub, params));
       return true;
     }
-    void post(req, res, hub, stores, pathname, params);
+    launch(res, post(req, res, hub, stores, pathname, params));
     return true;
   }
   json(res, { error: 'unknown endpoint' }, 404);
@@ -144,7 +130,36 @@ function split(url: string): { pathname: string; params: URLSearchParams } {
   return { pathname: parsed.pathname, params: parsed.searchParams };
 }
 
+/** Accept the identity spellings used by older and newer renderer clients. */
+function rendererIdentity(params: URLSearchParams): string | undefined {
+  const raw = params.get('renderer') ?? params.get('rendererId') ?? params.get('id');
+  if (raw === null) return undefined;
+  const parsed = rendererIdSchema.safeParse(raw);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** A chunk must be attributable; anonymous legacy streams still may connect. */
+function requiredRendererIdentity(
+  params: URLSearchParams,
+): { value: string } | { error: string; detail?: unknown } {
+  const raw = params.get('renderer') ?? params.get('rendererId') ?? params.get('id');
+  if (raw === null || raw === '') return { error: 'renderer id is required' };
+  const parsed = rendererIdSchema.safeParse(raw);
+  if (!parsed.success) return { error: 'invalid renderer id', detail: parsed.error.issues };
+  return { value: parsed.data };
+}
+
 function json(res: ServerResponse, body: unknown, status = 200): void {
+  // A delayed route can finish after its caller has navigated away. Treat that
+  // as a discarded response, including the successful path: writing headers
+  // here would turn an ordinary client close into an uncaught server error.
+  if (res.destroyed || res.writableEnded) return;
+  // Headers cannot be changed once a route has started its response. Ending
+  // that partial response is the only safe terminal action left.
+  if (res.headersSent) {
+    res.end();
+    return;
+  }
   const payload = Buffer.from(JSON.stringify(body), 'utf8');
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -155,12 +170,47 @@ function json(res: ServerResponse, body: unknown, status = 200): void {
 }
 
 /**
- * Read a JSON body. `null` means the body was there and was not JSON; an empty
- * body is an empty object, which is what a bare POST means.
+ * Settle route work that continues after `handleApi` returns.
+ *
+ * Node does not do anything with a promise started from an HTTP callback. A
+ * filesystem read or a renderer wait that rejects there would therefore be an
+ * unhandled rejection, and in a process configured to treat those as fatal it
+ * would take the control server down with it. The response may have gone away
+ * while the work was waiting — the normal case when a browser tab is closed —
+ * so the terminal path must be as quiet as the input path.
+ */
+function launch(res: ServerResponse, work: Promise<void>): void {
+  void work.catch((error: unknown) => {
+    if (res.destroyed || res.writableEnded) return;
+    console.error('API request failed:', error);
+    try {
+      if (res.headersSent) {
+        res.end();
+        return;
+      }
+      json(res, { error: 'internal server error' }, 500);
+    } catch {
+      // The peer can close between the guard and the write. There is no useful
+      // response left to send, and this path must never create another reject.
+    }
+  });
+}
+
+/**
+ * Read a JSON body. `null` means the body was invalid or was discarded after
+ * the peer went away; an empty body is an empty object, which is what a bare
+ * POST means.
  */
 async function readBody(req: IncomingMessage): Promise<{ value: unknown } | null> {
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
+  try {
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+  } catch {
+    // A renderer or panel going away mid-post is a discarded request, not a
+    // server fault. Returning null lets the route classify it as invalid while
+    // keeping the iterator rejection inside the body reader.
+    return null;
+  }
   const raw = Buffer.concat(chunks).toString('utf8');
   if (raw.trim() === '') return { value: {} };
   try {
@@ -205,7 +255,7 @@ function get(
   const { decks = null, motions = null, scripts = null, bgm = null } = stores;
   switch (pathname) {
     case '/api/stream':
-      stream(res, hub);
+      stream(res, hub, rendererIdentity(params));
       return;
     case '/api/state':
       json(res, hub.snapshot(toInt(params.get('since'))));
@@ -214,7 +264,7 @@ function get(
       json(res, hub.snapshot().vocabulary);
       return;
     case '/api/events':
-      void events(res, hub, params);
+      launch(res, events(res, hub, params));
       return;
     case '/api/queue':
       json(res, { queue: hub.queue.list(), viewers: hub.viewers } satisfies QueueResponse);
@@ -226,30 +276,30 @@ function get(
     // The roster rides on the snapshot as well; this is the form that waits for
     // a rescan rather than answering with the last one. See `Decks.list`.
     case '/api/decks':
-      void listDecks(res, decks);
+      launch(res, listDecks(res, decks));
       return;
     // Read fresh rather than off the snapshot, unlike the document roster. A
     // renderer asks for this once when it connects and then plays what it was
     // given for the life of the page, so there is nothing for a cached copy to
     // save and one stale read would be a motion edited and apparently ignored.
     case '/api/motions':
-      void listMotions(res, motions);
+      launch(res, listMotions(res, motions));
       return;
     // Read fresh for the reason the motion roster is, and one more: a script is
     // edited in a text editor beside the panel, and the loop an operator runs
     // is save, press the chip again. A cached roster would answer that with the
     // run of turns from before the edit.
     case '/api/scripts':
-      void listScripts(res, scripts);
+      launch(res, listScripts(res, scripts));
       return;
     case '/api/bgm':
-      void listBackgroundMusic(res, bgm);
+      launch(res, listBackgroundMusic(res, bgm));
       return;
     default:
       // `/api/decks/<id>/text` is the one route here with a name in it, so it
       // cannot be a case above. Nothing else under `/api/` is patterned.
       if (pathname.startsWith('/api/decks/')) {
-        void deckText(res, decks, pathname, params);
+        launch(res, deckText(res, decks, pathname, params));
         return;
       }
       json(res, { error: 'unknown endpoint' }, 404);
@@ -327,7 +377,12 @@ async function post(
   params: URLSearchParams,
 ): Promise<void> {
   const body = await readBody(req);
-  if (body === null) return json(res, { error: 'invalid json' }, 400);
+  if (body === null) {
+    if (!(req.destroyed || res.destroyed || res.writableEnded)) {
+      json(res, { error: 'invalid json' }, 400);
+    }
+    return;
+  }
   if (pathname === '/api/command') return command(res, hub, body.value, params);
   if (pathname === '/api/report') return report(res, hub, body.value);
   if (pathname === '/api/speech') return handleSpeech(res, body.value);
@@ -462,6 +517,8 @@ async function recordChunk(
 ): Promise<void> {
   const session = params.get('session') ?? '';
   if (session === '') return json(res, { error: 'no session' }, 400);
+  const owner = requiredRendererIdentity(params);
+  if ('error' in owner) return json(res, owner, 400);
   const mime = params.get('mime') ?? 'application/octet-stream';
   const final = params.get('final') === '1';
 
@@ -478,14 +535,28 @@ async function recordChunk(
     }
   } catch {
     // The page was closed mid-post. Nothing to report and nothing to write.
-    return json(res, { error: 'chunk was cut off' }, 400);
+    if (!(req.destroyed || res.destroyed || res.writableEnded)) {
+      json(res, { error: 'chunk was cut off' }, 400);
+    }
+    return;
   }
 
-  const took = await hub.recordChunk(session, mime, Buffer.concat(chunks), { final });
-  // 409 rather than 404: the session is not wrong so much as no longer the one
-  // running, which is what a renderer flushing into a take that has already
-  // been stopped and replaced looks like.
-  if (!took) return json(res, { error: 'not the recording in flight' }, 409);
+  const outcome = await hub.recordChunk(session, owner.value, mime, Buffer.concat(chunks), {
+    final,
+  });
+  if (outcome.status === 'stale') {
+    return json(res, { error: 'not the recording in flight', recording: hub.recording }, 409);
+  }
+  if (outcome.status === 'conflict') {
+    return json(
+      res,
+      { error: 'recording belongs to another renderer', recording: hub.recording },
+      409,
+    );
+  }
+  if (outcome.status === 'failed') {
+    return json(res, { error: 'recording write failed', recording: hub.recording }, 500);
+  }
   return json(res, { ok: true, recording: hub.recording });
 }
 
@@ -570,7 +641,8 @@ function queue(res: ServerResponse, hub: Hub, pathname: string, body: unknown): 
     case '/api/queue/pop': {
       const taken = pathname.endsWith('pop') ? hub.queue.pop() : hub.queue.shift();
       const viewers = hub.publishQueue();
-      json(res, { queue: hub.queue.list(), viewers, entry: taken });
+      const payload: QueueResponse = { queue: hub.queue.list(), viewers, entry: taken };
+      json(res, payload);
       return;
     }
     case '/api/queue/clear':
@@ -603,7 +675,7 @@ function queue(res: ServerResponse, hub: Hub, pathname: string, body: unknown): 
 }
 
 /** SSE down-channel. One per open viewer. */
-function stream(res: ServerResponse, hub: Hub): void {
+function stream(res: ServerResponse, hub: Hub, rendererId?: string): void {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-store',
@@ -616,7 +688,7 @@ function stream(res: ServerResponse, hub: Hub): void {
   res.write(': connected\n\n');
   const unsubscribe = hub.subscribe((message) => {
     res.write(`data: ${JSON.stringify(message)}\n\n`);
-  });
+  }, rendererId);
   const ping = setInterval(() => {
     res.write(': ping\n\n');
   }, SSE_PING_SECONDS * 1000);
@@ -644,15 +716,11 @@ async function command(
   body: unknown,
   params: URLSearchParams,
 ): Promise<void> {
-  const commands: StampedCommand[] = [];
-  for (const candidate of batch(body)) {
-    // A command this server does not understand is dropped rather than failing
-    // the request: the caller and the renderer have separate release cycles,
-    // and the rest of the batch is still deliverable.
-    const parsed = parseCommand(candidate);
-    if (parsed) commands.push(stamp(parsed));
+  const parsed = commandRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return json(res, { error: 'no command', detail: parsed.error.issues }, 400);
   }
-  if (commands.length === 0) return json(res, { error: 'no command' }, 400);
+  const commands: StampedCommand[] = parsed.data.map(stamp);
 
   const delivered = hub.send({ type: 'command', commands: commands.map((c) => c.command) });
   const result: CommandResponse = {
@@ -682,18 +750,11 @@ async function command(
   return json(res, result);
 }
 
-/** One command, or several under `batch` to be delivered together. */
-function batch(body: unknown): unknown[] {
-  if (typeof body !== 'object' || body === null) return [];
-  const inner = (body as { batch?: unknown }).batch;
-  return Array.isArray(inner) ? inner : [body];
-}
-
 /** Stamp an id so the caller can correlate the turn events that come back. */
 function stamp(command: Command): StampedCommand {
   stampCounter = (stampCounter + 1) % 9973;
   const generated = `c${Date.now() % 1_000_000_000}-${stampCounter}`;
-  if (PAYLOAD_ID_COMMANDS.has(command.cmd)) return { command, id: generated };
+  if (isPayloadIdCommand(command)) return { command, id: generated };
   const id = command.id ?? generated;
   return { command: { ...command, id }, id };
 }

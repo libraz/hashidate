@@ -1,4 +1,5 @@
 import type {
+  AvatarStatus,
   Command,
   LabelledId,
   PlacementReport,
@@ -20,7 +21,7 @@ import type { BgmSource } from './bgm';
 import { BgmCoordinator } from './bgm-state';
 import type { DeckSource } from './decks';
 import { type RewindMode, TurnQueue } from './queue';
-import type { OpenOptions, RecordingStore } from './recordings';
+import type { AppendResult, OpenOptions, RecordingStore } from './recordings';
 import type { SpeechSource } from './speech';
 import { Standing } from './standing';
 
@@ -75,6 +76,9 @@ export const RECORD_TAIL_SECONDS = 1.2;
  */
 export const RECORD_FLUSH_SECONDS = 6.0;
 
+/** How long an owner-less live renderer may be absent before its take is closed. */
+export const RECORD_ORPHAN_SECONDS = 6.0;
+
 /**
  * How long an interrupt this server sent stays expected.
  *
@@ -112,16 +116,21 @@ export const EXPECTED_INTERRUPT_SECONDS = 5.0;
  * an orchestrator polling `/api/events`, and an LLM loop waiting for a line to
  * finish is woken once per renderer instead of once per line.
  *
- * A repeat is only an echo when nothing has happened to that turn in between:
- * a line put back by a rewind is said again under the same id, and its second
- * `turn.end` is a second ending rather than a second report of the first. The
- * `turn.start` that must sit between them is what tells the two apart, and the
- * window is a second guard for the same distinction.
+ * A repeat is only an echo while the same subject and event type are inside the
+ * short window. A line put back by a rewind is said again under a new id; a
+ * legacy client reusing one must wait past this window before its second event
+ * can be distinguished from another renderer's report.
  */
 export const ECHO_SECONDS = 2.0;
 
 /** One connected viewer's down-channel. */
 export type ViewerListener = (message: StreamMessage) => void;
+
+/** One SSE connection, optionally identified by the renderer that owns it. */
+interface ViewerClient {
+  listener: ViewerListener;
+  rendererId?: string;
+}
 
 /** What `waitFor` settles with. */
 export interface WaitResult {
@@ -165,7 +174,9 @@ export class Hub {
   // below yields part-way through, so there is no window for a second caller
   // to see half a report: the lock is gone, and the condition variable is the
   // set of pending promises that `report` settles.
-  private readonly clients = new Set<ViewerListener>();
+  private readonly clients = new Set<ViewerClient>();
+  /** Number of live SSE connections for each renderer identity. */
+  private readonly rendererConnections = new Map<string, number>();
   private readonly waiters = new Set<Waiter>();
   private readonly events: SessionEvent[] = [];
   /**
@@ -182,6 +193,9 @@ export class Hub {
   private slides: SlideReport | null = null;
   private placement: PlacementReport | null = null;
   private avatars: LabelledId[] = [];
+  private avatar: AvatarStatus | null = null;
+  /** Last valid report, including avatar-only heartbeats. */
+  private heartbeatAt = 0;
   private stateAt = 0;
   /** See `EXPECTED_INTERRUPT_SECONDS`. Epoch seconds, zero for none pending. */
   private interruptExpectedUntil = 0;
@@ -203,6 +217,8 @@ export class Hub {
    * when an entry stops being pending.
    */
   readonly queue = new TurnQueue();
+  /** Last queue state observed at a hub boundary, for edits outside reports. */
+  private queueWorkObserved = false;
 
   /**
    * The setup, so a renderer opened at the top of the broadcast is not opened on
@@ -249,6 +265,15 @@ export class Hub {
   /** The watchdog on a stopped recording's last chunk. See `RECORD_FLUSH_SECONDS`. */
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /** The bounded safety net for a renderer that disappears mid-take. */
+  private orphanTimer: ReturnType<typeof setTimeout> | null = null;
+  private orphanOwner: string | null = null;
+
+  /** True after this take has observed at least one pending/on-air line. */
+  private recordingQueueSeen = false;
+  /** Mirrors the store's synchronous first-owner pin for the watchdog. */
+  private recordingOwner: string | null = null;
+
   /**
    * A hold waiting on proof that the recording is rolling.
    *
@@ -277,14 +302,25 @@ export class Hub {
    * queue arriving on its own after the hold had ended would be applied to the
    * old scene.
    */
-  subscribe(listener: ViewerListener): () => void {
-    this.clients.add(listener);
+  subscribe(listener: ViewerListener, rendererId?: string): () => void {
+    const client: ViewerClient = { listener, rendererId };
+    this.clients.add(client);
+    if (rendererId !== undefined) {
+      this.rendererConnections.set(rendererId, (this.rendererConnections.get(rendererId) ?? 0) + 1);
+      this.cancelOrphan(rendererId);
+    }
     const commands = this.standing.commands();
     const bgm = this.bgmCoordinator.currentCommand();
     if (bgm !== null) commands.push(bgm);
-    if (this.queue.length > 0) commands.push(this.queue.command());
+    // Always replace the renderer's local queue on connect, including with an
+    // empty list. A reconnect may have missed the server's last clear or
+    // completion; silence would leave stale local rows available to play.
+    // Only pending entries are re-delivered. The on-air copy is owned by the
+    // renderer that started it and must not be replayed on reconnect.
+    commands.push(this.queue.command());
+    this.observeQueue();
     if (commands.length > 0) listener({ type: 'command', commands });
-    return () => this.unsubscribe(listener);
+    return () => this.detach(client);
   }
 
   /**
@@ -296,11 +332,29 @@ export class Hub {
    * message and no synthesis.
    */
   publishQueue(): number {
+    this.observeQueue();
     return this.send({ type: 'command', commands: [this.queue.command()] });
   }
 
-  unsubscribe(listener: ViewerListener): void {
-    this.clients.delete(listener);
+  unsubscribe(listener: ViewerListener, rendererId?: string): void {
+    for (const client of [...this.clients]) {
+      if (client.listener !== listener) continue;
+      if (rendererId !== undefined && client.rendererId !== rendererId) continue;
+      this.detach(client);
+    }
+  }
+
+  private detach(client: ViewerClient): void {
+    if (!this.clients.delete(client)) return;
+    const rendererId = client.rendererId;
+    if (rendererId === undefined) return;
+    const count = (this.rendererConnections.get(rendererId) ?? 1) - 1;
+    if (count > 0) {
+      this.rendererConnections.set(rendererId, count);
+      return;
+    }
+    this.rendererConnections.delete(rendererId);
+    this.armOrphan(rendererId);
   }
 
   /**
@@ -357,9 +411,9 @@ export class Hub {
    *
    * Normal events that name a turn or a set of them are matched here: those are
    * the ones an orchestrator counts. Inline BGM cues take the stronger bounded
-   * id path in `routeBgmCue`. The scan stops at the newest event about the same
-   * subject, so a repeat only counts as an echo while nothing has happened to
-   * that turn in between.
+   * id path in `routeBgmCue`. We scan all recent events about the subject so a
+   * coalesced [start, end] batch cannot hide an earlier same-type event behind
+   * the other type.
    */
   private isEcho(event: SessionEvent, at: number): boolean {
     const subject = eventSubject(event);
@@ -367,7 +421,13 @@ export class Hub {
     for (let i = this.events.length - 1; i >= 0; i -= 1) {
       const logged = this.events[i];
       if (eventSubject(logged) !== subject) continue;
-      return logged.type === event.type && at - (logged.at ?? 0) < ECHO_SECONDS;
+      // A renderer may coalesce [start, end] while another renderer reports
+      // those events separately. Compare both subject *and* type across the
+      // whole short window; looking only at the newest subject lets the
+      // different event type in the batch hide its own duplicate.
+      if (logged.type === event.type && Math.abs(at - (logged.at ?? 0)) < ECHO_SECONDS) {
+        return true;
+      }
     }
     return false;
   }
@@ -425,6 +485,7 @@ export class Hub {
    * connect later has to be able to hear it too.
    */
   send(message: StreamMessage): number {
+    this.observeQueue();
     const commands = message.commands.map((command) =>
       command.cmd === 'bgm' ? this.bgmCoordinator.apply(command) : command,
     );
@@ -435,7 +496,7 @@ export class Hub {
 
   /** Fan out an already canonical message without applying it a second time. */
   private broadcast(message: StreamMessage): void {
-    for (const listener of this.clients) listener(message);
+    for (const client of this.clients) client.listener(message);
   }
 
   get viewers(): number {
@@ -443,6 +504,67 @@ export class Hub {
   }
 
   // --- recording ------------------------------------------------------------
+
+  /**
+   * Observe the queue at a server boundary.
+   *
+   * `TurnQueue.list()` intentionally exposes pending lines only, while a take
+   * must stay alive for a line that has already started. The recording latch is
+   * per take: an empty take has never had work and therefore cannot be stopped
+   * merely because it remains empty for a few heartbeats.
+   */
+  private observeQueue(previousWork = this.queueWorkObserved): void {
+    const currentWork = this.queue.hasWork;
+    // `previousWork` is also an observation: a report may be the first
+    // boundary after a pending line was drained, so looking only at the state
+    // after its events would miss the non-empty half of the transition.
+    if (this.recordings !== null && (currentWork || previousWork)) {
+      this.recordingQueueSeen = true;
+    }
+    this.queueWorkObserved = currentWork;
+    if (!currentWork) {
+      // A stopped take remains live while its encoder flushes. A record-off
+      // command itself passes through send(), so never arm the queue tail again
+      // during that bounded flush window.
+      if (this.flushTimer === null) this.considerTail();
+      else this.clearTail();
+    } else this.clearTail();
+  }
+
+  /** Arm the orphan safety net when the last connection for an owner leaves. */
+  private armOrphan(rendererId: string): void {
+    const live = this.recordings?.current ?? null;
+    if (live === null || this.recordingOwner !== rendererId) return;
+    this.clearOrphan();
+    this.orphanOwner = rendererId;
+    this.orphanTimer = setTimeout(() => {
+      this.orphanTimer = null;
+      this.orphanOwner = null;
+      const still = this.recordings?.current ?? null;
+      if (still === null || this.recordingOwner !== rendererId) return;
+      if ((this.rendererConnections.get(rendererId) ?? 0) > 0) return;
+      // No renderer remains to deliver the encoder's terminal chunk. Send the
+      // normal stop command for observers, then close the sink immediately
+      // rather than waiting for the ordinary renderer-flush watchdog; this is
+      // the bounded orphan path itself.
+      this.stopRecording(still.session);
+      this.clearFlush();
+      void this.finishRecording(still.session);
+    }, RECORD_ORPHAN_SECONDS * 1000);
+    this.orphanTimer.unref?.();
+  }
+
+  /** Reconnection of the same renderer makes the orphan timer unnecessary. */
+  private cancelOrphan(rendererId: string): void {
+    if (this.orphanOwner !== rendererId) return;
+    this.clearOrphan();
+  }
+
+  private clearOrphan(): void {
+    if (this.orphanTimer !== null) clearTimeout(this.orphanTimer);
+    this.orphanTimer = null;
+    this.orphanOwner = null;
+  }
 
   /**
    * Open a take and tell the renderers to roll.
@@ -461,6 +583,10 @@ export class Hub {
     const opened = this.recordings.open(options);
     if (opened === null) return null;
     this.clearTimers();
+    this.clearOrphan();
+    this.recordingOwner = null;
+    this.recordingQueueSeen = this.queue.hasWork;
+    this.queueWorkObserved = this.queue.hasWork;
     this.releaseOn = options.release ? opened.session : null;
     this.send({
       type: 'command',
@@ -491,17 +617,18 @@ export class Hub {
     if (session !== undefined && session !== live.session) return null;
     this.clearTail();
     this.releaseOn = null;
+    this.clearOrphan();
+    if (this.flushTimer === null) {
+      this.flushTimer = setTimeout(() => {
+        this.flushTimer = null;
+        void this.finishRecording(live.session);
+      }, RECORD_FLUSH_SECONDS * 1000);
+      this.flushTimer.unref?.();
+    }
     this.send({
       type: 'command',
       commands: [{ cmd: 'record', on: false, session: live.session }],
     });
-    if (this.flushTimer === null) {
-      this.flushTimer = setTimeout(() => {
-        this.flushTimer = null;
-        void this.recordings?.close(live.session);
-      }, RECORD_FLUSH_SECONDS * 1000);
-      this.flushTimer.unref?.();
-    }
     return live;
   }
 
@@ -514,22 +641,51 @@ export class Hub {
    */
   async recordChunk(
     session: string,
+    owner: string,
     mime: string,
     chunk: Buffer,
     { final = false }: { final?: boolean } = {},
-  ): Promise<boolean> {
-    if (this.recordings === null) return false;
-    const first = this.recordings.current?.mime === null;
-    if (!this.recordings.append(session, mime, chunk)) return false;
-    if (first && this.releaseOn === session) {
+  ): Promise<AppendResult> {
+    if (this.recordings === null) {
+      return { status: 'stale', first: false, recording: null };
+    }
+    const current = this.recordings.current;
+    if (current === null || current.session !== session) {
+      return { status: 'stale', first: false, recording: current };
+    }
+    // Keep this synchronous with the store's owner pin. A second renderer can
+    // reach this method before the first write callback, but it must still see
+    // a conflict rather than interleave bytes into the same take.
+    if (this.recordingOwner === null) this.recordingOwner = owner;
+    // A renderer can disappear after the take starts but before its first
+    // chunk arrives. In that case detach() had no owner to arm against; once
+    // this synchronous pin identifies the owner, arm the same bounded orphan
+    // watchdog if no connection for it remains.
+    if ((this.rendererConnections.get(owner) ?? 0) === 0) this.armOrphan(owner);
+    const result = await this.recordings.append(session, owner, mime, chunk);
+    if (result.status === 'failed') {
+      // A terminal chunk that failed at the sink still owns this take. Close it
+      // so a subsequent take is not blocked forever by a renderer that already
+      // reported its last chunk. Stale and conflict responses must never close
+      // a live take they do not own.
+      if (final) {
+        this.clearFlush();
+        await this.recordings.close(session);
+        this.clearFinishedRecording(session);
+      }
+      return result;
+    }
+    if (result.status !== 'accepted') return result;
+    if (result.first && this.releaseOn === session) {
       this.releaseOn = null;
       this.send({ type: 'command', commands: [{ cmd: 'pause', on: false }] });
     }
     if (final) {
       this.clearFlush();
       await this.recordings.close(session);
+      this.clearFinishedRecording(session);
     }
-    return true;
+    return result;
   }
 
   /** The take in flight, as the snapshot reports it. */
@@ -543,7 +699,24 @@ export class Hub {
    */
   async closeRecording(): Promise<void> {
     this.clearTimers();
+    this.clearOrphan();
+    this.recordingOwner = null;
+    this.recordingQueueSeen = false;
     await this.recordings?.close();
+  }
+
+  private async finishRecording(session: string): Promise<void> {
+    await this.recordings?.close(session);
+    this.clearFinishedRecording(session);
+  }
+
+  /** Clear take-local state unless a newer take won the close race. */
+  private clearFinishedRecording(session: string): void {
+    const current = this.recordings?.current ?? null;
+    if (current !== null && current.session !== session) return;
+    this.clearOrphan();
+    this.recordingOwner = null;
+    this.recordingQueueSeen = false;
   }
 
   /**
@@ -557,7 +730,7 @@ export class Hub {
    */
   private considerTail(): void {
     const live = this.recordings?.current ?? null;
-    if (live === null || !live.autoStop || this.queue.length > 0) {
+    if (live === null || !live.autoStop || !this.recordingQueueSeen || this.queue.hasWork) {
       this.clearTail();
       return;
     }
@@ -569,7 +742,7 @@ export class Hub {
       // started by a `say` that never touched the queue length this saw.
       const still = this.recordings?.current ?? null;
       if (still === null || !still.autoStop) return;
-      if (this.queue.length > 0 || this.state.speaking) return;
+      if (this.queue.hasWork || this.state.speaking || !this.recordingQueueSeen) return;
       this.stopRecording(still.session);
     }, RECORD_TAIL_SECONDS * 1000);
     this.tailTimer.unref?.();
@@ -596,10 +769,16 @@ export class Hub {
 
   /** Take one report from a viewer. Returns the newest sequence number. */
   report(body: ReportBody): number {
+    // Avatar loading can be reported before a Session exists. Keep connection
+    // liveness on its own clock so that a failed/early renderer is visible as
+    // connected while its state clock remains unset and its state stays empty.
+    this.heartbeatAt = now();
+    const previousWork = this.queue.hasWork;
     if (body.state !== undefined) {
       this.state = body.state;
       this.stateAt = now();
     }
+    if (body.avatar !== undefined) this.avatar = body.avatar;
     if (body.vocabulary) this.vocabulary = body.vocabulary;
     if (body.voice !== undefined) this.voice = body.voice;
     if (body.tuning !== undefined) this.tuning = body.tuning;
@@ -631,6 +810,10 @@ export class Hub {
       if (this.isEcho(event, at)) continue;
       this.seq += 1;
       this.events.push({ ...event, seq: this.seq, at });
+      // A start is the hand-off from the server's pending list to the
+      // renderer-owned on-air set. The event has already passed echo filtering,
+      // so only the first renderer's start performs this move.
+      if (event.type === 'turn.start' && event.turn) this.queue.start(event.turn);
       // A line the renderer has finished with stops being pending and starts
       // being history. Driven off the event rather than off the reported
       // `queued` count, because the count says how many are left and not which
@@ -653,20 +836,22 @@ export class Hub {
     }
     // After the events, because every one of them above can be the thing that
     // emptied the queue. See `considerTail`.
-    this.considerTail();
+    this.observeQueue(previousWork);
     this.wake();
     return this.seq;
   }
 
   snapshot(since?: number): Snapshot {
-    const fresh = now() - this.stateAt < STATE_STALE_SECONDS;
+    const heartbeatFresh = now() - this.heartbeatAt < STATE_STALE_SECONDS;
+    const stateFresh = now() - this.stateAt < STATE_STALE_SECONDS;
     return {
-      connected: this.clients.size > 0 && fresh,
+      connected: this.clients.size > 0 && heartbeatFresh,
       viewers: this.clients.size,
       seq: this.seq,
-      state: fresh ? this.state : {},
+      state: stateFresh ? this.state : {},
       vocabulary: this.vocabulary,
       events: since === undefined ? [...this.events] : this.since(since),
+      avatar: this.avatar,
       // Not gated on `fresh`, unlike the state above. A stale state is a lie
       // about what the avatar is doing right now; the chain and the queue are
       // settings and a script, and both are still true with nothing connected —

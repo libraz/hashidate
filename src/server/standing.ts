@@ -87,9 +87,10 @@ type Of<K extends Persistent['cmd']> = Extract<Persistent, { cmd: K }>;
 /**
  * The order they go out in, which is not the order they came in.
  *
- * `avatar` first because it replaces the scene every later command talks to, and
- * `wear` straight after it because a costume is the one thing that is meaningless
- * against the wrong body. The rest are independent of each other and are listed
+ * `avatar` first because it replaces the scene every later command talks to,
+ * `tune` next because its scales and multipliers carry across the replacement,
+ * and `wear` after tuning because a costume is meaningless against the wrong
+ * body. The rest are independent of each other and are listed
  * roughly as an operator sets them: the character, then the set, then the sound.
  *
  * `deck` before `slide` because a `deck` states the page it opens on and would

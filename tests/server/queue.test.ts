@@ -143,6 +143,26 @@ describe('TurnQueue.command', () => {
  * difference — repeat one line, or rewind past it — is the whole feature.
  */
 describe('TurnQueue history', () => {
+  it('moves a started entry from pending to airing before history', () => {
+    const [a, b] = fill('a', 'b');
+    expect(queue.start(a)).toBe(true);
+    expect(ids()).toEqual([b]);
+    expect(queue.airing().map((entry) => entry.id)).toEqual([a]);
+    expect(queue.command()).toMatchObject({ cmd: 'queue', turns: [{ id: b }] });
+
+    expect(queue.complete(a)).toBe(true);
+    expect(queue.airing()).toEqual([]);
+    expect(queue.list().map((entry) => entry.id)).toEqual([b]);
+    expect(queue.history().map((entry) => entry.id)).toEqual([a]);
+  });
+
+  it('completes a pending entry as a safe fallback when start was missed', () => {
+    const [a] = fill('a');
+    expect(queue.complete(a)).toBe(true);
+    expect(queue.list()).toEqual([]);
+    expect(queue.history().map((entry) => entry.id)).toEqual([a]);
+  });
+
   it('moves a finished entry out of the pending list and into the history', () => {
     const [a, b] = fill('a', 'b');
     expect(queue.complete(a)).toBe(true);

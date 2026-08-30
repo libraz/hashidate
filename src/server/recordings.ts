@@ -1,5 +1,6 @@
-import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
+import { createWriteStream, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import type { Writable } from 'node:stream';
 import type { Recording } from '../protocol';
 
 /**
@@ -106,8 +107,27 @@ export function timestamp(at: Date): string {
 export interface RecordingStore {
   readonly current: Recording | null;
   open(options: OpenOptions): Recording | null;
-  append(session: string, mime: string, chunk: Buffer): boolean;
+  append(session: string, owner: string, mime: string, chunk: Buffer): Promise<AppendResult>;
   close(session?: string): Promise<Recording | null>;
+}
+
+/** A sink factory, injectable so write failure paths can be tested directly. */
+export type RecordingSink = (path: string) => Writable;
+
+/** The outcome of one renderer's attempt to append a chunk. */
+export type AppendStatus = 'accepted' | 'stale' | 'conflict' | 'failed';
+
+/**
+ * A serialized append result.
+ *
+ * `first` means the first non-empty chunk that the sink accepted. It is the
+ * only safe evidence for releasing a recording hold: opening a stream or
+ * accepting a request says nothing about whether bytes reached disk.
+ */
+export interface AppendResult {
+  status: AppendStatus;
+  first: boolean;
+  recording: Recording | null;
 }
 
 export interface OpenOptions {
@@ -123,6 +143,8 @@ export interface OpenOptions {
 /** A recording in flight, as this module holds it. */
 interface Live {
   session: string;
+  /** Pinned synchronously by the first append attempt. */
+  owner: string | null;
   base: string;
   mime: string | null;
   extension: string | null;
@@ -132,9 +154,19 @@ interface Live {
   width: number;
   height: number;
   fps: number;
-  stream: WriteStream | null;
+  stream: Writable | null;
+  /** Bounded error retained for the snapshot and the next append response. */
+  error: string | null;
   /** Serialises the writes so chunks land in the order they arrived. */
   writing: Promise<void>;
+}
+
+/** Keep a bad filesystem error useful without letting it grow a report. */
+const MAX_ERROR_LENGTH = 1024;
+
+function errorText(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.slice(0, MAX_ERROR_LENGTH) || 'recording sink failed';
 }
 
 const now = (): number => Date.now() / 1000;
@@ -144,7 +176,10 @@ export class Recordings implements RecordingStore {
   private live: Live | null = null;
   private counter = 0;
 
-  constructor(root: string) {
+  constructor(
+    root: string,
+    private readonly sink: RecordingSink = (path) => createWriteStream(path, { flags: 'wx' }),
+  ) {
     this.root = resolve(root);
   }
 
@@ -169,6 +204,7 @@ export class Recordings implements RecordingStore {
     this.counter += 1;
     this.live = {
       session: `r${Date.now().toString(36)}-${this.counter.toString(36)}`,
+      owner: null,
       base: resolve(this.root, `${stem(options.name)}-${timestamp(at)}`),
       mime: null,
       extension: null,
@@ -179,6 +215,7 @@ export class Recordings implements RecordingStore {
       height: options.height,
       fps: options.fps,
       stream: null,
+      error: null,
       writing: Promise.resolve(),
     };
     return report(this.live);
@@ -194,26 +231,69 @@ export class Recordings implements RecordingStore {
    *
    * The first chunk is what names the file. See `extensionFor`.
    */
-  append(session: string, mime: string, chunk: Buffer): boolean {
+  append(session: string, owner: string, mime: string, chunk: Buffer): Promise<AppendResult> {
     const live = this.live;
-    if (live === null || live.session !== session) return false;
-    if (chunk.byteLength === 0) return true;
-    if (live.stream === null) {
-      live.mime = mime;
-      live.extension = extensionFor(mime);
-      live.stream = this.begin(live);
+    if (live === null || live.session !== session) {
+      return Promise.resolve({
+        status: 'stale',
+        first: false,
+        recording: live === null ? null : report(live),
+      });
     }
-    const stream = live.stream;
-    live.bytes += chunk.byteLength;
-    // Chained rather than awaited by the caller: the route answers as soon as
-    // the bytes are ours, and the writes still land in order.
-    live.writing = live.writing.then(
-      () =>
-        new Promise<void>((done) => {
-          stream.write(chunk, () => done());
-        }),
-    );
-    return true;
+    // This assignment must happen before the first await. Two renderers can
+    // post at the same time, and whichever call reaches this synchronous line
+    // first owns the take even if its sink subsequently fails.
+    if (live.owner === null) live.owner = owner;
+    if (live.owner !== owner) {
+      return Promise.resolve({
+        status: 'conflict',
+        first: false,
+        recording: report(live),
+      });
+    }
+
+    const write = live.writing
+      .then(async () => {
+        if (live.error !== null) return { accepted: false, first: false };
+        if (chunk.byteLength === 0) return { accepted: true, first: false };
+
+        // The value is read inside the serialized operation, not when the
+        // request is queued. A second chunk may arrive before the first sink
+        // callback; only the one that actually completes first is `first`.
+        const firstSuccessful = live.mime === null;
+
+        let stream = live.stream;
+        if (stream === null) {
+          stream = this.begin(live, mime);
+          if (stream === null) return { accepted: false, first: false };
+          live.stream = stream;
+        }
+        try {
+          await writeChunk(stream, chunk);
+        } catch (error) {
+          live.error = errorText(error);
+          return { accepted: false, first: false };
+        }
+        // These fields describe bytes accepted by the sink, not a request that
+        // merely arrived. A failed open/write therefore leaves bytes and mime
+        // unchanged and cannot release a hold upstream.
+        live.bytes += chunk.byteLength;
+        if (live.mime === null) {
+          live.mime = mime;
+          live.extension = extensionFor(mime);
+        }
+        return { accepted: true, first: firstSuccessful };
+      })
+      .catch((error: unknown) => {
+        live.error = errorText(error);
+        return { accepted: false, first: false };
+      });
+    live.writing = write.then(() => undefined);
+    return write.then(({ accepted, first: firstSuccessful }) => ({
+      status: accepted ? ('accepted' as const) : ('failed' as const),
+      first: firstSuccessful,
+      recording: report(live),
+    }));
   }
 
   /**
@@ -231,7 +311,16 @@ export class Recordings implements RecordingStore {
     this.live = null;
     await live.writing;
     const stream = live.stream;
-    if (stream !== null) await new Promise<void>((done) => stream.end(done));
+    if (stream !== null) {
+      if (live.error !== null) {
+        // An errored stream may never invoke an `end` callback. It is already
+        // unusable, and destroying it is the bounded terminal action that lets
+        // a later recording start.
+        stream.destroy();
+      } else {
+        await new Promise<void>((done) => stream.end(done));
+      }
+    }
     return report(live);
   }
 
@@ -243,25 +332,53 @@ export class Recordings implements RecordingStore {
    * failing because a directory was renamed is not a useful thing to be strict
    * about.
    */
-  private begin(live: Live): WriteStream {
+  private begin(live: Live, mime: string): Writable | null {
     // Synchronously, and before the stream: this runs on the first chunk of a
     // take that is already rolling, and a directory made a tick later is a
     // directory made after the open that needed it failed.
     try {
       mkdirSync(this.root, { recursive: true });
-    } catch {
-      // Left to the stream's own error, which names the file rather than the
-      // directory and is the line worth printing.
+    } catch (error) {
+      live.error = errorText(error);
+      return null;
     }
-    const path = `${live.base}${live.extension ?? ''}`;
+    const path = `${live.base}${extensionFor(mime)}`;
     // `wx` rather than `w`: two takes started inside one second would otherwise
     // have the same name, and the second would overwrite the first silently.
-    const stream = createWriteStream(path, { flags: 'wx' });
+    let stream: Writable;
+    try {
+      stream = this.sink(path);
+    } catch (error) {
+      live.error = errorText(error);
+      return null;
+    }
     stream.on('error', (error) => {
-      console.error(`recording ${path}: ${error.message}`);
+      live.error = errorText(error);
+      console.error(`recording ${path}: ${live.error}`);
     });
     return stream;
   }
+}
+
+/** Wait for the sink's callback or its error event, whichever comes first. */
+function writeChunk(stream: Writable, chunk: Buffer): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error | null): void => {
+      if (settled) return;
+      settled = true;
+      stream.off('error', onError);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onError = (error: Error): void => finish(error);
+    stream.once('error', onError);
+    try {
+      stream.write(chunk, (error?: Error | null) => finish(error));
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
 }
 
 function report(live: Live): Recording {
@@ -275,5 +392,6 @@ function report(live: Live): Recording {
     width: live.width,
     height: live.height,
     fps: live.fps,
+    error: live.error,
   };
 }

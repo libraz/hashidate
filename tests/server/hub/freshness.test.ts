@@ -19,6 +19,31 @@ afterEach(() => {
 });
 
 describe('state freshness', () => {
+  it('keeps avatar-only heartbeat and state freshness independent', () => {
+    hub.subscribe(() => {});
+    hub.report({ avatar: { phase: 'failed', error: 'model missing' } });
+
+    expect(hub.snapshot().avatar).toEqual({ phase: 'failed', error: 'model missing' });
+    expect(hub.snapshot().connected).toBe(true);
+    expect(hub.snapshot().state).toEqual({});
+
+    vi.advanceTimersByTime(STATE_STALE_SECONDS * 1000 + 1);
+    expect(hub.snapshot().connected).toBe(false);
+    expect(hub.snapshot().avatar).toEqual({ phase: 'failed', error: 'model missing' });
+    expect(hub.snapshot().state).toEqual({});
+
+    hub.report({ state: state({ speaking: true }) });
+    vi.advanceTimersByTime(STATE_STALE_SECONDS * 1000 + 1);
+    hub.report({ avatar: { phase: 'failed', error: 'model reloaded unsuccessfully' } });
+
+    expect(hub.snapshot().connected).toBe(true);
+    expect(hub.snapshot().avatar).toEqual({
+      phase: 'failed',
+      error: 'model reloaded unsuccessfully',
+    });
+    expect(hub.snapshot().state).toEqual({});
+  });
+
   it('reports connected while a viewer is attached and its report is recent', () => {
     hub.subscribe(() => {});
     hub.report({ state: state({ speaking: true }) });
@@ -75,12 +100,13 @@ describe('state freshness', () => {
     expect(hub.snapshot().state.queued).toBe(2);
   });
 
-  it('does not refresh the clock for a report that carries no state', () => {
+  it('refreshes heartbeat without making a stale state current', () => {
     hub.subscribe(() => {});
-    hub.report({ state: state() });
+    hub.report({ state: state({ speaking: true }) });
     vi.advanceTimersByTime(STATE_STALE_SECONDS * 1000);
     hub.report({ events: [event('a')] });
-    expect(hub.snapshot().connected).toBe(false);
+    expect(hub.snapshot().connected).toBe(true);
+    expect(hub.snapshot().state).toEqual({});
   });
 
   it('keeps serving the vocabulary and the event log while the state is stale', () => {

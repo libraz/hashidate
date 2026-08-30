@@ -1,6 +1,7 @@
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Writable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { extensionFor, Recordings, stem, timestamp } from '@/server/recordings';
 
@@ -87,8 +88,12 @@ describe('Recordings', () => {
   it('names the file from the first chunk and appends the rest in order', async () => {
     const take = recordings.open({ name: 'opening', ...OPEN }, AT);
     if (take === null) throw new Error('the take did not open');
-    expect(recordings.append(take.session, MP4, Buffer.from('one'))).toBe(true);
-    expect(recordings.append(take.session, MP4, Buffer.from('two'))).toBe(true);
+    expect(
+      (await recordings.append(take.session, 'renderer-a', MP4, Buffer.from('one'))).status,
+    ).toBe('accepted');
+    expect(
+      (await recordings.append(take.session, 'renderer-a', MP4, Buffer.from('two'))).status,
+    ).toBe('accepted');
     const closed = await recordings.close(take.session);
 
     expect(closed?.mime).toBe(MP4);
@@ -104,7 +109,9 @@ describe('Recordings', () => {
     if (first === null) throw new Error('the take did not open');
     await recordings.close(first.session);
     const second = recordings.open(OPEN, AT);
-    expect(recordings.append(first.session, MP4, Buffer.from('stale'))).toBe(false);
+    expect(
+      (await recordings.append(first.session, 'renderer-a', MP4, Buffer.from('stale'))).status,
+    ).toBe('stale');
     expect(second?.session).not.toBe(first.session);
   });
 
@@ -129,17 +136,105 @@ describe('Recordings', () => {
   it('reports what has landed on disk, which is the only honest progress figure', async () => {
     const take = recordings.open(OPEN, AT);
     if (take === null) throw new Error('the take did not open');
-    recordings.append(take.session, MP4, Buffer.alloc(2048));
+    await recordings.append(take.session, 'renderer-a', MP4, Buffer.alloc(2048));
     expect(recordings.current?.bytes).toBe(2048);
     expect(recordings.current?.width).toBe(1920);
     expect(recordings.current?.autoStop).toBe(true);
+    const closed = await recordings.close(take.session);
+    expect(closed?.bytes).toBe(2048);
+    expect((await readFile(closed?.file ?? '', 'utf8')).length).toBe(2048);
+  });
+
+  it('pins the first renderer and keeps bytes separate from a conflicting stream', async () => {
+    const take = recordings.open({ name: 'owned', ...OPEN }, AT);
+    if (take === null) throw new Error('the take did not open');
+
+    const first = await recordings.append(take.session, 'renderer-a', MP4, Buffer.from('one'));
+    const second = await recordings.append(take.session, 'renderer-b', MP4, Buffer.from('two'));
+
+    expect(first).toMatchObject({ status: 'accepted', first: true });
+    expect(second).toMatchObject({ status: 'conflict', first: false });
+    const closed = await recordings.close(take.session);
+    expect(closed?.bytes).toBe(3);
+    expect(await readFile(join(root, 'owned-20260829-142530.mp4'), 'utf8')).toBe('one');
+  });
+
+  it('pins ownership before awaiting a sink write', async () => {
+    let signalWriteStarted: (() => void) | undefined;
+    let finishWrite: ((error?: Error | null) => void) | undefined;
+    const writeStarted = new Promise<void>((resolve) => {
+      signalWriteStarted = resolve;
+    });
+    const deferred = new Recordings(
+      root,
+      () =>
+        new Writable({
+          write(_chunk, _encoding, callback) {
+            finishWrite = callback;
+            signalWriteStarted?.();
+          },
+        }),
+    );
+    const take = deferred.open({ name: 'deferred', ...OPEN }, AT);
+    if (take === null) throw new Error('the take did not open');
+
+    const firstPromise = deferred.append(take.session, 'renderer-a', MP4, Buffer.from('one'));
+    await writeStarted;
+    const second = await deferred.append(take.session, 'renderer-b', MP4, Buffer.from('two'));
+    expect(second).toMatchObject({ status: 'conflict', first: false, recording: { bytes: 0 } });
+
+    finishWrite?.();
+    const first = await firstPromise;
+    expect(first).toMatchObject({ status: 'accepted', first: true, recording: { bytes: 3 } });
+    const closed = await deferred.close(take.session);
+    expect(closed?.bytes).toBe(3);
+  });
+
+  it('surfaces an open failure without counting bytes or releasing ownership', async () => {
+    const take = recordings.open({ name: 'occupied', ...OPEN }, AT);
+    if (take === null) throw new Error('the take did not open');
+    await writeFile(join(root, 'occupied-20260829-142530.mp4'), 'already here');
+
+    const failed = await recordings.append(take.session, 'renderer-a', MP4, Buffer.from('x'));
+    expect(failed.status).toBe('failed');
+    expect(failed.recording).toMatchObject({ bytes: 0, mime: null });
+    expect(failed.recording?.error).toBeTruthy();
+    expect(
+      (await recordings.append(take.session, 'renderer-b', MP4, Buffer.from('y'))).status,
+    ).toBe('conflict');
+    const closed = await recordings.close(take.session);
+    expect(closed).toMatchObject({ bytes: 0, mime: null });
+    expect(closed?.error).toBeTruthy();
+  });
+
+  it('surfaces a write failure through an injected sink and freezes progress', async () => {
+    const failing = new Recordings(
+      root,
+      () =>
+        new Writable({
+          write(_chunk, _encoding, callback) {
+            callback(new Error('sink offline'));
+          },
+        }),
+    );
+    const take = failing.open({ name: 'failed', ...OPEN }, AT);
+    if (take === null) throw new Error('the take did not open');
+
+    const result = await failing.append(take.session, 'renderer-a', MP4, Buffer.from('x'));
+    expect(result.status).toBe('failed');
+    expect(result.recording).toMatchObject({ bytes: 0, mime: null, error: 'sink offline' });
+    expect((await failing.append(take.session, 'renderer-a', MP4, Buffer.from('y'))).status).toBe(
+      'failed',
+    );
+    expect(failing.current).toMatchObject({ bytes: 0, mime: null, error: 'sink offline' });
+    await failing.close(take.session);
   });
 
   it('makes the directory when the configured one is not there', async () => {
     const nested = new Recordings(join(root, 'takes'));
     const take = nested.open(OPEN, AT);
     if (take === null) throw new Error('the take did not open');
-    nested.append(take.session, MP4, Buffer.from('x'));
+    await nested.append(take.session, 'renderer-a', MP4, Buffer.from('x'));
     await nested.close(take.session);
     expect(await readdir(join(root, 'takes'))).toHaveLength(1);
   });

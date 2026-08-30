@@ -67,6 +67,9 @@ export const HISTORY_MAX = 100;
 /** How the queue tells its owner that the renderer needs the new list. */
 export type Deliver = (turns: TurnRequest[]) => number;
 
+/** A turn that has started in a renderer but has not ended yet. */
+export type AiringEntry = QueueEntry;
+
 /**
  * Epoch seconds, matching the unit the event log stamps `at` in.
  *
@@ -77,7 +80,10 @@ export type Deliver = (turns: TurnRequest[]) => number;
 const now = (): number => Date.now() / 1000;
 
 export class TurnQueue {
+  /** Lines waiting to start. This is the only list exposed to editors. */
   private entries: QueueEntry[] = [];
+  /** Lines that started but have not yet reported an end. */
+  private onAir: AiringEntry[] = [];
   /** What has been said, oldest first. Capped at `HISTORY_MAX`. */
   private spoken: HistoryEntry[] = [];
   private seq = 0;
@@ -106,6 +112,21 @@ export class TurnQueue {
 
   get length(): number {
     return this.entries.length;
+  }
+
+  /** Number of pending plus on-air lines, for recording/tail ownership. */
+  get workLength(): number {
+    return this.entries.length + this.onAir.length;
+  }
+
+  /** The on-air lines, as a copy for observers that need ownership state. */
+  airing(): AiringEntry[] {
+    return this.onAir.map((entry) => ({ ...entry }));
+  }
+
+  /** Whether at least one line is pending or on air. */
+  get hasWork(): boolean {
+    return this.workLength > 0;
   }
 
   /**
@@ -185,6 +206,22 @@ export class TurnQueue {
     return this.entries.pop() ?? null;
   }
 
+  /**
+   * Move a pending line to the on-air set when a renderer starts it.
+   *
+   * A start report is the ownership hand-off: after it is accepted, queue
+   * editors must not be able to see or mutate this line. A duplicate start is
+   * harmless and leaves the first hand-off intact.
+   */
+  start(id: string): boolean {
+    if (this.onAir.some((entry) => entry.id === id)) return false;
+    const index = this.entries.findIndex((entry) => entry.id === id);
+    if (index === -1) return false;
+    const [entry] = this.entries.splice(index, 1);
+    this.onAir.push(entry);
+    return true;
+  }
+
   /** Empty it. */
   clear(): void {
     this.entries.length = 0;
@@ -204,14 +241,27 @@ export class TurnQueue {
    * likely to be wanted back.
    */
   complete(id: string, { interrupted = false }: { interrupted?: boolean } = {}): boolean {
+    const airingIndex = this.onAir.findIndex((entry) => entry.id === id);
+    if (airingIndex !== -1) {
+      const [entry] = this.onAir.splice(airingIndex, 1);
+      this.fileHistory(entry, interrupted);
+      return true;
+    }
+    // A renderer can reconnect or an older client can omit turn.start. Keep a
+    // safe fallback so a valid end still removes a pending line rather than
+    // leaving it to be replayed on the next queue edit.
     const index = this.entries.findIndex((entry) => entry.id === id);
     if (index === -1) return false;
     const [entry] = this.entries.splice(index, 1);
+    this.fileHistory(entry, interrupted);
+    return true;
+  }
+
+  private fileHistory(entry: QueueEntry, interrupted: boolean): void {
     this.spoken.push({ ...entry, saidAt: now(), ...(interrupted ? { interrupted } : {}) });
     if (this.spoken.length > HISTORY_MAX) {
       this.spoken.splice(0, this.spoken.length - HISTORY_MAX);
     }
-    return true;
   }
 
   /** What has been said, oldest first. A copy, on the same footing as `list`. */

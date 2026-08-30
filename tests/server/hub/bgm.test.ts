@@ -36,12 +36,12 @@ describe('inline BGM cues', () => {
     next.report({ bgm: bgm({ muted: true }), events: [cue] });
     next.report({ events: [cue] });
     expect(next.snapshot().events).toEqual([]);
-    expect(seen).toEqual([]);
+    expect(seen).toEqual([{ type: 'command', commands: [{ cmd: 'queue', turns: [] }] }]);
 
     next.report({ bgm: bgm(), events: [cue] });
     expect(next.snapshot().events).toHaveLength(1);
-    expect(seen).toHaveLength(1);
-    expect(seen[0].commands[0]).toMatchObject({
+    expect(seen).toHaveLength(2);
+    expect(seen[1].commands[0]).toMatchObject({
       cmd: 'bgm',
       action: 'play',
       track: 'song.mp3',
@@ -55,7 +55,7 @@ describe('inline BGM cues', () => {
 
     next.report({ bgm: bgm(), events: [cue] });
     next.report({ bgm: bgm(), events: [cue] });
-    expect(seen).toHaveLength(1);
+    expect(seen).toHaveLength(2);
     expect(next.snapshot().events).toHaveLength(1);
     expect(next.snapshot().bgm).toMatchObject({
       track: 'song.mp3',
@@ -82,7 +82,7 @@ describe('inline BGM cues', () => {
 
     next.report({ bgm: bgm(), events: [first] });
 
-    expect(seen).toHaveLength(EVENT_LOG_MAX + 2);
+    expect(seen).toHaveLength(EVENT_LOG_MAX + 3);
     expect(next.snapshot().events).toHaveLength(EVENT_LOG_MAX);
     expect(next.snapshot().events.filter((event) => event.cueId === 'first')).toHaveLength(1);
   });
