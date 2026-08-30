@@ -36,6 +36,8 @@ interface HeadMeasurement extends MeasuredVolume {
 
 type HeadVolume = HeadMeasurement & VolumeFrame;
 
+type ClearPart = 'upper' | 'forearm' | 'hand';
+
 /** Where this arm starts and how long its segments are, in world units. */
 interface ArmSegments {
   S: THREE.Vector3;
@@ -346,86 +348,126 @@ export class BodyVolumes {
     const Lh = this._arm.Lh;
     let moved = false;
 
-    // Turn `apply` by whatever takes the buried point out to the surface,
-    // about `pivot`. Returns false when there is no rotation to make.
-    const push = (pivot: THREE.Vector3, res: DeepResult, apply: (q: THREE.Quaternion) => void) => {
-      const f = res.frame;
-      if (!(f && res.vol)) return false;
-      const rel = this._rel.copy(this._hit).sub(f.O);
-      const y = rel.dot(f.up);
-      const rad = this._radial.copy(rel).addScaledVector(f.up, -y);
-      // Straight down the axis there is no radial direction to push along, so
-      // use the arm's own side — outward is unambiguous there.
-      if (rad.length() < 1e-6) rad.copy(lateral);
-      rad.normalize();
-      const R = surfaceOf(res.vol, y, Math.atan2(rad.dot(f.fwd), rad.dot(f.right)));
-      this._want.copy(rad).multiplyScalar(R).addScaledVector(f.up, y).add(f.O);
-      this._from.copy(this._hit).sub(pivot);
-      this._want.sub(pivot);
-      if (this._from.lengthSq() < 1e-12 || this._want.lengthSq() < 1e-12) return false;
-      this._from.normalize();
-      this._want.normalize();
-      if (this._from.dot(this._want) > 1 - 1e-9) return false;
-      this._swing2.setFromUnitVectors(this._from, this._want);
-      apply(this._swing2);
-      return true;
-    };
-
-    // The surface is curved and a segment is straight, so clearing the deepest
-    // point can leave a neighbour as the new worst. The loop stops the moment
-    // nothing is buried, so the passes cost nothing on a pose already clear.
-    const relieve = (
-      pivot: () => THREE.Vector3,
-      base: () => THREE.Vector3,
-      dir: THREE.Vector3,
-      from: number,
-      len: number,
-      apply: (q: THREE.Quaternion) => void,
-    ) => {
-      if (!(len > 0)) return;
-      for (let pass = 0; pass < TORSO_PASSES; pass++) {
-        const res = this.deepestSeg(base(), dir, from, len, this._hit);
-        if (res.depth <= 0) return;
-        if (!push(pivot(), res, apply)) return;
+    // The upper arm has only the shoulder above it, so the whole arm turns.
+    if (only !== 'hand') {
+      if (this.relieve(S, S, u, La * TORSO_ARM_START, La, lateral, 'upper', u, l, h)) {
         moved = true;
       }
-    };
-
-    const E = this._elbow;
-    const W = this._wrist;
-    const elbow = () => E.copy(S).addScaledVector(u, La);
-
-    // The upper arm has only the shoulder above it, so the whole arm turns.
-    if (only !== 'hand')
-      relieve(
-        () => S,
-        () => S,
-        u,
-        La * TORSO_ARM_START,
-        La,
-        (q) => {
-          u.applyQuaternion(q).normalize();
-          if (l) l.applyQuaternion(q).normalize();
-          if (h) h.applyQuaternion(q).normalize();
-        },
-      );
+    }
 
     // The forearm turns about the elbow, leaving the upper arm where it is.
-    if (l && only !== 'hand')
-      relieve(elbow, elbow, l, Lf / TORSO_SAMPLES, Lf, (q) => {
-        l.applyQuaternion(q).normalize();
-        if (h) h.applyQuaternion(q).normalize();
-      });
+    if (l && only !== 'hand' && Lf > 0) {
+      this._elbow.copy(S).addScaledVector(u, La);
+      if (
+        this.relieve(
+          this._elbow,
+          this._elbow,
+          l,
+          Lf / TORSO_SAMPLES,
+          Lf,
+          lateral,
+          'forearm',
+          u,
+          l,
+          h,
+        )
+      ) {
+        moved = true;
+      }
+    }
 
     // The hand turns about the wrist and moves nothing else at all.
-    if (h && l) {
-      const wrist = () => W.copy(elbow()).addScaledVector(l, Lf);
-      relieve(wrist, wrist, h, Lh / TORSO_SAMPLES, Lh, (q) => {
-        h.applyQuaternion(q).normalize();
-      });
+    if (h && l && Lh > 0) {
+      this._elbow.copy(S).addScaledVector(u, La);
+      this._wrist.copy(this._elbow).addScaledVector(l, Lf);
+      if (
+        this.relieve(this._wrist, this._wrist, h, Lh / TORSO_SAMPLES, Lh, lateral, 'hand', u, l, h)
+      ) {
+        moved = true;
+      }
     }
 
     return moved;
+  }
+
+  // Turn the arm by whatever takes the buried point out to the surface,
+  // about `pivot`. Returns false when there is no rotation to make.
+  private push(
+    pivot: THREE.Vector3,
+    res: DeepResult,
+    lateral: THREE.Vector3,
+    part: ClearPart,
+    u: THREE.Vector3,
+    l: THREE.Vector3 | null,
+    h: THREE.Vector3 | null,
+  ): boolean {
+    const f = res.frame;
+    if (!(f && res.vol)) return false;
+    const rel = this._rel.copy(this._hit).sub(f.O);
+    const y = rel.dot(f.up);
+    const rad = this._radial.copy(rel).addScaledVector(f.up, -y);
+    // Straight down the axis there is no radial direction to push along, so
+    // use the arm's own side — outward is unambiguous there.
+    if (rad.length() < 1e-6) rad.copy(lateral);
+    rad.normalize();
+    const R = surfaceOf(res.vol, y, Math.atan2(rad.dot(f.fwd), rad.dot(f.right)));
+    this._want.copy(rad).multiplyScalar(R).addScaledVector(f.up, y).add(f.O);
+    this._from.copy(this._hit).sub(pivot);
+    this._want.sub(pivot);
+    if (this._from.lengthSq() < 1e-12 || this._want.lengthSq() < 1e-12) return false;
+    this._from.normalize();
+    this._want.normalize();
+    if (this._from.dot(this._want) > 1 - 1e-9) return false;
+    this._swing2.setFromUnitVectors(this._from, this._want);
+    this.applyClear(part, this._swing2, u, l, h);
+    return true;
+  }
+
+  // The surface is curved and a segment is straight, so clearing the deepest
+  // point can leave a neighbour as the new worst. The loop stops the moment
+  // nothing is buried, so the passes cost nothing on a pose already clear.
+  private relieve(
+    pivot: THREE.Vector3,
+    base: THREE.Vector3,
+    dir: THREE.Vector3,
+    from: number,
+    len: number,
+    lateral: THREE.Vector3,
+    part: ClearPart,
+    u: THREE.Vector3,
+    l: THREE.Vector3 | null,
+    h: THREE.Vector3 | null,
+  ): boolean {
+    if (!(len > 0)) return false;
+    let moved = false;
+    for (let pass = 0; pass < TORSO_PASSES; pass++) {
+      const res = this.deepestSeg(base, dir, from, len, this._hit);
+      if (res.depth <= 0) return moved;
+      if (!this.push(pivot, res, lateral, part, u, l, h)) return moved;
+      moved = true;
+    }
+    return moved;
+  }
+
+  private applyClear(
+    part: ClearPart,
+    q: THREE.Quaternion,
+    u: THREE.Vector3,
+    l: THREE.Vector3 | null,
+    h: THREE.Vector3 | null,
+  ): void {
+    if (part === 'upper') {
+      u.applyQuaternion(q).normalize();
+      if (l) l.applyQuaternion(q).normalize();
+      if (h) h.applyQuaternion(q).normalize();
+    } else if (part === 'forearm') {
+      if (!l) return;
+      l.applyQuaternion(q).normalize();
+      if (h) h.applyQuaternion(q).normalize();
+    } else {
+      if (!h) return;
+      h.applyQuaternion(q).normalize();
+    }
   }
 
   /** The deepest sample on one straight run of the arm, in world space. */

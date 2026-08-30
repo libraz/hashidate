@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { ArmAnatomy, elevationCeiling, JOINTS, zoneOf } from '@/engine/anatomy';
+import { BodyVolumes } from '@/engine/anatomy/volumes';
 import { buildProfile } from '@/engine/profile';
 import type { Profile, Side } from '@/engine/types';
 import { buildRig } from '../helpers/scene';
@@ -299,6 +300,55 @@ describe('ArmAnatomy.clamp', () => {
     expect(upper.distanceTo(before[0])).toBeLessThan(IDEMPOTENT);
     expect(fore.distanceTo(before[1])).toBeLessThan(IDEMPOTENT);
     expect(hand.distanceTo(before[2])).toBeLessThan(IDEMPOTENT);
+  });
+
+  it('keeps shoulder, forearm, and hand relief outputs on their own dispatch paths', () => {
+    const body = buildBody();
+    const chest = need(
+      body.profile.bones.chest ?? body.profile.bones.spine ?? body.profile.bones.hips,
+      'chest',
+    );
+    const makeVolumes = () => {
+      const volumes = new BodyVolumes(
+        body.profile,
+        body.profile.body,
+        body.anat.up,
+        body.anat.right,
+        body.anat.fwd,
+      );
+      volumes.update(chest);
+      const shoulder = need(body.profile.bones['upperArm.L'], 'upperArm.L');
+      volumes.setArm(
+        shoulder.getWorldPosition(new THREE.Vector3()),
+        need(body.profile.limb['upper.L'], 'upper.L'),
+        need(body.profile.limb['lower.L'], 'lower.L'),
+        need(body.profile.limb['tip.L.middle'], 'tip.L.middle') * 0.35,
+      );
+      return volumes;
+    };
+    const lateral = body.outward('L');
+
+    const shoulder = swung(body.anat.right, body.down, 0.3);
+    expect(makeVolumes().clear(shoulder, null, null, lateral)).toBe(true);
+    expect(shoulder.x).toBeCloseTo(0.09412242595804733, 12);
+    expect(shoulder.y).toBeCloseTo(-0.9955606304649517, 12);
+
+    const forearm = swung(body.anat.right, body.down, 0.8);
+    const forearmUpper = body.down.clone();
+    expect(makeVolumes().clear(forearmUpper, forearm, null, lateral)).toBe(true);
+    expect(forearmUpper.distanceTo(body.down)).toBeLessThan(EXACT);
+    expect(forearm.x).toBeCloseTo(0.17015888529355686, 12);
+    expect(forearm.y).toBeCloseTo(-0.9854166396786965, 12);
+
+    const handUpper = body.down.clone();
+    const handForearm = swung(body.anat.right, body.down, 0.3);
+    const hand = handForearm.clone();
+    expect(makeVolumes().clear(handUpper, handForearm, hand, lateral, 'hand')).toBe(true);
+    expect(handUpper.distanceTo(body.down)).toBeLessThan(EXACT);
+    expect(handForearm.x).toBeCloseTo(0.955336489125606, 12);
+    expect(handForearm.y).toBeCloseTo(-0.29552020666133955, 12);
+    expect(hand.x).toBeCloseTo(0.9999999999824337, 12);
+    expect(hand.y).toBeCloseTo(-0.0000059272894388501754, 12);
   });
 });
 
