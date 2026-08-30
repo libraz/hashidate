@@ -2,9 +2,12 @@ import {
   BGM_DEFAULT_LOOP,
   BGM_DEFAULT_VOLUME,
   BGM_DSP_DEFAULTS,
+  BGM_FADE_DEFAULTS,
   type BgmCommand,
   type BgmDsp,
   type BgmDspPatch,
+  type BgmFade,
+  type BgmFadePatch,
   type BgmReport,
   type BgmState,
   type BgmTransport,
@@ -24,6 +27,7 @@ interface InternalState {
   volume: number;
   loop: boolean;
   dsp: BgmDsp;
+  fade: BgmFade;
   transport: LiveTransport;
   position: number;
   revision: number;
@@ -59,6 +63,7 @@ export class BgmCoordinator {
         ...BGM_DSP_DEFAULTS,
         reverb: { ...BGM_DSP_DEFAULTS.reverb },
       },
+      fade: { ...BGM_FADE_DEFAULTS },
       transport: 'stopped',
       position: 0,
       revision: 0,
@@ -100,6 +105,8 @@ export class BgmCoordinator {
     if (command.volume !== undefined) this.stateValue.volume = command.volume;
     if (command.loop !== undefined) this.stateValue.loop = command.loop;
     if (command.dsp !== undefined) this.stateValue.dsp = mergeDsp(this.stateValue.dsp, command.dsp);
+    if (command.fade !== undefined)
+      this.stateValue.fade = mergeFade(this.stateValue.fade, command.fade);
 
     if (selected === null) {
       // Unloading is stronger than an action that happened to accompany it.
@@ -250,7 +257,11 @@ export class BgmCoordinator {
 
   private snapshotAt(at: number): BgmState {
     this.materialize(at);
-    return { ...this.stateValue };
+    return {
+      ...this.stateValue,
+      dsp: { ...this.stateValue.dsp, reverb: { ...this.stateValue.dsp.reverb } },
+      fade: { ...this.stateValue.fade },
+    };
   }
 
   private commandAt(at: number, action: BgmCommand['action'] | null, id?: string): BgmCommand {
@@ -262,6 +273,7 @@ export class BgmCoordinator {
       volume: state.volume,
       loop: state.loop,
       dsp: state.dsp,
+      fade: state.fade,
       revision: state.revision,
       transport: state.transport,
       position: state.position,
@@ -290,6 +302,14 @@ function mergeDsp(base: BgmDsp, patch: BgmDspPatch): BgmDsp {
       ...(patch.reverb?.decay === undefined ? {} : { decay: patch.reverb.decay }),
       ...(patch.reverb?.damping === undefined ? {} : { damping: patch.reverb.damping }),
     },
+  };
+}
+
+/** Merge one or both transition durations without resetting the sibling. */
+function mergeFade(base: BgmFade, patch: BgmFadePatch): BgmFade {
+  return {
+    inSeconds: patch.inSeconds ?? base.inSeconds,
+    outSeconds: patch.outSeconds ?? base.outSeconds,
   };
 }
 

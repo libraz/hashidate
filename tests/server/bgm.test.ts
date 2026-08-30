@@ -199,6 +199,7 @@ describe('BgmCoordinator', () => {
       position: 77,
       at: 1,
       dsp: { reverb: { mix: 0.3 } },
+      fade: { inSeconds: 2 },
     });
     expect(started).toMatchObject({
       id: 'start',
@@ -213,6 +214,7 @@ describe('BgmCoordinator', () => {
         width: 1,
         reverb: { mix: 0.3, decay: 0.5, damping: 0.5 },
       },
+      fade: { inSeconds: 2, outSeconds: 1 },
     });
     expect(started).not.toHaveProperty('inputGainDb');
 
@@ -228,6 +230,7 @@ describe('BgmCoordinator', () => {
       cmd: 'bgm',
       volume: 0.45,
       dsp: { toneDb: 2, reverb: { damping: 0.6 } },
+      fade: { outSeconds: 3 },
     });
     expect(settings.action).toBeUndefined();
     expect(settings).toMatchObject({
@@ -240,6 +243,7 @@ describe('BgmCoordinator', () => {
         width: 1,
         reverb: { mix: 0.3, decay: 0.5, damping: 0.6 },
       },
+      fade: { inSeconds: 2, outSeconds: 3 },
     });
 
     const selected = coordinator.apply({ cmd: 'bgm', track: 'next.flac' });
@@ -392,6 +396,33 @@ describe('BgmCoordinator', () => {
       }),
     );
     expect(coordinator.state()).toMatchObject({ transport: 'playing', position: 5, at: 105 });
+  });
+
+  it('returns the resolved fade policy on every canonical and late-join command', () => {
+    let at = 100;
+    const coordinator = new BgmCoordinator(() => at);
+    const started = coordinator.apply({
+      cmd: 'bgm',
+      track: 'first.mp3',
+      action: 'play',
+      fade: { inSeconds: 0, outSeconds: 2.5 },
+      position: 900,
+      at: 1,
+    });
+    expect(started).toMatchObject({ fade: { inSeconds: 0, outSeconds: 2.5 } });
+
+    at = 105;
+    const selected = coordinator.apply({ cmd: 'bgm', track: 'second.flac' });
+    expect(selected).toMatchObject({
+      track: 'second.flac',
+      transport: 'stopped',
+      position: 0,
+      fade: { inSeconds: 0, outSeconds: 2.5 },
+    });
+    expect(coordinator.currentCommand()).toMatchObject({
+      track: 'second.flac',
+      fade: { inSeconds: 0, outSeconds: 2.5 },
+    });
   });
 
   it('does not turn an audible failure into an automatic loop', () => {
