@@ -75,6 +75,30 @@ Turning **Stop at the end of the script** off leaves it running until the Stop b
 
 Either way the file stays open for a second or so after the stop. The encoder is still holding frames when it is told to wind down, and closing on the command rather than on the last chunk would truncate every take by exactly that much. The panel's byte count is what says when it has finished: it is what has landed on disk, which is the only figure that can tell a recorder that is still going from one that has quietly stopped.
 
+## What comes out is variable frame rate
+
+A frame exists when the compositing canvas is redrawn, and nothing redraws it faster than the screen refreshes. Ask for 60 fps on a renderer sitting on a 50 Hz display and you get 50.
+
+The encoder timestamps frames when they were actually drawn, so the file ends up variable-rate with an average like 49.36 fps. **The contents are correct.** Audio packet spacing, video frame spacing and both stream start times all line up, and the mouth matches the voice from one end of a take to the other.
+
+It only goes wrong handed to a player or an editor that reads it as a fixed rate. Laying out 50 fps of real frames as though there were 60 changes how fast the picture advances, and the sound appears to run ahead of it. Nothing in the file is broken, which is why measuring it turns up nothing — the giveaway is the odd fraction `ffprobe` reports as `avg_frame_rate`.
+
+## Put it through once afterwards
+
+Making it constant-rate removes it. Match the rate to the refresh rate it was recorded on.
+
+```sh
+ffmpeg -i show/recordings/<take>.mp4 \
+  -fps_mode cfr -r 50 -c:v libx264 -preset veryfast -crf 18 -c:a copy \
+  show/recordings/<take>-cfr50.mp4
+```
+
+The audio is not re-encoded. There is no reason to touch it, and the voice is the last thing this runtime wants to spend quality on.
+
+The file usually gets much smaller — 615 MB became 147 MB for an eighteen-minute commentary. That is not quality thrown away. The browser encodes while it streams, so it can neither look ahead nor use B-frames, and it goes on spending bits through every second nothing moved; on a take that is mostly a still document, that is most of them.
+
+Setting the display to 60 Hz is the answer that needs no conversion at all. This pass is enough if all you want is the drift gone.
+
 ## Next
 
 - [Scripts](scripts.md) — what is being loaded
