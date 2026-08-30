@@ -98,16 +98,16 @@ afterEach(async () => {
 });
 
 describe('the tool surface once everything is on it', () => {
-  it('bundles twenty-one commands into seven tools', async () => {
+  it('bundles twenty-one commands into eight tools', async () => {
     h = harness();
     const client = await connect(h.control);
 
     const { tools } = await client.listTools();
 
-    // Seven because a tool per command costs accuracy on both sides: the model
-    // picks worse from a list that long, and the list itself is context. The
-    // seventh reads documents and sends nothing at all.
+    // Eight: BGM is an independent surface because its live roster and
+    // transport have no avatar vocabulary to share with the other tools.
     expect(tools.map((tool) => tool.name).sort()).toEqual([
+      'bgm',
       'deck',
       'interrupt',
       'react',
@@ -128,10 +128,13 @@ describe('the tool surface once everything is on it', () => {
     // nor read one, so every value it sent would be a guess it could not check.
     expect(tools.map((tool) => tool.name)).not.toContain('voice');
     expect(tools.map((tool) => tool.name)).not.toContain('tune');
-    for (const tool of tools) {
+    for (const tool of tools.filter((one) => one.name !== 'bgm')) {
       expect(offers(tool.inputSchema, 'dsp')).toBe(false);
       expect(offers(tool.inputSchema, 'sway')).toBe(false);
     }
+    const bgm = tools.find((tool) => tool.name === 'bgm');
+    expect(bgm).toBeDefined();
+    expect(offers(bgm?.inputSchema, 'dsp')).toBe(true);
   });
 });
 

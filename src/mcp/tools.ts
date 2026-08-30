@@ -1,6 +1,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { type ZodError, type ZodType, z } from 'zod';
 import {
+  bgmDspPatchSchema,
   cameraFrameSchema,
   emotionVectorSchema,
   type LabelledId,
@@ -44,7 +45,15 @@ import {
  */
 const MAX_LINES = 16;
 
-export type ToolName = 'speak' | 'status' | 'interrupt' | 'react' | 'stage' | 'revise' | 'deck';
+export type ToolName =
+  | 'speak'
+  | 'status'
+  | 'interrupt'
+  | 'react'
+  | 'stage'
+  | 'revise'
+  | 'deck'
+  | 'bgm';
 
 /** How far down the queue `status` may be asked to look. Past this it is a script. */
 const MAX_DEPTH = 50;
@@ -93,6 +102,30 @@ const DECK_NOTE = [
 const DECK_ID_NOTE = 'The document id. One of the ones list returns.';
 const DECK_FROM_NOTE = 'The page to start reading at. 1-based. Defaults to 1.';
 const DECK_TO_NOTE = `The page to stop reading at. Inclusive. Defaults to ${MAX_PAGES} pages from from.`;
+const BGM_NOTE = [
+  'Control the broadcast background music. BGM is separate from synthesized voice and room acoustics.',
+  '',
+  '- list rescans the configured show/bgm directory and returns exact .mp3/.flac track ids',
+  '- play needs an id returned by list; resume continues the selected track without selecting another',
+  '- volume is the BGM mix level from 0 (silent) to 1 (full); loop controls end-of-track behavior',
+  '- settings changes only the named BGM mix/DSP fields and requires at least one setting',
+  '- DSP is BGM-only: it never changes synthesized voice processing or the staged room',
+].join('\n');
+const BGM_TRACK_NOTE =
+  'The exact filename returned by bgm action=list, including its .mp3 or .flac extension. Track ids are directory-local strings, not URLs.';
+const BGM_VOLUME_NOTE = 'BGM-only mix level, 0..1. This does not change synthesized voice volume.';
+const BGM_LOOP_NOTE = 'Whether the selected BGM track restarts at its end.';
+const BGM_DSP_NOTE = [
+  'Optional BGM-only libsonare Mixer controls. These leave synthesized voice processing and room acoustics untouched.',
+  'toneDb: -6..6 dB tone tilt; compression: 0..1 amount; width: 0..2 stereo width.',
+  'reverb.mix: 0..0.5, reverb.decay: 0..0.9, reverb.damping: 0..1.',
+].join('\n');
+const BGM_TONE_NOTE = 'BGM-only tone tilt, -6..6 dB. Voice and room are unchanged.';
+const BGM_COMPRESSION_NOTE = 'BGM-only compression amount, 0..1. Voice and room are unchanged.';
+const BGM_WIDTH_NOTE = 'BGM-only stereo width, 0..2. Voice and room are unchanged.';
+const BGM_REVERB_MIX_NOTE = 'BGM-only reverb mix, 0..0.5. This is not the staged room.';
+const BGM_REVERB_DECAY_NOTE = 'BGM-only reverb decay, 0..0.9. This is not the staged room.';
+const BGM_REVERB_DAMPING_NOTE = 'BGM-only reverb damping, 0..1. This is not the staged room.';
 const STAGE_DECK_NOTE =
   'The id of the document to present. null takes it down. Normally the operator has already put one up, so there is no need to write this.';
 const STAGE_SLIDE_NOTE =
@@ -376,6 +409,72 @@ const deckInput = z.discriminatedUnion('action', [
 
 export type DeckInput = z.infer<typeof deckInput>;
 
+/**
+ * The DSP patch keeps the protocol's canonical ranges and keys, while adding
+ * the field descriptions a model needs when it is choosing a BGM control.
+ * Extending the protocol schema here is intentional: validation still comes
+ * from `bgmDspPatchSchema`, so this tool cannot drift from the wire.
+ */
+const bgmReverbPatch = bgmDspPatchSchema.shape.reverb.unwrap().extend({
+  mix: bgmDspPatchSchema.shape.reverb.unwrap().shape.mix.describe(BGM_REVERB_MIX_NOTE),
+  decay: bgmDspPatchSchema.shape.reverb.unwrap().shape.decay.describe(BGM_REVERB_DECAY_NOTE),
+  damping: bgmDspPatchSchema.shape.reverb.unwrap().shape.damping.describe(BGM_REVERB_DAMPING_NOTE),
+});
+
+const bgmDspInput = bgmDspPatchSchema
+  .extend({
+    toneDb: bgmDspPatchSchema.shape.toneDb.describe(BGM_TONE_NOTE),
+    compression: bgmDspPatchSchema.shape.compression.describe(BGM_COMPRESSION_NOTE),
+    width: bgmDspPatchSchema.shape.width.describe(BGM_WIDTH_NOTE),
+    reverb: bgmReverbPatch.optional(),
+  })
+  .strict()
+  .describe(BGM_DSP_NOTE);
+
+/** `dsp: {}` is not a setting; at least one actual BGM control must be named. */
+function hasDspSetting(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const dsp = value as Record<string, unknown>;
+  if (dsp.toneDb !== undefined || dsp.compression !== undefined || dsp.width !== undefined) {
+    return true;
+  }
+  if (typeof dsp.reverb !== 'object' || dsp.reverb === null) return false;
+  return Object.values(dsp.reverb).some((setting) => setting !== undefined);
+}
+
+const bgmSettingsInput = z
+  .object({
+    action: z.literal('settings'),
+    volume: z.number().finite().min(0).max(1).optional().describe(BGM_VOLUME_NOTE),
+    loop: z.boolean().optional().describe(BGM_LOOP_NOTE),
+    dsp: bgmDspInput.optional(),
+  })
+  .strict()
+  .refine(
+    (value) => value.volume !== undefined || value.loop !== undefined || hasDspSetting(value.dsp),
+    'settings requires at least one of volume, loop, or a DSP control',
+  );
+
+/** BGM is one independent tool so a caller can list and mutate it explicitly. */
+const bgmInput = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('list') }).strict(),
+  z
+    .object({
+      action: z.literal('play'),
+      track: z.string().min(1).describe(BGM_TRACK_NOTE),
+      volume: z.number().finite().min(0).max(1).optional().describe(BGM_VOLUME_NOTE),
+      loop: z.boolean().optional().describe(BGM_LOOP_NOTE),
+      dsp: bgmDspInput.optional(),
+    })
+    .strict(),
+  z.object({ action: z.literal('pause') }).strict(),
+  z.object({ action: z.literal('resume') }).strict(),
+  z.object({ action: z.literal('stop') }).strict(),
+  bgmSettingsInput,
+]);
+
+export type BgmInput = z.infer<typeof bgmInput>;
+
 /** The set of tools built for one avatar, with the vocabulary they were built from. */
 export interface Tools {
   /** What `tools/list` answers with. */
@@ -387,6 +486,7 @@ export interface Tools {
   readonly stage: ZodType<StageInput>;
   readonly revise: ZodType<ReviseInput>;
   readonly deck: ZodType<DeckInput>;
+  readonly bgm: ZodType<BgmInput>;
   /**
    * The vocabulary these were narrowed against. Kept so that a rejection can
    * quote back the list the caller should have been working from, rather than
@@ -472,6 +572,7 @@ export function buildTools(vocabulary: Partial<Vocabulary>): Tools {
       define('stage', STAGE_NOTE, stage),
       define('revise', REVISE_NOTE, revise),
       define('deck', DECK_NOTE, deckInput),
+      define('bgm', BGM_NOTE, bgmInput),
     ],
     speak,
     status: statusInput,
@@ -480,6 +581,7 @@ export function buildTools(vocabulary: Partial<Vocabulary>): Tools {
     stage,
     revise,
     deck: deckInput,
+    bgm: bgmInput,
     vocabulary,
   };
 }

@@ -1,5 +1,12 @@
 import { getLocale, pick } from '../i18n/locale';
-import type { QueueEntry, QueueResponse, SessionEvent, SessionState, Snapshot } from '../protocol';
+import type {
+  BgmState,
+  QueueEntry,
+  QueueResponse,
+  SessionEvent,
+  SessionState,
+  Snapshot,
+} from '../protocol';
 
 /**
  * What comes back out of the control API, cut down to what a model branches on.
@@ -65,6 +72,8 @@ export interface Status {
    * looking at the panel, who can do something about them.
    */
   slides: { deck: string | null; page: number; pages: number } | null;
+  /** The server-owned BGM transport, including its resolved DSP and fallback state. */
+  bgm: BgmState | null;
 }
 
 export function projectStatus(snapshot: Snapshot, since?: number, depth?: number): Status {
@@ -91,6 +100,10 @@ export function projectStatus(snapshot: Snapshot, since?: number, depth?: number
             page: snapshot.slides.page,
             pages: snapshot.slides.pages,
           },
+    // The BGM timeline is server-owned rather than renderer-specific. Keep the
+    // resolved DSP and `dspDegraded` marker intact so an orchestrator can see
+    // what the broadcast is actually applying without touching voice or room.
+    bgm: snapshot.bgm ?? null,
   };
 }
 

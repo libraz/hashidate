@@ -4,6 +4,7 @@ import { getLocale, type Localized, pick } from '../i18n/locale';
 import {
   avatarCommandSchema,
   backdropCommandSchema,
+  bgmCommandSchema,
   cameraCommandSchema,
   commandSchema,
   debugCommandSchema,
@@ -639,6 +640,102 @@ const decks: Handler = async (client) => {
   }
 };
 
+/**
+ * BGM transport and mix convenience commands.
+ *
+ * `bgm play` also accepts `--volume` and `--loop` so a selected track can be
+ * started in one command. DSP flags stay on the MCP/panel surfaces: tone,
+ * compression, width and reverb are mix decisions that need to be judged
+ * against the rendered broadcast, not guessed from a terminal.
+ */
+const bgm: Handler = async (client, args) => {
+  const action = args[0];
+  if (action === undefined)
+    fail('bgm list|play <filename>|pause|resume|stop|volume <0..1>|loop on|off');
+
+  if (action === 'list') {
+    const extra = args.slice(1);
+    if (extra.length > 0) fail(`bgm list takes no arguments: ${extra.join(' ')}`);
+    const tracks = await client.bgmTracks();
+    if (tracks.length === 0) {
+      console.log('no BGM tracks (put an .mp3 or .flac file in show/bgm/)');
+      return;
+    }
+    for (const track of tracks) {
+      console.log(`  ${track.id.padEnd(32)} ${track.mime.padEnd(12)} ${track.bytes} bytes`);
+    }
+    return;
+  }
+
+  if (action === 'play') {
+    const { values, positionals } = parseArgs({
+      args: args.slice(1),
+      options: { volume: { type: 'string' }, loop: { type: 'string' } },
+      allowPositionals: true,
+    });
+    const track = positionals[0];
+    if (track === undefined || track === '')
+      fail('bgm play needs the exact filename from bgm list');
+    if (positionals.length > 1)
+      fail(`bgm play takes one filename: ${positionals.slice(1).join(' ')}`);
+    const volume = values.volume === undefined ? undefined : bgmVolume(values.volume);
+    const loop = values.loop === undefined ? undefined : bgmLoop(values.loop);
+    show(
+      await client.command(
+        build(bgmCommandSchema, {
+          cmd: 'bgm',
+          action: 'play',
+          track,
+          ...(volume === undefined ? {} : { volume }),
+          ...(loop === undefined ? {} : { loop }),
+        }),
+      ),
+    );
+    return;
+  }
+
+  if (action === 'pause' || action === 'resume' || action === 'stop') {
+    if (args.length !== 1) fail(`bgm ${action} takes no arguments`);
+    show(
+      await client.command(
+        build(bgmCommandSchema, {
+          cmd: 'bgm',
+          action: action === 'resume' ? 'play' : action,
+        }),
+      ),
+    );
+    return;
+  }
+
+  if (action === 'volume') {
+    if (args.length !== 2) fail('bgm volume needs a value from 0..1');
+    const volume = bgmVolume(args[1]);
+    show(await client.command(build(bgmCommandSchema, { cmd: 'bgm', volume })));
+    return;
+  }
+
+  if (action === 'loop') {
+    if (args.length !== 2) fail('bgm loop needs on or off');
+    const loop = bgmLoop(args[1]);
+    show(await client.command(build(bgmCommandSchema, { cmd: 'bgm', loop })));
+    return;
+  }
+
+  fail(`bgm list|play <filename>|pause|resume|stop|volume <0..1>|loop on|off: ${action}`);
+};
+
+function bgmVolume(raw: string | undefined): number {
+  const volume = toNumber(raw, 0, 'bgm volume');
+  if (volume < 0 || volume > 1) fail(`bgm volume takes 0..1: ${raw}`);
+  return volume;
+}
+
+function bgmLoop(raw: string | undefined): boolean {
+  if (raw === 'on') return true;
+  if (raw === 'off') return false;
+  fail(`bgm loop takes on or off: ${raw}`);
+}
+
 /** Same shape as `room` beside it, and the same rule: no id is the bare stage. */
 const backdrop: Handler = async (client, args) => {
   const { positionals } = parseArgs({ args, allowPositionals: true });
@@ -872,6 +969,7 @@ const HANDLERS: Record<string, Handler> = {
   slide,
   place,
   decks,
+  bgm,
   play,
   motions,
   wear,
@@ -906,6 +1004,7 @@ function usage(): never {
       '  yarn ctl avatar manuka',
       '  yarn ctl tune sway.stiffness=2 idle.breathDepth=1.2',
       '  yarn ctl deck intro --page 3',
+      '  yarn ctl bgm list && yarn ctl bgm play opening.mp3 --volume 0.2',
       '  yarn ctl slide next',
       '  yarn ctl play demo --check   # read show/scripts/demo.yaml without a server',
       '  yarn ctl play demo --replace # drop what is pending and run it',

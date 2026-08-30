@@ -1,5 +1,8 @@
 import { type ZodType, z } from 'zod';
 import {
+  type BgmResponse,
+  type BgmTrack,
+  bgmResponseSchema,
   type CommandRequest,
   type DecksResponse,
   type DeckTextResponse,
@@ -220,6 +223,22 @@ export class ControlClient {
    */
   async motions(): Promise<MotionsResponse> {
     return expect(motionsResponseSchema, await this.request('/motions'));
+  }
+
+  /**
+   * The playable BGM files the control server can see right now.
+   *
+   * Unlike the snapshot's cached state, this endpoint rescans the direct BGM
+   * directory for every request. A track added beside a running show therefore
+   * becomes available without restarting either the server or this client.
+   */
+  async bgm(): Promise<BgmResponse> {
+    return expect(bgmResponseSchema, await this.request('/bgm'));
+  }
+
+  /** The track roster alone, for callers that do not need the response wrapper. */
+  async bgmTracks(): Promise<BgmTrack[]> {
+    return (await this.bgm()).tracks;
   }
 
   /**

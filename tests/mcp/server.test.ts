@@ -5,6 +5,8 @@ import { ControlError } from '@/control/client';
 import { same } from '@/i18n/locale';
 import { SOURCE } from '@/mcp/server';
 import {
+  bgmState,
+  bgmTrack,
   closeAll,
   connect,
   deck,
@@ -62,11 +64,12 @@ afterEach(async () => {
 });
 
 describe('the tool surface', () => {
-  it('offers exactly seven tools', async () => {
+  it('offers exactly eight tools', async () => {
     h = harness();
     const client = await connect(h.control);
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
+      'bgm',
       'deck',
       'interrupt',
       'react',
@@ -306,6 +309,7 @@ describe('status', () => {
 
     expect(Object.keys(payload).sort()).toEqual(
       [
+        'bgm',
         'avatar',
         'connected',
         'emotion',
@@ -329,6 +333,10 @@ describe('status', () => {
       idle: false,
       emotion: { joy: 0.6 },
       seq: 3,
+      bgm: expect.objectContaining({
+        dsp: expect.objectContaining({ toneDb: 0, width: 1 }),
+        dspDegraded: false,
+      }),
     });
     // Which of the two shapes the avatar is named by is the adapter's choice;
     // that it is named at all is not, since the enums depend on which one it is.
@@ -471,6 +479,88 @@ describe('status', () => {
     // be able to find out that the renderer is not up.
     expect(result.isError).toBeFalsy();
     expect(payloadOf(result)).toMatchObject({ connected: false, viewers: 0 });
+  });
+});
+
+describe('bgm', () => {
+  it('lists the live MP3/FLAC roster through the independent tool', async () => {
+    h = harness();
+    h.setBgmTracks([bgmTrack({ id: 'opening.mp3' }), bgmTrack({ id: 'room.flac' })]);
+    const client = await connect(h.control);
+
+    const payload = payloadOf(
+      await client.callTool({ name: 'bgm', arguments: { action: 'list' } }),
+    );
+
+    expect(h.control.bgm).toHaveBeenCalledTimes(1);
+    expect(payload.tracks).toEqual([
+      expect.objectContaining({ id: 'opening.mp3', mime: 'audio/mpeg' }),
+      expect.objectContaining({ id: 'room.flac', mime: 'audio/flac' }),
+    ]);
+    expect(h.control.command).not.toHaveBeenCalled();
+  });
+
+  it('plays an exact track with mix settings and returns canonical BGM state', async () => {
+    h = harness();
+    h.setSnapshot(
+      snapshot({
+        bgm: bgmState({
+          track: 'opening.mp3',
+          volume: 0.35,
+          transport: 'playing',
+          dspDegraded: true,
+        }),
+      }),
+    );
+    const client = await connect(h.control);
+
+    const result = await client.callTool({
+      name: 'bgm',
+      arguments: {
+        action: 'play',
+        track: 'opening.mp3',
+        volume: 0.35,
+        loop: false,
+        dsp: { toneDb: 2, compression: 0.4, width: 1.2, reverb: { mix: 0.2 } },
+      },
+    });
+
+    expect(h.control.command).toHaveBeenCalledWith({
+      cmd: 'bgm',
+      action: 'play',
+      track: 'opening.mp3',
+      volume: 0.35,
+      loop: false,
+      dsp: { toneDb: 2, compression: 0.4, width: 1.2, reverb: { mix: 0.2 } },
+    });
+    expect(payloadOf(result)).toMatchObject({
+      ok: true,
+      bgm: { track: 'opening.mp3', transport: 'playing', dspDegraded: true },
+    });
+  });
+
+  it('maps resume to play without replacing the selected track', async () => {
+    h = harness();
+    const client = await connect(h.control);
+
+    await client.callTool({ name: 'bgm', arguments: { action: 'resume' } });
+
+    expect(h.control.command).toHaveBeenCalledWith({ cmd: 'bgm', action: 'play' });
+  });
+
+  it('requires a setting for settings and rejects out-of-range DSP values', async () => {
+    h = harness();
+    const client = await connect(h.control);
+
+    const empty = await client.callTool({ name: 'bgm', arguments: { action: 'settings' } });
+    const invalid = await client.callTool({
+      name: 'bgm',
+      arguments: { action: 'settings', dsp: { reverb: { mix: 0.6 } } },
+    });
+
+    expect(empty.isError).toBe(true);
+    expect(invalid.isError).toBe(true);
+    expect(h.control.command).not.toHaveBeenCalled();
   });
 });
 
@@ -661,6 +751,7 @@ describe('a control server that is not there', () => {
     // Started before the control server, which is the ordinary case when the
     // client launches it: the list has to exist so the model can call it later.
     expect(tools.map((tool) => tool.name).sort()).toEqual([
+      'bgm',
       'deck',
       'interrupt',
       'react',

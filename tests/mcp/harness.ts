@@ -6,6 +6,9 @@ import { same } from '@/i18n/locale';
 import type { Control } from '@/mcp/server';
 import { createServer } from '@/mcp/server';
 import type {
+  BgmResponse,
+  BgmState,
+  BgmTrack,
   Command,
   Deck,
   DecksResponse,
@@ -172,6 +175,36 @@ export const event = (seq: number, over: Partial<SessionEvent> = {}): SessionEve
   ...over,
 });
 
+/** A complete server-owned BGM state for MCP projection and mutation tests. */
+export const bgmState = (over: Partial<BgmState> = {}): BgmState => ({
+  track: null,
+  volume: 0.2,
+  loop: true,
+  dsp: {
+    toneDb: 0,
+    compression: 0,
+    width: 1,
+    reverb: { mix: 0, decay: 0.5, damping: 0.5 },
+  },
+  transport: 'stopped',
+  position: 0,
+  revision: 0,
+  at: 1_700_000_000,
+  duration: null,
+  blocked: false,
+  error: null,
+  dspDegraded: false,
+  ...over,
+});
+
+export const bgmTrack = (over: Partial<BgmTrack> & { id: string }): BgmTrack => ({
+  label: over.id,
+  mime: over.id.toLowerCase().endsWith('.flac') ? 'audio/flac' : 'audio/mpeg',
+  bytes: 1024,
+  at: 1_700_000_000,
+  ...over,
+});
+
 /** A whole snapshot: the projection tests are about what is *dropped* from it. */
 export const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
   connected: true,
@@ -196,6 +229,7 @@ export const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
     wardrobe: { top: 'coat' },
   },
   vocabulary: vocabulary(),
+  bgm: bgmState(),
   events: [event(1), event(2), event(3)],
   voice: {
     preset: 'plain',
@@ -290,6 +324,8 @@ export interface Harness {
   seed(entries: QueueEntry[]): void;
   /** What the document directory holds. Empty by default: most tests have no document. */
   setDecks(found: Deck[]): void;
+  /** What the BGM directory holds. Empty by default: the roster is live. */
+  setBgmTracks(found: BgmTrack[]): void;
   /** Lines already spoken, which is what a rewind reaches into. */
   setHistory(entries: HistoryEntry[]): void;
   /** The queue as the fake holds it, after whatever the adapter did to it. */
@@ -304,6 +340,7 @@ export function harness(): Harness {
   let queue: QueueEntry[] = [];
   let said: HistoryEntry[] = [];
   let found: Deck[] = [];
+  let tracks: BgmTrack[] = [];
   let minted = 0;
   const failures = new Map<string, Error>();
 
@@ -418,6 +455,10 @@ export function harness(): Harness {
       gate('history');
       return { history: [...said] };
     }),
+    bgm: vi.fn(async (): Promise<BgmResponse> => {
+      gate('bgm');
+      return { tracks: [...tracks] };
+    }),
     decks: vi.fn(async (): Promise<DecksResponse> => {
       gate('decks');
       return { decks: [...found] };
@@ -455,6 +496,9 @@ export function harness(): Harness {
     },
     setDecks: (documents) => {
       found = [...documents];
+    },
+    setBgmTracks: (foundTracks) => {
+      tracks = [...foundTracks];
     },
     setHistory: (entries) => {
       said = [...entries];

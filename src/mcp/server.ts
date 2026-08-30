@@ -10,6 +10,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { ControlError, type QueueOutcome } from '../control/client';
 import type {
+  BgmResponse,
   Command,
   CommandRequest,
   DecksResponse,
@@ -22,6 +23,7 @@ import type {
 } from '../protocol';
 import { projectQueue, projectStatus, queuedIds } from './project';
 import {
+  type BgmInput,
   buildTools,
   explain,
   MAX_PAGES,
@@ -124,6 +126,8 @@ export interface Control {
     opts: { interrupt: boolean },
   ): Promise<QueueOutcome>;
   history(): Promise<HistoryResponse>;
+  /** A fresh scan of the configured BGM directory. */
+  bgm(): Promise<BgmResponse>;
   /**
    * The two document reads, which are reads and nothing else.
    *
@@ -226,6 +230,8 @@ export function createServer(control: Control): Server {
         return revise(args);
       case 'deck':
         return deck(args);
+      case 'bgm':
+        return bgm(args);
       default:
         return refuse(`Unknown tool: ${name}`);
     }
@@ -342,6 +348,47 @@ export function createServer(control: Control): Server {
   }
 
   /**
+   * List or control the server-owned background music transport.
+   *
+   * `list` reads the directory directly. Mutations travel as one canonical
+   * `bgm` command, and then read the server snapshot so the response includes
+   * the resolved DSP and degradation marker when that read is available.
+   */
+  async function bgm(args: unknown): Promise<CallToolResult> {
+    const parsed = tools.bgm.safeParse(args);
+    if (!parsed.success) return refuse(explain('bgm', parsed.error, tools));
+    const call = parsed.data;
+    if (call.action === 'list') {
+      try {
+        return report(await control.bgm());
+      } catch (error) {
+        return unreachable(error);
+      }
+    }
+
+    const command: Extract<Command, { cmd: 'bgm' }> = bgmCommand(call);
+    try {
+      const response = await control.command(command);
+      const payload = commandResponse(response);
+      // A command delivery response and the canonical server state are two
+      // useful answers to one request. A restarted/older control endpoint may
+      // deliver the command but fail the follow-up read, so keep the delivery
+      // answer in that case rather than turning a successful mutation into an
+      // error.
+      try {
+        const snapshot = await control.state();
+        if (snapshot.bgm !== undefined) payload.bgm = snapshot.bgm;
+      } catch {
+        // The delivery result remains actionable even when the state read races
+        // a control-server restart.
+      }
+      return report(payload);
+    } catch (error) {
+      return unreachable(error);
+    }
+  }
+
+  /**
    * Two verbs under one tool, because the choice between them is the whole
    * decision: `interrupt` cuts the current line off where it is, `clear` lets it
    * finish and drops what is behind it.
@@ -443,6 +490,37 @@ export function createServer(control: Control): Server {
         return control.queueClear();
       case 'rewind':
         return control.queueRewind(call.id, call.mode, { interrupt: call.interrupt });
+    }
+  }
+
+  function bgmCommand(
+    call: Exclude<BgmInput, { action: 'list' }>,
+  ): Extract<Command, { cmd: 'bgm' }> {
+    switch (call.action) {
+      case 'play':
+        return {
+          cmd: 'bgm',
+          action: 'play',
+          track: call.track,
+          ...(call.volume === undefined ? {} : { volume: call.volume }),
+          ...(call.loop === undefined ? {} : { loop: call.loop }),
+          ...(call.dsp === undefined ? {} : { dsp: call.dsp }),
+        };
+      case 'pause':
+        return { cmd: 'bgm', action: 'pause' };
+      case 'resume':
+        // Resume is intentionally a play with no track. The coordinator keeps
+        // the current selection and position when no track is supplied.
+        return { cmd: 'bgm', action: 'play' };
+      case 'stop':
+        return { cmd: 'bgm', action: 'stop' };
+      case 'settings':
+        return {
+          cmd: 'bgm',
+          ...(call.volume === undefined ? {} : { volume: call.volume }),
+          ...(call.loop === undefined ? {} : { loop: call.loop }),
+          ...(call.dsp === undefined ? {} : { dsp: call.dsp }),
+        };
     }
   }
 
@@ -556,4 +634,12 @@ function field(response: unknown, key: string): unknown {
   return typeof response === 'object' && response !== null
     ? (response as Record<string, unknown>)[key]
     : undefined;
+}
+
+/** Preserve a delivery response's fields while making room for canonical state. */
+function commandResponse(response: unknown): Record<string, unknown> {
+  if (typeof response === 'object' && response !== null && !Array.isArray(response)) {
+    return { ...(response as Record<string, unknown>) };
+  }
+  return { response };
 }
