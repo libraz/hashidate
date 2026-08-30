@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { type MessageKey, useT } from '@/i18n';
 import type { SpeechState } from '@/protocol';
 import { LocaleSwitch } from '@/ui/LocaleSwitch';
-import { Segmented } from '@/ui/Segmented';
+import { Tabs } from '@/ui/Segmented';
 import { clear, interrupt } from './api';
 import { BgmTab } from './bgm/BgmTab';
 import { DressTab } from './dress/DressTab';
@@ -83,6 +83,9 @@ const SPEECH_NOTICE: Record<SpeechState, MessageKey | null> = {
   down: 'panel.speech.down',
 };
 
+/** What the tab strip points `aria-controls` at. One region, so a constant. */
+const BODY_ID = 'panel-tab-body';
+
 const TAB_LABELS: Array<{ value: Tab; key: MessageKey }> = [
   { value: 'queue', key: 'panel.tabs.queue' },
   { value: 'record', key: 'panel.tabs.record' },
@@ -145,28 +148,33 @@ export function Panel() {
           </span>
         ) : null}
 
-        {/* Beside the link readout rather than in a tab: it is set once by
-            whoever opens the panel, and a setting nobody can find is a panel
-            that stays in the wrong language all evening. */}
-        <LocaleSwitch />
-
-        <div className={styles.transport}>
-          <button
-            type="button"
-            className={styles.clear}
-            onClick={() => void clear().then(refresh)}
-            title={t('panel.drop.title')}
-          >
-            {t('panel.drop')}
-          </button>
-          <button
-            type="button"
-            className={`${styles.stop} ${speaking ? styles.armed : ''}`}
-            onClick={() => void interrupt().then(refresh)}
-            title={t('panel.stop.title')}
-          >
-            {t('panel.stop')}
-          </button>
+        {/* The right-hand group: what the operator reaches for, against the edge
+            they reach from. The language switch is in the header rather than in
+            a tab because a setting nobody can find is a panel that stays in the
+            wrong language all evening — but it is set once a session and the
+            transport is pressed all through one, so a rule separates them and
+            the transport keeps the corner. */}
+        <div className={styles.tools}>
+          <LocaleSwitch />
+          <span className={styles.divider} aria-hidden="true" />
+          <div className={styles.transport}>
+            <button
+              type="button"
+              className={styles.clear}
+              onClick={() => void clear().then(refresh)}
+              title={t('panel.drop.title')}
+            >
+              {t('panel.drop')}
+            </button>
+            <button
+              type="button"
+              className={`${styles.stop} ${speaking ? styles.armed : ''}`}
+              onClick={() => void interrupt().then(refresh)}
+              title={t('panel.stop.title')}
+            >
+              {t('panel.stop')}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -183,7 +191,13 @@ export function Panel() {
       {notice ? <div className={styles.notice}>{t(notice)}</div> : null}
 
       <div className={styles.tabs}>
-        <Segmented options={tabs} value={tab} onChange={setTab} ariaLabel={t('panel.tabs.aria')} />
+        <Tabs
+          options={tabs}
+          value={tab}
+          onChange={setTab}
+          ariaLabel={t('panel.tabs.aria')}
+          controls={BODY_ID}
+        />
       </div>
 
       {/*
@@ -201,7 +215,11 @@ export function Panel() {
         <div className={styles.monitor}>
           <Preview snapshot={data} refresh={refresh} />
         </div>
-        <div className={styles.controls}>
+        {/* The half the tab strip actually swaps. The preview beside it is not
+            in here on purpose: it is the same picture whichever tab is up, and
+            a screen reader told the whole main region changed on every tab
+            press would be describing a change that did not happen. */}
+        <div className={styles.controls} id={BODY_ID} role="tabpanel">
           {tab === 'queue' ? <QueueTab snapshot={data} refresh={refresh} /> : null}
           {tab === 'record' ? <RecordTab snapshot={data} refresh={refresh} /> : null}
           {tab === 'perform' ? <PerformTab snapshot={data} refresh={refresh} /> : null}

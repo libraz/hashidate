@@ -5,7 +5,7 @@ import type { CameraFrame } from '@/engine/types';
 import { useT } from '@/i18n';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { LocaleSwitch } from '@/ui/LocaleSwitch';
-import { Segmented } from '@/ui/Segmented';
+import { Segmented, Tabs } from '@/ui/Segmented';
 import { Toggle } from '@/ui/Toggle';
 import type { ControlStatus } from '../control-client';
 import { useSessionState } from '../hooks';
@@ -38,6 +38,9 @@ import { TuneTab } from './tabs/TuneTab';
  * The avatar picker, the camera framing, the idle switch and the speech box all
  * sit outside the tabs, because none of them belongs to one of those four jobs.
  */
+
+/** What the tab strip points `aria-controls` at. One region, so a constant. */
+const BODY_ID = 'console-tab-body';
 
 const TABS = [
   { value: 'perform', message: 'console.tabs.perform' },
@@ -251,15 +254,16 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
       <DemoBar session={session} />
 
       <div className={styles.tabs}>
-        <Segmented
+        <Tabs
           ariaLabel={t('console.tabs.aria')}
           options={TABS.map((it) => ({ value: it.value, label: t(it.message) }))}
           value={tab}
           onChange={setTab}
+          controls={BODY_ID}
         />
       </div>
 
-      <div className={styles.body}>
+      <div className={styles.body} id={BODY_ID} role="tabpanel">
         {status.phase === 'failed' ? (
           <>
             <p className={styles.problems}>{status.message}</p>

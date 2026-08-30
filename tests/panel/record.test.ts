@@ -43,6 +43,7 @@ function snapshot(recordingState: Snapshot['recording'] = null): Snapshot {
     slides: null,
     speech: 'absent',
     queue: [],
+    airing: [],
     paused: false,
     recording: recordingState,
   };
@@ -101,12 +102,14 @@ describe('RecordTab rendering', () => {
       );
     });
 
+    // A radio group and not a tab strip: naming an output size selects nothing
+    // for a screen reader to move to. See `Segmented`.
     expect(
-      host.querySelector('[role="tablist"][aria-label="Output size"] [aria-selected="true"]')
+      host.querySelector('[role="radiogroup"][aria-label="Output size"] [aria-checked="true"]')
         ?.textContent,
     ).toBe('1280×720');
     expect(
-      host.querySelector('[role="tablist"][aria-label="Frame rate"] [aria-selected="true"]')
+      host.querySelector('[role="radiogroup"][aria-label="Frame rate"] [aria-checked="true"]')
         ?.textContent,
     ).toBe('60 fps');
   });

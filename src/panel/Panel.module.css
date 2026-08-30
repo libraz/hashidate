@@ -117,8 +117,29 @@
 
 /* --- transport ------------------------------------------------------------ */
 
-.transport {
+/*
+ * Everything the operator reaches for, held against the edge they reach from.
+ *
+ * The language switch used to sit next to the link readout, which put a control
+ * nobody touches twice a session in the middle of a row of things that are only
+ * read, and left the two buttons that matter alone across a metre of nothing.
+ * Grouped here they read as one cluster, and the rule keeps the setting from
+ * reading as part of the transport.
+ */
+.tools {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.divider {
+  width: 1px;
+  height: 16px;
+  background: var(--line);
+}
+
+.transport {
   display: flex;
   gap: var(--space-3);
 }
