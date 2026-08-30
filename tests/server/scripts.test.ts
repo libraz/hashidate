@@ -140,9 +140,18 @@ describe('Scripts.get', () => {
     // The filesystem stores this decomposed and every other surface composes it.
     // They are one name except in a string comparison, which is the one place
     // this would notice.
-    await writeFile(join(root, '台本ダ.yaml'.normalize('NFD')), 'lines: [{ text: あ }]');
+    const onDisk = join(root, '台本ダ.yaml'.normalize('NFD'));
+    await writeFile(onDisk, 'lines: [{ text: あ }]');
     const { scripts: found } = await scripts.list();
     expect(found[0]?.id).toBe('台本ダ'.normalize('NFC'));
-    expect(await scripts.get('台本ダ'.normalize('NFC'))).not.toBeNull();
+
+    const loaded = await scripts.get('台本ダ'.normalize('NFC'));
+    expect(loaded).not.toBeNull();
+    // The path is asserted rather than only the lookup succeeding, because the
+    // two come apart per platform: a lookup on macOS ignores the normalisation
+    // form, so a path composed back out of the id opens there and opens nothing
+    // on Linux. Pinning the name the directory actually holds is what fails on
+    // both when this regresses.
+    expect(loaded?.path).toBe(onDisk);
   });
 });

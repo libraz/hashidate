@@ -114,13 +114,40 @@ export class Scripts {
   async get(id: string): Promise<LoadedScript | null> {
     if (!isId(id)) return null;
     const name = id.normalize('NFC');
+    const target = await this.locate(name);
+    if (target === null) return null;
+    const raw = await this.read(target);
+    if (raw === null) return null;
+    if (typeof raw !== 'string') throw new ScriptError(`${target}: ${raw.error}`);
+    return { id: name, path: target, script: parseScript(target, raw) };
+  }
+
+  /**
+   * The file a composed id names, in whichever form the directory holds it.
+   *
+   * `list` composes every id on the way out, and a filename with a Japanese
+   * character in it is decomposed on the filesystem it was typed on. Spelling
+   * the path back out as `<root>/<id><extension>` therefore asks for a name the
+   * directory may not hold — and macOS hides that, because a lookup there
+   * ignores which normalisation form the name is in. On Linux it finds nothing,
+   * so the script that the panel is listing is the script that refuses to run.
+   *
+   * Matching against the listing is the only lookup that agrees with the roster
+   * on both. `EXTENSIONS` stays the outer loop so a directory holding two
+   * spellings of one name resolves in the same order it did when the path was
+   * built by hand.
+   */
+  private async locate(name: string): Promise<string | null> {
+    const names = await readdir(this.root).catch(() => [] as string[]);
     for (const extension of EXTENSIONS) {
-      const target = resolve(this.root, `${name}${extension}`);
-      if (!target.startsWith(this.root + sep)) continue;
-      const raw = await this.read(target);
-      if (raw === null) continue;
-      if (typeof raw !== 'string') throw new ScriptError(`${target}: ${raw.error}`);
-      return { id: name, path: target, script: parseScript(target, raw) };
+      for (const entry of names) {
+        if (extname(entry).toLowerCase() !== extension) continue;
+        if (basename(entry, extname(entry)).normalize('NFC') !== name) continue;
+        const target = resolve(this.root, entry);
+        // The same guard `list` keeps, and kept for the same reason: correct
+        // only because of who calls it is correct until somebody else does.
+        if (target.startsWith(this.root + sep)) return target;
+      }
     }
     return null;
   }
