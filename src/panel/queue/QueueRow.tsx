@@ -40,6 +40,33 @@ interface Props {
   onPromote: () => void;
 }
 
+/**
+ * One stroke on a 12 px square, in whatever colour its button is.
+ *
+ * `aria-label` on the `svg` and not on the button, because the button already
+ * carries the same string as its `title`: what a screen reader needs is for the
+ * drawing to be a name rather than an unlabelled graphic.
+ */
+function Mark({ d, label }: { d: string; label: string }) {
+  return (
+    <svg
+      className={styles.mark}
+      viewBox="0 0 12 12"
+      width="12"
+      height="12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      role="img"
+      aria-label={label}
+    >
+      <path d={d} />
+    </svg>
+  );
+}
+
 /** Seconds as `1:04`, because a queue is read as a running time. */
 export const clock = (seconds: number): string => {
   const whole = Math.max(0, Math.round(seconds));
@@ -184,12 +211,23 @@ export function QueueRow({
         ) : null}
       </div>
 
+      {/*
+        Three marks rather than two glyphs and a word.
+
+        The column used to read `↑↑`, 編集 (edit), `✕` — an arrow borrowed from
+        the arrow block, a label, and a multiplication sign, at three different
+        optical weights, in a stack twenty pixels wide. Drawn instead, on the
+        same hairline the rest of the panel is ruled with, so the three read as
+        one control column and none of them depends on which font the stack
+        happened to fall through to. What each does is on its `title` and its
+        `aria-label`, which is where it was already.
+      */}
       <div className={styles.actions}>
         <button type="button" onClick={onPromote} title={t('panel.row.promote')}>
-          ↑↑
+          <Mark d="M3 2.5h6M6 10.5V5M3.5 7.5 6 5l2.5 2.5" label={t('panel.row.promote')} />
         </button>
         <button type="button" onClick={onEdit} title={t('panel.row.edit')}>
-          {t('panel.row.edit')}
+          <Mark d="M8.5 1.5l2 2-6.5 6.5-2.5.5.5-2.5z" label={t('panel.row.edit')} />
         </button>
         <button
           type="button"
@@ -197,7 +235,7 @@ export function QueueRow({
           title={t('panel.row.remove')}
           className={styles.remove}
         >
-          ✕
+          <Mark d="M3 3l6 6M9 3l-6 6" label={t('panel.row.remove')} />
         </button>
       </div>
     </li>
