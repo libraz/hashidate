@@ -102,7 +102,12 @@ export interface StageFrame {
   /** The character's picture: the WebGL canvas, and where it sits. */
   avatar: { canvas: HTMLCanvasElement; rect: Rect };
   /** The document layer, or null when none is up. See `SlideStage.layers`. */
-  slides: { rect: Rect; canvases: Array<{ canvas: HTMLCanvasElement; opacity: number }> } | null;
+  slides: {
+    rect: Rect;
+    canvases: Array<{ canvas: HTMLCanvasElement; opacity: number }>;
+    /** Moves when a page is painted, so a held composite knows it is stale. */
+    revision: number;
+  } | null;
   /**
    * What fills the frame under both layers, as a CSS colour.
    *

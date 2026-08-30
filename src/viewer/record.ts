@@ -106,13 +106,163 @@ export function place(rect: Rect, fit: Fit): Rect {
 }
 
 /**
+ * Draw the document layer at its rectangle.
+ *
+ * Split out so that `SlideComposite` can run the identical call into a canvas
+ * of its own. That is what makes a cached frame and an uncached one the same
+ * pixels rather than merely similar ones, and it is the reason this is one
+ * function instead of two that would have to be kept in step by hand.
+ */
+function drawSlides(
+  ctx: CanvasRenderingContext2D,
+  slides: NonNullable<StageFrame['slides']>,
+  rect: Rect,
+): void {
+  // Opaque, so a page that does not fill its rectangle letterboxes against
+  // black rather than against the page colour. The same thing the layer's own
+  // element does; see `SlideStage`.
+  ctx.fillStyle = '#000';
+  ctx.fillRect(rect.left, rect.top, rect.width, rect.height);
+  for (const layer of slides.canvases) {
+    if (layer.opacity <= 0 || layer.canvas.width === 0 || layer.canvas.height === 0) continue;
+    ctx.globalAlpha = layer.opacity;
+    ctx.drawImage(layer.canvas, rect.left, rect.top, rect.width, rect.height);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/**
+ * The document layer, composited once and kept until it changes.
+ *
+ * A page is a still picture for as long as it is up, but `compose` runs on
+ * every frame: at 60fps a page held for thirty seconds is the same scale-and-
+ * blit eighteen hundred times, over the largest rectangle in the frame and
+ * through the most expensive interpolation the context has. Held here instead,
+ * an unchanged page costs one flat copy — which is the difference between
+ * meeting the rate that was asked for and recording at fifty while the file
+ * says sixty.
+ *
+ * It is invalidated by everything that changes what the layer looks like: the
+ * page (`revision`, moved by `SlideStage.paint`), the crossfade (`opacity`,
+ * which moves for the length of a page turn — so a turn costs exactly what it
+ * always did), the rectangle, and the output size. Nothing else can change it;
+ * the canvases themselves are two fixed elements that are redrawn in place,
+ * which is why `revision` has to exist rather than comparing references.
+ */
+export class SlideComposite {
+  private canvas: HTMLCanvasElement | null = null;
+  private ctx: CanvasRenderingContext2D | null = null;
+  private key: string | null = null;
+  private size: StageSize = { width: 0, height: 0 };
+  private readonly create: () => HTMLCanvasElement;
+
+  /** Injected so a test can hold a composite without a rasteriser. */
+  constructor(create: () => HTMLCanvasElement = () => document.createElement('canvas')) {
+    this.create = create;
+  }
+
+  /**
+   * Put the layer into `target`, rebuilding the held copy only when it moved.
+   *
+   * Falls back to drawing straight into `target` when a second canvas cannot be
+   * had — a context that will not allocate is a reason to record unaccelerated,
+   * never a reason to drop the document out of the frame.
+   */
+  draw(
+    target: CanvasRenderingContext2D,
+    slides: NonNullable<StageFrame['slides']>,
+    rect: Rect,
+    out: StageSize,
+  ): void {
+    const key = signature(slides, rect, out);
+    if (this.canvas === null || this.key !== key) {
+      if (!this.rebuild(slides, rect, out, key)) {
+        drawSlides(target, slides, rect);
+        return;
+      }
+    }
+    if (this.canvas === null) return;
+    target.globalAlpha = 1;
+    target.drawImage(this.canvas, 0, 0);
+  }
+
+  /** Release the held canvas. A take is over; the next one may be a new size. */
+  dispose(): void {
+    this.canvas = null;
+    this.ctx = null;
+    this.key = null;
+    this.size = { width: 0, height: 0 };
+  }
+
+  private rebuild(
+    slides: NonNullable<StageFrame['slides']>,
+    rect: Rect,
+    out: StageSize,
+    key: string,
+  ): boolean {
+    if (this.canvas === null || this.size.width !== out.width || this.size.height !== out.height) {
+      let canvas: HTMLCanvasElement;
+      try {
+        canvas = this.create();
+      } catch {
+        return false;
+      }
+      canvas.width = out.width;
+      canvas.height = out.height;
+      // Alpha, unlike the frame this is copied into: outside the rectangle the
+      // page colour underneath has to survive. Source-over composes the same
+      // either way, so the copy lands on the background exactly as a direct
+      // draw would have.
+      const ctx = canvas.getContext('2d');
+      if (ctx === null) return false;
+      this.canvas = canvas;
+      this.ctx = ctx;
+      this.size = { width: out.width, height: out.height };
+    }
+    const ctx = this.ctx;
+    if (ctx === null) return false;
+    // The same interpolation the recording canvas is set to. A page scaled at a
+    // different quality here would be a cache that changes the picture.
+    ctx.imageSmoothingQuality = 'high';
+    ctx.clearRect(0, 0, this.size.width, this.size.height);
+    drawSlides(ctx, slides, rect);
+    this.key = key;
+    return true;
+  }
+}
+
+/** Everything about the layer that a frame can see. See `SlideComposite`. */
+function signature(slides: NonNullable<StageFrame['slides']>, rect: Rect, out: StageSize): string {
+  const opacity = slides.canvases.map((layer) => layer.opacity).join(',');
+  return [
+    slides.revision,
+    rect.left,
+    rect.top,
+    rect.width,
+    rect.height,
+    out.width,
+    out.height,
+    opacity,
+  ].join('|');
+}
+
+/**
  * Draw one frame of the stage into a 2D context of the given size.
  *
  * The order is the browser's own: the page colour, then the document layer at
  * its rectangle, then the character over it. Nothing here decides where
  * anything goes — see the module docstring.
+ *
+ * `slideCache` is optional because the frame it produces does not depend on it:
+ * with one the document layer is copied from a held composite, without one it
+ * is drawn directly, and both paths run `drawSlides`.
  */
-export function compose(ctx: CanvasRenderingContext2D, frame: StageFrame, out: StageSize): boolean {
+export function compose(
+  ctx: CanvasRenderingContext2D,
+  frame: StageFrame,
+  out: StageSize,
+  slideCache?: SlideComposite,
+): boolean {
   const fit = fitStage(frame.stage, out);
   if (fit.scale <= 0) return false;
 
@@ -130,17 +280,8 @@ export function compose(ctx: CanvasRenderingContext2D, frame: StageFrame, out: S
 
   if (frame.slides !== null) {
     const rect = place(frame.slides.rect, fit);
-    // Opaque, so a page that does not fill its rectangle letterboxes against
-    // black rather than against the page colour. The same thing the layer's own
-    // element does; see `SlideStage`.
-    ctx.fillStyle = '#000';
-    ctx.fillRect(rect.left, rect.top, rect.width, rect.height);
-    for (const layer of frame.slides.canvases) {
-      if (layer.opacity <= 0 || layer.canvas.width === 0 || layer.canvas.height === 0) continue;
-      ctx.globalAlpha = layer.opacity;
-      ctx.drawImage(layer.canvas, rect.left, rect.top, rect.width, rect.height);
-    }
-    ctx.globalAlpha = 1;
+    if (slideCache) slideCache.draw(ctx, frame.slides, rect, out);
+    else drawSlides(ctx, frame.slides, rect);
   }
 
   const avatar = place(frame.avatar.rect, fit);
@@ -194,6 +335,8 @@ export class StageRecorder {
   private unsubscribe: (() => void) | null = null;
   private session: string | null = null;
   private out: StageSize = { width: 0, height: 0 };
+  /** The document layer, held between frames. See `SlideComposite`. */
+  private readonly slideCache = new SlideComposite();
   /** Uploads are chained so the server appends them in the order they were made. */
   private uploads: Promise<void> = Promise.resolve();
   /** The last problem, for the renderer's own report. Cleared by a new take. */
@@ -236,7 +379,10 @@ export class StageRecorder {
     const canvas = document.createElement('canvas');
     canvas.width = request.width;
     canvas.height = request.height;
-    const ctx = canvas.getContext('2d', { alpha: false });
+    // `desynchronized` takes the low-latency compositing path. Nothing about the
+    // frame changes; what it buys is that composing the next one is not waiting
+    // on the page's own presentation.
+    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
     if (ctx === null) {
       this.failure = 'no 2d context for the recording canvas';
       return;
@@ -278,7 +424,7 @@ export class StageRecorder {
     };
 
     this.unsubscribe = this.onFrame((frame) => {
-      if (this.ctx !== null) compose(this.ctx, frame, this.out);
+      if (this.ctx !== null) compose(this.ctx, frame, this.out, this.slideCache);
     });
     recorder.start(CHUNK_MS);
   }
@@ -291,6 +437,7 @@ export class StageRecorder {
     this.recorder = null;
     this.session = null;
     this.ctx = null;
+    this.slideCache.dispose();
     if (recorder !== null && recorder.state !== 'inactive') recorder.stop();
     await this.uploads;
   }

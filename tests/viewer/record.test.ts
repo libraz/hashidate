@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CANDIDATES, compose, fitStage, pickMime, place } from '@/viewer/record';
+import { CANDIDATES, compose, fitStage, pickMime, place, SlideComposite } from '@/viewer/record';
 import type { Rect } from '@/viewer/scene/placement';
 import type { StageFrame } from '@/viewer/scene/runtime';
 
@@ -43,11 +43,39 @@ function recorder() {
     fillRect(x: number, y: number, w: number, h: number) {
       calls.push(`fill ${ctx.fillStyle} ${round(x)},${round(y)} ${round(w)}x${round(h)}`);
     },
-    drawImage(_image: unknown, x: number, y: number, w: number, h: number) {
-      calls.push(`draw @${ctx.globalAlpha} ${round(x)},${round(y)} ${round(w)}x${round(h)}`);
+    clearRect() {
+      /* the held composite starts each rebuild from nothing */
+    },
+    drawImage(_image: unknown, x: number, y: number, w?: number, h?: number) {
+      // Three arguments is the flat copy of a held composite; five is a scale.
+      if (w === undefined || h === undefined) calls.push(`copy ${round(x)},${round(y)}`);
+      else calls.push(`draw @${ctx.globalAlpha} ${round(x)},${round(y)} ${round(w)}x${round(h)}`);
     },
   };
   return { ctx: ctx as unknown as CanvasRenderingContext2D, calls };
+}
+
+/** A document layer, with the two canvases `SlideStage` keeps and repaints. */
+function slides(
+  over: Partial<NonNullable<StageFrame['slides']>> = {},
+): NonNullable<StageFrame['slides']> {
+  return {
+    rect: { left: 0, top: 0, width: 1280, height: 720 },
+    canvases: [
+      { canvas: canvas(), opacity: 1 },
+      { canvas: canvas(), opacity: 0 },
+    ],
+    revision: 1,
+    ...over,
+  };
+}
+
+/** A canvas for `SlideComposite` to hold, recording what is drawn into it. */
+function composite() {
+  const held = recorder();
+  const create = (): HTMLCanvasElement =>
+    ({ width: 0, height: 0, getContext: () => held.ctx }) as unknown as HTMLCanvasElement;
+  return { held, create };
 }
 
 describe('pickMime', () => {
@@ -131,6 +159,7 @@ describe('compose', () => {
             { canvas: canvas(), opacity: 1 },
             { canvas: canvas(), opacity: 0 },
           ],
+          revision: 1,
         },
         avatar: { canvas: canvas(), rect: { left: 900, top: 300, width: 340, height: 400 } },
       }),
@@ -160,6 +189,7 @@ describe('compose', () => {
             { canvas: canvas(), opacity: 0.4 },
             { canvas: canvas(), opacity: 0.6 },
           ],
+          revision: 1,
         },
       }),
       OUT,
@@ -182,12 +212,103 @@ describe('compose', () => {
             { canvas: canvas(0, 0), opacity: 1 },
             { canvas: canvas(), opacity: 0 },
           ],
+          revision: 1,
         },
       }),
       OUT,
     );
     // Only the character.
     expect(calls.filter((c) => c.startsWith('draw'))).toEqual(['draw @1 0,0 1920x1080']);
+  });
+
+  it('composites the document layer once and copies it while nothing moves', () => {
+    // The page is a still picture for as long as it is up. What it must not cost
+    // is a rescale of the largest rectangle in the frame on every one of them.
+    const { held, create } = composite();
+    const cache = new SlideComposite(create);
+    const first = recorder();
+    compose(first.ctx, frame({ slides: slides() }), OUT, cache);
+    // Scaled into the held canvas, then copied flat into the frame.
+    expect(held.calls).toEqual(['fill #000 0,0 1920x1080', 'draw @1 0,0 1920x1080']);
+    expect(first.calls.filter((c) => c.startsWith('copy'))).toEqual(['copy 0,0']);
+
+    const second = recorder();
+    compose(second.ctx, frame({ slides: slides() }), OUT, cache);
+    // Nothing further was drawn into the held canvas; the frame took the copy.
+    expect(held.calls).toHaveLength(2);
+    expect(second.calls.filter((c) => c.startsWith('copy'))).toEqual(['copy 0,0']);
+  });
+
+  it('recomposites when the page changes, which references cannot tell it', () => {
+    // `SlideStage` repaints two fixed canvases in place, so identity says
+    // nothing about what is on them. `revision` is the only signal there is.
+    const { held, create } = composite();
+    const cache = new SlideComposite(create);
+    compose(recorder().ctx, frame({ slides: slides({ revision: 1 }) }), OUT, cache);
+    expect(held.calls).toHaveLength(2);
+
+    compose(recorder().ctx, frame({ slides: slides({ revision: 2 }) }), OUT, cache);
+    expect(held.calls).toHaveLength(4);
+  });
+
+  it('recomposites through a page turn, and settles once it lands', () => {
+    const { held, create } = composite();
+    const cache = new SlideComposite(create);
+    const turning = (a: number, b: number) =>
+      slides({
+        canvases: [
+          { canvas: canvas(), opacity: a },
+          { canvas: canvas(), opacity: b },
+        ],
+      });
+
+    compose(recorder().ctx, frame({ slides: turning(1, 0) }), OUT, cache);
+    const settled = held.calls.length;
+    compose(recorder().ctx, frame({ slides: turning(0.6, 0.4) }), OUT, cache);
+    expect(held.calls.length).toBeGreaterThan(settled);
+
+    // Landed: the same opacities twice running cost one composite, not two.
+    const midturn = held.calls.length;
+    compose(recorder().ctx, frame({ slides: turning(0, 1) }), OUT, cache);
+    const after = held.calls.length;
+    compose(recorder().ctx, frame({ slides: turning(0, 1) }), OUT, cache);
+    expect(held.calls.length).toBe(after);
+    expect(after).toBeGreaterThan(midturn);
+  });
+
+  it('draws the layer directly when no second canvas can be had', () => {
+    // A context that will not allocate is a reason to record unaccelerated,
+    // never a reason to drop the document out of the frame.
+    const cache = new SlideComposite(() => {
+      throw new Error('no canvas');
+    });
+    const { ctx, calls } = recorder();
+    compose(ctx, frame({ slides: slides() }), OUT, cache);
+    expect(calls).toEqual([
+      'fill #000 0,0 1920x1080',
+      'fill rgb(15, 17, 21) 0,0 1920x1080',
+      'fill #000 0,0 1920x1080',
+      'draw @1 0,0 1920x1080',
+      'draw @1 0,0 1920x1080',
+    ]);
+  });
+
+  it('puts the same pixels in the frame whether or not it is holding them', () => {
+    const direct = recorder();
+    compose(direct.ctx, frame({ slides: slides() }), OUT);
+
+    const { held, create } = composite();
+    const cached = recorder();
+    compose(cached.ctx, frame({ slides: slides() }), OUT, new SlideComposite(create));
+
+    // The held canvas received exactly the draws the direct frame made for the
+    // document layer, and the frame received them as one copy in their place.
+    expect(held.calls).toEqual(direct.calls.slice(2, 4));
+    expect(cached.calls).toEqual([
+      ...direct.calls.slice(0, 2),
+      'copy 0,0',
+      ...direct.calls.slice(4),
+    ]);
   });
 
   it('leaves the letterbox black on a transparent source, which has no colour', () => {

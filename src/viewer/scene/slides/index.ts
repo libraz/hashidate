@@ -72,6 +72,15 @@ export class SlideStage implements Slides {
   private readonly layer: HTMLDivElement;
   /** The two crossfading canvases. `front` says which one is showing. */
   private readonly canvases: [HTMLCanvasElement, HTMLCanvasElement];
+  /**
+   * How many pages have been painted, for anything holding a copy of the layer.
+   *
+   * The two canvases above are made once and repainted in place, so their
+   * identity says nothing about what is on them — a recorder comparing
+   * references would keep showing the page before this one. This moves whenever
+   * `paint` puts something new up, which is the only way the picture changes.
+   */
+  private revision = 0;
   private front = 0;
   private readonly open: (url: string) => Promise<DeckSource>;
   private readonly url: (id: string) => string;
@@ -182,7 +191,11 @@ export class SlideStage implements Slides {
    * — and a recording that took the first would cut every page turn into a jump
    * while the picture on screen dissolved.
    */
-  layers(): { rect: Rect; canvases: Array<{ canvas: HTMLCanvasElement; opacity: number }> } | null {
+  layers(): {
+    rect: Rect;
+    canvases: Array<{ canvas: HTMLCanvasElement; opacity: number }>;
+    revision: number;
+  } | null {
     if (!this.up) return null;
     return {
       rect: this.rect,
@@ -190,6 +203,7 @@ export class SlideStage implements Slides {
         canvas,
         opacity: Number.parseFloat(getComputedStyle(canvas).opacity) || 0,
       })),
+      revision: this.revision,
     };
   }
 
@@ -409,6 +423,7 @@ export class SlideStage implements Slides {
     this.canvases[this.front].style.opacity = '0';
     back.style.opacity = '1';
     this.front = 1 - this.front;
+    this.revision += 1;
   }
 
   /**
