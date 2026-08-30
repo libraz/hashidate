@@ -72,9 +72,12 @@ export function DressTab({ loaded }: { loaded: LoadedAvatar }) {
                   }}
                 />
               ))}
+              {/* A state and not an action, on the same reading as the panel's
+                  wardrobe: an empty slot is one of the things the slot can be,
+                  and the action variant's transparent fill was overriding the
+                  selection tint on the one chip in the row that was chosen. */}
               <Chip
                 label={t('console.none')}
-                variant="action"
                 state={wardrobe.state[slot] === null ? 'on' : 'off'}
                 onClick={() => {
                   wardrobe.set(slot, null);

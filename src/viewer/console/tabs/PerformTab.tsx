@@ -157,6 +157,14 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
               onClick={() => setMood(name)}
             />
           ))}
+        </ChipRow>
+        {/* An action is never a member of the list it acts on: appended to the
+            wrap above it lands wherever the last mood left room and reads as
+            one more mood. Its own row, which is what the section above and the
+            gestures below already do. The blend switch is out for the same
+            reason — it changes how the section works rather than naming a
+            mood. The panel's own performance tab follows the same rule. */}
+        <ChipRow>
           <Chip label={t('console.release')} variant="action" onClick={rest} />
           <Chip
             label={t('console.perform.emotion.blend')}
@@ -203,6 +211,8 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
                 }
               />
             ))}
+          </ChipRow>
+          <ChipRow>
             <Chip label={t('console.release')} variant="action" onClick={rest} />
           </ChipRow>
         </Section>
@@ -224,6 +234,8 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
                 onClick={() => session.setOverlay(o.id, (state?.overlays?.[o.id] ?? 0) > 0 ? 0 : 1)}
               />
             ))}
+          </ChipRow>
+          <ChipRow>
             <Chip label={t('console.releaseAll')} variant="action" onClick={rest} />
           </ChipRow>
         </Section>

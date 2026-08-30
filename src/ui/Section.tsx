@@ -6,6 +6,16 @@ interface Props {
   title: string;
   /** A short count or state, shown in monospace beside the title. */
   meta?: string;
+  /**
+   * One control that acts on the whole section rather than on anything in it —
+   * a rescan of the directory the list below was read from.
+   *
+   * It belongs here and not at the end of that list. Appended to a wrap of
+   * chips it lands wherever the last one left room, and reads as one more thing
+   * to press: another script, another document, another track. Beside the
+   * title it reads as what it is.
+   */
+  action?: ReactNode;
   /** Long-form explanation, hidden behind the info toggle. One string per paragraph. */
   note?: string[];
   children: ReactNode;
@@ -18,7 +28,7 @@ interface Props {
  * the title row carries only the title and a short state readout; anything that
  * needs a sentence lives behind the info toggle.
  */
-export function Section({ title, meta, note, children }: Props) {
+export function Section({ title, meta, action, note, children }: Props) {
   const [open, setOpen] = useState(false);
   const noteId = useId();
   const { t } = useT();
@@ -28,6 +38,7 @@ export function Section({ title, meta, note, children }: Props) {
       <div className={styles.head}>
         <h2 className={styles.title}>{title}</h2>
         {meta ? <span className={styles.meta}>{meta}</span> : <span className={styles.meta} />}
+        {action ? <div className={styles.action}>{action}</div> : null}
         {note?.length ? (
           <button
             type="button"

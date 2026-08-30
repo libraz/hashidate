@@ -119,12 +119,24 @@ export function ScriptPicker({ entries, refresh }: Props) {
     <section className={styles.picker} aria-label={t('panel.script.aria')}>
       <div className={styles.head}>
         <span className={styles.title}>{t('panel.script.title')}</span>
-        <Toggle
-          label={t('panel.script.hold')}
-          checked={hold}
-          onChange={setHold}
-          title={t('panel.script.hold.title')}
+        {/* Beside the title rather than at the end of the roster below: it acts
+            on the directory and not on a script, and appended to that wrap it
+            landed wherever the last script left room and read as one more
+            script to press. */}
+        <Chip
+          label={t('panel.script.rescan')}
+          variant="action"
+          title={t('panel.script.rescan.title')}
+          onClick={() => void rescan()}
         />
+        <div className={styles.setting}>
+          <Toggle
+            label={t('panel.script.hold')}
+            checked={hold}
+            onChange={setHold}
+            title={t('panel.script.hold.title')}
+          />
+        </div>
       </div>
 
       <ChipRow>
@@ -141,12 +153,6 @@ export function ScriptPicker({ entries, refresh }: Props) {
             onClick={() => void load(script)}
           />
         ))}
-        <Chip
-          label={t('panel.script.rescan')}
-          variant="action"
-          title={t('panel.script.rescan.title')}
-          onClick={() => void rescan()}
-        />
       </ChipRow>
 
       {/* Only for what a load would actually lose — see `handmade`. A chip does

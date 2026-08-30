@@ -187,6 +187,19 @@ export function PerformTab({ snapshot, refresh }: Props) {
               onClick={() => run(setEmotion({ [mood.id as EmotionName]: 1 }))}
             />
           ))}
+        </ChipRow>
+        {/*
+          An action is never a member of the list it acts on.
+
+          Appended to the same wrap, the clear landed at whatever position the
+          eighth mood happened to leave free, and read as a ninth mood — worst
+          in the sections below, where it comes after twenty-nine expressions
+          and the operator is scanning for a name. Its own row, which is what
+          the section above and the gestures below already do. The mixer is out
+          for the same reason: it switches how this section works rather than
+          naming a mood.
+        */}
+        <ChipRow>
           <Chip
             label={t('panel.perform.release')}
             variant="action"
@@ -234,6 +247,8 @@ export function PerformTab({ snapshot, refresh }: Props) {
                 }
               />
             ))}
+          </ChipRow>
+          <ChipRow>
             <Chip
               label={t('panel.perform.release')}
               variant="action"
@@ -262,6 +277,8 @@ export function PerformTab({ snapshot, refresh }: Props) {
                 />
               );
             })}
+          </ChipRow>
+          <ChipRow>
             <Chip
               label={t('panel.perform.releaseAll')}
               variant="action"

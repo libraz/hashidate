@@ -72,9 +72,13 @@ export function DressTab({ snapshot, refresh }: { snapshot: Snapshot; refresh: (
                   onClick={() => run(wear(slot, item.id))}
                 />
               ))}
+              {/* A state and not an action: an empty slot is one of the things
+                  the slot can be, and it is picked the same way the garments
+                  are. As an action it took the action variant's transparent
+                  fill over the selection tint, so the one chip in the row that
+                  was chosen was the one drawn as though it were not. */}
               <Chip
                 label={t('panel.dress.bare')}
-                variant="action"
                 state={worn[slot] === null ? 'on' : 'off'}
                 onClick={() => run(wear(slot, null))}
               />

@@ -311,12 +311,24 @@ export function SlidesTab({ snapshot, refresh }: Props) {
       <Section
         title={t('panel.slides.title')}
         meta={up ?? t('panel.slides.none')}
+        action={
+          <Chip
+            label={t('panel.slides.rescan')}
+            variant="action"
+            title={t('panel.slides.rescan.title')}
+            onClick={() => void readDecks().then(refresh)}
+          />
+        }
         note={[t('panel.slides.title.note1'), t('panel.slides.title.note2')]}
       >
         <ChipRow>
+          {/* A state and not an action: no document up is one of the things the
+              layer can be showing, and it is picked the same way a document is.
+              As an action it took that variant's transparent fill over the
+              selection tint, so the chip that was chosen was the one drawn as
+              though it were not. */}
           <Chip
             label={t('panel.slides.none')}
-            variant="action"
             state={up === null ? 'on' : 'off'}
             title={t('panel.slides.none.title')}
             onClick={() => void deck(null)}
@@ -331,12 +343,6 @@ export function SlidesTab({ snapshot, refresh }: Props) {
               onClick={() => void deck(item.id)}
             />
           ))}
-          <Chip
-            label={t('panel.slides.rescan')}
-            variant="action"
-            title={t('panel.slides.rescan.title')}
-            onClick={() => void readDecks().then(refresh)}
-          />
         </ChipRow>
         {decks.length === 0 ? <p className={styles.empty}>{t('panel.slides.empty')}</p> : null}
       </Section>

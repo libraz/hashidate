@@ -246,6 +246,15 @@ export function BgmTab({ snapshot, refresh }: Props) {
       <Section
         title={t('panel.bgm.title')}
         meta={t(statusKey)}
+        action={
+          <Chip
+            label={t('panel.bgm.rescan')}
+            variant="action"
+            title={t('panel.bgm.rescan.title')}
+            disabled={rescanBusy}
+            onClick={() => void rescan()}
+          />
+        }
         note={[t('panel.bgm.note1'), t('panel.bgm.note2')]}
       >
         <ChipRow>
@@ -263,13 +272,6 @@ export function BgmTab({ snapshot, refresh }: Props) {
               }}
             />
           ))}
-          <Chip
-            label={t('panel.bgm.rescan')}
-            variant="action"
-            title={t('panel.bgm.rescan.title')}
-            disabled={rescanBusy}
-            onClick={() => void rescan()}
-          />
         </ChipRow>
         {tracks.length === 0 ? <p className={styles.empty}>{t('panel.bgm.empty')}</p> : null}
         {trackId !== null && selected === undefined ? (
@@ -278,7 +280,11 @@ export function BgmTab({ snapshot, refresh }: Props) {
         {notice !== null ? <p className={styles.error}>{notice}</p> : null}
       </Section>
 
-      <Section title={t('panel.bgm.selected')} meta={`${position} / ${duration}`}>
+      {/* No `meta`: the elapsed and the length are on the first row of the body,
+          beside the track they belong to and in the size they are read at. The
+          section head carried the same pair, which put the figure twice on one
+          screen and left the operator checking which of the two was moving. */}
+      <Section title={t('panel.bgm.selected')}>
         <div className={styles.selected}>
           <div className={styles.selectedName}>
             <strong>{selected?.label ?? (trackId === null ? t('panel.bgm.none') : trackId)}</strong>

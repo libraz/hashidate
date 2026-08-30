@@ -32,6 +32,14 @@
   text-overflow: ellipsis;
 }
 
+/* Between the readout and the explanation toggle, so the head reads title,
+   state, act on it, explain it. `align-items: baseline` on the row would sit a
+   chip's text on the title's baseline and its box a few pixels low. */
+.action {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
 /*
  * The explanation toggle.
  *

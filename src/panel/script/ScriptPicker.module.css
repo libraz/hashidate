@@ -18,15 +18,19 @@
 }
 
 /*
- * Title on the left, the one setting that changes what a chip does on the
- * right. It is on the same line rather than under the chips because it has to
- * be read *before* one is pressed, and nothing below a row of buttons is.
+ * Title and the rescan on the left, the one setting that changes what a chip
+ * does on the right. The setting is on this line rather than under the chips
+ * because it has to be read *before* one is pressed, and nothing below a row of
+ * buttons is.
  */
 .head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-4);
+}
+
+.setting {
+  margin-left: auto;
 }
 
 .title {
