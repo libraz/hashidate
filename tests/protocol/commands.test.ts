@@ -147,7 +147,11 @@ const SWITCH_CASES: Record<CommandName, Command[]> = {
   bgm: [
     { cmd: 'bgm' },
     { cmd: 'bgm', action: 'play', track: 'opening.mp3', volume: 0.2, loop: true },
-    { cmd: 'bgm', dsp: { toneDb: 1, reverb: { mix: 0.35, decay: 0.7, damping: 0.4 } } },
+    {
+      cmd: 'bgm',
+      dsp: { toneDb: 1, reverb: { mix: 0.35, decay: 0.7, damping: 0.4 } },
+      fade: { inSeconds: 0.25 },
+    },
     {
       cmd: 'bgm',
       action: 'pause',
@@ -257,6 +261,24 @@ describe('parseCommand degrading rather than throwing', () => {
     expect(bgmCommandSchema.safeParse({ cmd: 'bgm', dsp: { toneDb: -6, width: 2 } }).success).toBe(
       true,
     );
+  });
+
+  it('bounds crossfade patches and accepts zero for a hard switch', () => {
+    expect(
+      bgmCommandSchema.safeParse({ cmd: 'bgm', fade: { inSeconds: 0, outSeconds: 10 } }).success,
+    ).toBe(true);
+    for (const value of [-0.001, 10.001, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(bgmCommandSchema.safeParse({ cmd: 'bgm', fade: { inSeconds: value } }).success).toBe(
+        false,
+      );
+      expect(bgmCommandSchema.safeParse({ cmd: 'bgm', fade: { outSeconds: value } }).success).toBe(
+        false,
+      );
+    }
+    expect(
+      bgmCommandSchema.safeParse({ cmd: 'bgm', fade: { inSeconds: 1, curve: 'equal-power' } })
+        .success,
+    ).toBe(false);
   });
 });
 

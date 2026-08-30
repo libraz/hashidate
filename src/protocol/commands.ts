@@ -926,6 +926,53 @@ export const BGM_DEFAULTS = { volume: 0.2, loop: true } as const;
 export const BGM_DEFAULT_VOLUME = BGM_DEFAULTS.volume;
 export const BGM_DEFAULT_LOOP = BGM_DEFAULTS.loop;
 
+/** Crossfade durations are deliberately short and bounded for live control. */
+export const BGM_FADE_LIMITS = {
+  inSeconds: { min: 0, max: 10 },
+  outSeconds: { min: 0, max: 10 },
+} as const;
+export const BGM_FADE_DEFAULTS = { inSeconds: 1, outSeconds: 1 } as const;
+export const BGM_FADE_DEFAULT_IN_SECONDS = BGM_FADE_DEFAULTS.inSeconds;
+export const BGM_FADE_DEFAULT_OUT_SECONDS = BGM_FADE_DEFAULTS.outSeconds;
+
+/** Fully resolved crossfade settings kept by the server and sent to viewers. */
+export const bgmFadeSchema = z
+  .object({
+    inSeconds: z
+      .number()
+      .finite()
+      .min(BGM_FADE_LIMITS.inSeconds.min)
+      .max(BGM_FADE_LIMITS.inSeconds.max),
+    outSeconds: z
+      .number()
+      .finite()
+      .min(BGM_FADE_LIMITS.outSeconds.min)
+      .max(BGM_FADE_LIMITS.outSeconds.max),
+  })
+  .strict();
+
+export type BgmFade = z.infer<typeof bgmFadeSchema>;
+
+/** Partial crossfade settings; absent fields retain their server-side values. */
+export const bgmFadePatchSchema = z
+  .object({
+    inSeconds: z
+      .number()
+      .finite()
+      .min(BGM_FADE_LIMITS.inSeconds.min)
+      .max(BGM_FADE_LIMITS.inSeconds.max)
+      .optional(),
+    outSeconds: z
+      .number()
+      .finite()
+      .min(BGM_FADE_LIMITS.outSeconds.min)
+      .max(BGM_FADE_LIMITS.outSeconds.max)
+      .optional(),
+  })
+  .strict();
+
+export type BgmFadePatch = z.infer<typeof bgmFadePatchSchema>;
+
 export type BgmAction = z.infer<typeof bgmActionSchema>;
 
 /** The transport state that is synchronised to every renderer. */
@@ -1000,6 +1047,8 @@ export const bgmCommandSchema = z.object({
   loop: z.boolean().optional(),
   /** A partial libsonare Mixer DSP patch; omitted leaves the active chain unchanged. */
   dsp: bgmDspPatchSchema.optional(),
+  /** Partial crossfade durations; omitted leaves the active transition policy unchanged. */
+  fade: bgmFadePatchSchema.optional(),
   revision: z.number().int().nonnegative().optional(),
   transport: bgmTransportSchema.optional(),
   position: z.number().finite().min(0).optional(),

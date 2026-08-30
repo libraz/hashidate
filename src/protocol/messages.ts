@@ -15,7 +15,9 @@ import type {
 import type { Localized } from '../i18n/locale';
 import {
   type Assert,
+  BGM_FADE_DEFAULTS,
   bgmDspSchema,
+  bgmFadeSchema,
   bgmTransportSchema,
   cameraFrameSchema,
   commandSchema,
@@ -294,6 +296,8 @@ export const bgmStateSchema = z.object({
   loop: z.boolean(),
   /** The server-owned libsonare DSP patch for the BGM stream. */
   dsp: bgmDspSchema,
+  /** Resolved crossfade durations used for future track transitions. */
+  fade: bgmFadeSchema.default(() => ({ ...BGM_FADE_DEFAULTS })),
   transport: bgmTransportSchema,
   position: z.number().finite().nonnegative(),
   revision: z.number().int().nonnegative(),

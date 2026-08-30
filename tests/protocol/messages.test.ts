@@ -318,6 +318,7 @@ describe('BGM reports and state', () => {
         width: 1,
         reverb: { mix: 0.35, decay: 0.7, damping: 0.4 },
       },
+      fade: { inSeconds: 1.5, outSeconds: 0.75 },
       transport: 'playing',
       position: 2.5,
       revision: 9,
@@ -330,7 +331,7 @@ describe('BGM reports and state', () => {
     expect(bgmStateSchema.parse(state)).toEqual(state);
   });
 
-  it('defaults the state degradation flag for older snapshots', () => {
+  it('defaults fade settings and the degradation flag for older snapshots', () => {
     const state = {
       track: null,
       volume: 0.2,
@@ -344,7 +345,10 @@ describe('BGM reports and state', () => {
       blocked: false,
       error: null,
     };
-    expect(bgmStateSchema.parse(state).dspDegraded).toBe(false);
+    expect(bgmStateSchema.parse(state)).toMatchObject({
+      fade: { inSeconds: 1, outSeconds: 1 },
+      dspDegraded: false,
+    });
   });
 
   it('rejects normalized DSP controls outside their range', () => {
