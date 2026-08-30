@@ -10,9 +10,9 @@ An avatar runtime for an AI VTuber: a browser-rendered character that something 
 [![MCP](https://img.shields.io/badge/MCP-8%20tools-1a6873)](docs/en/mcp.md)
 [![docs](https://img.shields.io/badge/docs-guides-b5892e)](docs/en/introduction.md)
 
-![The broadcast panel saying three queued lines](docs/images/panel.webp)
+![The broadcast panel running a loaded script](docs/images/panel.webp)
 
-Three lines put on the queue, said one after another, each with a performance on it. The panel on the right is driving the same control API an orchestrator would.
+A script loaded on the queue: one line on air, nineteen waiting, each with a performance on it. The panel is driving the same control API an orchestrator would.
 
 ## It depends on no model
 
@@ -48,17 +48,9 @@ A clone of this repository is the runtime and nothing else. Two of the things it
 | **A voice** | Not required to run, required in practice: a VTuber that never makes a sound is a test fixture. Needs `uv` and Python 3.11, and several GB of PyTorch come with it. The recordings it clones a voice from are of a real person and are **not included** either — bring your own. |
 | Blender, OBS | Only to convert a model, and only to put the result on a stream. |
 
-Setting the voice up is putting a minute or two of WAV clips in `tools/tts/reference/clips/`, which ships empty for the purpose, and running one command:
+Setting the voice up is putting a minute or two of WAV clips in `tools/tts/reference/clips/`, which ships empty for the purpose, and running `make voice` once. Without one everything still runs: the line is mouthed silently on the timing the text implies, which is what the tests do. It is worth knowing that this works, and it is not what you want on a stream.
 
-```sh
-make voice
-```
-
-That builds the Python environment if there is not one, inspects the clips, and encodes them into what the sidecar loads at startup.
-
-Without a voice everything still runs: the line is mouthed silently on the timing the text implies, which is what the tests do. It is worth knowing that this works, and it is not what you want on a stream.
-
-The voice is swappable for the same reason the model is. The renderer asks its own origin for audio and the server proxies to a UNIX socket, so anything that answers `POST /speak` with `{ text, reading? }` → WAV and `GET /health` can stand in — `HASHIDATE_TTS_SOCKET` moves the target, and `HASHIDATE_TTS_PORT` points it at a stand-in that speaks over a port instead. See [Speech](docs/en/speech.md).
+The voice is swappable for the same reason the model is — anything that answers `POST /speak` → WAV can stand in for the sidecar. See [Speech](docs/en/speech.md).
 
 The details, and what a first run looks like: [Getting started](docs/en/getting-started.md).
 
@@ -70,7 +62,7 @@ yarn install
 make dev
 ```
 
-The viewer comes up on `127.0.0.1:5173`, the control API on `127.0.0.1:8765` and the speech sidecar — if its environment has been built — on a socket at `tools/tts/.run/speech.sock`. `yarn dev` starts the first two alone.
+The viewer comes up on `127.0.0.1:5173`, the control API on `127.0.0.1:8765` and the speech sidecar — if its environment has been built — on a socket at `tools/tts/.run/speech.sock`. `yarn dev` starts the first two alone, and `yarn shell` opens the panel and the stage as native windows with all three underneath.
 
 Drive it from another terminal:
 
@@ -102,15 +94,13 @@ Under it: [Architecture](docs/en/architecture.md), [Avatars](docs/en/avatars.md)
 
 ## Non-goals
 
-hashidate renders and animates a character; it is not the VTuber. It has no language model, no speech recognition and no stream output, and the orchestrator that decides what to say lives outside this repository.
-
-Speech is the one thing that crossed the line, and only as far as `tools/tts/`: a sidecar reached over HTTP and never imported. The engine holds no audio code either — it states what a spoken line is and the viewer, which has the `AudioContext`, provides one.
+hashidate renders and animates a character; it is not the VTuber. It has no language model, no speech recognition and no stream output, and the orchestrator that decides what to say lives outside this repository. Speech is the one thing that crossed the line, and only as far as `tools/tts/`: a sidecar reached over HTTP and never imported.
 
 It is also deliberately loopback-only. There is no `--host` flag, no CORS header and no tunnel, because the avatars used for validation may not be republished: exposing the renderer would be a licensing decision before it was a code change.
 
 The model data does not leave that loop. The browser reads it from `127.0.0.1` and draws it; nothing in the runtime copies it, uploads it or learns from it.
 
-The engine is a runtime, not an editor. Rigging, weighting and garment authoring happen in Blender, and `tools/blender` is the seam between the two.
+The engine is a runtime, not an editor: rigging, weighting and garment authoring happen in Blender, and `tools/blender` is the seam between the two.
 
 ## Development
 

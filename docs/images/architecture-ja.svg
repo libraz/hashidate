@@ -79,8 +79,8 @@
   <line class="rule" x1="479" y1="158" x2="621" y2="158"/>
   <text class="s" x="550" y="180" text-anchor="middle">発話のキュー</text>
   <text class="s" x="550" y="200" text-anchor="middle">常設状態</text>
-  <text class="s" x="550" y="220" text-anchor="middle">スライド（PDF）</text>
-  <text class="s" x="550" y="240" text-anchor="middle">両方のページを配信</text>
+  <text class="s" x="550" y="220" text-anchor="middle">show/ をディスクから読む</text>
+  <text class="s" x="550" y="240" text-anchor="middle">3 つのページを配信</text>
 
   <rect class="box" x="750" y="104" width="166" height="170" rx="8"/>
   <text class="h"    x="833" y="130" text-anchor="middle">ビューア</text>

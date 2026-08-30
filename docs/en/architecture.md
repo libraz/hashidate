@@ -13,7 +13,9 @@ Three processes and a page. A caller posts commands to the control server; the s
 | `src/protocol` | The wire format, as zod schemas. The viewer, the server and the CLI all import it, so the command vocabulary cannot drift between them. |
 | `src/viewer` | The renderer: a three.js stage, with a development console beside it. This is the page OBS points at. |
 | `src/panel` | The broadcast panel, on `/panel/`. Everything it does goes through the control API, so what it can do is what an orchestrator can do. |
-| `src/server` | The local control API. Serves both pages and carries commands to the renderer. |
+| `src/monitor` | The stage, on `/monitor/`. The same renderer letterboxed to 16:9 with nothing around it — the page an operator watches and OBS monitors. |
+| `src/shell` | The native launcher: the two pages as windows, with the server and the sidecar started underneath. A convenience for a development checkout, deliberately not packaged. |
+| `src/server` | The local control API. Serves all three pages and carries commands to the renderer. |
 | `src/control` | The node-side client for that API, shared by `ctl` and the MCP adapter. |
 | `src/cli` | `ctl` — a thin client, for driving the avatar by hand. |
 | `src/mcp` | The MCP adapter: the same control API, as tools a language model can be handed. |

@@ -36,12 +36,14 @@ Nothing in it names a model, a voice or an avatar. The same turn plays on a diff
 
 - **Profile discovery** — bones, finger families, visemes, blink shapes and drawn-expression groups resolved from whatever the model actually ships, with ARKit detected rather than assumed.
 - **Performances** — a face and a movement named together, grouped by what kind of thing they are, entered and left as a state. One table, spoken by the control API, the panel and the idle autopilot alike.
-- **Motion** — gaze with saccades and a sprung head, breathing and weight-shift idles, a gesture table, hop runs, and an arm solved back from where the fingertip has to be, with the joint strain reported.
+- **Motion** — gaze with saccades and a sprung head, breathing and weight-shift idles, a gesture table, hop runs, and an arm solved back from where the fingertip has to be, with the joint strain reported. Keyframe motions load off disk beside the built-in table without joining it.
 - **Face** — an emotion blend composed onto either ARKit or the model's own shapes, drawn expressions, layered effects, a blink scheduler with an eyelid droop, and text-timed lipsync.
 - **Secondary motion** — spring chains for hair and garments, with colliders and a tail.
 - **Wardrobe** — slots, presets and the hide-shapes that go with them, read from the model's meshes.
 - **Sets and acoustics** — four generated rooms to be seen in and four to be heard in, on separate axes.
 - **Slides** — a PDF behind the character, at the frame's own resolution, readable as text by whatever is writing the script.
+- **Sound around the voice** — background music from the show directory, on its own level and its own effects, under one audio graph the page owns.
+- **Recording** — a take written to a file by the renderer that is on air, with no compositor in the way.
 
 ## The engine holds no avatar data
 
