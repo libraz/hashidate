@@ -25,6 +25,7 @@ Every command goes to `POST /api/command`, one at a time or several under `batch
 | `tune` | The set-once layer: breath, sway, jump, tail, shading. Every field optional and merged onto what is running, so one fader is one small message. Bounded, unlike `point` — a breath period of zero is not an ambitious breath. |
 | `debug` | The measurement readout, over every renderer attached. The one standing-looking setting that is deliberately never kept. |
 | `record` | Start or stop writing the composed frame to a file, at a size the command names. Only the renderer that is not muted acts on it. |
+| `bgm` | Select, play, pause or stop an MP3/FLAC from the configured BGM library; independently patch its level, looping and BGM-only libsonare effects. The server keeps its transport in sync across renderers. |
 | `pause` | Hold the queue where it is, or let it move again. The line on air finishes and nothing is discarded — it is the third thing that can be done to a run of turns, and the only one that keeps them. |
 | `interrupt` / `clear` / `reset` | Stop mid-line and drop the queue / drop the queue and let the line finish / back to nothing. |
 
@@ -38,5 +39,6 @@ There is no command that names a model, a provider or a prompt, and there will n
 
 - [The control API](control-api.md) — endpoints, batching, state
 - [Recording](recording.md) — `record` and `pause` as one movement
+- [Background music](bgm.md) — files, transport, level and effects
 - [Performances](performances.md) — `perform` in detail
 - [Lines and cues](lines-and-cues.md) — `say` in detail

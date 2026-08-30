@@ -10,7 +10,7 @@
 }
 ```
 
-## Seven tools
+## Eight tools
 
 | Tool | What it does |
 |---|---|
@@ -21,6 +21,7 @@
 | `stage` | The persistent half — the camera, the set, the acoustic, the document. |
 | `revise` | Edit what is already queued. |
 | `deck` | Read a document, so a script can be written about it. |
+| `bgm` | List and play local MP3/FLAC tracks; set their level, loop and BGM-only libsonare effects. |
 
 The vocabulary is a resource — `hashidate://vocabulary` — and so is what has already been said.
 
@@ -35,6 +36,12 @@ Every tool is one of the endpoints in [The control API](control-api.md), and it 
 ## Where the lines go
 
 Lines go on the server's queue rather than out as a `say`, so they survive a viewer reload, they appear in the panel where they can be reordered and rewritten, and they carry `source: mcp` to tell them from a comment or from something typed by hand.
+
+## Background music
+
+`bgm` with `action: "list"` re-scans `show/bgm/` and returns the exact filenames a later `play` accepts. The remaining actions are `play`, `pause`, `resume`, `stop` and `settings`. Level and looping can be changed independently; the `dsp` object controls tone, compression, stereo width and reverb on BGM alone. See [Background music](bgm.md).
+
+`status` includes the server-owned BGM transport and resolved settings, so a caller can tell whether it is playing and whether a renderer had to fall back to dry playback.
 
 ## What is deliberately absent
 

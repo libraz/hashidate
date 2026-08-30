@@ -7,7 +7,7 @@ AITuber のためのアバターランタイムです。ブラウザで描いた
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![three.js](https://img.shields.io/badge/three.js-r185-000000?logo=three.js&logoColor=white)](https://threejs.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
-[![MCP](https://img.shields.io/badge/MCP-7%20tools-1a6873)](docs/ja/mcp.md)
+[![MCP](https://img.shields.io/badge/MCP-8%20tools-1a6873)](docs/ja/mcp.md)
 [![docs](https://img.shields.io/badge/docs-%E8%A7%A3%E8%AA%AC-b5892e)](docs/ja/introduction.md)
 
 ![キューに積んだ 3 行を話す配信パネル](docs/images/panel.webp)
@@ -31,10 +31,11 @@ hashidate はアプリケーションではなくアダプタです。依存関�
 | **スライドを使った説明** | 後ろに PDF を出し、ページ送りを行に載せます。スライドはテキストとして読めるので、モデルがその台本を書けます。 | `deck`、`say --slide 2` |
 | **台本どおりの進行** | モデルはどこにも要りません。シェルスクリプトも立派なオーケストレータです。 | `yarn ctl say …` |
 | **一本撮って動画にする** | 台本を読み込み、合成が進んでいるキューを抱えたまま画角を決め、録画を押します。mp4 が `show/recordings/` に落ちます。 | パネルのキュータブと録画タブ |
+| **BGM を敷いた配信** | ローカルの show ディレクトリに置いた MP3 か FLAC を、声とは別の音量と libsonare のエフェクトで鳴らします。 | パネルの BGM タブ、または MCP の `bgm` |
 | **手で回す配信** | パネルが操作面の全部で、その操作はすべて同じ API を通ります。 | `/panel/` |
 | **組んだモデルの確認** | そのアバターに何を頼めるかは、モデル自身のシェイプとメッシュから発見します。 | `yarn ctl vocab` |
 
-7 つとも実際のコマンド付きで：[使いどころ](docs/ja/use-cases.md)。
+8 つとも実際のコマンド付きで：[使いどころ](docs/ja/use-cases.md)。
 
 ## 動かすのに必要なもの
 
@@ -78,6 +79,7 @@ yarn ctl vocab                                  # このアバターに何を頼
 yarn ctl perform happy                          # 表情とモーションをひと組にしたもの
 yarn ctl say "こんばんは" --perform hello --wait
 yarn ctl say "[hello]こんばんは。[explain]今日はこの話をします。"
+yarn ctl bgm list && yarn ctl bgm play opening.mp3
 yarn ctl idle on
 yarn ctl watch                                  # 発話のイベントを追う
 ```
@@ -94,7 +96,7 @@ yarn ctl watch                                  # 発話のイベントを追う
 
 動かす：[制御 API](docs/ja/control-api.md)、[コマンド](docs/ja/commands.md)、[プリセット](docs/ja/performances.md)、[原稿と演出](docs/ja/lines-and-cues.md)、[台本](docs/ja/scripts.md)、[MCP アダプタ](docs/ja/mcp.md)。
 
-絵と音：[音声](docs/ja/speech.md)、[ステージ](docs/ja/stage.md)、[スライド](docs/ja/slides.md)、[モーション](docs/ja/motions.md)、[録画](docs/ja/recording.md)、[操作面](docs/ja/surfaces.md)。
+絵と音：[音声](docs/ja/speech.md)、[BGM](docs/ja/bgm.md)、[ステージ](docs/ja/stage.md)、[スライド](docs/ja/slides.md)、[モーション](docs/ja/motions.md)、[録画](docs/ja/recording.md)、[操作面](docs/ja/surfaces.md)。
 
 その下：[構成](docs/ja/architecture.md)、[アバター](docs/ja/avatars.md)。
 

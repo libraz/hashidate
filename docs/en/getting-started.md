@@ -59,6 +59,8 @@ yarn ctl vocab                                  # what this avatar can be asked 
 yarn ctl perform happy                          # a face and a movement, named together
 yarn ctl say "Good evening." --perform hello --wait
 yarn ctl say "[hello]Good evening. [explain]Tonight I want to talk about this."
+yarn ctl bgm list                              # MP3 and FLAC in show/bgm/
+yarn ctl bgm play opening.mp3 --volume 0.2
 yarn ctl perform                                # put it back
 yarn ctl point 40 25 --extent 0.9 --finger little
 yarn ctl idle on
@@ -73,6 +75,8 @@ yarn ctl play demo --replace    # run it
 ```
 
 See [Scripts](scripts.md).
+
+Background music is optional and needs no import step. Put `.mp3` or `.flac` files directly in `show/bgm/`; the directory is re-read when it is listed from the panel, CLI or MCP. Its contents are git-ignored. See [Background music](bgm.md).
 
 `yarn build` produces a static viewer in `dist/`; `yarn start` serves it from the control server alone, without vite.
 

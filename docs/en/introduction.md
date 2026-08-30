@@ -13,7 +13,7 @@ Everything to the left of that line moves fast and belongs to whoever is buildin
 Keeping the two apart means a model swap is not a code change here, and a renderer change is not a rewrite of the orchestrator. Concretely, hashidate is usable from:
 
 - an LLM loop in any language, talking to `POST /api/command`
-- an MCP client, with the same API exposed as seven tools
+- an MCP client, with the same API exposed as eight tools
 - a shell script with no model in it at all
 - the broadcast panel, driven by a person
 

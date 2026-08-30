@@ -59,11 +59,22 @@ yarn ctl resume
 
 See [Recording](recording.md).
 
-## 6. Running a broadcast by hand
+## 6. Background music under a segment
 
-The panel on `/panel/` is a full operating surface: the script and its history, performances, voice, wardrobe, tuning and readouts, with the avatar, the framing, the set and the idle switch under a live preview. Everything it does goes through the control API, so anything an operator can do from it, an orchestrator can do too. See [The surfaces](surfaces.md).
+Put an MP3 or FLAC directly in `show/bgm/`, then choose it from the BGM tab or let an MCP caller select the exact id returned by `bgm` list. Its level, loop and libsonare effects are independent of the spoken voice, and the same mix reaches the stage, OBS and a local recording.
 
-## 7. Checking a model you just rigged
+```sh
+yarn ctl bgm list
+yarn ctl bgm play opening.mp3 --volume 0.16 --loop on
+```
+
+See [Background music](bgm.md).
+
+## 7. Running a broadcast by hand
+
+The panel on `/panel/` is a full operating surface: the script and its history, performances, voice, BGM, wardrobe, tuning and readouts, with the avatar, the framing, the set and the idle switch under a live preview. Everything it does goes through the control API, so anything an operator can do from it, an orchestrator can do too. See [The surfaces](surfaces.md).
+
+## 8. Checking a model you just rigged
 
 What the avatar can be asked for is discovered from its own shapes and meshes, so the vocabulary endpoint is a report on the model.
 

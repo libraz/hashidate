@@ -7,7 +7,7 @@ An avatar runtime for an AI VTuber: a browser-rendered character that something 
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![three.js](https://img.shields.io/badge/three.js-r185-000000?logo=three.js&logoColor=white)](https://threejs.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
-[![MCP](https://img.shields.io/badge/MCP-7%20tools-1a6873)](docs/en/mcp.md)
+[![MCP](https://img.shields.io/badge/MCP-8%20tools-1a6873)](docs/en/mcp.md)
 [![docs](https://img.shields.io/badge/docs-guides-b5892e)](docs/en/introduction.md)
 
 ![The broadcast panel saying three queued lines](docs/images/panel.webp)
@@ -31,10 +31,11 @@ Swap the model, the provider or the framework: nothing on the right-hand side ch
 | **A talk given from slides** | A PDF behind her, page turns riding on the lines. The deck is readable as text, so a model can write the script for it. | `deck`, `say --slide 2` |
 | **A scripted segment** | No model anywhere. A shell script is a perfectly good orchestrator. | `yarn ctl say …` |
 | **A segment recorded to a file** | Load a script, frame the shot against a queue that is already synthesising, press record. The mp4 lands in `show/recordings/`. | The panel's Queue and Recording tabs |
+| **A broadcast with background music** | MP3 or FLAC from a local show directory, with its own level and libsonare effects. | The panel's BGM tab, or the `bgm` MCP tool |
 | **A broadcast run by hand** | The panel is a full operating surface, and everything it does goes through the same API. | `/panel/` |
 | **Checking a model you rigged** | What the avatar can be asked for is discovered from its own shapes and meshes. | `yarn ctl vocab` |
 
-Worked versions of all seven: [Use cases](docs/en/use-cases.md).
+Worked versions of all eight: [Use cases](docs/en/use-cases.md).
 
 ## What you need
 
@@ -78,6 +79,7 @@ yarn ctl vocab                                  # what this avatar can be asked 
 yarn ctl perform happy                          # a face and a movement, named together
 yarn ctl say "Good evening." --perform hello --wait
 yarn ctl say "[hello]Good evening. [explain]Tonight I want to talk about this."
+yarn ctl bgm list && yarn ctl bgm play opening.mp3
 yarn ctl idle on
 yarn ctl watch                                  # follow the turn events
 ```
@@ -94,7 +96,7 @@ Start here: [Introduction](docs/en/introduction.md), [Use cases](docs/en/use-cas
 
 Driving it: [The control API](docs/en/control-api.md), [Commands](docs/en/commands.md), [Performances](docs/en/performances.md), [Lines and cues](docs/en/lines-and-cues.md), [Scripts](docs/en/scripts.md), [The MCP adapter](docs/en/mcp.md).
 
-The picture and the sound: [Speech](docs/en/speech.md), [The stage](docs/en/stage.md), [Slides](docs/en/slides.md), [Motions](docs/en/motions.md), [Recording](docs/en/recording.md), [The surfaces](docs/en/surfaces.md).
+The picture and the sound: [Speech](docs/en/speech.md), [Background music](docs/en/bgm.md), [The stage](docs/en/stage.md), [Slides](docs/en/slides.md), [Motions](docs/en/motions.md), [Recording](docs/en/recording.md), [The surfaces](docs/en/surfaces.md).
 
 Under it: [Architecture](docs/en/architecture.md), [Avatars](docs/en/avatars.md).
 

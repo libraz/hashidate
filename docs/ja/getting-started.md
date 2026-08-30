@@ -59,6 +59,8 @@ yarn ctl vocab                                  # このアバターに何を頼
 yarn ctl perform happy                          # 表情とモーションをひと組にしたもの
 yarn ctl say "こんばんは" --perform hello --wait
 yarn ctl say "[hello]こんばんは。[explain]今日はこの話をします。"
+yarn ctl bgm list                              # show/bgm/ の MP3 と FLAC
+yarn ctl bgm play opening.mp3 --volume 0.2
 yarn ctl perform                                # 解除する
 yarn ctl point 40 25 --extent 0.9 --finger little
 yarn ctl idle on
@@ -73,6 +75,8 @@ yarn ctl play demo --replace    # 流す
 ```
 
 [台本](scripts.md)を参照してください。
+
+BGM は任意で、取り込み作業は要りません。`.mp3` または `.flac` を `show/bgm/` の直下に置くと、パネル・CLI・MCP から一覧を読むたびに再走査されます。中身は git 管理外です。[BGM](bgm.md)を参照してください。
 
 `yarn build` は `dist/` に静的なビューアを吐きます。`yarn start` は vite を介さず、制御サーバ単体でそれを配信します。
 

@@ -45,6 +45,8 @@ The record command reaches every renderer attached, and on an ordinary desk that
 
 That is the same rule the mute already draws rather than a second one: a monitor is a page that makes no sound, and what a take is supposed to contain is what the room heard. It follows that a stage muted because OBS *is* monitoring the browser source will not record — and should not, because OBS is recording it.
 
+The voice and the processed BGM meet before that mute and the recording tap. A take made by the audible renderer therefore contains both at the same levels heard from the page, including the BGM-only libsonare effects. See [Background music](bgm.md).
+
 ## mp4, or the truth about what it is
 
 The take is encoded in the browser, and asked for as MP4 first: `avc1` video with AAC audio, which opens in everything and drops into an editor without a conversion step.
