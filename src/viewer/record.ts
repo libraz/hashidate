@@ -1,3 +1,5 @@
+import type { RendererId } from '@/protocol';
+import { rendererId as pageRendererId } from './renderer-id';
 import type { Rect, StageSize } from './scene/placement';
 import type { StageFrame } from './scene/runtime';
 
@@ -304,6 +306,8 @@ export interface StageRecorderOptions {
   /** Everything the voice makes, as a stream. See `BrowserVoice.captureStream`. */
   openAudio: () => Promise<MediaStream | null>;
   base?: string;
+  /** Stable identity of the page that owns this encoder. */
+  rendererId?: RendererId;
   /** Injected so a test can drive a take without an encoder or a network. */
   fetch?: typeof globalThis.fetch;
 }
@@ -324,6 +328,7 @@ export class StageRecorder {
   private readonly openAudio: StageRecorderOptions['openAudio'];
   private readonly base: string;
   private readonly send: typeof globalThis.fetch;
+  private readonly rendererId: RendererId;
 
   /**
    * The context the take is composed into, which is also the flag for whether
@@ -341,12 +346,24 @@ export class StageRecorder {
   private uploads: Promise<void> = Promise.resolve();
   /** The last problem, for the renderer's own report. Cleared by a new take. */
   private failure: string | null = null;
+  /** The page lifecycle owns this recorder, so unload gets one last chance to flush. */
+  private readonly onPageHide = (): void => {
+    void this.dispose();
+  };
+  private disposed = false;
+  /** Completion of the current encoder's final chunk, if one is being stopped. */
+  private finalizing: Promise<void> | null = null;
+  private finalize: (() => void) | null = null;
 
   constructor(opts: StageRecorderOptions) {
     this.onFrame = opts.onFrame;
     this.openAudio = opts.openAudio;
     this.base = opts.base ?? '/api';
+    this.rendererId = opts.rendererId ?? pageRendererId;
     this.send = opts.fetch ?? globalThis.fetch.bind(globalThis);
+    if (typeof globalThis.addEventListener === 'function') {
+      globalThis.addEventListener('pagehide', this.onPageHide);
+    }
   }
 
   get recording(): boolean {
@@ -366,8 +383,10 @@ export class StageRecorder {
    * session nothing is listening for any more.
    */
   async start(request: RecordRequest): Promise<void> {
+    if (this.disposed) return;
     if (this.session === request.session && this.recorder !== null) return;
     await this.stop();
+    if (this.disposed) return;
     this.failure = null;
 
     const mime = pickMime();
@@ -389,11 +408,24 @@ export class StageRecorder {
     }
     ctx.imageSmoothingQuality = 'high';
 
-    const stream = canvas.captureStream(request.fps);
+    let stream: MediaStream;
+    try {
+      stream = canvas.captureStream(request.fps);
+    } catch (error) {
+      this.failure = error instanceof Error ? error.message : String(error);
+      return;
+    }
     // Before the recorder is built, because a track cannot be added to a stream
     // one is already reading. A renderer that has not spoken yet has no audio
     // graph at all, so this is what builds it — see `BrowserVoice.captureStream`.
-    const audio = await this.openAudio();
+    let audio: MediaStream | null;
+    try {
+      audio = await this.openAudio();
+    } catch (error) {
+      this.failure = error instanceof Error ? error.message : String(error);
+      return;
+    }
+    if (this.disposed) return;
     for (const track of audio?.getAudioTracks() ?? []) stream.addTrack(track);
 
     let recorder: MediaRecorder;
@@ -409,17 +441,34 @@ export class StageRecorder {
     this.session = request.session;
     this.recorder = recorder;
 
+    let stopped = false;
+    let resolveStopped!: () => void;
+    const complete = new Promise<void>((resolve) => {
+      resolveStopped = resolve;
+    });
+    this.finalizing = complete;
+    const finalize = (): void => {
+      if (stopped) return;
+      stopped = true;
+      // The final marker is queued after every data chunk already observed.
+      this.post(request.session, mime, new Blob([]), true);
+      void this.uploads.then(resolveStopped, resolveStopped);
+    };
+    this.finalize = finalize;
+
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) this.post(request.session, mime, event.data, false);
     };
     // The last thing the encoder does. The empty chunk after it is what tells
     // the server the file is complete — the alternative, flagging whichever
     // chunk turned out to be last, means guessing which one that was.
-    recorder.onstop = () => {
-      this.post(request.session, mime, new Blob([]), true);
-    };
+    recorder.onstop = finalize;
     recorder.onerror = () => {
       this.failure = 'the encoder stopped';
+      // MediaRecorder's error event is terminal. Queue the marker here too, so
+      // an embedding fake or browser that omits a later `stop` event cannot leave
+      // `stop()` waiting forever with a live server-side take.
+      finalize();
       void this.stop();
     };
 
@@ -438,8 +487,37 @@ export class StageRecorder {
     this.session = null;
     this.ctx = null;
     this.slideCache.dispose();
-    if (recorder !== null && recorder.state !== 'inactive') recorder.stop();
+    const finalizing = this.finalizing;
+    const finalize = this.finalize;
+    if (recorder !== null) {
+      if (recorder.state !== 'inactive') {
+        try {
+          recorder.stop();
+        } catch {
+          // An encoder can report an error and become inactive between the
+          // state read and this call. The final marker remains the useful path.
+          finalize?.();
+        }
+      } else {
+        // Some browsers mark the encoder inactive before dispatching `stop`.
+        // Calling the idempotent finalizer makes the completion contract hold in
+        // that case as well as in deterministic test fakes.
+        finalize?.();
+      }
+      if (finalizing !== null) await finalizing;
+    }
     await this.uploads;
+  }
+
+  /** Stop the encoder and remove the page lifecycle listener. */
+  async dispose(): Promise<void> {
+    if (!this.disposed) {
+      this.disposed = true;
+      if (typeof globalThis.removeEventListener === 'function') {
+        globalThis.removeEventListener('pagehide', this.onPageHide);
+      }
+    }
+    await this.stop();
   }
 
   /**
@@ -451,13 +529,16 @@ export class StageRecorder {
   private post(session: string, mime: string, blob: Blob, final: boolean): void {
     const url =
       `${this.base}/record/chunk?session=${encodeURIComponent(session)}` +
-      `&mime=${encodeURIComponent(mime)}${final ? '&final=1' : ''}`;
+      `&mime=${encodeURIComponent(mime)}` +
+      `&renderer=${encodeURIComponent(this.rendererId)}` +
+      `${final ? '&final=1' : ''}`;
     this.uploads = this.uploads.then(async () => {
       try {
         await this.send(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/octet-stream' },
           body: blob,
+          ...(final ? { keepalive: true } : {}),
         });
       } catch {
         // The server went away mid-take. Nothing here can repair that, and the

@@ -179,9 +179,9 @@ function Fact({ label, value }: { label: string; value: string }) {
 /**
  * A local ring of turn events, newest first.
  *
- * Subscribed rather than drained: `session.takeEvents()` empties the queue, and
- * the control channel is already draining it to send upstream. Two consumers of
- * a drain means each sees half the log.
+ * Subscribed rather than drained: the production control client observes the
+ * live listener and keeps its own pending path for reports. `takeEvents()` is a
+ * test observation surface, not a server drain, so it is not used here.
  */
 function useEventLog(session: LoadedAvatar['session']): LoggedEvent[] {
   const [log, setLog] = useState<LoggedEvent[]>([]);

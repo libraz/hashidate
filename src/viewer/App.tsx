@@ -66,16 +66,41 @@ export function App() {
    */
   const runtimeRef = useRef<AvatarRuntime | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the useRef value is stable for the page lifetime
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     const rt = new AvatarRuntime(host);
     runtimeRef.current = rt;
     setRuntime(rt);
-    const off = rt.onStatus(setStatus);
+    // The stream belongs to the page, not to the GLB. Start it while the first
+    // model is still loading so a slow or missing avatar is observable and can
+    // keep receiving commands without making the control server guess whether
+    // this renderer ever existed.
+    const client = new ControlClient(null, {
+      onStatus: setControl,
+      onRejected: () => setRejected((n) => n + 1),
+      renderer: rendererControls,
+    });
+    controlRef.current = client;
+    const off = rt.onStatus((next) => {
+      setStatus(next);
+      if (next.phase === 'failed') {
+        client.setAvatarStatus({ phase: 'failed', error: next.message });
+        // A failed load cannot end the hold that was waiting for it. The old
+        // session, when there is one, remains usable for subsequent commands.
+        client.discardHeld();
+      } else {
+        client.setAvatarStatus({ phase: next.phase });
+        if (next.phase === 'ready') client.bind(next.loaded.session, next.loaded.avatar.id);
+      }
+    });
+    client.start();
     void rt.load(initialAvatar());
     return () => {
       off();
+      client.stop();
+      if (controlRef.current === client) controlRef.current = null;
       rt.dispose();
       runtimeRef.current = null;
       setRuntime(null);
@@ -149,44 +174,6 @@ export function App() {
     addEventListener('keydown', onKey);
     return () => removeEventListener('keydown', onKey);
   }, []);
-
-  /**
-   * The control channel outlives the avatar.
-   *
-   * It holds the connection to the orchestrator, and that connection is not
-   * something a swap should interrupt — the session under it is replaced
-   * instead.
-   */
-  useEffect(() => {
-    // A load that produced nothing still ends the swap. Without this the client
-    // would hold every later command waiting for a session that is not coming.
-    if (status.phase === 'failed') controlRef.current?.discardHeld();
-    if (status.phase !== 'ready') return;
-    const { session } = status.loaded;
-    const existing = controlRef.current;
-    if (existing) {
-      existing.bind(session, status.loaded.avatar.id);
-      return;
-    }
-    const client = new ControlClient(session, {
-      onStatus: setControl,
-      onRejected: () => setRejected((n) => n + 1),
-      renderer: rendererControls,
-    });
-    client.start();
-    controlRef.current = client;
-    // `rendererControls` is a ref's value and never changes identity; it is
-    // listed because the rule cannot tell that, not because a change would mean
-    // anything here.
-  }, [status, rendererControls]);
-
-  useEffect(
-    () => () => {
-      controlRef.current?.stop();
-      controlRef.current = null;
-    },
-    [],
-  );
 
   /**
    * A handle on the live scene, for the console.

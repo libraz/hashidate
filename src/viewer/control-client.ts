@@ -2,14 +2,17 @@ import { loadMotions } from '@/engine/motion';
 import type { Session } from '@/engine/session';
 import type { LabelledId, SessionEvent } from '@/engine/types';
 import {
+  type AvatarStatus,
   type BgmCommand,
   type BgmReport,
   type Command,
   motionsResponseSchema,
-  parseCommand,
+  parseStreamMessage,
   RECORD_DEFAULTS,
+  type RendererId,
   type ReportBody,
 } from '@/protocol';
+import { rendererId as pageRendererId } from './renderer-id';
 
 /**
  * Control channel.
@@ -103,14 +106,17 @@ export interface ControlOptions {
   /** Commands the wire carried but the schema rejected. Surfaced, not swallowed. */
   onRejected?: (raw: unknown) => void;
   renderer?: RendererControls;
+  /** Stable identity used to bind this page's stream and renderer-owned work. */
+  rendererId?: RendererId;
 }
 
 export class ControlClient {
-  private session: Session;
+  private session: Session | null;
   private readonly base: string;
   private readonly onStatus: (status: ControlStatus) => void;
   private readonly onRejected: (raw: unknown) => void;
   private readonly renderer: RendererControls | null;
+  private readonly rendererId: RendererId;
 
   status: ControlStatus = 'offline';
 
@@ -121,6 +127,7 @@ export class ControlClient {
   private timer: ReturnType<typeof setInterval> | null = null;
   private retry: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
+  private avatar: AvatarStatus = { phase: 'idle' };
   /**
    * Commands waiting for an avatar to finish arriving, or null when none is.
    *
@@ -131,12 +138,13 @@ export class ControlClient {
   /** The avatar the hold is waiting for. Null when nothing is held. */
   private awaiting: string | null = null;
 
-  constructor(session: Session, opts: ControlOptions = {}) {
+  constructor(session: Session | null, opts: ControlOptions = {}) {
     this.session = session;
     this.base = opts.base ?? '/api';
     this.onStatus = opts.onStatus ?? (() => {});
     this.onRejected = opts.onRejected ?? (() => {});
     this.renderer = opts.renderer ?? null;
+    this.rendererId = opts.rendererId ?? pageRendererId;
     this.bind(session);
   }
 
@@ -162,7 +170,7 @@ export class ControlClient {
    * — the constructor — passes null and releases, which is right, because
    * nothing can be held before the first command.
    */
-  bind(session: Session, avatar: string | null = null): void {
+  bind(session: Session | null, avatar: string | null = null): void {
     this.unbind?.();
     // A hold belongs to the run of turns, not to the character saying them, so
     // it survives a swap the way the queue itself does. The queue comes back
@@ -173,15 +181,34 @@ export class ControlClient {
     //
     // Carried here because this is the only place that can see both sessions.
     // The constructor binds the session it was given, where this is a no-op.
-    session.paused = this.session.paused;
+    if (session !== null && this.session !== null) session.paused = this.session.paused;
     this.session = session;
-    this.unbind = session.on((ev) => {
-      this.pending.push(ev);
-      // Turn boundaries are what a caller blocks on, so they go up immediately
-      // rather than on the next tick of the reporting timer.
-      if (ev.type.startsWith('turn.') || ev.type === 'cue.fire') void this.report();
-    });
+    if (session !== null) {
+      this.unbind = session.on((ev) => {
+        this.pending.push(ev);
+        // Turn boundaries are what a caller blocks on, so they go up immediately
+        // rather than on the next tick of the reporting timer.
+        if (ev.type.startsWith('turn.') || ev.type === 'cue.fire') void this.report();
+      });
+    }
     if (this.awaiting === null || this.awaiting === avatar) this.flush();
+    if (this.status === 'online') void this.report(true);
+  }
+
+  /**
+   * Publish the avatar lifecycle independently of whether a session exists yet.
+   *
+   * The control stream starts before the first GLB is available, so a model that
+   * fails to load must still be visible as a connected but failed renderer. Keep
+   * the error bounded at this edge as well as in the wire schema: this method is
+   * also called by an embedding host that may have a loader of its own.
+   */
+  setAvatarStatus(status: AvatarStatus): void {
+    const error = status.error;
+    this.avatar = {
+      phase: status.phase,
+      ...(error === undefined ? {} : { error: error === null ? null : error.slice(0, 1024) }),
+    };
     if (this.status === 'online') void this.report(true);
   }
 
@@ -205,6 +232,7 @@ export class ControlClient {
   }
 
   start(): void {
+    if (this.timer !== null) return;
     this.stopped = false;
     this.connect();
     this.timer = setInterval(() => void this.report(), REPORT_INTERVAL);
@@ -246,7 +274,9 @@ export class ControlClient {
       clearTimeout(this.retry);
       this.retry = null;
     }
-    const src = new EventSource(`${this.base}/stream`);
+    const src = new EventSource(
+      `${this.base}/stream?renderer=${encodeURIComponent(this.rendererId)}`,
+    );
     this.source = src;
 
     src.onopen = () => {
@@ -266,12 +296,10 @@ export class ControlClient {
       } catch {
         return;
       }
-      if (!isCommandBatch(msg)) return;
-      for (const raw of msg.commands) {
-        const command = parseCommand(raw);
-        if (command) this.apply(command);
-        else this.onRejected(raw);
-      }
+      const parsed = parseStreamMessage(msg);
+      if (!parsed) return;
+      for (const command of parsed.commands) this.apply(command);
+      for (const raw of parsed.rejected) this.onRejected(raw);
     };
 
     src.onerror = () => {
@@ -351,13 +379,19 @@ export class ControlClient {
     // when it changes, for the same reason the voice report does: it is what a
     // remote fader is drawn from, and a fader that only updates when somebody
     // moves it cannot show what an avatar swap did to it.
+    const session = this.session;
     const body: ReportBody = {
-      state: this.session.state(),
+      avatar: this.avatar,
       events,
-      tuning: this.session.tuning(),
+      ...(session === null
+        ? {}
+        : {
+            state: session.state(),
+            tuning: session.tuning(),
+          }),
     };
     if (withVocabulary) {
-      body.vocabulary = this.session.vocabulary();
+      if (session !== null) body.vocabulary = session.vocabulary();
       // Fixed for the life of the page, so it goes with the vocabulary rather
       // than every 700 ms.
       if (this.renderer) body.avatars = this.renderer.avatars;
@@ -366,19 +400,19 @@ export class ControlClient {
     // than what it last sent — see `VoiceReport`. On the report timer and not
     // only on change, because it carries the loudness of the last take and a
     // meter that only updates when a setting moves is not a meter.
-    const voice = this.session.voice?.report();
+    const voice = session?.voice?.report();
     if (voice) body.voice = voice;
     // Beside the voice and on the timer for the same reason: how many pages a
     // document has is discovered by opening it, and whether the page asked for
     // is the page showing changes without anything being sent.
-    const slides = this.session.slides?.report();
+    const slides = session?.slides?.report();
     if (slides) body.slides = slides;
     // And the layout beside it, on the timer for the reason the tuning report
     // is: it is what a remote control surface draws its composition controls
     // from, and most of the layouts that reach a renderer were never sent as a
     // command at all — a browser source carries its own on the URL it was
     // opened with.
-    const placement = this.session.composition?.report();
+    const placement = session?.composition?.report();
     if (placement) body.placement = placement;
     const bgm = this.renderer?.bgmReport?.();
     if (bgm) body.bgm = bgm;
@@ -445,22 +479,38 @@ export class ControlClient {
       this.renderer?.setBgm?.(c);
       return;
     }
+    // A first avatar load is also allowed to start before there is a session.
+    // Once a load is already in flight, a later avatar remains behind it just
+    // like every other command; otherwise preserve any bounded pre-session hold
+    // while starting the load that will eventually release it.
+    if (c.cmd === 'avatar') {
+      if (this.awaiting !== null) {
+        this.held?.push(c);
+        if (this.held && this.held.length > HELD_MAX)
+          this.held.splice(0, this.held.length - HELD_MAX);
+        return;
+      }
+      if (this.renderer?.load(c.id)) {
+        this.held ??= [];
+        this.awaiting = c.id;
+      }
+      return;
+    }
     if (this.held) {
       this.held.push(c);
       if (this.held.length > HELD_MAX) this.held.splice(0, this.held.length - HELD_MAX);
       return;
     }
+    if (this.session === null) {
+      // A page can receive setup before its first GLB has loaded. Keep the same
+      // bounded hold used by avatar swaps, and let a failed load discard it;
+      // commands must never accumulate without a cap while a loader is stuck.
+      this.held = [];
+      this.held.push(c);
+      return;
+    }
     const s = this.session;
     switch (c.cmd) {
-      // Not `s.something`: see the note above. A load the renderer refuses —
-      // an id it does not have, or the avatar it is already showing — is not
-      // held for, since nothing is going to arrive to end the hold.
-      case 'avatar':
-        if (this.renderer?.load(c.id)) {
-          this.held = [];
-          this.awaiting = c.id;
-        }
-        return;
       case 'say':
         s.say({
           id: c.id,
@@ -577,10 +627,4 @@ export class ControlClient {
         return;
     }
   }
-}
-
-function isCommandBatch(msg: unknown): msg is { type: 'command'; commands: unknown[] } {
-  if (typeof msg !== 'object' || msg === null) return false;
-  const m = msg as { type?: unknown; commands?: unknown };
-  return m.type === 'command' && Array.isArray(m.commands);
 }

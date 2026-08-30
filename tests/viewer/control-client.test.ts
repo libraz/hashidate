@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Director } from '@/engine/director';
 import { buildProfile } from '@/engine/profile';
 import { Session } from '@/engine/session';
@@ -94,8 +94,47 @@ function nextSession(): Session {
 
 let harness: ReturnType<typeof build>;
 
+/** A deterministic EventSource with manual lifecycle signals. */
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+
+  readonly url: string;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: (() => void) | null = null;
+  closeCalls = 0;
+
+  constructor(url: string) {
+    this.url = url;
+    FakeEventSource.instances.push(this);
+  }
+
+  close(): void {
+    this.closeCalls++;
+  }
+
+  open(): void {
+    this.onopen?.();
+  }
+
+  message(value: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(value) } as MessageEvent);
+  }
+
+  error(): void {
+    this.onerror?.();
+  }
+}
+
 beforeEach(() => {
   harness = build();
+});
+
+afterEach(() => {
+  FakeEventSource.instances = [];
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('ControlClient.apply', () => {
@@ -447,5 +486,120 @@ describe('the telemetry readout', () => {
     const session = new Session(new Director(buildProfile(rig.root, rig.descriptor)));
     const client = new ControlClient(session);
     expect(() => client.apply({ cmd: 'debug', on: true })).not.toThrow();
+  });
+});
+
+describe('the control stream lifecycle', () => {
+  it('starts before a session exists and reports the avatar load state', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const send = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false } as Response);
+    const client = new ControlClient(null, {
+      base: '/control',
+      rendererId: 'renderer-test',
+    });
+    client.setAvatarStatus({ phase: 'loading', error: 'x'.repeat(5000) });
+
+    client.start();
+    const source = FakeEventSource.instances[0];
+    expect(source.url).toBe('/control/stream?renderer=renderer-test');
+    source.open();
+
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    const body = JSON.parse(String(send.mock.calls[1][1]?.body)) as {
+      avatar?: { phase?: string; error?: string };
+    };
+    expect(body.avatar).toEqual({ phase: 'loading', error: 'x'.repeat(1024) });
+    client.stop();
+  });
+
+  it('applies known stream commands and surfaces rejected elements individually', () => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const rejected: unknown[] = [];
+    const client = new ControlClient(harness.session, {
+      onRejected: (raw) => rejected.push(raw),
+    });
+    client.start();
+    const source = FakeEventSource.instances[0];
+    const raw = { cmd: 'future-command', value: 1 };
+    source.message({
+      type: 'command',
+      commands: [{ cmd: 'say', id: 'stream-turn', text: 'あ' }, raw],
+    });
+
+    expect(harness.session.queue.map((turn) => turn.id)).toEqual(['stream-turn']);
+    expect(rejected).toEqual([raw]);
+    client.stop();
+  });
+
+  it('keeps an all-unknown frame a healthy no-op for the next frame', () => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const rejected: unknown[] = [];
+    const client = new ControlClient(harness.session, {
+      onRejected: (raw) => rejected.push(raw),
+    });
+    client.start();
+    const source = FakeEventSource.instances[0];
+    const raw = { cmd: 'future-only' };
+    source.message({ type: 'command', commands: [raw] });
+    expect(harness.session.queue).toHaveLength(0);
+    source.message({
+      type: 'command',
+      commands: [{ cmd: 'say', id: 'after-unknown', text: 'い' }],
+    });
+
+    expect(harness.session.queue.map((turn) => turn.id)).toEqual(['after-unknown']);
+    expect(rejected).toEqual([raw]);
+    client.stop();
+  });
+
+  it('does not let an old EventSource error close its replacement', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const client = new ControlClient(null, { rendererId: 'renderer-test' });
+    client.start();
+    const first = FakeEventSource.instances[0];
+    first.error();
+    expect(first.closeCalls).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1500);
+    const second = FakeEventSource.instances[1];
+    expect(second).toBeDefined();
+
+    // The old browser object may report its terminal error after the retry has
+    // already installed a replacement. It may close only itself and must not
+    // clear the replacement or schedule a third source.
+    first.error();
+    expect(first.closeCalls).toBe(2);
+    expect(second.closeCalls).toBe(0);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(FakeEventSource.instances).toHaveLength(2);
+
+    client.stop();
+  });
+
+  it('does not create another source while connected or after stop', () => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const client = new ControlClient(null, { rendererId: 'renderer-test' });
+    client.start();
+    const connect = (client as unknown as { connect(): void }).connect.bind(client);
+    connect();
+    expect(FakeEventSource.instances).toHaveLength(1);
+
+    client.stop();
+    connect();
+    expect(FakeEventSource.instances).toHaveLength(1);
+  });
+
+  it('bounds commands received before the first session is ready', () => {
+    const client = new ControlClient(null);
+    for (let i = 0; i < 205; i++) {
+      client.apply({ cmd: 'say', id: `held-${i}`, text: 'あ' });
+    }
+
+    const arrived = nextSession();
+    client.bind(arrived, 'a');
+    expect(arrived.queue.map((turn) => turn.id)).toEqual(
+      Array.from({ length: 200 }, (_, i) => `held-${i + 5}`),
+    );
   });
 });

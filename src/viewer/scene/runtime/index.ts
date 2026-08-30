@@ -17,6 +17,7 @@ import type { BgmCommand, BgmReport } from '@/protocol';
 import { BrowserAudioOutput } from '../../audio-output';
 import { BrowserBgm } from '../../bgm';
 import { StageRecorder } from '../../record';
+import { rendererId } from '../../renderer-id';
 import { stageMode } from '../../stage-mode';
 import { BrowserVoice } from '../../voice';
 import { BackdropStage } from '../backdrop';
@@ -120,6 +121,7 @@ export class AvatarRuntime {
   private readonly recorder = new StageRecorder({
     onFrame: (fn) => this.onFrame(fn),
     openAudio: () => this.audio.captureStream(),
+    rendererId,
   });
 
   private toon = true;
@@ -690,7 +692,11 @@ export class AvatarRuntime {
     // before the loop stops feeding it frames. A page closed mid-take still
     // posts its last chunk, so the file on the server is closed rather than
     // left for the watchdog.
-    void this.recorder.stop();
+    // `dispose` removes the pagehide listener and starts the encoder's final
+    // upload before the audio graph it is reading from is torn down. The upload
+    // itself may finish after this synchronous scene teardown, which is why the
+    // recorder owns the await rather than this method blocking the page.
+    void this.recorder.dispose();
     this.bgm.dispose();
     this.voice.dispose();
     this.audio.dispose();
