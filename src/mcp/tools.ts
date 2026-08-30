@@ -113,7 +113,7 @@ const BGM_NOTE = [
   '- play needs an id returned by list; resume continues the selected track without selecting another',
   '- volume is the BGM mix level from 0 (silent) to 1 (full); loop controls end-of-track behavior',
   '- settings changes only the named BGM mix/DSP/fade fields and requires at least one setting',
-  '- fade.inSeconds and fade.outSeconds are seconds in the range 0..10. Different-track play crossfades both tracks; 0 is a hard edge. The first/stopped play uses only fade-in, and pause/resume/stop are immediate',
+  '- fade.inSeconds and fade.outSeconds are seconds in the range 0..10. Different-track play crossfades both tracks; 0 is a hard edge. The first/stopped play uses only fade-in. stop fades out over fade.outSeconds and keeps the selection; pause and resume are immediate',
   '- The transport actions can also be placed in speak text as [@bgm play], [@bgm play track filename], [@bgm pause] and [@bgm stop]. The filename remainder may contain spaces and Japanese characters; [ and ] are reserved',
   '- Inline [@bgm play track] uses the current fade settings; fade is not part of inline cue syntax',
   '- DSP is BGM-only: it never changes synthesized voice processing or the staged room',
@@ -123,13 +123,14 @@ const BGM_TRACK_NOTE =
 const BGM_VOLUME_NOTE = 'BGM-only mix level, 0..1. This does not change synthesized voice volume.';
 const BGM_LOOP_NOTE = 'Whether the selected BGM track restarts at its end.';
 const BGM_FADE_NOTE = [
-  'Optional BGM crossfade policy for track changes. Durations are seconds, each 0..10.',
+  'Optional BGM transition policy. Durations are seconds, each 0..10.',
   'On a different-track play while another track is playing, the old track fades out while the new one fades in. 0 is a hard edge.',
-  'The first play, or a play from stopped, uses only fade-in. Pause, resume and stop are immediate.',
+  'The first play, or a play from stopped, uses only fade-in. stop fades out over fade.outSeconds. Pause and resume are immediate.',
   'Inline [@bgm play track] cues inherit the current fade settings; fade is not part of the cue syntax.',
 ].join('\n');
 const BGM_FADE_IN_NOTE = 'Fade in duration in seconds, 0..10. 0 starts at full level.';
-const BGM_FADE_OUT_NOTE = 'Fade out duration in seconds, 0..10. 0 cuts at the track change.';
+const BGM_FADE_OUT_NOTE =
+  'Fade out duration in seconds, 0..10. Used by the track that is leaving: the old one on a different-track play, and the selected one on stop. 0 cuts.';
 const BGM_DSP_NOTE = [
   'Optional BGM-only libsonare Mixer controls. These leave synthesized voice processing and room acoustics untouched.',
   'toneDb: -6..6 dB tone tilt; compression: 0..1 amount; width: 0..2 stereo width.',

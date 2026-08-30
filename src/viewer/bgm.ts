@@ -107,6 +107,8 @@ export class BrowserBgm {
     generation: number;
     promise: Promise<void>;
   } | null = null;
+  /** Defers the post-stop worklet rebuild until the faded tail has left. */
+  private tailTimer: ReturnType<typeof setTimeout> | null = null;
 
   private track: string | null = null;
   private volume: number = BGM_DEFAULT_VOLUME;
@@ -189,7 +191,12 @@ export class BrowserBgm {
     if (command.position !== undefined || command.at !== undefined) {
       this.position = projected;
       this.positionAt = this.now();
-      if (this.currentRoute !== null) this.syncPosition(this.currentRoute, projected);
+      // A stop carries position zero because that is where the canonical
+      // timeline goes, but the route it stops is still sounding through its
+      // fade. Seeking it would restart the track underneath its own fade-out.
+      // The route is leaving, so where it is no longer matters.
+      if (this.currentRoute !== null && command.action !== 'stop')
+        this.syncPosition(this.currentRoute, projected);
     }
 
     if (selected !== undefined && selected !== previousTrack) {
@@ -317,6 +324,7 @@ export class BrowserBgm {
     this.epoch += 1;
     this.playGeneration += 1;
     this.pendingSwitch = null;
+    this.clearTailTimer();
     this.dspGeneration += 1;
     this.dspInstall = null;
     this.offUnlock?.();
@@ -655,31 +663,76 @@ export class BrowserBgm {
     return null;
   }
 
+  /**
+   * Stop: the selection is kept, the timeline resets to zero, and the sound
+   * leaves over `fade.outSeconds`.
+   *
+   * The tail is the whole difficulty, and three things follow from it. A media
+   * element has to keep sounding while its envelope falls, so the route is
+   * *retired* rather than torn down — the same retirement the outgoing half of
+   * a crossfade uses.
+   *
+   * `currentRoute` is released now rather than when the tail ends. A play
+   * arriving mid-fade has to build a new route beside the leaving one: handed
+   * the retiring route instead, `playCurrent` would find it already started and
+   * unpaused, return early, and let the envelope finish falling on the very
+   * track it was asked to bring back.
+   *
+   * Nothing is seeked back to zero. `position` is the canonical timeline and is
+   * zero from this instant, but moving an element that is still sounding would
+   * restart the track underneath its own fade.
+   *
+   * The worklet outlives the tail. Rebuilding it is what keeps a plate reverb
+   * from leaking into the next take, but the tail is still being processed by
+   * that very chain, so the rebuild waits — and is skipped if a play has since
+   * claimed a new route, which is a continuation rather than the next take.
+   *
+   * `outSeconds: 0` is the hard edge this used to be unconditionally. Unloading
+   * the track (`track: null`) remains the boundary that leaves no tail at all.
+   */
   private stopAtBoundary(): void {
     this.transport = 'stopped';
     this.position = 0;
     this.positionAt = this.now();
-    const route = this.currentRoute;
-    if (this.pendingSwitch !== null) {
-      this.pendingSwitch = null;
-      for (const pending of [...this.routes]) this.finalizeRoute(pending);
-      this.currentRoute = null;
-      this.duration = null;
-    } else if (route !== null) {
-      route.audio.pause();
-      this.scheduleEnvelope(route, 0, 0);
-      this.syncPosition(route, 0);
+    const hadPendingSwitch = this.pendingSwitch !== null;
+    this.pendingSwitch = null;
+    const outSeconds = Math.max(0, this.fade.outSeconds);
+    const at = this.audioTime();
+    for (const route of [...this.routes]) {
+      // A route already leaving keeps the envelope and the timer it was given.
+      // Stopping twice must neither restart its fade from the level it has
+      // decayed to — which would make the second stop take longer than the
+      // first — nor cut short a tail the operator has already asked for.
+      if (route.retired) continue;
+      if (outSeconds > 0 && this.isAudible(route)) this.retireRouteAt(route, outSeconds, at);
+      else this.finalizeRoute(route);
     }
-    for (const retired of [...this.routes]) {
-      if (retired !== route) this.finalizeRoute(retired);
-    }
+    // Whatever is still held is still leaving: retiring keeps a route until its
+    // own timer finalizes it, and finalizing removes it here and now.
+    const tail = this.routes.size;
+    this.currentRoute = null;
+    // The incoming half of an interrupted switch never sounded, so its duration
+    // was never measured and must not be reported against the kept selection.
+    if (hadPendingSwitch) this.duration = null;
     this.pendingPlay = null;
     this.epoch += 1;
     this.playGeneration += 1;
-    // Stop is a hard transport boundary: remove the old worklet instance so a
-    // plate tail cannot leak into the next take. Pause intentionally skips this.
-    this.recreateDsp();
+    this.clearTailTimer();
+    if (tail === 0) {
+      this.recreateDsp();
+    } else {
+      this.tailTimer = setTimeout(() => {
+        this.tailTimer = null;
+        if (!this.disposed && this.currentRoute === null) this.recreateDsp();
+      }, outSeconds * 1000);
+    }
     this.emitReport();
+  }
+
+  private clearTailTimer(): void {
+    if (this.tailTimer === null) return;
+    clearTimeout(this.tailTimer);
+    this.tailTimer = null;
   }
 
   private recreateDsp(): void {
@@ -815,6 +868,10 @@ export class BrowserBgm {
 
   private hardUnload(): void {
     this.pendingSwitch = null;
+    // An unload outranks a stop still waiting to rebuild: the tail it was
+    // waiting for is being finalized here, and letting the timer survive would
+    // tear down whatever chain the next selection has since installed.
+    this.clearTailTimer();
     for (const route of [...this.routes]) this.finalizeRoute(route);
     this.currentRoute = null;
     this.dspGeneration += 1;

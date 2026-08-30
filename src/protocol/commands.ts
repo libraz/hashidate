@@ -926,7 +926,23 @@ export const BGM_DEFAULTS = { volume: 0.2, loop: true } as const;
 export const BGM_DEFAULT_VOLUME = BGM_DEFAULTS.volume;
 export const BGM_DEFAULT_LOOP = BGM_DEFAULTS.loop;
 
-/** Crossfade durations are deliberately short and bounded for live control. */
+/**
+ * Transition durations, deliberately short and bounded for live control.
+ *
+ * `outSeconds` is one number with one meaning — how the track that is sounding
+ * leaves — and it is spent in both of the ways a track can leave: crossfaded
+ * under an incoming one, or faded to silence by `stop`. Giving stop its own
+ * duration would be a second answer to the same question, and an operator who
+ * set one and not the other would get a segment whose two endings did not
+ * match.
+ *
+ * `0` is therefore the hard edge, on either path. It is also the escape hatch
+ * for a live stop that has to be instant. The stronger one is unloading the
+ * track (`track: null`), which leaves no tail at all rather than a short one.
+ *
+ * `pause` is untouched by both and stays immediate: it is a hold, and a hold
+ * that faded would have to decide what resuming from half a fade means.
+ */
 export const BGM_FADE_LIMITS = {
   inSeconds: { min: 0, max: 10 },
   outSeconds: { min: 0, max: 10 },
@@ -935,7 +951,7 @@ export const BGM_FADE_DEFAULTS = { inSeconds: 1, outSeconds: 1 } as const;
 export const BGM_FADE_DEFAULT_IN_SECONDS = BGM_FADE_DEFAULTS.inSeconds;
 export const BGM_FADE_DEFAULT_OUT_SECONDS = BGM_FADE_DEFAULTS.outSeconds;
 
-/** Fully resolved crossfade settings kept by the server and sent to viewers. */
+/** Fully resolved transition settings kept by the server and sent to viewers. */
 export const bgmFadeSchema = z
   .object({
     inSeconds: z

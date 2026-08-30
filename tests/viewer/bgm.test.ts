@@ -327,8 +327,89 @@ describe('BrowserBgm', () => {
       position: 0,
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    h.audios[0].onended?.();
+    // Stop leaves the first element behind as a fading tail, so the replay is a
+    // second route. It is that one whose events have to be bound: an unbound
+    // replay can never reach the end of the track.
+    expect(h.audios).toHaveLength(2);
+    h.audios[1].onended?.();
     expect(h.bgm.report().transport).toBe('ended');
+    h.bgm.dispose();
+  });
+
+  it('fades the track out over the outgoing duration on stop', async () => {
+    const h = harness();
+    h.bgm.apply({
+      cmd: 'bgm',
+      revision: 1,
+      track: 'one.mp3',
+      action: 'play',
+      fade: { inSeconds: 1, outSeconds: 4 },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    h.audios[0].currentTime = 42;
+
+    h.bgm.apply({ cmd: 'bgm', revision: 2, action: 'stop', transport: 'stopped', position: 0 });
+
+    // Still sounding, and still where it was: pausing or seeking here is what
+    // the unconditional hard edge used to do.
+    expect(h.audios[0].paused).toBe(false);
+    expect(h.audios[0].currentTime).toBe(42);
+    expect(h.gains[2].gain.calls).toContainEqual({
+      method: 'linearRampToValueAtTime',
+      value: 0,
+      at: 14,
+    });
+    // The canonical timeline is at zero from the instant of the stop, whatever
+    // the element that is leaving is still doing.
+    expect(h.bgm.report().transport).toBe('stopped');
+    expect(h.bgm.report().position).toBe(0);
+    h.bgm.dispose();
+  });
+
+  it('keeps the hard edge when the outgoing duration is zero', async () => {
+    const h = harness();
+    h.bgm.apply({
+      cmd: 'bgm',
+      revision: 1,
+      track: 'one.mp3',
+      action: 'play',
+      fade: { inSeconds: 0, outSeconds: 0 },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    h.bgm.apply({ cmd: 'bgm', revision: 2, action: 'stop', transport: 'stopped', position: 0 });
+    expect(h.audios[0].paused).toBe(true);
+    h.bgm.dispose();
+  });
+
+  it('builds a new route when play arrives during the stop fade', async () => {
+    const h = harness();
+    h.bgm.apply({
+      cmd: 'bgm',
+      revision: 1,
+      track: 'one.mp3',
+      action: 'play',
+      fade: { inSeconds: 1, outSeconds: 4 },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    h.bgm.apply({ cmd: 'bgm', revision: 2, action: 'stop', transport: 'stopped', position: 0 });
+    h.bgm.apply({ cmd: 'bgm', revision: 3, action: 'play', transport: 'playing', position: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The leaving route is not adopted by the play: it keeps falling on its own
+    // envelope while the new one rises beside it.
+    expect(h.audios).toHaveLength(2);
+    expect(h.audios[1].paused).toBe(false);
+    expect(h.gains[2].gain.calls).toContainEqual({
+      method: 'linearRampToValueAtTime',
+      value: 0,
+      at: 14,
+    });
+    expect(h.gains[3].gain.calls).toContainEqual({
+      method: 'linearRampToValueAtTime',
+      value: 1,
+      at: 11,
+    });
     h.bgm.dispose();
   });
 
