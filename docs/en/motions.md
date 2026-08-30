@@ -1,29 +1,29 @@
 # Motions
 
-A gesture of your own, in a file, on top of the ones this project ships.
+A gesture of your own, in a file, alongside the ones this project ships.
 
-Drop a YAML file in `show/motions/` and it becomes a gesture under its own filename — playable by `gesture`, nameable from a line, listed in the vocabulary beside the built-in ones. `--motions <dir>` moves the directory anywhere. Nothing in it is tracked.
+Put a YAML file in `show/motions/` and it becomes a gesture under its own filename: playable by `gesture`, nameable from a line, listed in the vocabulary beside the built-in ones. `--motions <dir>` moves the directory anywhere. Nothing in it is tracked.
 
 ```sh
 yarn ctl motions             # what the server can see
 yarn ctl gesture salute      # play it
 ```
 
-The renderer reads the directory when it connects, so the loop is: edit the file, reload the page.
+The renderer reads the directory when it connects, so the edit loop is: edit the file, reload the page.
 
-## It is keyframes, and the built-in table is not
+## Keyframes, not procedural motion
 
-A built-in gesture is a function of time. `wave` is a sine whose amplitude decays, because a wave held at constant amplitude for three seconds is a metronome rather than a greeting; `nod` is a damped oscillation, because one beat reads as a twitch and it is the second, smaller beat that makes it read as agreement. Those are not values anybody types into a file. They were arrived at by watching a render, and the comments beside them in `src/engine/motion/gestures/` say which failure each number exists to prevent.
+A built-in gesture is a function of time. `wave` is a sine whose amplitude decays, because a wave held at constant amplitude for three seconds reads as a metronome rather than a greeting; `nod` is a damped oscillation, because one beat reads as a twitch and it is the second, smaller beat that makes it read as agreement. Those are not values that can be typed into a file. They were arrived at by watching a render, and the comments beside them in `src/engine/motion/gestures/` say which failure each number prevents.
 
-So this format is poses at times, interpolated between — which is what a person editing a text file can actually control. It expresses less than the built-in form does, and is meant to. The gesture table is not migrated to it and will not be: a keyframed `nod` is a nod with the tuning taken out.
+This format is therefore poses at times, interpolated between, which is what a person editing a text file can control. It expresses less than the built-in form does, by design. The gesture table is not migrated to it: a keyframed `nod` is a nod with the tuning taken out.
 
-Two consequences follow from the same reasoning:
+Two consequences follow.
 
-**A name already in the gesture table is refused**, rather than shadowing it. What the performance table names has to keep meaning what it meant, or a script written against this runtime does something else on the machine next to it.
+**A name already in the gesture table is refused**, rather than shadowing it. What the performance table names has to keep meaning what it meant, or a script written against this runtime does something else on another machine.
 
-**The idle autopilot never picks one.** It plays a gesture nobody asked for, so it may only draw from the set that was watched on a render. A motion is played when it is named.
+**The idle autopilot never picks one.** It plays a gesture nobody asked for, so it may only draw from the set that was checked against a render. A loaded motion plays when it is named.
 
-## What a file looks like
+## File format
 
 ```yaml
 label: { en: Salute, ja: 敬礼 }
@@ -66,31 +66,31 @@ frames:
 
 ### Directions, not positions
 
-`arms` names the four links shoulder to hand as directions in **character space**: x outward from the midline, y up, z forward. They are normalised on the way in, so their length does not matter and only their bearing does. `palm` is which way the palm faces, and it is worth stating — aiming the hand only says where the fingers point, and the roll about that axis falls out as an accident otherwise.
+`arms` names the four links shoulder to hand as directions in **character space**: x outward from the midline, y up, z forward. They are normalised on the way in, so their length does not matter and only their bearing does. `palm` is which way the palm faces, and it is worth stating, because aiming the hand only says where the fingers point and the roll about that axis is otherwise incidental.
 
 `fingers` is curl per finger, 0 straight and 1 fully closed. `spine` is additive offsets in radians per slot: `hips`, `spine`, `chest`, `neck`, `head`.
 
-Sides are written out. The built-in table authors one pose and mirrors it onto whichever hand is free, and it can do that because every entry was checked on both; a file says `L` or `R` and gets it.
+Sides are written out. The built-in table authors one pose and mirrors it onto whichever hand is free, which it can do because every entry was checked on both; a file states `L` or `R` and gets it.
 
-### Unstated is not zero
+### Omitted fields are unstated, not zero
 
-Every field is optional, and one that a keyframe leaves out is not "back to rest" — it is unstated, and whichever neighbouring keyframe does state it is used unchanged. That is what lets a motion move the arms over four keyframes while stating the spine once. Fading toward a value nobody wrote down is the reading that produces movement nobody authored.
+Every field is optional, and one that a keyframe leaves out is not "back to rest": it is unstated, and whichever neighbouring keyframe does state it is used unchanged. That is what lets a motion move the arms over four keyframes while stating the spine once. Fading toward a value nobody wrote down produces movement nobody authored.
 
-### What is deliberately missing
+### What the format does not support
 
-`reach` and `point` — the two things the built-in table solves against a particular avatar's measured proportions. An authored reach that misses does not look approximate; it puts the hand inside the face. The gesture table has the notes that make those authorable and a file dropped in a directory does not. A direction that is wrong costs an arm at an odd angle, which is a thing you can see and fix.
+`reach` and `point` are absent: they are the two things the built-in table solves against a particular avatar's measured proportions. An authored reach that misses does not look approximate, it puts the hand inside the face. The gesture table carries the notes that make those authorable and a file dropped in a directory does not. A direction that is wrong costs an arm at an odd angle, which is visible and fixable.
 
 ## Variation
 
-A gesture is played with a little variation so that two playbacks are not identical. For a keyframe track that means one thing and not the other:
+A gesture is played with a little variation so that two playbacks are not identical. For a keyframe track:
 
 - `rate` scales **time** — the only reading of "faster" a keyframe track has.
 - `scale` reaches the **spine** alone. A direction has no amplitude to vary; scaling one aims it somewhere else, which is a different pose rather than the same pose done smaller.
-- `side` does **nothing**. The built-in table authors one pose and mirrors it onto whichever hand is free, and can do that because every entry was checked on both. A file states `L` or `R` and gets it, so `--side` on a loaded motion is ignored rather than flipping a pose nobody checked flipped.
+- `side` does **nothing**. The built-in table authors one pose and mirrors it onto whichever hand is free, which it can do because every entry was checked on both. A file states `L` or `R` and gets it, so `--side` on a loaded motion is ignored rather than flipping a pose that was never checked flipped.
 
-## When it does not work
+## Parse errors
 
-A file that will not parse is listed with its reason rather than dropped, because a motion that is simply absent reads as a filename typed wrong — which is the one thing it is not.
+A file that will not parse is listed with its reason rather than dropped, because a motion that is simply absent reads as a mistyped filename.
 
 ```
 $ yarn ctl motions
@@ -98,7 +98,7 @@ $ yarn ctl motions
   broken           group: invalid option
 ```
 
-A loop whose first and last keyframes differ snaps once per cycle. Nothing checks for it: how close is close enough is a judgement about a render.
+A loop whose first and last keyframes differ snaps once per cycle. Nothing checks for it, because how close is close enough is a judgement about a render.
 
 ## Next
 

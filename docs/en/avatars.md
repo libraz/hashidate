@@ -2,20 +2,20 @@
 
 The engine holds no avatar data. Everything that is a property of one particular model lives in a descriptor under `src/avatars`, and the runtime reads it through a profile. Adding an avatar is adding a file.
 
-**A fresh clone has no avatar in it.** The descriptors here point at `public/models/<id>.glb`, which is git-ignored, so the first thing to do with a checkout is supply a model. See [Building your own](#building-your-own).
+**A fresh clone has no avatar in it.** The descriptors here point at `public/models/<id>.glb`, which is git-ignored, so the first step with a checkout is to supply a model. See [Building your own](#building-your-own).
 
 ```sh
 yarn ctl avatar manuka
 yarn ctl vocab
 ```
 
-`avatar` is the only command that replaces the session every other one talks to, so the renderer holds what arrives behind it until the model is standing: swap and dress in one breath does what it reads like.
+`avatar` is the only command that replaces the session every other one talks to, so the renderer holds what arrives behind it until the model is standing: swap and dress in one batch behaves as written.
 
-## Discovered rather than declared
+## The vocabulary is discovered from the model
 
-What the model can be asked for is resolved from what it actually ships — bones, finger families, visemes, blink shapes, drawn-expression groups, wardrobe meshes. ARKit is detected, not assumed.
+What the model can be asked for is resolved from what it actually ships: bones, finger families, visemes, blink shapes, drawn-expression groups, wardrobe meshes. ARKit support is detected, not assumed.
 
-That is why `GET /api/vocabulary` is a report on the model rather than a constant. Two models by different authors, one implementing the ARKit 52 blendshape set and one implementing none of it, are driven by the same engine over the same command vocabulary — which is the claim this repository exists to test.
+`GET /api/vocabulary` is therefore a report on the model rather than a constant. Two models by different authors, one implementing the ARKit 52 blendshape set and one implementing none of it, are driven by the same engine over the same command vocabulary, which is the claim this repository tests.
 
 ## Wardrobe
 
@@ -28,7 +28,7 @@ yarn ctl wear --preset casual
 
 ## Assets
 
-The two validation avatars are purchased VRChat models. Their source packages, the extracted meshes and textures, and the GLB the viewer loads are all git-ignored: they are 1.5 GB together, and they are not ours to redistribute.
+The two validation avatars are purchased VRChat models. Their source packages, the extracted meshes and textures, and the GLB the viewer loads are all git-ignored: they are 1.5 GB together, and they cannot be redistributed here.
 
 The pipeline turns a purchased package into a GLB:
 
@@ -44,17 +44,17 @@ make glb        # FBX            → public/models/*.glb
 
 ## Licensing is why the runtime is loopback-only
 
-The avatars used for validation are commercial models that may not be republished. The viewer and the control API bind to `127.0.0.1` and send no CORS header **because of that**, not out of caution. The speech sidecar goes further and binds no port at all — a UNIX socket in a directory only its own user can enter — for a second and stronger reason: the voice is cloned from recordings of a real person. It can afford to, because its only caller is the control server proxying for the renderer.
+The avatars used for validation are commercial models that may not be republished. The viewer and the control API bind to `127.0.0.1` and send no CORS header **because of that**, not out of caution. The speech sidecar goes further and binds no port at all — a UNIX socket in a directory only its own user can enter — for a second and stronger reason: the voice is cloned from recordings of a real person. It can do that because its only caller is the control server proxying for the renderer.
 
 There is no `--host` flag, no CORS header and no tunnel. If exposing the renderer ever becomes necessary, it is a licensing decision first and a code change second.
 
-Nothing under `public/models/` is covered by this repository's licence. A checkout gives you the runtime, not the characters it was built against.
+Nothing under `public/models/` is covered by this repository's licence. A checkout provides the runtime, not the characters it was built against.
 
 ## Building your own
 
-The engine is a runtime, not an editor. Rigging, weighting and garment authoring happen in Blender, and `tools/blender` is the seam between the two. A model that comes out of that pipeline needs a descriptor in `src/avatars` and nothing else.
+The engine is a runtime, not an editor. Rigging, weighting and garment authoring happen in Blender, and `tools/blender` is the interface between the two. A model that comes out of that pipeline needs a descriptor in `src/avatars` and nothing else.
 
-Tests build a synthetic avatar in code rather than loading a GLB — a suite that needs a purchased 16 MB model can only run on a machine that has bought it. Extend `tests/helpers/scene.ts` rather than adding a fixture.
+Tests build a synthetic avatar in code rather than loading a GLB, because a suite that needs a purchased 16 MB model can only run on a machine that has bought it. Extend `tests/helpers/scene.ts` rather than adding a fixture.
 
 ## Next
 

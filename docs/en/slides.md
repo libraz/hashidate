@@ -1,6 +1,6 @@
 # Slides
 
-A PDF put up behind the character, so she can present from it.
+A PDF put up behind the character, to present from.
 
 ![A page of the demo deck, with the character standing in the corner of the same frame](../images/slides.webp)
 
@@ -8,13 +8,13 @@ That is one browser source, exactly as OBS receives it: the page fills the frame
 
 ![The layers of the output frame](../images/frame.svg)
 
-It is flat. The page is not geometry in the room and not a texture on a screen somewhere in the scene — it is a DOM layer directly behind the render, at the frame's own resolution. Everything that would otherwise happen to it on the way through a 3D pipeline is what makes slide text unreadable: tone mapping moves the white, filtering softens strokes a pixel wide, and a page turn becomes a texture upload rather than an image swap. Drawing it flat costs the ability to tilt it, which no one wanted, and buys type as sharp as the file is.
+The page is flat. It is not geometry in the room and not a texture on a screen somewhere in the scene: it is a DOM layer directly behind the render, at the frame's own resolution. What a 3D pipeline would otherwise do to it is what makes slide text unreadable — tone mapping moves the white, filtering softens strokes a pixel wide, and a page turn becomes a texture upload rather than an image swap. Drawing it flat costs the ability to tilt it and keeps type as sharp as the file is.
 
-## Putting one up
+## Showing a document
 
-Put the documents in `show/slides/` — `--slides <dir>` moves that anywhere, including outside the repository, and either way they are ignored by git. A document's id is its filename without the extension.
+Put the documents in `show/slides/`. `--slides <dir>` moves that anywhere, including outside the repository, and either way they are ignored by git. A document's id is its filename without the extension.
 
-One document ships: `hashidate.pdf`, three pages about this runtime and the person who wrote it, which is what the demo script presents from. It is the exception to the ignore rule for the same reason `demo.yaml` is — it belongs to the project rather than to a broadcast.
+One document ships: `hashidate.pdf`, three pages about this runtime and its author, which is what the demo script presents from. It is an exception to the ignore rule for the same reason `demo.yaml` is — it belongs to the project rather than to a broadcast.
 
 ```sh
 yarn ctl deck intro          # up, at page 1
@@ -24,32 +24,32 @@ yarn ctl slide 12
 yarn ctl deck none           # down
 ```
 
-While a document is up it takes the place of the set: both go behind the character, and the renderer puts the room away for the duration and brings it back unchanged when the document comes down. Two commands still, so a segment that goes to slides and back is one command each way and neither has to restate the other.
+While a document is up it takes the place of the set: both go behind the character, and the renderer puts the room away for the duration and brings it back unchanged when the document comes down. They remain two commands, so a segment that goes to slides and back is one command each way and neither has to restate the other.
 
-The character moves out of the way with `place`, which shrinks the picture rather than the shot. See [The stage](stage.md#where-she-stands-in-the-frame).
+The character moves out of the way with `place`, which shrinks the picture rather than the shot. See [The stage](stage.md#where-the-character-stands-in-the-frame).
 
-## A page can ride on a line
+## Page turns on a line
 
-Which is what makes a document follow a script rather than an operator:
+A page turn can ride on a line, which is what makes a document follow a script rather than an operator:
 
 ```sh
 yarn ctl say "The whole picture first." --slide 2
 yarn ctl say "And this is what it looks like." --deck hashidate --slide 1
 ```
 
-That page is **absolute, and there is deliberately no relative form on a line.** A queued line can be dropped, reordered or sent round again, and a "next page" written into one means a different page every time the script is touched — the rest of the deck slips by one and nothing in the queue says why.
+That page is **absolute, and there is deliberately no relative form on a line.** A queued line can be dropped, reordered or sent round again, and a "next page" written into one means a different page every time the script is touched: the rest of the deck slips by one and nothing in the queue records why.
 
-`slide`'s relative form is for the operator with a hand on an arrow key, who is reacting to what is on screen rather than describing it.
+`slide`'s relative form is for the operator with a hand on an arrow key, reacting to what is on screen rather than describing it.
 
 ## Fonts
 
-A deck that names a font instead of carrying it — which a Japanese one usually does, because the machine that made it had the font installed — is drawn from the character maps and standard outlines that ship with pdf.js, served out of the installed package at `/pdfjs/`. Without them such a page draws with its text simply absent, and nothing says so.
+A deck that names a font instead of embedding it — which a Japanese one usually does, because the machine that made it had the font installed — is drawn from the character maps and standard outlines that ship with pdf.js, served out of the installed package at `/pdfjs/`. Without them such a page draws with its text absent, and nothing reports it.
 
-## A document can be read rather than shown
+## Reading a document as text
 
 `GET /api/decks/<id>/text` returns the words on the pages, extracted without rasterising anything, and the MCP layer offers the same thing as a tool.
 
-That is the whole point of the feature: a model that can read the deck can write the script for it, and put the page numbers on the lines.
+That is what the feature is for: a model that can read the deck can write the script for it and put the page numbers on the lines.
 
 ```sh
 curl '127.0.0.1:8765/api/decks/intro/text?from=1&to=3'

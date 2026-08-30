@@ -14,37 +14,37 @@ Every command goes to `POST /api/command`, one at a time or several under `batch
 | `point` | Aim a fingertip at a bearing — degrees on the wire, and any of the five fingers. Held until released. |
 | `look` | How much the gaze tracks the camera, 0 to 1. |
 | `idle` | The autopilot, on or off. |
-| `camera` | Where the camera stands: a framing — `face`, `bust`, `upper`, `full` — and how far off it, as a yaw, a pitch and a zoom. The offsets are relative to the framing so they survive an avatar swap, and every field is optional: naming a shot does not straighten one somebody tilted. |
+| `camera` | Where the camera stands: a framing — `face`, `bust`, `upper`, `full` — and how far off it, as a yaw, a pitch and a zoom. The offsets are relative to the framing so they survive an avatar swap, and every field is optional: naming a shot does not straighten one that was deliberately tilted. |
 | `room` | The space the voice is heard in. No id is dry. Persistent, like the camera. |
-| `backdrop` | The room the character is seen in. No id is the flat background. A separate axis from `room` — a set can be cut without the microphone appearing to move. |
-| `deck` | The document she is presenting from, by filename. No id takes it down. It occupies the same place as a backdrop, so the set is put away while one is up and restored when it comes down. |
+| `backdrop` | The room the character is seen in. No id is the flat background. A separate axis from `room`, so a set can be cut without the microphone appearing to move. |
+| `deck` | The document the character is presenting from, by filename. No id takes it down. It occupies the same place as a backdrop, so the set is put away while one is up and restored when it comes down. |
 | `slide` | Turn a page. `page` is absolute, `by` is relative, and a bare `slide` is next. Past either end is clamped rather than refused. |
-| `place` | Where the character stands in the output frame and where the document sits behind her, each as a rectangle of it. Not the camera: the shot is untouched and the picture of it is moved, so the gestures still play as authored. Also rides on a line under `stage.place`, which is how a script moves her aside for a deck and back. |
+| `place` | Where the character stands in the output frame and where the document sits behind, each as a rectangle of it. Not the camera: the shot is untouched and the picture of it is moved, so the gestures still play as authored. Also rides on a line under `stage.place`, which is how a script moves the character aside for a deck and back. |
 | `wear` | One slot to an item, or a whole preset at once. |
-| `avatar` | Load a different character. The only command that replaces the session every other one talks to, so the renderer holds what arrives behind it until the model is standing — swap and dress in one breath does what it reads like. |
-| `tune` | The set-once layer: breath, sway, jump, tail, shading. Every field optional and merged onto what is running, so one fader is one small message. Bounded, unlike `point` — a breath period of zero is not an ambitious breath. |
+| `avatar` | Load a different character. The only command that replaces the session every other one talks to, so the renderer holds what arrives behind it until the model is standing: swap and dress in one batch behaves as written. |
+| `tune` | The set-once layer: breath, sway, jump, tail, shading. Every field optional and merged onto what is running, so one fader is one small message. Bounded, unlike `point`. |
 | `voice` | Set the persistent voice-processing chain. `preset` selects a base preset and `null` bypasses it; `dsp` partially overrides the chain with `inputGainDb`, `outputGainDb`, `wetMix`, and optional `retune`, `formant`, `eq`, `gate`, `compressor`, `deesser`, `reverb` and `limiter` groups. `yarn ctl voice` accepts one preset name or `--bypass`; detailed DSP fields are sent through the API. |
 | `debug` | The measurement readout, over every renderer attached. The one standing-looking setting that is deliberately never kept. |
 | `record` | Start or stop writing the composed frame to a file, at a size the command names. Only the renderer that is not muted acts on it. |
-| `bgm` | Select, play, pause or stop an MP3/FLAC from the configured BGM library; independently patch its level, looping, crossfade durations (0..10 seconds) and BGM-only libsonare effects. Different-track play crossfades the old and new tracks; the first/stopped play fades in only, while pause/resume/stop are immediate. The server keeps its transport in sync across renderers. The transport actions are also available as inline `[@bgm ...]` cues in a line, using the current fade settings. |
-| `pause` | Hold the queue where it is, or let it move again. The line on air finishes and nothing is discarded — it is the third thing that can be done to a run of turns, and the only one that keeps them. |
+| `bgm` | Select, play, pause or stop an MP3/FLAC from the configured BGM library; independently patch its level, looping, crossfade durations (0..10 seconds) and BGM-only libsonare effects. A different-track play crossfades the old and new tracks; the first or stopped play fades in only, while pause, resume and stop are immediate. The server keeps its transport in sync across renderers. The transport actions are also available as inline `[@bgm ...]` cues in a line, using the current fade settings. |
+| `pause` | Hold the queue where it is, or let it move again. The line on air finishes and nothing is discarded. It is the third thing that can be done to a run of turns, and the only one that keeps them. |
 | `interrupt` / `clear` / `reset` | Stop mid-line and drop the queue / drop the queue and let the line finish / back to nothing. |
 
-## What `ctl` adds on top
+## What `ctl` adds
 
-`yarn ctl` is a thin client for the table above, so `yarn ctl camera bust` is a `camera` command and nothing else. Eight of its verbs are not commands, though — they read the API, or they do something in the terminal that no renderer needs to hear about:
+`yarn ctl` is a thin client for the table above, so `yarn ctl camera bust` is a `camera` command and nothing else. Eight of its verbs are not commands: they read the API, or they do something in the terminal that no renderer needs to hear about.
 
 | `yarn ctl …` | What it is |
 |---|---|
 | `vocab` | `GET /api/vocabulary` — what this avatar can be asked for. The object to paste into a system prompt |
-| `state` | `GET /api/state` — the snapshot, printed. Says so when no renderer is attached |
-| `watch` | The event tail, followed until Ctrl-C. How to see the order turns actually happen in |
+| `state` | `GET /api/state` — the snapshot, printed. Reports when no renderer is attached |
+| `watch` | The event tail, followed until Ctrl-C. Shows the order turns actually happen in |
 | `decks` | The documents on disk, with their page counts. See [Slides](slides.md) |
 | `motions` | The gestures in `show/motions/`, with any file that would not parse and why. See [Motions](motions.md) |
 | `play` | Run a script. `--check` validates it with no server running. See [Scripts](scripts.md) |
 | `hold` / `resume` | The two halves of the `pause` command, spelled apart. See [Recording](recording.md) |
 
-`yarn ctl` with no arguments prints the whole list with worked examples, which is the fastest reference there is.
+`yarn ctl` with no arguments prints the whole list with worked examples.
 
 ## Typed cues in a line
 
@@ -63,9 +63,9 @@ Typed cues travel through ordinary `say`, `queue`, and script text. For `perform
 
 ## Which hand
 
-A one-handed gesture picks an arm afresh every time it plays. The table authors one pose and mirrors it onto whichever hand is free — every entry was checked on both — and the draw is there because a character who waves with the same arm every time reads as a mechanism rather than a person.
+A one-handed gesture picks an arm afresh every time it plays. The table authors one pose and mirrors it onto whichever hand is free — every entry was checked on both — because a character that waves with the same arm every time reads as a mechanism rather than a person.
 
-`side`, `L` or `R`, pins it for a caller that has a reason to: the hand away from the document, or the same hand the line before used.
+`side`, `L` or `R`, pins it for a caller that needs a particular hand: the hand away from the document, or the same hand the previous line used.
 
 ```
 yarn ctl gesture peace --side L
@@ -73,15 +73,15 @@ yarn ctl perform nice --side R
 yarn ctl say "こっちだよ" --gesture pointUp --side L
 ```
 
-It is one field per line rather than one per field, because a turn plays one movement — `gesture`'s, or the one `perform` names — and a hand written twice could only ever disagree with itself. On a two-handed gesture there is no hand to choose and it fixes which way the head turns instead. A [motion loaded from a file](motions.md) states `L` or `R` itself and ignores it.
+It is one field per line rather than one per field, because a turn plays one movement — `gesture`'s, or the one `perform` names — and a hand written twice could only disagree with itself. On a two-handed gesture there is no hand to choose, and `side` fixes which way the head turns instead. A [motion loaded from a file](motions.md) states `L` or `R` itself and ignores it.
 
 Inline cues do not carry it. `[@gesture peace]` mid-sentence draws its hand as before; a line that needs a particular one names the movement on the line rather than inside it.
 
-## What is deliberately absent
+## What is not in the vocabulary
 
-There is no command that names a model, a provider or a prompt, and there will not be one. What to say is decided on the other side of the boundary; this table is only about how it is said.
+No command names a model, a provider or a prompt, and none will be added. What to say is decided on the other side of the boundary; this table covers only how it is said.
 
-`voice` and `tune` are absent from the MCP surface for a different reason: how a voice is mixed and where the set-once layer sits are decided by ear and by eye against a render, not by a caller that can neither hear nor see the result.
+`voice` and `tune` are absent from the MCP surface for a different reason: how a voice is mixed and where the set-once layer sits are judged by ear and by eye against a render, not by a caller that can neither hear nor see the result.
 
 ## Next
 

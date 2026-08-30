@@ -17,7 +17,7 @@ yarn ctl bgm stop
 
 The default level is 0.2 and looping is on. Fade-in and fade-out default to 1 second and accept 0..10 seconds; 0 is a hard edge. A different-track play while another track is playing fades the old track out and the new track in at the same time. The first play, or a play from stopped, uses only fade-in.
 
-Fade-out is spent by whichever track is leaving, so `stop` fades out over it as well. The timeline resets to zero at the instant of the stop while the sound is still going; a play arriving during that tail starts a fresh pass rather than adopting the one that is leaving. `stop` keeps the selection, so choosing Play again restarts from the beginning. Pause and resume stay immediate — a hold that faded would have to decide what resuming from half a fade means. For a stop with no tail at all, set fade-out to 0, or use the panel's Unload action, which clears the selection and leaves nothing ringing.
+Fade-out is spent by whichever track is leaving, so `stop` fades out over it as well. The timeline resets to zero at the instant of the stop while the sound is still going; a play arriving during that tail starts a fresh pass rather than adopting the one that is leaving. `stop` keeps the selection, so choosing Play again restarts from the beginning. Pause and resume are immediate, because a fade on a hold would have to define what resuming from half a fade means. For a stop with no tail at all, set fade-out to 0, or use the panel's Unload action, which clears the selection and leaves nothing ringing.
 
 `yarn ctl bgm fade <inSeconds> <outSeconds>` changes the current fade settings. `bgm play` accepts `--fade-in` and `--fade-out` to update those settings as part of the play command. Inline track switches, starts from stopped and stops use the settings in force when the cue runs; resuming from paused remains immediate.
 
@@ -61,7 +61,7 @@ This line resumes the selected track. [@bgm play]
 The segment ends here. [@bgm stop]
 ```
 
-The track name is optional for `play`; without it, the selected track resumes. Resuming from paused is immediate, while a start from stopped fades in. The remainder after `play` is the exact filename, so spaces and Japanese characters are allowed. The `[` and `]` characters are reserved. These cues work through ordinary `speak`, `say`, `queue`, and script text, and need no separate MCP or CLI operation. Track switches, stopped starts and stops use the current fade settings; fade durations are not part of the inline syntax. A segment that ends on music therefore sets its fade-out once in the script's setup and closes with `[@bgm stop]` at the end of the last line. Use the panel or the `bgm` MCP tool for volume, looping, fade durations and DSP; those settings are not line cues.
+The track name is optional for `play`; without it, the selected track resumes. Resuming from paused is immediate, while a start from stopped fades in. The remainder after `play` is the exact filename, so spaces and Japanese characters are allowed. The `[` and `]` characters are reserved. These cues work through ordinary `speak`, `say`, `queue`, and script text, and need no separate MCP or CLI operation. Track switches, stopped starts and stops use the current fade settings; fade durations are not part of the inline syntax. A segment that ends on music therefore sets its fade-out once in the script's setup and closes with `[@bgm stop]` at the end of the last line. Volume, looping, fade durations and DSP are set from the panel or the `bgm` MCP tool; they are not line cues.
 
 ## BGM-only effects
 
@@ -80,9 +80,9 @@ If the worklet cannot start, the track continues through a dry path instead of g
 
 ## Several renderers and recording
 
-The server owns the transport clock. A stage, the panel preview and an OBS browser source therefore join the same track at the same point rather than each starting a private copy from zero. A late renderer receives the current selection, position and settings when it connects.
+The server owns the transport clock. A stage, the panel preview and an OBS browser source therefore join the same track at the same point rather than each starting a private copy from zero. A renderer that connects late receives the current selection, position and settings.
 
-Whether one of those pages makes sound is still decided only by its URL. `?mute=1` mutes voice and BGM together; there is no separate renderer-mute command. The panel preview is therefore silent even though it follows the transport.
+Whether one of those pages makes sound is decided only by its URL. `?mute=1` mutes voice and BGM together; there is no separate renderer-mute command. The panel preview is therefore silent even though it follows the transport.
 
 Voice and processed BGM meet at the viewer's shared output. A recording made by the unmuted renderer contains both, at the same levels heard from that page.
 

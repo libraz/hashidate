@@ -1,6 +1,6 @@
 # hashidate
 
-An avatar runtime for an AI VTuber: a browser-rendered character that something else drives over a local HTTP API, one turn of dialogue at a time. The renderer holds the character; the caller holds the script.
+An avatar runtime for an AI VTuber: a browser-rendered character driven over a local HTTP API, one turn of dialogue at a time. The renderer holds the character; the caller holds the script.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/libraz/hashidate/ci.yml?branch=main&label=CI)](https://github.com/libraz/hashidate/actions)
 [![codecov](https://codecov.io/gh/libraz/hashidate/branch/main/graph/badge.svg)](https://codecov.io/gh/libraz/hashidate)
@@ -14,51 +14,51 @@ An avatar runtime for an AI VTuber: a browser-rendered character that something 
 
 ![The broadcast panel running a loaded script](docs/images/panel.webp)
 
-A script loaded on the queue: one line on air, nineteen waiting, each with a performance on it. The panel is driving the same control API an orchestrator would.
+The broadcast panel with a script loaded on the queue: one line on air, nineteen pending, each carrying a performance. The panel drives the same control API an orchestrator uses.
 
-## It depends on no model
+## No model dependency
 
-hashidate is an adapter, not an application. There is no provider SDK in the dependency tree, no API key to configure, and no persona, prompt, script or conversation state — those stay on your side of the line. What crosses the line is one turn — some words, optionally a performance to say them with, optionally the shot to say them in — and a character says and performs it.
+hashidate is an adapter, not an application. There is no provider SDK in the dependency tree, no API key to configure, and no persona, prompt, script or conversation state — all of that stays on the caller's side. What crosses the boundary is one turn: some words, optionally a performance to say them with, optionally the shot to say them in.
 
 ![What crosses the boundary](docs/images/boundary.svg)
 
-Swap the model, the provider or the framework: nothing on the right-hand side changes. The same runtime is driven from an LLM loop in any language, from an MCP client, from a shell script with no model in it at all, or by a person at the broadcast panel — and all four can be mixed in one broadcast.
+Swapping the model, the provider or the framework changes nothing on the runtime side. The same runtime is driven from an LLM loop in any language, from an MCP client, from a shell script with no model in it, or by an operator at the broadcast panel, and all four can be mixed in one broadcast.
 
-## What you can build with it
+## Use cases
 
-| Use case | What it does | The part you touch |
+| Use case | What it does | The interface used |
 |---|---|---|
-| **An AI VTuber answering chat** | Your loop decides the line; hashidate says it and performs it. | `POST /api/command`, or the `speak` MCP tool |
-| **Commentary over a game** | She stands on the game capture with nothing behind her; OBS composites. | `?transparent=1&place=bottom-right:0.32x0.6` |
-| **A talk given from slides** | A PDF behind her, page turns riding on the lines. The deck is readable as text, so a model can write the script for it. | `deck`, `say --slide 2` |
-| **A scripted segment** | No model anywhere. A shell script is a perfectly good orchestrator. | `yarn ctl say …` |
-| **A segment recorded to a file** | Load a script, frame the shot against a queue that is already synthesising, press record. The mp4 lands in `show/recordings/`. | The panel's Queue and Recording tabs |
+| **An AI VTuber answering chat** | The caller decides the line; hashidate says and performs it. | `POST /api/command`, or the `speak` MCP tool |
+| **Commentary over a game** | The character is drawn with a transparent background and OBS composites it over the game capture. | `?transparent=1&place=bottom-right:0.32x0.6` |
+| **A talk given from slides** | A PDF behind the character, with page turns carried on the lines. The deck is also readable as text, so a model can write the script for it. | `deck`, `say --slide 2` |
+| **A scripted segment** | No model involved. A shell script is enough of an orchestrator. | `yarn ctl say …` |
+| **A segment recorded to a file** | Load a script, frame the shot against a queue that is already being synthesised, then record. The mp4 is written to `show/recordings/`. | The panel's Queue and Recording tabs |
 | **A broadcast with background music** | MP3 or FLAC from a local show directory, with its own level and libsonare effects. | The panel's BGM tab, or the `bgm` MCP tool |
 | **A broadcast run by hand** | The panel is a full operating surface, and everything it does goes through the same API. | `/panel/` |
-| **Checking a model you rigged** | What the avatar can be asked for is discovered from its own shapes and meshes. | `yarn ctl vocab` |
+| **Checking a rigged model** | What the avatar can be asked for is discovered from its own shapes and meshes. | `yarn ctl vocab` |
 
 ![A page of the demo deck, with the character standing in the corner of the same frame](docs/images/slides.webp)
 
-The third of those, on air. The deck is a PDF the server reads off disk, the character is placed in a corner of the same frame, and the page turns arrive on the lines — one browser source, and OBS composites nothing.
+The third use case, on air. The deck is a PDF the server reads off disk, the character is placed in a corner of the same frame, and page turns arrive on the lines. OBS receives one browser source and composites nothing.
 
 Worked versions of all eight: [Use cases](docs/en/use-cases.md).
 
-## What you need
+## Requirements
 
-A clone of this repository is the runtime and nothing else. Two of the things it needs are deliberately not in the box:
+A clone of this repository is the runtime and nothing else. Two of its requirements are deliberately not included.
 
 | Requirement | Notes |
 |---|---|
-| Node 22 and Yarn 4 | Pinned in `mise.toml`. `mise install` gets both. |
-| **An avatar** | Required, and **not included.** The descriptors in `src/avatars` point at `public/models/<id>.glb`, which is git-ignored, so a fresh clone has nothing to draw. The two models this was built against are purchased and not ours to redistribute — bring your own, put it through `make glb`, and add one descriptor file. |
-| **A voice** | Not required to run, required in practice: a VTuber that never makes a sound is a test fixture. Needs `uv` and Python 3.11, and several GB of PyTorch come with it. The recordings it clones a voice from are of a real person and are **not included** either — bring your own. |
+| Node 22 and Yarn 4 | Pinned in `mise.toml`. `mise install` installs both. |
+| **An avatar** | Required, and **not included.** The descriptors in `src/avatars` point at `public/models/<id>.glb`, which is git-ignored, so a fresh clone has nothing to draw. The two models this runtime was built against are purchased and cannot be redistributed here. Supply your own model, put it through `make glb`, and add one descriptor file. |
+| **A voice** | Not required to run, but needed for anything broadcast. Requires `uv` and Python 3.11, and pulls in several GB of PyTorch. The recordings the voice is cloned from are of a real person and are **not included** either. |
 | Blender, OBS | Only to convert a model, and only to put the result on a stream. |
 
-Setting the voice up is putting a minute or two of WAV clips in `tools/tts/reference/clips/`, which ships empty for the purpose, and running `make voice` once. Without one everything still runs: the line is mouthed silently on the timing the text implies, which is what the tests do. It is worth knowing that this works, and it is not what you want on a stream.
+Setting up the voice means putting a minute or two of WAV clips in `tools/tts/reference/clips/`, which ships empty for the purpose, and running `make voice` once. Without a voice everything still runs: the line is mouthed silently on the timing the text implies. That path is for tests and development rather than for broadcast.
 
-The voice is swappable for the same reason the model is. A sidecar substitute accepts `{ "text": string }` at `POST /speak`, returns `audio/*`, and answers `GET /health` with a JSON boolean `ready`. See [Speech](docs/en/speech.md).
+The voice is swappable for the same reason the model is. A substitute sidecar accepts `{ "text": string }` at `POST /speak`, returns `audio/*`, and answers `GET /health` with a JSON boolean `ready`. See [Speech](docs/en/speech.md).
 
-The details, and what a first run looks like: [Getting started](docs/en/getting-started.md).
+Full setup and a first run: [Getting started](docs/en/getting-started.md).
 
 ## Quick start
 
@@ -78,11 +78,11 @@ yarn ctl perform happy                          # a face and a movement, named t
 yarn ctl say "Good evening." --perform hello --wait
 yarn ctl say "[hello]Good evening. [explain]Tonight I want to talk about this."
 yarn ctl bgm list && yarn ctl bgm play opening.mp3
-yarn ctl idle on                                # let her perform by herself; breath and gaze were already running
+yarn ctl idle on                                # the idle autopilot; breath and gaze run regardless
 yarn ctl watch                                  # follow the turn events
 ```
 
-## How it fits together
+## Architecture
 
 ![hashidate architecture](docs/images/architecture.svg)
 
@@ -100,13 +100,13 @@ Under it: [Architecture](docs/en/architecture.md), [Avatars](docs/en/avatars.md)
 
 ## Non-goals
 
-hashidate renders and animates a character; it is not the VTuber. It has no language model, no speech recognition and no stream output, and the orchestrator that decides what to say lives outside this repository. Speech is the one thing that crossed the line, and only as far as `tools/tts/`: a sidecar reached over HTTP and never imported.
+hashidate renders and animates a character; it is not the VTuber. It has no language model, no speech recognition and no stream output, and the orchestrator that decides what to say lives outside this repository. Speech synthesis is the one exception, and it is confined to `tools/tts/`: a sidecar reached over HTTP and never imported.
 
-It is also deliberately loopback-only. There is no `--host` flag, no CORS header and no tunnel, because the avatars used for validation may not be republished: exposing the renderer would be a licensing decision before it was a code change.
+The runtime is loopback-only. There is no `--host` flag, no CORS header and no tunnel, because the avatars used for validation may not be republished; exposing the renderer would be a licensing decision before a code change.
 
-The model data does not leave that loop. The browser reads it from `127.0.0.1` and draws it; nothing in the runtime copies it, uploads it or learns from it.
+Model data does not leave that loop. The browser reads it from `127.0.0.1` and draws it; nothing in the runtime copies it, uploads it or trains on it.
 
-The engine is a runtime, not an editor: rigging, weighting and garment authoring happen in Blender, and `tools/blender` is the seam between the two.
+The engine is a runtime, not an editor. Rigging, weighting and garment authoring happen in Blender, and `tools/blender` is the interface between the two.
 
 ## Development
 
@@ -116,14 +116,14 @@ yarn lint          # biome
 yarn test          # vitest
 ```
 
-Tests build a synthetic avatar in code rather than loading a GLB — a suite that needs a purchased 16 MB model can only run on a machine that has bought it.
+Tests build a synthetic avatar in code rather than loading a GLB, because a suite that needs a purchased 16 MB model can only run on a machine that has bought it.
 
-The numbers in `src/engine` were arrived at by watching two real avatars, and most of them carry a comment naming the failure they exist to prevent. They are not defaults to be tidied: changing one is a decision that needs a look at the render.
+The constants in `src/engine` were arrived at by watching two real avatars, and most carry a comment naming the failure they prevent. Changing one requires checking the result in a render.
 
 ## License
 
 [Apache-2.0](LICENSE) — the code in this repository.
 
-Nothing under `public/models/` is covered by it. The avatars are purchased commercial models under their authors' own terms: a checkout gives you the runtime, not the characters it was built against.
+Nothing under `public/models/` is covered by it. The avatars are purchased commercial models under their authors' own terms: a checkout provides the runtime, not the characters it was built against.
 
 The wall and floor textures in `public/textures/` are CC0 1.0, from ambientCG (`WoodFloor001`, `Fabric019`).
