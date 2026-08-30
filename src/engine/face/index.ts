@@ -19,4 +19,4 @@ export {
 export type { MouthViseme, MouthWeights, VisemeEvent, VisemeOptions, VisemeTrack } from './lipsync';
 export { Mouth, scaleTrack, textToVisemes } from './lipsync';
 export type { ExpressionPreset, LidClosure } from './presets';
-export { buildOverlays, buildPresets } from './presets';
+export { buildIdleFaces, buildOverlays, buildPresets } from './presets';

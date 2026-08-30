@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildOverlays, buildPresets } from '@/engine/face';
+import { buildIdleFaces, buildOverlays, buildPresets } from '@/engine/face';
 import { buildProfile } from '@/engine/profile';
 import type { AvatarDescriptor, PresetSpec, Profile } from '@/engine/types';
 import { same } from '@/i18n/locale';
@@ -111,6 +111,57 @@ describe('buildPresets', () => {
     profile.groups.get(FACE_GROUP)?.push('F_GHOST');
     expect(profile.groups.get(FACE_GROUP)).toContain('F_GHOST');
     expect(buildPresets(profile, descriptor).map((p) => p.id)).toEqual(FACE_IDS);
+  });
+});
+
+describe('buildIdleFaces', () => {
+  /** The pool the autopilot draws from, and the vocabulary it was drawn out of. */
+  function pool(presets: PresetSpec): { idle: string[]; all: string[] } {
+    const { profile, descriptor } = setup({ presets });
+    const built = buildPresets(profile, descriptor);
+    return { idle: buildIdleFaces(built, descriptor), all: built.map((p) => p.id) };
+  }
+
+  it('offers the whole set when no emotion claims one and nothing is barred', () => {
+    expect(pool({ group: FACE_GROUP }).idle).toEqual(FACE_IDS);
+  });
+
+  it('leaves out a face the emotion vector already reaches', () => {
+    // Otherwise the autopilot picks a drawing the mood underneath is not in,
+    // and the character wears a grin while feeling nothing in particular.
+    const { idle } = pool({ group: FACE_GROUP, emotion: { joy: 'F_NIKO' } });
+    expect(idle).not.toContain('F_NIKO');
+    expect(idle).toEqual(FACE_IDS.filter((id) => id !== 'F_NIKO'));
+  });
+
+  it('bars a face from the idle without taking it out of the vocabulary', () => {
+    // The distinction `idleExclude` exists for: the sleeping face is worth
+    // having for the moment somebody asks for it and is not something to drift
+    // into between turns, so it has to be missing from one list and present in
+    // the other.
+    const { idle, all } = pool({ group: FACE_GROUP, idleExclude: ['F_SUYASUYA'] });
+    expect(idle).not.toContain('F_SUYASUYA');
+    expect(all).toContain('F_SUYASUYA');
+  });
+
+  it('applies both subtractions at once', () => {
+    const { idle } = pool({
+      group: FACE_GROUP,
+      emotion: { joy: 'F_NIKO' },
+      idleExclude: ['F_SUYASUYA'],
+    });
+    expect(idle).toEqual(['F_DOYA', 'F_JITO']);
+  });
+
+  it('ignores a bar for an id this avatar does not have', () => {
+    expect(pool({ group: FACE_GROUP, idleExclude: ['F_NOT_HERE'] }).idle).toEqual(FACE_IDS);
+  });
+
+  it('never offers a face the avatar excluded outright', () => {
+    // `exclude` already removed it from the resolved list, so it cannot reach
+    // the pool by either route.
+    const { idle } = pool({ group: FACE_GROUP, exclude: ['F_DOYA'] });
+    expect(idle).not.toContain('F_DOYA');
   });
 });
 

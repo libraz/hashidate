@@ -403,6 +403,20 @@ export interface PresetSpec extends DrawnShapeSpec {
    * only that a drawing already contains the travel.
    */
   hideGroup?: string;
+  /**
+   * Faces the idle autopilot may not reach for on its own.
+   *
+   * Distinct from `exclude`, and the difference is the whole point: an excluded
+   * shape is not an expression at all and leaves the vocabulary entirely, while
+   * these are perfectly good drawings that simply must not arrive unasked. A
+   * sleeping face is the clearest case — it is worth having for the moment
+   * somebody asks for it by name, and it is not something the character should
+   * drift into while waiting for the next turn.
+   *
+   * So they stay in the list, stay reachable by `setExpression` and by a script
+   * cue, and are only kept out of the pool the autopilot picks from.
+   */
+  idleExclude?: string[];
 }
 
 export interface MaterialRules {

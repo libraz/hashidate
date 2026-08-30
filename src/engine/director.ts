@@ -13,6 +13,7 @@ import type * as THREE from 'three';
 import type { ExpressionPreset, MouthViseme } from './face';
 import {
   Blink,
+  buildIdleFaces,
   buildOverlays,
   buildPresets,
   composeArkit,
@@ -66,12 +67,19 @@ const pickOne = <T>(xs: T[]): T => xs[Math.floor(Math.random() * xs.length)];
  * they outnumber everything else three to one. Poses are in the pool and sulking
  * and startlement are not — a held pose is fine because the next pick releases
  * it, whereas a character who is periodically furious at nothing is not.
+ *
+ * `calm` is absent for a third reason. A mood the autopilot holds for the better
+ * part of ten seconds is what the character looks like between turns, and a
+ * settled, half-lidded face held that long reads as drowsy rather than as
+ * composed — the standing rows have to leave the character awake. Its weight
+ * went to `blank` and `wonder`, so the amount of standing is unchanged and only
+ * what is being felt while standing moved. `sleepy` stays: a yawn that arrives
+ * and passes is a punctuation mark, which is the row it sits in.
  */
 // biome-ignore format: the repetition is the weighting, and the rows show it
 const AUTO_ACTS: PerformanceId[] = [
-  'calm', 'calm', 'calm', 'calm',
-  'blank', 'blank', 'blank',
-  'wonder', 'wonder',
+  'blank', 'blank', 'blank', 'blank', 'blank', 'blank',
+  'wonder', 'wonder', 'wonder',
   'bashful', 'gloomy',
   'agree', 'agree', 'curious', 'curious', 'ponder', 'dunno', 'interested',
   'giggle', 'peace', 'applause',
@@ -207,11 +215,10 @@ export class Director {
     this.overlays = buildOverlays(profile, avatar);
     this.overlayIds = new Set(this.overlays.map((x) => x.id));
 
-    // Authored faces that no canonical emotion maps to. They are the bulk of
-    // the set and the semantic API cannot ask for them, so the autopilot picks
-    // from here directly.
-    const mapped = new Set(Object.values(this._emotionPreset));
-    this._extraFaces = this.presets.map((x) => x.id).filter((id) => !mapped.has(id));
+    // Authored faces that no canonical emotion maps to, less the ones the avatar
+    // keeps out of the idle. They are the bulk of the set and the semantic API
+    // cannot ask for them, so the autopilot picks from here directly.
+    this._extraFaces = buildIdleFaces(this.presets, avatar);
   }
 
   /**

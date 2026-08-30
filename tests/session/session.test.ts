@@ -1262,17 +1262,18 @@ describe('idle ownership', () => {
   it('releases an unowned held gesture when a face-only idle act starts', () => {
     const { session, director, step } = build({ idle: true });
     session.gesture('armCross');
+    // Pinned to the first row of the autopilot's pool, which is face-only.
     const random = vi.spyOn(Math, 'random').mockReturnValue(0);
     try {
       step(Math.ceil((IDLE_AFTER + 1) / DT));
       expect(director.auto).toBe(true);
 
       let elapsed = 0;
-      while (director.performance !== 'calm' && elapsed < 10) {
+      while (director.performance !== 'blank' && elapsed < 10) {
         step(1);
         elapsed += DT;
       }
-      expect(director.performance).toBe('calm');
+      expect(director.performance).toBe('blank');
       const gesture = director.body.gesture;
       expect(gesture === null || (gesture.id === 'armCross' && gesture.released)).toBe(true);
     } finally {
@@ -1319,25 +1320,26 @@ describe('idle ownership', () => {
   it('composes idle overlays over the caller weight and restores it on wake', () => {
     const { session, director, step } = build({ idle: true });
     session.setOverlay('FX_BLUSH', 0.4);
-    const calm = PERFORMANCE_TABLE.calm;
-    const prior = calm.overlay;
+    const blank = PERFORMANCE_TABLE.blank;
+    const prior = blank.overlay;
+    // Pinned to the first row of the autopilot's pool.
     const random = vi.spyOn(Math, 'random').mockReturnValue(0);
-    calm.overlay = ['FX_BLUSH'];
+    blank.overlay = ['FX_BLUSH'];
     try {
       step(Math.ceil((IDLE_AFTER + 1) / DT));
       let elapsed = 0;
-      while (director.performance !== 'calm' && elapsed < 10) {
+      while (director.performance !== 'blank' && elapsed < 10) {
         step(1);
         elapsed += DT;
       }
-      expect(director.performance).toBe('calm');
+      expect(director.performance).toBe('blank');
       expect(session.state().overlays).toEqual({ FX_BLUSH: 1 });
 
       session.setIdle(false);
       expect(director.auto).toBe(false);
       expect(session.state().overlays).toEqual({ FX_BLUSH: 0.4 });
     } finally {
-      calm.overlay = prior;
+      blank.overlay = prior;
       random.mockRestore();
     }
   });

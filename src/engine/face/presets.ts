@@ -224,6 +224,27 @@ export function buildPresets(profile: Profile, avatar?: AvatarDescriptor): Expre
 }
 
 /**
+ * The faces the idle autopilot may reach for on its own.
+ *
+ * Two subtractions from the resolved list, and they are subtracted for opposite
+ * reasons. A face some canonical emotion maps to already arrives through the
+ * emotion vector, so putting it here as well would have the autopilot pick a
+ * drawing the mood underneath is not in — the character would look delighted
+ * while feeling nothing in particular. What is left is the bulk of the set: the
+ * drawings no emotion names, which nothing else in the runtime can reach.
+ *
+ * `idleExclude` then removes the ones that are reachable but must not arrive
+ * unasked — a face is a wardrobe item the character puts on for a moment, and
+ * some of them say something the idle should never say by accident.
+ */
+export function buildIdleFaces(presets: ExpressionPreset[], avatar?: AvatarDescriptor): string[] {
+  const spec = avatar?.presets;
+  const mapped = new Set(Object.values(spec?.emotion ?? {}));
+  const barred = new Set(spec?.idleExclude ?? []);
+  return presets.map((x) => x.id).filter((id) => !(mapped.has(id) || barred.has(id)));
+}
+
+/**
  * Resolve the overlay list. Same discovery, no lid measurement: an overlay is
  * drawn on top of whatever the lids are doing and never claims them.
  */

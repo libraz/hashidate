@@ -86,6 +86,22 @@ export default {
      * find between performances.
      */
     exclude: ['F_PAH'],
+    /**
+     * The faces that read as asleep or as gone slack. All four are good drawings
+     * and all four are wrong arriving on their own: the idle is what the
+     * character looks like while waiting, and a viewer who glances over should
+     * find somebody awake rather than somebody nodding off.
+     *
+     * `F_HOWAWA` is here for a related reason rather than the same one. It is
+     * the softest face in the set and no emotion maps to it any more (see the
+     * table below), which would otherwise hand it straight to the autopilot —
+     * and a half-lidded, round-mouthed face held between turns is the drowsiness
+     * the other three are being kept out for.
+     *
+     * None of them leaves the vocabulary. `expression F_SUYASUYA` and a cue in
+     * a script both still reach them, which is the point of asking for one.
+     */
+    idleExclude: ['F_HOWAWA', 'F_SUYASUYA', 'F_MUNYAMUNYA', 'F_GUTTARI', 'F_POYAYAN'],
     label: (id: string) => id.replace(/^F_/, '').replace(/_/g, ' '),
     emotion: {
       /**
@@ -112,7 +128,15 @@ export default {
       // above, and every other face in the set reads as some other feeling —
       // so surprise is left to the composition, which is what an emotion with
       // no drawing is supposed to fall back to.
-      relaxed: 'F_HOWAWA',
+      //
+      // No relaxed either, and for once the drawing exists. `F_HOWAWA` is drawn
+      // with the lids low and the mouth small and round, which is a face for a
+      // beat and not a state: `relaxed` is what the character is in for whole
+      // stretches — every calm mood, every stretch, every chin on a hand — and
+      // held that long the drawing stops reading as at ease and starts reading
+      // as half asleep. The composition puts a light smile and a slight squint
+      // on the character's own face instead, which holds. The drawing is still
+      // there to ask for.
       thinking: 'F_FUMUFUMU',
       shy: 'F_TERETERE',
     },
