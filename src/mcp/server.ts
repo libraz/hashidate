@@ -144,7 +144,7 @@ export interface Control {
 
 export function createServer(control: Control): Server {
   const server = new Server(
-    { name: 'hashidate', version: '0.1.0' },
+    { name: 'hashidate', version: '0.2.0' },
     {
       capabilities: { tools: { listChanged: true }, resources: {} },
       instructions: INSTRUCTIONS,
