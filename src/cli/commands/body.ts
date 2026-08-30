@@ -76,6 +76,8 @@ export const hop: Handler = async (client, args) => {
  */
 export const point: Handler = async (client, args) => {
   const { numbers, rest } = extractNumbers(args, ['--extent', '--side', '--finger']);
+  if (numbers.length > 2)
+    fail(`point takes at most two numeric positionals: ${numbers.slice(2).join(' ')}`);
   const { values } = parseArgs({
     args: rest,
     options: {
