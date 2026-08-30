@@ -4,9 +4,15 @@ import {
   BGM_DEFAULT_LOOP,
   BGM_DEFAULT_VOLUME,
   BGM_DSP_DEFAULTS,
+  BGM_FADE_DEFAULTS,
+  BGM_FADE_LIMITS,
+  type BgmCommand,
   type BgmDsp,
   type BgmDspPatch,
+  type BgmFade,
+  type BgmFadePatch,
   type BgmTrack,
+  type BgmTransport,
   type Snapshot,
 } from '@/protocol';
 import { Chip, ChipRow } from '@/ui/Chip';
@@ -89,6 +95,31 @@ export function fromBgmDspValue(dsp: BgmDsp, control: BgmDspControl): number {
   }
 }
 
+/** The two transition durations shown in seconds, matching the wire fields. */
+export type BgmFadeControl = 'inSeconds' | 'outSeconds';
+
+/** Map one display control to one transition-duration patch. */
+export function toBgmFadePatch(control: BgmFadeControl, displayValue: number): BgmFadePatch {
+  return control === 'inSeconds' ? { inSeconds: displayValue } : { outSeconds: displayValue };
+}
+
+/** Read one transition duration back into the seconds shown by the sliders. */
+export function fromBgmFadeValue(fade: BgmFade, control: BgmFadeControl): number {
+  return fade[control];
+}
+
+/** Select a track without accidentally restarting the one already selected. */
+export function trackSelectionIntent(
+  currentTrack: string | null,
+  requestedTrack: string,
+  transport: BgmTransport,
+): Pick<BgmCommand, 'track' | 'action'> | null {
+  if (currentTrack === requestedTrack) return null;
+  return transport === 'playing'
+    ? { track: requestedTrack, action: 'play' }
+    : { track: requestedTrack };
+}
+
 function rosterKey(tracks: readonly BgmTrack[]): string {
   return tracks.map((track) => `${track.id}\u0000${track.bytes}\u0000${track.at}`).join('\u0001');
 }
@@ -112,6 +143,8 @@ const DEFAULT_DSP: BgmDsp = {
   ...BGM_DSP_DEFAULTS,
   reverb: { ...BGM_DSP_DEFAULTS.reverb },
 };
+
+const DEFAULT_FADE: BgmFade = { ...BGM_FADE_DEFAULTS };
 
 const RESET_DSP: BgmDspPatch = {
   toneDb: BGM_DSP_DEFAULTS.toneDb,
@@ -159,6 +192,7 @@ export function BgmTab({ snapshot, refresh }: Props) {
     volume: BGM_DEFAULT_VOLUME,
     loop: BGM_DEFAULT_LOOP,
     dsp: DEFAULT_DSP,
+    fade: { ...DEFAULT_FADE },
     transport: 'stopped' as const,
     position: 0,
     revision: 0,
@@ -223,7 +257,10 @@ export function BgmTab({ snapshot, refresh }: Props) {
               title={`${track.id} · ${modified(track.at, locale)}`}
               state={track.id === trackId ? 'on' : 'off'}
               disabled={busy}
-              onClick={() => void command({ track: track.id })}
+              onClick={() => {
+                const intent = trackSelectionIntent(trackId, track.id, bgm.transport);
+                if (intent !== null) void command(intent);
+              }}
             />
           ))}
           <Chip
@@ -317,6 +354,38 @@ export function BgmTab({ snapshot, refresh }: Props) {
           checked={bgm.loop}
           title={t('panel.bgm.loop.title')}
           onChange={(loop) => void command({ loop })}
+        />
+      </Section>
+
+      <Section
+        title={t('panel.bgm.fade')}
+        note={[t('panel.bgm.fade.note1'), t('panel.bgm.fade.note2')]}
+      >
+        <ChainSlider
+          label={t('panel.bgm.fadeIn')}
+          reported={fromBgmFadeValue(bgm.fade, 'inSeconds')}
+          min={BGM_FADE_LIMITS.inSeconds.min}
+          max={BGM_FADE_LIMITS.inSeconds.max}
+          step={0.1}
+          precision={1}
+          unit=" s"
+          title={t('panel.bgm.fadeIn.title')}
+          onCommit={(value) => {
+            void command({ fade: toBgmFadePatch('inSeconds', value) });
+          }}
+        />
+        <ChainSlider
+          label={t('panel.bgm.fadeOut')}
+          reported={fromBgmFadeValue(bgm.fade, 'outSeconds')}
+          min={BGM_FADE_LIMITS.outSeconds.min}
+          max={BGM_FADE_LIMITS.outSeconds.max}
+          step={0.1}
+          precision={1}
+          unit=" s"
+          title={t('panel.bgm.fadeOut.title')}
+          onCommit={(value) => {
+            void command({ fade: toBgmFadePatch('outSeconds', value) });
+          }}
         />
       </Section>
 

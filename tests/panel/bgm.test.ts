@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { formatBytes, formatTime, fromBgmDspValue, toBgmDspPatch } from '@/panel/bgm/BgmTab';
-import { BGM_DSP_DEFAULTS } from '@/protocol';
+import {
+  formatBytes,
+  formatTime,
+  fromBgmDspValue,
+  fromBgmFadeValue,
+  toBgmDspPatch,
+  toBgmFadePatch,
+  trackSelectionIntent,
+} from '@/panel/bgm/BgmTab';
+import { EMPTY_BGM } from '@/panel/hooks';
+import { BGM_DSP_DEFAULTS, BGM_FADE_DEFAULTS, BGM_FADE_LIMITS } from '@/protocol';
 
 describe('BGM panel formatting', () => {
   it('formats short and long timeline values without moving the units', () => {
@@ -44,4 +53,48 @@ describe('BGM DSP display mapping', () => {
     expect(fromBgmDspValue(dsp, 'reverb.decay')).toBe(70);
     expect(fromBgmDspValue(dsp, 'reverb.damping')).toBe(40);
   });
+});
+
+describe('BGM fade display mapping', () => {
+  it('keeps transition controls in seconds on the wire', () => {
+    expect(toBgmFadePatch('inSeconds', 2.5)).toEqual({ inSeconds: 2.5 });
+    expect(toBgmFadePatch('outSeconds', 0.7)).toEqual({ outSeconds: 0.7 });
+  });
+
+  it('reads the resolved transition durations back unchanged', () => {
+    const fade = { inSeconds: 2.5, outSeconds: 0.7 };
+    expect(fromBgmFadeValue(fade, 'inSeconds')).toBe(2.5);
+    expect(fromBgmFadeValue(fade, 'outSeconds')).toBe(0.7);
+  });
+
+  it('uses the bounded one-second defaults in the empty panel state', () => {
+    expect(BGM_FADE_LIMITS).toEqual({
+      inSeconds: { min: 0, max: 10 },
+      outSeconds: { min: 0, max: 10 },
+    });
+    expect(EMPTY_BGM.fade).toEqual(BGM_FADE_DEFAULTS);
+    expect(EMPTY_BGM.fade).not.toBe(BGM_FADE_DEFAULTS);
+  });
+});
+
+describe('BGM track selection', () => {
+  it('starts a true crossfade when changing tracks while playing', () => {
+    expect(trackSelectionIntent('opening.mp3', 'ending.flac', 'playing')).toEqual({
+      track: 'ending.flac',
+      action: 'play',
+    });
+  });
+
+  it('does nothing when the current track is clicked again', () => {
+    expect(trackSelectionIntent('opening.mp3', 'opening.mp3', 'playing')).toBeNull();
+  });
+
+  it.each(['paused', 'stopped'] as const)(
+    'only selects a different track while %s',
+    (transport) => {
+      expect(trackSelectionIntent('opening.mp3', 'ending.flac', transport)).toEqual({
+        track: 'ending.flac',
+      });
+    },
+  );
 });

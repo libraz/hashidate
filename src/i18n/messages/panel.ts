@@ -467,6 +467,17 @@ export const panelEn = {
   'panel.bgm.volume': 'Volume',
   'panel.bgm.loop': 'Loop',
   'panel.bgm.loop.title': 'Repeat the selected track after it ends',
+  'panel.bgm.fade': 'Track transitions',
+  'panel.bgm.fade.note1':
+    'Playing a different track crossfades: the outgoing track fades out while the incoming track fades in. The first play and a stopped play fade in only.',
+  'panel.bgm.fade.note2':
+    'Pause, resume and stop remain immediate. Set either side to 0 to disable that fade.',
+  'panel.bgm.fadeIn': 'Fade in',
+  'panel.bgm.fadeIn.title':
+    'Fade in the first or stopped play, and the incoming side of a different-track crossfade',
+  'panel.bgm.fadeOut': 'Fade out',
+  'panel.bgm.fadeOut.title':
+    'Fade out the old track when playing a different track; pause and stop stay immediate',
   'panel.bgm.effects': 'Effects — BGM only',
   'panel.bgm.effects.note':
     'These controls are the libsonare insert chain for BGM. Voice effects and the room are unaffected.',
@@ -971,6 +982,17 @@ export const panelJa: Record<keyof typeof panelEn, string> = {
   'panel.bgm.volume': '音量',
   'panel.bgm.loop': 'ループ',
   'panel.bgm.loop.title': '曲が終わったら選択した曲を繰り返す',
+  'panel.bgm.fade': '曲の切り替え',
+  'panel.bgm.fade.note1':
+    '別の曲へ切り替えるときは、前の曲をフェードアウトしながら次の曲をフェードインします。最初の再生や停止中からの再生は、フェードインだけです。',
+  'panel.bgm.fade.note2':
+    '一時停止・再開・停止はすぐに反映されます。0 秒にすると、その側のフェードを無効にできます。',
+  'panel.bgm.fadeIn': 'フェードイン',
+  'panel.bgm.fadeIn.title':
+    '最初の再生、停止中からの再生、別の曲へ切り替えるときの次の曲をフェードインする',
+  'panel.bgm.fadeOut': 'フェードアウト',
+  'panel.bgm.fadeOut.title':
+    '別の曲へ切り替えるときに前の曲をフェードアウトする。一時停止と停止はすぐに反映される',
   'panel.bgm.effects': 'エフェクト — BGM のみ',
   'panel.bgm.effects.note':
     'ここは BGM 用 libsonare インサートチェーンの操作です。声のエフェクトと部屋の響きには影響しません。',

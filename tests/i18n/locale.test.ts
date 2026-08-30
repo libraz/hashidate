@@ -50,6 +50,10 @@ describe('the catalogues', () => {
     expect(CATALOGS.ja['panel.tabs.bgm']).toBe('BGM');
     expect(CATALOGS.en['panel.bgm.effects.note']).toContain('Voice effects');
     expect(CATALOGS.ja['panel.bgm.effects.note']).toContain('声');
+    expect(CATALOGS.en['panel.bgm.fade.note1']).toContain('crossfades');
+    expect(CATALOGS.en['panel.bgm.fade.note2']).toContain('0');
+    expect(CATALOGS.ja['panel.bgm.fade.note1']).toContain('フェードアウト');
+    expect(CATALOGS.ja['panel.bgm.fade.note2']).toContain('0 秒');
   });
 });
 

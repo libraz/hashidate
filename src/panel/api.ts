@@ -258,9 +258,9 @@ export const setVoice = (preset: string | null | undefined, dsp?: VoiceDsp): Pro
  * Send BGM intent through the same canonical command endpoint as every other
  * panel control. Synchronisation fields are deliberately not accepted here:
  * the server owns the revision and timeline, while this helper only sends
- * selection, transport, level, loop and independent DSP patches.
+ * selection, transport, level, loop, fade policy and independent DSP patches.
  */
-export type BgmIntent = Pick<BgmCommand, 'action' | 'track' | 'volume' | 'loop' | 'dsp'>;
+export type BgmIntent = Pick<BgmCommand, 'action' | 'track' | 'volume' | 'loop' | 'fade' | 'dsp'>;
 
 export const setBgm = (intent: BgmIntent): Promise<unknown> => send({ cmd: 'bgm', ...intent });
 

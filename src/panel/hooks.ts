@@ -3,6 +3,7 @@ import {
   BGM_DEFAULT_LOOP,
   BGM_DEFAULT_VOLUME,
   BGM_DSP_DEFAULTS,
+  BGM_FADE_DEFAULTS,
   type BgmState,
   type Snapshot,
 } from '@/protocol';
@@ -30,7 +31,7 @@ export interface Runtime {
 }
 
 /** A stable first render, even before a renderer has reported BGM state. */
-const EMPTY_BGM: BgmState = {
+export const EMPTY_BGM: BgmState = {
   track: null,
   volume: BGM_DEFAULT_VOLUME,
   loop: BGM_DEFAULT_LOOP,
@@ -38,6 +39,7 @@ const EMPTY_BGM: BgmState = {
     ...BGM_DSP_DEFAULTS,
     reverb: { ...BGM_DSP_DEFAULTS.reverb },
   },
+  fade: { ...BGM_FADE_DEFAULTS },
   transport: 'stopped',
   position: 0,
   revision: 0,
