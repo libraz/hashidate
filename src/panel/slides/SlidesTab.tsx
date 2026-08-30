@@ -85,6 +85,16 @@ interface DocControls {
 }
 
 /**
+ * The effective size of the standard broadcast corner placement.
+ *
+ * README.md, `src/panel/stage/source.ts`, and the use-case docs all use
+ * `bottom-{left,right}:0.32x0.6`; the renderer's effective multiplier is the
+ * tighter 0.32 axis. A full-frame avatar needs this size before a non-centre
+ * anchor has room to move it.
+ */
+const STANDARD_BROADCAST_SIZE = 0.32;
+
+/**
  * Whether a change this panel sent has come back: the renderer reporting the
  * rectangle it was asked for.
  *
@@ -125,6 +135,40 @@ export function fitAspect(size: number): { width: number; height: number } {
   return {
     width: clamp(size, PLACEMENT_LIMITS.width),
     height: clamp(size, PLACEMENT_LIMITS.height),
+  };
+}
+
+/**
+ * Resolve one avatar control change into the complete placement on the wire.
+ *
+ * The character's effective scale is the tighter of the reported fractions —
+ * the renderer draws the same frame inside both axes. A full-frame character
+ * has no room for a non-centre anchor, so selecting one uses the standard
+ * broadcast effective scale in this same placement command. Other changes,
+ * including selecting centre or moving an already smaller character, retain
+ * the current effective scale.
+ */
+export function avatarPlacement(
+  avatar: Required<Placement>,
+  next: Partial<AvatarControls>,
+): Required<Placement> {
+  const currentSize = Math.min(avatar.width, avatar.height);
+  const merged: AvatarControls = {
+    anchor: avatar.anchor,
+    size: currentSize,
+    margin: avatar.margin,
+    ...next,
+  };
+  const size =
+    next.anchor !== undefined &&
+    merged.anchor !== 'center' &&
+    currentSize === PLACEMENT_LIMITS.width.max
+      ? STANDARD_BROADCAST_SIZE
+      : merged.size;
+  return {
+    anchor: merged.anchor,
+    margin: merged.margin,
+    ...fitAspect(size),
   };
 }
 
@@ -235,17 +279,7 @@ export function SlidesTab({ snapshot, refresh }: Props) {
 
   /** Move the character's rectangle: locally so the control tracks, then on the wire. */
   const moveAvatar = (next: Partial<AvatarControls>): void => {
-    const merged: AvatarControls = {
-      anchor: avatar.anchor,
-      size: avatar.height,
-      margin: avatar.margin,
-      ...next,
-    };
-    const placement = {
-      anchor: merged.anchor,
-      margin: merged.margin,
-      ...fitAspect(merged.size),
-    };
+    const placement = avatarPlacement(avatar, next);
     setSentAvatar(placement);
     void place({ avatar: placement });
   };
@@ -381,7 +415,7 @@ export function SlidesTab({ snapshot, refresh }: Props) {
         </Field>
         <Slider
           label={t('panel.slides.size')}
-          value={avatar.height}
+          value={Math.min(avatar.width, avatar.height)}
           min={PLACEMENT_LIMITS.height.min}
           max={PLACEMENT_LIMITS.height.max}
           step={0.01}

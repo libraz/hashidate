@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { PLACEMENT_LIMITS } from '@/engine/types';
 import { resetLocale, setLocale } from '@/i18n';
-import { ago, clampPage, fitAspect, settled } from '@/panel/slides/SlidesTab';
+import { ago, avatarPlacement, clampPage, fitAspect, settled } from '@/panel/slides/SlidesTab';
 
 /**
- * The four things the document tab works out for itself.
+ * The five things the document tab works out for itself.
  *
  * Everything else in that tab is a command with a label on it. These are the
  * translations: one gesture into the two fractions the wire carries, a typed
@@ -38,6 +38,43 @@ describe('fitAspect', () => {
       width: PLACEMENT_LIMITS.width.max,
       height: PLACEMENT_LIMITS.height.max,
     });
+  });
+});
+
+describe('avatarPlacement', () => {
+  const full = { anchor: 'center' as const, width: 1, height: 1, margin: 0.04 };
+
+  it('shrinks a full-frame avatar when moving away from centre', () => {
+    // A top-only anchor is the regression: horizontal anchors appeared to work
+    // at full size because the renderer hugs the silhouette to the side.
+    expect(avatarPlacement(full, { anchor: 'top' })).toEqual({
+      anchor: 'top',
+      width: 0.32,
+      height: 0.32,
+      margin: 0.04,
+    });
+  });
+
+  it('keeps a full-frame avatar when centre is selected', () => {
+    expect(avatarPlacement(full, { anchor: 'center' })).toEqual(full);
+  });
+
+  it('uses the renderer effective size from a non-square report', () => {
+    expect(
+      avatarPlacement(
+        { anchor: 'bottom-right', width: 0.32, height: 0.6, margin: 0.08 },
+        { anchor: 'top-left' },
+      ),
+    ).toEqual({ anchor: 'top-left', width: 0.32, height: 0.32, margin: 0.08 });
+  });
+
+  it('keeps an existing effective size below full frame', () => {
+    expect(
+      avatarPlacement(
+        { anchor: 'bottom-right', width: 0.47, height: 0.72, margin: 0.1 },
+        { anchor: 'left' },
+      ),
+    ).toEqual({ anchor: 'left', width: 0.47, height: 0.47, margin: 0.1 });
   });
 });
 
