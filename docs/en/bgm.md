@@ -8,26 +8,29 @@ The native shell has **Window → Open BGM Folder** for the default library.
 
 ```sh
 yarn ctl bgm list
-yarn ctl bgm play opening.mp3 --volume 0.2 --loop on
+yarn ctl bgm play opening.mp3 --volume 0.2 --loop on --fade-in 1 --fade-out 1
+yarn ctl bgm fade 1 1
 yarn ctl bgm pause
 yarn ctl bgm resume
 yarn ctl bgm stop
 ```
 
-The default level is 0.2 and looping is on. `stop` returns to the start but keeps the selection; choosing Play again restarts it. The panel also has an Unload action that clears the selected track.
+The default level is 0.2 and looping is on. Fade-in and fade-out default to 1 second and accept 0..10 seconds; 0 is a hard edge. A different-track play while another track is playing fades the old track out and the new track in at the same time. The first play, or a play from stopped, uses only fade-in. Pause, resume and stop are immediate. `stop` returns to the start but keeps the selection; choosing Play again restarts it. The panel also has an Unload action that clears the selected track.
+
+`yarn ctl bgm fade <inSeconds> <outSeconds>` changes the current fade settings. `bgm play` accepts `--fade-in` and `--fade-out` to update those settings as part of the play command. Inline track switches and starts from stopped use the settings in force when the cue runs; resuming from paused remains immediate.
 
 ## Panel and MCP
 
-The BGM tab lists the library and controls selection, play, pause, stop, level and looping. Its **Effects — BGM only** section has tone, compression, stereo width and reverb controls. Changes are live and do not alter the synthesized voice or the `room` selected for it.
+The BGM tab lists the library and controls selection, play, pause, stop, level, looping and fade-in/fade-out durations. Its **Effects — BGM only** section has tone, compression, stereo width and reverb controls. Changes are live and do not alter the synthesized voice or the `room` selected for it.
 
 MCP exposes the same operations as the eighth tool, `bgm`:
 
 | Action | Input |
 |---|---|
 | `list` | None. Re-scan and return the exact MP3/FLAC ids. |
-| `play` | `track`, with optional `volume`, `loop` and `dsp`. |
+| `play` | `track`, with optional `volume`, `loop`, `fade` and `dsp`. |
 | `pause` / `resume` / `stop` | No other fields. |
-| `settings` | One or more of `volume`, `loop` and `dsp`. |
+| `settings` | One or more of `volume`, `loop`, `fade` and `dsp`. |
 
 For example:
 
@@ -35,6 +38,7 @@ For example:
 {
   "action": "settings",
   "volume": 0.16,
+  "fade": { "inSeconds": 1.25, "outSeconds": 0.75 },
   "dsp": {
     "compression": 0.25,
     "reverb": { "mix": 0.08, "decay": 0.45 }
@@ -42,7 +46,7 @@ For example:
 }
 ```
 
-`status` returns the selected track, transport, position, duration, level, loop setting and resolved DSP values. A caller should use the id returned by `list`, not construct a `/bgm/` URL itself.
+`status` returns the selected track, transport, position, duration, level, loop setting, resolved fade settings and resolved DSP values. A caller should use the id returned by `list`, not construct a `/bgm/` URL itself.
 
 ## Inline BGM cues
 
@@ -55,7 +59,7 @@ This line resumes the selected track. [@bgm play]
 The segment ends here. [@bgm stop]
 ```
 
-The track name is optional for `play`; without it, the selected track resumes. The remainder after `play` is the exact filename, so spaces and Japanese characters are allowed. The `[` and `]` characters are reserved. These cues work through ordinary `speak`, `say`, `queue`, and script text, and need no separate MCP or CLI operation. Use the panel or the `bgm` MCP tool for volume, looping, and DSP; those settings are not line cues.
+The track name is optional for `play`; without it, the selected track resumes. Resuming from paused is immediate, while a start from stopped fades in. The remainder after `play` is the exact filename, so spaces and Japanese characters are allowed. The `[` and `]` characters are reserved. These cues work through ordinary `speak`, `say`, `queue`, and script text, and need no separate MCP or CLI operation. Track switches and stopped starts use the current fade settings; fade durations are not part of the inline syntax. Use the panel or the `bgm` MCP tool for volume, looping, fade durations and DSP; those settings are not line cues.
 
 ## BGM-only effects
 

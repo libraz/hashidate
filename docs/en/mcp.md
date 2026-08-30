@@ -21,7 +21,7 @@
 | `stage` | The persistent half — the camera, the set, the acoustic, the document. |
 | `revise` | Edit what is already queued. |
 | `deck` | Read a document, so a script can be written about it. |
-| `bgm` | List and play local MP3/FLAC tracks; set their level, loop and BGM-only libsonare effects. |
+| `bgm` | List and play local MP3/FLAC tracks; set their level, loop, crossfade durations and BGM-only libsonare effects. |
 
 The vocabulary is a resource — `hashidate://vocabulary` — and so is what has already been said.
 
@@ -47,11 +47,11 @@ The `text` field accepts the legacy `[performanceId]` shorthand and these typed 
 [@bgm play] [@bgm play track filename] [@bgm pause] [@bgm stop]
 ```
 
-`[@bgm play]` resumes the selected track. The remainder after `play` is the exact BGM filename, so spaces and Japanese characters are allowed. The same remainder rule applies to dynamic performance, expression, gesture, and hop ids. `[` and `]` are reserved. Typed cues are ordinary line text and travel through `speak` and script queues. `room`, `backdrop`, `deck`, and `place` stay in line-start `stage` setup. BGM volume, looping, and DSP stay in the panel or the `bgm` tool's settings action. Relative slides are not inline cues. See [Lines and cues](lines-and-cues.md) for the timing rules.
+`[@bgm play]` resumes the selected track. The remainder after `play` is the exact BGM filename, so spaces and Japanese characters are allowed. The same remainder rule applies to dynamic performance, expression, gesture, and hop ids. `[` and `]` are reserved. Typed cues are ordinary line text and travel through `speak` and script queues. `room`, `backdrop`, `deck`, and `place` stay in line-start `stage` setup. BGM play cues inherit the current fade settings. BGM volume, looping, fade durations and DSP stay in the panel or the `bgm` tool's settings action. Relative slides are not inline cues. See [Lines and cues](lines-and-cues.md) for the timing rules.
 
 ## Background music
 
-`bgm` with `action: "list"` re-scans `show/bgm/` and returns the exact filenames a later `play` accepts. The remaining actions are `play`, `pause`, `resume`, `stop` and `settings`. Level and looping can be changed independently; the `dsp` object controls tone, compression, stereo width and reverb on BGM alone. See [Background music](bgm.md).
+`bgm` with `action: "list"` re-scans `show/bgm/` and returns the exact filenames a later `play` accepts. The remaining actions are `play`, `pause`, `resume`, `stop` and `settings`. Level, looping and `fade` can be changed independently; `fade.inSeconds` and `fade.outSeconds` are 0..10 seconds, where 0 is a hard edge. A different-track play crossfades the two tracks; the first/stopped play uses only fade-in, and pause/resume/stop are immediate. The `dsp` object controls tone, compression, stereo width and reverb on BGM alone. See [Background music](bgm.md).
 
 `status` includes the server-owned BGM transport and resolved settings, so a caller can tell whether it is playing and whether a renderer had to fall back to dry playback.
 

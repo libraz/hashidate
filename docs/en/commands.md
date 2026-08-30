@@ -25,7 +25,7 @@ Every command goes to `POST /api/command`, one at a time or several under `batch
 | `tune` | The set-once layer: breath, sway, jump, tail, shading. Every field optional and merged onto what is running, so one fader is one small message. Bounded, unlike `point` — a breath period of zero is not an ambitious breath. |
 | `debug` | The measurement readout, over every renderer attached. The one standing-looking setting that is deliberately never kept. |
 | `record` | Start or stop writing the composed frame to a file, at a size the command names. Only the renderer that is not muted acts on it. |
-| `bgm` | Select, play, pause or stop an MP3/FLAC from the configured BGM library; independently patch its level, looping and BGM-only libsonare effects. The server keeps its transport in sync across renderers. The transport actions are also available as inline `[@bgm ...]` cues in a line. |
+| `bgm` | Select, play, pause or stop an MP3/FLAC from the configured BGM library; independently patch its level, looping, crossfade durations (0..10 seconds) and BGM-only libsonare effects. Different-track play crossfades the old and new tracks; the first/stopped play fades in only, while pause/resume/stop are immediate. The server keeps its transport in sync across renderers. The transport actions are also available as inline `[@bgm ...]` cues in a line, using the current fade settings. |
 | `pause` | Hold the queue where it is, or let it move again. The line on air finishes and nothing is discarded — it is the third thing that can be done to a run of turns, and the only one that keeps them. |
 | `interrupt` / `clear` / `reset` | Stop mid-line and drop the queue / drop the queue and let the line finish / back to nothing. |
 
@@ -38,11 +38,11 @@ The `text` field accepts these inline forms. `[performanceId]` remains shorthand
 | `[@perform id]` / `[@expression id]` / `[@gesture id]` / `[@hop id]` | Change the named performance, expression, gesture, or hop. |
 | `[@camera face\|bust\|upper\|full]` | Change the camera framing at that point. |
 | `[@slide 3]` | Move to an absolute, 1-based page. |
-| `[@bgm play]` | Resume the selected BGM track. |
+| `[@bgm play]` | Resume the selected BGM track immediately from paused, or fade it in from stopped. |
 | `[@bgm play track filename]` | Select and play the filename remainder; spaces and Japanese characters are allowed. |
 | `[@bgm pause]` / `[@bgm stop]` | Pause or stop the selected track. |
 
-Typed cues travel through ordinary `say`, `queue`, and script text. For `perform`, `expression`, `gesture`, and `hop`, the whole remainder is the id, so spaces and Japanese characters are allowed. Both square brackets are reserved and are not spoken. `room`, `backdrop`, `deck`, and `place` remain line-start `stage` setup. BGM volume, looping, and DSP are mixer settings in the panel or through the `bgm` command. Relative slides are not inline cues.
+Typed cues travel through ordinary `say`, `queue`, and script text. For `perform`, `expression`, `gesture`, and `hop`, the whole remainder is the id, so spaces and Japanese characters are allowed. Both square brackets are reserved and are not spoken. `room`, `backdrop`, `deck`, and `place` remain line-start `stage` setup. BGM volume, looping, fade durations and DSP are mixer settings in the panel or through the `bgm` command. Relative slides are not inline cues.
 
 ## What is deliberately absent
 

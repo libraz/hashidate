@@ -70,7 +70,7 @@ And three the *server* owns rather than any renderer, because they are about fil
 
 - `recording` — the take being written, with how many bytes have landed on disk. Null when there is none. It is the server's own figure because a recorder that has quietly stopped and one that is still going look identical from the page doing the recording.
 - `paused` — whether the queue is held. See [Recording](recording.md).
-- `bgm` — the selected track, transport and position, level, loop and resolved BGM-only DSP values. It also folds in playback errors and a dry-effect fallback reported by audible renderers.
+- `bgm` — the selected track, transport and position, level, loop, fade settings and resolved BGM-only DSP values. It also folds in playback errors and a dry-effect fallback reported by audible renderers.
 
 ## Next
 
