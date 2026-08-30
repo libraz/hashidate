@@ -103,6 +103,10 @@ export function App() {
       if (MODE.muted) return;
       runtimeRef.current?.setRecording(on, take);
     },
+    setBgm: (command) => {
+      runtimeRef.current?.setBgm(command);
+    },
+    bgmReport: () => runtimeRef.current?.bgmReport ?? null,
     load: (id) => {
       const next = getAvatar(id);
       const rt = runtimeRef.current;

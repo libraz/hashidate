@@ -2,6 +2,8 @@ import { loadMotions } from '@/engine/motion';
 import type { Session } from '@/engine/session';
 import type { LabelledId, SessionEvent } from '@/engine/types';
 import {
+  type BgmCommand,
+  type BgmReport,
   type Command,
   motionsResponseSchema,
   parseCommand,
@@ -78,6 +80,10 @@ export interface RendererControls {
     on: boolean,
     take: { session: string; width: number; height: number; fps: number },
   ): void;
+  /** Apply a server-canonical BGM command before any avatar-load hold. */
+  setBgm?(command: BgmCommand): void;
+  /** Report the page-owned BGM graph on the heartbeat. */
+  bgmReport?(): BgmReport | null;
   /**
    * Start loading one. Answers whether anything is actually going to happen.
    *
@@ -374,6 +380,8 @@ export class ControlClient {
     // opened with.
     const placement = this.session.composition?.report();
     if (placement) body.placement = placement;
+    const bgm = this.renderer?.bgmReport?.();
+    if (bgm) body.bgm = bgm;
 
     try {
       await fetch(`${this.base}/report`, {
@@ -428,6 +436,13 @@ export class ControlClient {
         height: c.height ?? RECORD_DEFAULTS.height,
         fps: c.fps ?? RECORD_DEFAULTS.fps,
       });
+      return;
+    }
+    // BGM belongs to the page-owned audio graph rather than the avatar
+    // session. It must continue through an avatar swap, so apply it before the
+    // hold that queues session commands behind a model load.
+    if (c.cmd === 'bgm') {
+      this.renderer?.setBgm?.(c);
       return;
     }
     if (this.held) {

@@ -45,8 +45,19 @@ function announceSurfaces(): Plugin {
 
 export default defineConfig({
   plugins: [react(), announceSurfaces()],
+  // Keep the Emscripten factory's `import.meta.url` intact. IIFE worker output
+  // rewrites it to `self.location.href`, but AudioWorkletGlobalScope exposes
+  // neither `self` nor a worker location. The page supplies WASM bytes through
+  // processorOptions, while this ES module format matches libsonare's own
+  // AudioWorklet bootstrap.
+  worker: { format: 'es' },
   resolve: {
-    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+    alias: {
+      '@libraz/libsonare/emscripten-factory': fileURLToPath(
+        new URL('./node_modules/@libraz/libsonare/dist/sonare.js', import.meta.url),
+      ),
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
   },
   server: {
     watch: {
@@ -74,6 +85,12 @@ export default defineConfig({
       // so they are served by the control server here and in production alike,
       // and the directory can sit outside the document root entirely.
       '/slides': {
+        target: `http://127.0.0.1:${CONTROL_PORT}`,
+        changeOrigin: false,
+      },
+      // Operator-supplied MP3/FLAC files are served by the control process,
+      // including byte ranges used by browser audio elements.
+      '/bgm': {
         target: `http://127.0.0.1:${CONTROL_PORT}`,
         changeOrigin: false,
       },

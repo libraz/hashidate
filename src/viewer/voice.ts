@@ -1,5 +1,6 @@
 import type { LabelledId, Take, Voice, VoiceChainRequest, VoiceReport } from '@/engine/types';
 import type { VoiceDsp } from '@/protocol';
+import { BrowserAudioOutput } from './audio-output';
 import { buildImpulse, ROOMS, type RoomId, roomList } from './rooms';
 import {
   DEFAULT_PRESET,
@@ -11,6 +12,10 @@ import {
   VOICE_PRESETS,
   voicePresetList,
 } from './voice-chain';
+
+// Kept exported from this module for the small browser-behaviour tests and for
+// callers that used the pre-shared-output voice helper.
+export { startContext } from './audio-output';
 
 /**
  * The voice, as the browser can provide one.
@@ -85,45 +90,6 @@ const ENVELOPE_REFERENCE = 0.95;
  * within a line or two.
  */
 const RETRY_AFTER_MS = 20_000;
-
-/**
- * How long to wait for a suspended context to start, in milliseconds.
- *
- * A browser that is refusing to start one does not say so: `resume()` is left
- * pending — not rejected, pending — until the page is interacted with, which
- * may be never. Awaiting it directly is what made this failure permanent rather
- * than merely silent. `prepare` runs its requests in one chain, so a promise
- * that never settles takes every line queued behind it as well, and the voice
- * did not come back even after the operator clicked.
- *
- * A quarter of a second is far more than a context that is going to start needs
- * — the race below returns as soon as `resume()` answers — and the wait is only
- * ever paid on a page that is being refused.
- */
-const RESUME_WAIT_MS = 250;
-
-/** Everything `startContext` needs, so a test can hand it something simpler. */
-type Startable = Pick<AudioContext, 'state' | 'resume'>;
-
-/**
- * Start a context, or answer false rather than waiting forever.
- *
- * Refusal is retried rather than fatal, and retrying is what the caller does by
- * asking again for the next line: a context that was refused *can* be started
- * later — a plain `resume()` on it succeeds once the page has been interacted
- * with, and it does not have to be called from inside the gesture to do so.
- */
-export async function startContext(ctx: Startable, waitMs = RESUME_WAIT_MS): Promise<boolean> {
-  // A context closed on teardown is not something a line should reopen.
-  if (ctx.state === 'closed') return false;
-  if (ctx.state !== 'running') {
-    await Promise.race([
-      ctx.resume().catch(() => {}),
-      new Promise((resolve) => setTimeout(resolve, waitMs)),
-    ]);
-  }
-  return ctx.state === 'running';
-}
 
 /**
  * Turn one channel of audio into a loudness curve, 0..1.
@@ -224,6 +190,8 @@ class BufferTake implements Take {
 
 export interface BrowserVoiceOptions {
   base?: string;
+  /** The page-owned graph. Supplying this prevents a second AudioContext. */
+  output?: BrowserAudioOutput;
   /**
    * Render silently. See `StageMode.muted` — this is the panel's preview, which
    * is a second renderer of the same commands and must not speak over the one on
@@ -261,15 +229,13 @@ export class BrowserVoice implements Voice {
    * read it. See `monitor-link.ts`.
    */
   private readonly muted: boolean;
+  private readonly providedOutput: BrowserAudioOutput | null;
+  private ownOutput: BrowserAudioOutput | null = null;
   private ctx: AudioContext | null = null;
   private chainNodes: Chain | null = null;
-  /** The recorder's tap off the end of the chain. See `captureStream`. */
-  private capture: MediaStreamAudioDestinationNode | null = null;
   private silentUntil = 0;
   /** See `isBlocked`. Set by `device`, which is the only thing that can know. */
   private blocked = false;
-  /** Removes the gesture listeners. See `armUnlock`. */
-  private disarm: (() => void) | null = null;
   /** Requests are run through this one at a time. See `prepare`. */
   private chain: Promise<unknown> = Promise.resolve();
 
@@ -310,56 +276,13 @@ export class BrowserVoice implements Voice {
   readonly rooms: LabelledId[] = roomList();
   readonly presets: LabelledId[] = voicePresetList();
 
-  constructor({ base = '/api', muted = false }: BrowserVoiceOptions = {}) {
+  constructor({ base = '/api', muted = false, output }: BrowserVoiceOptions = {}) {
     this.base = base;
     this.muted = muted;
+    this.providedOutput = output ?? null;
     // Resolve the default chain in the background, so the first line of a
     // session is processed rather than being the one that pays for the load.
     void this.applyChain(this.chainEpoch);
-    this.armUnlock();
-  }
-
-  /**
-   * Start a refused context the moment the operator touches the page.
-   *
-   * Without this the voice comes back on the *next* line after a click, because
-   * that is when something next asks for the device. With it, the click itself
-   * is enough — which matters because "click the picture and speak" is how
-   * anyone will check whether the sound is fixed, and a viewer that stays silent
-   * for one more line reads as still broken.
-   *
-   * Only ever revives a context that already exists and was refused. It does not
-   * make one: a page that has been touched gets a context that starts running
-   * anyway when the first line asks for it, and building one here would spend
-   * one of the few a document is allowed on a page that may never speak.
-   *
-   * Capturing, so a handler that stops propagation cannot hide the gesture, and
-   * passive, because nothing here has an opinion about the event itself.
-   */
-  private armUnlock(): void {
-    if (typeof addEventListener !== 'function') return;
-    const options = { capture: true, passive: true } as const;
-
-    const unlock = (): void => {
-      const ctx = this.ctx;
-      if (ctx?.state !== 'suspended') return;
-      void ctx.resume().then(
-        () => {
-          if (ctx.state !== 'running') return;
-          this.blocked = false;
-          this.disarm?.();
-        },
-        () => {},
-      );
-    };
-
-    addEventListener('pointerdown', unlock, options);
-    addEventListener('keydown', unlock, options);
-    this.disarm = () => {
-      this.disarm = null;
-      removeEventListener('pointerdown', unlock, options);
-      removeEventListener('keydown', unlock, options);
-    };
   }
 
   /**
@@ -370,19 +293,43 @@ export class BrowserVoice implements Voice {
    * handful a document is allowed, spent on a renderer that no longer exists.
    */
   dispose(): void {
-    this.disarm?.();
-    const ctx = this.ctx;
     this.ctx = null;
-    // The graph belongs to the context. Kept, it would hand a closed context's
-    // nodes to whatever asked next.
+    const nodes = this.chainNodes;
     this.chainNodes = null;
     this.roomEpoch += 1;
-    if (ctx) void ctx.close().catch(() => {});
+    if (nodes) {
+      for (const node of [nodes.input, nodes.dry, nodes.wet, nodes.convolver, nodes.output]) {
+        try {
+          node.disconnect();
+        } catch {
+          /* graph may already be disconnected */
+        }
+      }
+    }
+    // A supplied output belongs to the page/runtime. An output created for
+    // backwards-compatible standalone use is owned by this voice instead.
+    if (this.ownOutput !== null) this.ownOutput.dispose();
+    this.ownOutput = null;
   }
 
   /** Whether the output is silenced. Fixed for the life of the page. */
   get isMuted(): boolean {
-    return this.muted;
+    return this.outputOrNull?.isMuted ?? this.muted;
+  }
+
+  /** The shared page output, when one has been created or supplied. */
+  get audioOutput(): BrowserAudioOutput | null {
+    return this.outputOrNull;
+  }
+
+  private get outputOrNull(): BrowserAudioOutput | null {
+    return this.providedOutput ?? this.ownOutput;
+  }
+
+  private outputForAudio(): BrowserAudioOutput {
+    if (this.providedOutput !== null) return this.providedOutput;
+    if (this.ownOutput === null) this.ownOutput = new BrowserAudioOutput({ muted: this.muted });
+    return this.ownOutput;
   }
 
   /**
@@ -442,7 +389,7 @@ export class BrowserVoice implements Voice {
       room: this.room,
       lufs: this.lastMeasured.lufs,
       truePeakDb: this.lastMeasured.truePeakDb,
-      blocked: this.blocked,
+      blocked: this.isBlocked,
     };
   }
 
@@ -457,7 +404,7 @@ export class BrowserVoice implements Voice {
    * it. It is the one failure here whose fix is a person touching the page.
    */
   get isBlocked(): boolean {
-    return this.blocked;
+    return this.blocked || (this.outputOrNull?.isBlocked ?? false);
   }
 
   /**
@@ -479,15 +426,13 @@ export class BrowserVoice implements Voice {
    * then silent rather than absent, which is the same trade the mouth makes.
    */
   async captureStream(): Promise<MediaStream | null> {
+    const output = this.outputForAudio();
     const ctx = await this.device();
     if (ctx === null) return null;
-    if (this.capture === null) {
-      // Made once and kept, like the chain it hangs off. A second destination
-      // per take would leave the first connected to an output nothing reads.
-      this.capture = ctx.createMediaStreamDestination();
-      this.chainFor(ctx).output.connect(this.capture);
-    }
-    return this.capture.stream;
+    // The capture destination belongs to the shared output and is connected
+    // after the final master, so it contains both voice and BGM.
+    this.chainFor(ctx);
+    return output.captureStream();
   }
 
   /**
@@ -534,10 +479,9 @@ export class BrowserVoice implements Voice {
     wet.gain.value = 0;
     // Silence, if this renderer is a monitor. Nothing upstream of here knows or
     // cares: the take is made, played and clocked exactly as it would have been.
-    output.gain.value = this.muted ? 0 : 1;
     input.connect(dry).connect(output);
     input.connect(convolver).connect(wet).connect(output);
-    output.connect(ctx.destination);
+    output.connect(this.outputForAudio().voiceBus);
     this.chainNodes = { input, dry, wet, convolver, output };
     return this.chainNodes;
   }
@@ -591,13 +535,14 @@ export class BrowserVoice implements Voice {
    * `RESUME_WAIT_MS`.
    */
   private async device(): Promise<AudioContext | null> {
+    const output = this.outputForAudio();
     if (this.ctx === null) {
-      this.ctx = new AudioContext();
+      this.ctx = output.context;
       // A room chosen before there was anything to play it in. Applying it here
       // is what makes `setRoom` order-independent against the first line.
       if (this.room !== null) void this.applyRoom(this.roomEpoch);
     }
-    const started = await startContext(this.ctx);
+    const started = await output.ensureRunning();
     this.blocked = !started;
     return started ? this.ctx : null;
   }

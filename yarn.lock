@@ -408,7 +408,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@libraz/libsonare@npm:^1.7.2":
+"@libraz/libsonare@npm:1.7.2":
   version: 1.7.2
   resolution: "@libraz/libsonare@npm:1.7.2"
   checksum: 10c0/f16347d6bf0cc195d1de666739b9e3cb337283cb3380b488d9009ca5d89eb6baa2b701ec3a901d8d8b59065d81d71c51ba0b204514e89863d60dd1996da9d578
@@ -1845,7 +1845,7 @@ __metadata:
     "@biomejs/biome": "npm:^2.5.10"
     "@fontsource/ibm-plex-mono": "npm:^5.3.0"
     "@fontsource/ibm-plex-sans-jp": "npm:^5.3.0"
-    "@libraz/libsonare": "npm:^1.7.2"
+    "@libraz/libsonare": "npm:1.7.2"
     "@modelcontextprotocol/sdk": "npm:^1.30.0"
     "@types/node": "npm:^26"
     "@types/react": "npm:^19.2.18"

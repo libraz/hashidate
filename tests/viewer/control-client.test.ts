@@ -1,9 +1,9 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Director } from '@/engine/director';
 import { buildProfile } from '@/engine/profile';
 import { Session } from '@/engine/session';
 import { same } from '@/i18n/locale';
-import type { Command } from '@/protocol';
+import type { BgmCommand, BgmReport, Command } from '@/protocol';
 import { ControlClient, type RendererControls } from '@/viewer/control-client';
 import { buildRig } from '../helpers/scene';
 
@@ -31,6 +31,18 @@ function build() {
   const takes: Array<{ on: boolean; session: string }> = [];
   /** What the renderer is showing, so a redundant swap can answer false. */
   let standing = 'a';
+  const bgm: BgmCommand[] = [];
+  const bgmState: BgmReport = {
+    revision: 0,
+    track: null,
+    transport: 'stopped',
+    position: 0,
+    duration: null,
+    muted: false,
+    blocked: false,
+    error: null,
+    dspDegraded: false,
+  };
   const renderer: RendererControls = {
     avatars: [
       { id: 'a', label: same('あ') },
@@ -42,6 +54,10 @@ function build() {
     setRecording: (on, take) => {
       takes.push({ on, session: take.session });
     },
+    setBgm: (command) => {
+      bgm.push(command);
+    },
+    bgmReport: () => bgmState,
     load: (id) => {
       if (!renderer.avatars.some((avatar) => avatar.id === id)) return false;
       if (id === standing) return false;
@@ -52,7 +68,7 @@ function build() {
   };
 
   const client = new ControlClient(session, { renderer });
-  return { client, session, renderer, loads, readout, takes };
+  return { client, session, renderer, loads, readout, takes, bgm, bgmState };
 }
 
 /** A second session, standing in for the one a swap would build. */
@@ -106,6 +122,34 @@ describe('ControlClient.apply', () => {
       { on: true, session: 'r1' },
       { on: false, session: 'r1' },
     ]);
+  });
+
+  it('hands BGM to the page before an avatar-load hold', () => {
+    harness.client.apply({ cmd: 'avatar', id: 'b' });
+    harness.client.apply({
+      cmd: 'bgm',
+      id: 'bgm-1',
+      revision: 1,
+      track: 'one.mp3',
+      action: 'play',
+    });
+    harness.client.apply({ cmd: 'say', id: 'held', text: 'あ' });
+    expect(harness.bgm.map(({ id }) => id)).toEqual(['bgm-1']);
+    expect(harness.session.queue).toHaveLength(0);
+  });
+
+  it('includes the page BGM report in the heartbeat', async () => {
+    let body: string | undefined;
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      body = String(init?.body);
+      return { ok: true } as Response;
+    });
+    try {
+      await (harness.client as unknown as { report(): Promise<void> }).report();
+      expect(JSON.parse(body ?? '{}').bgm).toEqual(harness.bgmState);
+    } finally {
+      fetch.mockRestore();
+    }
   });
 
   it('ignores a verb it has no case for rather than throwing', () => {

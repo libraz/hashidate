@@ -22,6 +22,9 @@ import { SHOT_LIMITS } from '@/engine/types';
 import { getLocale, pick } from '@/i18n/locale';
 import type { MessageKey } from '@/i18n/messages';
 import { translate } from '@/i18n/translate';
+import type { BgmCommand, BgmReport } from '@/protocol';
+import { BrowserAudioOutput } from '../audio-output';
+import { BrowserBgm } from '../bgm';
 import { sendMonitorShot } from '../monitor-link';
 import { StageRecorder } from '../record';
 import { stageMode } from '../stage-mode';
@@ -175,18 +178,12 @@ export class AvatarRuntime {
   private readonly camWorld = new THREE.Vector3();
   private readonly resizeObserver: ResizeObserver;
   /**
-   * One voice for the page, not one per avatar.
-   *
-   * It owns an `AudioContext`, and a browser allows only a handful of those per
-   * document — building a fresh one on every avatar switch would run the tab out
-   * of them, and would throw away the resume the operator's first click bought.
-   * Which character is on screen has nothing to do with it either way.
-   *
-   * Muted when the page was opened as a monitor — the panel's preview is a
-   * second renderer of the same commands, and two of them speaking a fraction of
-   * a second apart is unusable. See `StageMode.muted`.
+   * One page-owned graph. The final master is where the URL-selected mute is
+   * applied, and both the voice and BGM survive avatar swaps below it.
    */
-  private readonly voice = new BrowserVoice({ muted: stageMode().muted });
+  private readonly audio = new BrowserAudioOutput({ muted: stageMode().muted });
+  private readonly voice = new BrowserVoice({ output: this.audio });
+  private readonly bgm = new BrowserBgm({ output: this.audio });
 
   /**
    * One recorder for the page, on the same reasoning the voice is one.
@@ -198,7 +195,7 @@ export class AvatarRuntime {
    */
   private readonly recorder = new StageRecorder({
     onFrame: (fn) => this.onFrame(fn),
-    openAudio: () => this.voice.captureStream(),
+    openAudio: () => this.audio.captureStream(),
   });
 
   private framings: Framings | null = null;
@@ -452,6 +449,16 @@ export class AvatarRuntime {
   /** Why the last take would not start, or null. Rides on the report. */
   get recordingError(): string | null {
     return this.recorder.error;
+  }
+
+  /** Apply a server-canonical BGM command without involving the avatar session. */
+  setBgm(command: BgmCommand): void {
+    this.bgm.apply(command);
+  }
+
+  /** The BGM state sent with the control heartbeat. */
+  get bgmReport(): BgmReport {
+    return this.bgm.report();
   }
 
   private setStatus(status: RuntimeStatus): void {
@@ -968,7 +975,9 @@ export class AvatarRuntime {
     // posts its last chunk, so the file on the server is closed rather than
     // left for the watchdog.
     void this.recorder.stop();
+    this.bgm.dispose();
     this.voice.dispose();
+    this.audio.dispose();
     this.unmount();
     this.slides.dispose();
     this.backdrop.dispose();
