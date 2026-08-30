@@ -1,9 +1,5 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { Director } from '@/engine/director';
-import { buildProfile } from '@/engine/profile';
-import { type MaterialSet, setupMaterials, Wardrobe } from '@/engine/scene';
 import { Session } from '@/engine/session';
 import type {
   AvatarDescriptor,
@@ -11,26 +7,20 @@ import type {
   LabelledId,
   Placement,
   PlacementReport,
-  Profile,
-  Scenery,
-  Shading,
   Shot,
   SlidePlacement,
   SlideReport,
 } from '@/engine/types';
-import { SHOT_LIMITS } from '@/engine/types';
-import { getLocale, pick } from '@/i18n/locale';
-import type { MessageKey } from '@/i18n/messages';
+import { getLocale } from '@/i18n/locale';
 import { translate } from '@/i18n/translate';
 import type { BgmCommand, BgmReport } from '@/protocol';
-import { BrowserAudioOutput } from '../audio-output';
-import { BrowserBgm } from '../bgm';
-import { sendMonitorShot } from '../monitor-link';
-import { StageRecorder } from '../record';
-import { stageMode } from '../stage-mode';
-import { BrowserVoice } from '../voice';
-import { BackdropStage } from './backdrop';
-import { buildFramings, type Framings } from './framing';
+import { BrowserAudioOutput } from '../../audio-output';
+import { BrowserBgm } from '../../bgm';
+import { StageRecorder } from '../../record';
+import { stageMode } from '../../stage-mode';
+import { BrowserVoice } from '../../voice';
+import { BackdropStage } from '../backdrop';
+import { buildFramings } from '../framing';
 import {
   FULL_FRAME,
   fitInside,
@@ -39,8 +29,17 @@ import {
   rectOf,
   resolvePlacement,
   type StageSize,
-} from './placement';
-import { SlideStage } from './slides';
+} from '../placement';
+import { SlideStage } from '../slides';
+import { FOV, ShotCamera } from './camera';
+import { buildHud, HUD_INTERVAL, type Hud } from './hud';
+import { disposeAvatar, mountAvatar } from './mount';
+import { sceneryPort, shadingPort } from './ports';
+import type { Listener, LoadedAvatar, RuntimeStatus, StageFrame } from './types';
+
+export { FOV } from './camera';
+export type { Hud } from './hud';
+export type { LoadedAvatar, RuntimeStatus, StageFrame } from './types';
 
 /**
  * The three.js side of the viewer, kept out of React entirely.
@@ -50,100 +49,18 @@ import { SlideStage } from './slides';
  * subscriptions for the readouts — because a 60 Hz simulation is not something
  * a render tree should be reconciling, and an avatar swap is not something a
  * component's lifetime should be tied to.
- */
-
-const FOV = 28;
-
-/** Live figures for the on-canvas readout. Sampled, not per-frame. */
-export interface Hud {
-  fps: number;
-  channel: string;
-  morphs: number;
-  sway: number | null;
-  breath: number;
-  blink: number;
-  gazeX: number;
-  speaking: boolean;
-  gesture: string | null;
-  expression: string | null;
-  auto: boolean;
-  /** The browser refusing this page an audio device. See `BrowserVoice.isBlocked`. */
-  voiceBlocked: boolean;
-}
-
-export interface LoadedAvatar {
-  avatar: AvatarDescriptor;
-  root: THREE.Object3D;
-  profile: Profile;
-  director: Director;
-  session: Session;
-  wardrobe: Wardrobe;
-  materials: MaterialSet;
-  /** Everything the profile, wardrobe or sway layer could not resolve. */
-  problems: string[];
-}
-
-/**
- * The composed picture, described so that something else can draw it.
  *
- * What is on screen is not one canvas and cannot be captured as one: the
- * document layer is DOM canvases the browser composites *behind* a WebGL canvas
- * — see `SlideStage` for why the page is not a textured quad — and the flat
- * colour behind both is CSS. Anything that has to produce a single frame of
- * this, which so far means the recorder, has to be told where the pieces are.
- *
- * Every rectangle is in the stage's own CSS pixels, so a consumer drawing at
- * some other size scales all of them by one factor and nothing moves relative
- * to anything else.
+ * What is left in this file is the scene and the loop: the lights, the two
+ * layers behind the character, what fills the frame under both of them, the
+ * swap, and the tick that drives all of it. The pieces that answer a question
+ * of their own are beside it — `camera.ts` for where the camera stands,
+ * `mount.ts` for turning a GLB into a working avatar and letting one go,
+ * `hud.ts` for the readout, `ports.ts` for the doors a session reaches this
+ * through, and `types.ts` for what all of them hand out.
  */
-export interface StageFrame {
-  /** The box every rectangle here is stated against. */
-  stage: StageSize;
-  /** The character's picture: the WebGL canvas, and where it sits. */
-  avatar: { canvas: HTMLCanvasElement; rect: Rect };
-  /** The document layer, or null when none is up. See `SlideStage.layers`. */
-  slides: {
-    rect: Rect;
-    canvases: Array<{ canvas: HTMLCanvasElement; opacity: number }>;
-    /** Moves when a page is painted, so a held composite knows it is stale. */
-    revision: number;
-  } | null;
-  /**
-   * What fills the frame under both layers, as a CSS colour.
-   *
-   * `rgba(0, 0, 0, 0)` on a source opened transparent, which is the honest
-   * answer: there is nothing behind it here, and what a recording puts there is
-   * whatever it started the frame with. See `StageMode.transparent`.
-   */
-  background: string;
-}
-
-export type RuntimeStatus =
-  | { phase: 'idle' }
-  | { phase: 'loading'; avatar: AvatarDescriptor }
-  | { phase: 'ready'; loaded: LoadedAvatar }
-  | { phase: 'failed'; avatar: AvatarDescriptor; message: string };
-
-type Listener<T> = (value: T) => void;
-
-/** How often the HUD is sampled. It is text, not an instrument; 8 Hz reads live. */
-const HUD_INTERVAL = 0.125;
-
-/**
- * How often a dragged shot is published, in milliseconds.
- *
- * Every one of these is a request out of the panel and a frame back down to
- * every renderer, so a drag published per frame would put sixty round trips a
- * second on the wire to move one camera. Ten is enough for the picture going to
- * air to look like it is following the one being dragged.
- */
-const SHOT_INTERVAL = 100;
-
 export class AvatarRuntime {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
-  readonly camera: THREE.PerspectiveCamera;
-  readonly controls: OrbitControls;
 
   private readonly host: HTMLElement;
   private readonly loader = new GLTFLoader();
@@ -152,6 +69,8 @@ export class AvatarRuntime {
   private readonly backdrop: BackdropStage;
   /** The document layer, which sits behind everything the renderer draws. */
   private readonly slides: SlideStage;
+  /** Where the camera stands, and how a drag on it is published. */
+  private readonly shotCamera: ShotCamera;
   /**
    * The flat background, held rather than built where it is set.
    *
@@ -203,14 +122,6 @@ export class AvatarRuntime {
     openAudio: () => this.audio.captureStream(),
   });
 
-  private framings: Framings | null = null;
-  private frame: CameraFrame = 'bust';
-  /** How far the camera has been moved off the framing. See `Shot`. */
-  private orbit = { yaw: 0, pitch: 0, zoom: 1 };
-  /** True while `place` is moving the camera, so its own change is not published. */
-  private placing = false;
-  private shotSentAt = 0;
-  private shotTimer: ReturnType<typeof setTimeout> | null = null;
   private toon = true;
 
   /** Where the picture of the character goes in the frame. See `Placement`. */
@@ -231,11 +142,10 @@ export class AvatarRuntime {
   private status: RuntimeStatus = { phase: 'idle' };
   private readonly statusListeners = new Set<Listener<RuntimeStatus>>();
   private readonly hudListeners = new Set<Listener<Hud>>();
-  private readonly cameraListeners = new Set<Listener<CameraFrame>>();
   /**
    * Called at the end of every frame, with the render still on the buffer.
    *
-   * A separate set from the three above because it is not a readout: the others
+   * A separate set from the two above because it is not a readout: the others
    * are sampled and this one is not allowed to miss a frame. A WebGL canvas is
    * only readable between the draw and the browser's next composite, so a
    * listener that wanted to copy the picture and was told about it a moment
@@ -284,41 +194,12 @@ export class AvatarRuntime {
     this.scene = new THREE.Scene();
     this.scene.background = this.flat;
 
-    this.camera = new THREE.PerspectiveCamera(FOV, 1, 0.01, 100);
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.08;
-    /**
-     * The pointer moves the camera on a page that is a tool, and not on one
-     * that is an output.
-     *
-     * A bare page is what OBS opens, and a shot nudged there by a stray drag is
-     * a shot the panel no longer agrees with — silently, because nothing tells
-     * the panel it happened. The console has the pointer because it is the
-     * development view, and an embedded preview has it because that is now how
-     * the shot is set: the panel frames this page and publishes what the drag
-     * produced. See `readShot` and `monitor-link.ts`.
-     */
     const embedded = window.parent !== window;
-    this.controls.enabled = stageMode().console || embedded;
-    if (embedded) {
-      // Panning moves the target off the framing, and there is no pan axis in a
-      // `Shot` to say so — a shot read back from a panned camera would be a
-      // bearing around the wrong point.
-      this.controls.enablePan = false;
-      // Slower than the default, because the picture being dragged is a monitor
-      // a few hundred pixels tall and three.js measures a rotation against that
-      // height. At 1.0 a short drag swings the camera round behind the
-      // character; the operator here is nudging a shot, not exploring a model.
-      this.controls.rotateSpeed = 0.4;
-      this.controls.zoomSpeed = 0.5;
-      // Stopped where the wire stops. A drag that could push the camera past
-      // what the schema accepts would produce a command that is dropped on
-      // arrival, and the preview would be the only picture that moved.
-      this.controls.minPolarAngle = Math.PI / 2 - THREE.MathUtils.degToRad(SHOT_LIMITS.pitch.max);
-      this.controls.maxPolarAngle = Math.PI / 2 - THREE.MathUtils.degToRad(SHOT_LIMITS.pitch.min);
-      this.controls.addEventListener('change', () => this.shotMoved());
-    }
+    this.shotCamera = new ShotCamera(
+      this.renderer.domElement,
+      { pointer: stageMode().console || embedded, embedded },
+      () => this.resize(),
+    );
 
     // Toon materials blow out easily; these levels are tuned for MeshToonMaterial.
     //
@@ -366,6 +247,16 @@ export class AvatarRuntime {
     this.renderer.setAnimationLoop(() => this.tick());
   }
 
+  /** The camera the scene is drawn through. */
+  get camera(): THREE.PerspectiveCamera {
+    return this.shotCamera.camera;
+  }
+
+  /** The orbit controls over it, for the console's own pointer handling. */
+  get controls(): ShotCamera['controls'] {
+    return this.shotCamera.controls;
+  }
+
   // --- subscriptions --------------------------------------------------------
 
   onStatus(fn: Listener<RuntimeStatus>): () => void {
@@ -379,16 +270,8 @@ export class AvatarRuntime {
     return () => this.hudListeners.delete(fn);
   }
 
-  /**
-   * The framing is set from two places — the console's picker and the control
-   * API's `camera` command — so the runtime owns it and the picker follows.
-   * Held as React state instead, a shot changed by the orchestrator would move
-   * the camera and leave the control showing the old framing.
-   */
   onCamera(fn: Listener<CameraFrame>): () => void {
-    this.cameraListeners.add(fn);
-    fn(this.frame);
-    return () => this.cameraListeners.delete(fn);
+    return this.shotCamera.onCamera(fn);
   }
 
   /**
@@ -474,129 +357,21 @@ export class AvatarRuntime {
   // --- camera ---------------------------------------------------------------
 
   get cameraFrame(): CameraFrame {
-    return this.frame;
+    return this.shotCamera.cameraFrame;
   }
 
   /** The shot as it stands: the framing, and how far it has been moved off it. */
   get shot(): Required<Shot> {
-    return { frame: this.frame, ...this.orbit };
+    return this.shotCamera.shot;
   }
 
   goto(frame: CameraFrame): void {
-    this.setShot({ frame });
+    this.shotCamera.goto(frame);
   }
 
-  /**
-   * Place the camera.
-   *
-   * An absent field is left where it was, which is what lets a drag send two
-   * numbers: the framing decides how much of the character is in shot, and the
-   * three offsets say where the operator is standing to see it. See `Shot`.
-   */
+  /** Place the camera. See `ShotCamera.setShot`. */
   setShot(shot: Shot): void {
-    if (shot.frame !== undefined && shot.frame !== this.frame) {
-      this.frame = shot.frame;
-      for (const fn of this.cameraListeners) fn(this.frame);
-    }
-    if (shot.yaw !== undefined) this.orbit.yaw = shot.yaw;
-    if (shot.pitch !== undefined) this.orbit.pitch = shot.pitch;
-    if (shot.zoom !== undefined) this.orbit.zoom = shot.zoom;
-    this.place();
-    // How much of the picture the character fills is a property of the shot —
-    // a full-length figure fills less of it than a face — and where the canvas
-    // sits is derived from that. Without this a framing change moves the
-    // character within a rectangle that stayed where the last one needed it.
-    this.resize();
-  }
-
-  /**
-   * Put the camera where the framing and the offsets say, in world space.
-   *
-   * The framing gives a target and a straight-on distance; the offsets turn that
-   * into a bearing around the target. Everything is derived, so a swap that
-   * rebuilds the framings puts the same shot on a differently-proportioned
-   * avatar rather than leaving the camera where the last one needed it.
-   *
-   * Where the picture *sits* in the frame is not here and must not be: see
-   * `resize`. A shot is what the camera can see; a placement is where that
-   * picture is put afterwards, and the two are kept apart so that putting the
-   * character in a corner cannot quietly change what is in shot.
-   */
-  private place(): void {
-    const f = this.framings?.[this.frame];
-    if (!f) return;
-    const base = f.position.distanceTo(f.target);
-    // The dolly stops where the wire does, and the framing decides in metres
-    // what that means — so it is set here, where the framing is known, rather
-    // than once in the constructor when there is no avatar yet.
-    this.controls.minDistance = base / SHOT_LIMITS.zoom.max;
-    this.controls.maxDistance = base / SHOT_LIMITS.zoom.min;
-    const spherical = new THREE.Spherical(
-      base / this.orbit.zoom,
-      // `phi` is measured from straight up, so level is a right angle and a
-      // positive pitch tilts the camera above the target — looking down.
-      Math.PI / 2 - THREE.MathUtils.degToRad(this.orbit.pitch),
-      THREE.MathUtils.degToRad(this.orbit.yaw),
-    );
-    this.controls.target.copy(f.target);
-    this.camera.position.copy(f.target).add(new THREE.Vector3().setFromSpherical(spherical));
-    // `update` dispatches a change, and on an embedded page a change is what
-    // publishes the shot. Without the flag, a shot arriving from the panel
-    // would be sent straight back to it.
-    this.placing = true;
-    this.controls.update();
-    this.placing = false;
-  }
-
-  /**
-   * The pointer moved the camera on an embedded page. Tell whoever framed us.
-   *
-   * Throttled with a trailing send rather than published per frame: a drag is
-   * sixty changes a second and every one of them would be an HTTP request out
-   * of the panel and an SSE frame back to every renderer. The trailing send is
-   * the one that matters — damping keeps the camera moving after the pointer
-   * has stopped, so the last change is the only one that says where the shot
-   * actually ended up.
-   */
-  private shotMoved(): void {
-    if (this.placing) return;
-    const since = Date.now() - this.shotSentAt;
-    if (since >= SHOT_INTERVAL) {
-      this.publishShot();
-      return;
-    }
-    if (this.shotTimer !== null) return;
-    this.shotTimer = setTimeout(() => {
-      this.shotTimer = null;
-      this.publishShot();
-    }, SHOT_INTERVAL - since);
-  }
-
-  private publishShot(): void {
-    const shot = this.readShot();
-    if (!shot) return;
-    this.shotSentAt = Date.now();
-    sendMonitorShot(shot);
-  }
-
-  /**
-   * Read the shot back off the camera, after the pointer has moved it.
-   *
-   * The inverse of `place`, and only meaningful while the target is still the
-   * framing's — which is why panning is switched off wherever this is used.
-   */
-  private readShot(): Required<Shot> | null {
-    const f = this.framings?.[this.frame];
-    if (!f) return null;
-    const offset = this.camera.position.clone().sub(this.controls.target);
-    const spherical = new THREE.Spherical().setFromVector3(offset);
-    if (spherical.radius < 1e-4) return null;
-    return {
-      frame: this.frame,
-      yaw: THREE.MathUtils.radToDeg(spherical.theta),
-      pitch: 90 - THREE.MathUtils.radToDeg(spherical.phi),
-      zoom: f.position.distanceTo(f.target) / spherical.radius,
-    };
+    this.shotCamera.setShot(shot);
   }
 
   get toonEnabled(): boolean {
@@ -766,21 +541,6 @@ export class AvatarRuntime {
    * gestures, which are authored against a framing, somewhere they were never
    * drawn for. Here the shot is untouched and the picture of it is smaller.
    */
-  /**
-   * How much of a picture of this width the character actually fills, 0 to 1.
-   *
-   * The framing decides the height of the world in shot and the aspect decides
-   * the width, so what is left over at the sides is arithmetic rather than
-   * something anybody chose. 1 before an avatar has loaded — nothing is in the
-   * picture yet, so there is no gap to close and nothing to move.
-   */
-  private contentWidth(picture: Rect): number {
-    const f = this.framings?.[this.frame];
-    if (!f || picture.height === 0) return 1;
-    const world = (f.height / this.orbit.zoom) * (picture.width / picture.height);
-    return world === 0 ? 1 : (2 * f.halfWidth) / world;
-  }
-
   private resize(): void {
     const w = this.host.clientWidth;
     const h = this.host.clientHeight;
@@ -793,11 +553,11 @@ export class AvatarRuntime {
     // shape asked for is the stage's own rather than 16:9, so a source of any
     // proportion shows a scaled copy of what it would have shown full frame.
     const anchor = this.avatarPlacement.anchor;
-    const picture = fitInside(rectOf(this.avatarPlacement, this.stage), w / h, anchor);
+    const picture: Rect = fitInside(rectOf(this.avatarPlacement, this.stage), w / h, anchor);
     // And then the character inside that picture is put on the edge, rather
     // than the picture's own edge, which is a quarter of a frame further out.
     // See `hugContent`.
-    const rect = hugContent(picture, anchor, this.contentWidth(picture));
+    const rect = hugContent(picture, anchor, this.shotCamera.contentWidth(picture));
     const el = this.renderer.domElement;
     el.style.position = 'absolute';
     el.style.left = `${rect.left}px`;
@@ -805,8 +565,7 @@ export class AvatarRuntime {
     // `setSize` writes the element's width and height itself, so only where it
     // sits is set above.
     this.renderer.setSize(rect.width, rect.height);
-    this.camera.aspect = rect.width / rect.height;
-    this.camera.updateProjectionMatrix();
+    this.shotCamera.setAspect(rect.width / rect.height);
   }
 
   // --- loading --------------------------------------------------------------
@@ -857,44 +616,10 @@ export class AvatarRuntime {
     const root = gltf.scene;
     this.scene.add(root);
 
-    // Casts, but does not receive. The shadow the avatar throws on the wall
-    // behind it is what puts it in the room rather than in front of a picture of
-    // one, and costs a second pass over geometry that is already skinned.
-    // Receiving is the other half and is deliberately left off: a skinned mesh
-    // self-shadowing at these bone counts stipples the face at exactly the
-    // framing the stream spends all its time at.
-    root.traverse((o) => {
-      if (o instanceof THREE.Mesh) o.castShadow = true;
-    });
+    const mounted = mountAvatar(root, avatar, this.toon);
+    const { profile, director, wardrobe, materials, problems } = mounted;
 
-    const materials = setupMaterials(root, avatar);
-    materials.apply(this.toon);
-
-    const profile = buildProfile(root, avatar);
-    const problems: string[] = [];
-    // Worded in the language in force when the model came up. These are read
-    // off the console beside the model they describe, and a swap is what
-    // rebuilds them, so following a later switch would mean carrying every
-    // finding as a pair for a line nobody re-reads.
-    const say = (key: MessageKey, names: string[], separator: string) =>
-      problems.push(translate(key, getLocale(), { names: names.join(separator) }));
-    if (profile.missing.length) say('console.problem.profile', profile.missing, ', ');
-
-    const director = new Director(profile, avatar);
-    const wardrobe = new Wardrobe(root, profile, avatar.wardrobe);
-    if (wardrobe.missing.length) say('console.problem.wardrobe', wardrobe.missing, ' / ');
-    if (director.spring.missing.length) {
-      say('console.problem.sway', director.spring.missing, ' / ');
-    }
-    if (director.tail.missing.length) {
-      say('console.problem.tail', director.tail.missing, ' / ');
-    }
-
-    this.framings = buildFramings(root, profile, FOV);
-    // `place`, not `goto`: the framings were just rebuilt for a body of another
-    // size, and the shot the operator set up should survive that. The offsets
-    // are relative for exactly this reason.
-    this.place();
+    this.shotCamera.rebuild(buildFramings(root, profile, FOV));
 
     const session = new Session(director, {
       wardrobe,
@@ -953,21 +678,7 @@ export class AvatarRuntime {
     const cur = this.current;
     if (!cur) return;
     this.scene.remove(cur.root);
-    // Materials and their textures belong to the material layer, which holds
-    // both the imported set and the toon set; only the geometry is ours.
-    cur.materials.dispose();
-    // Geometry, and the two GPU resources that hang off a skinned mesh rather
-    // than off its material: the skeleton's bone texture and the morph-target
-    // array texture. Neither is reachable by walking materials, and neither
-    // shows up as anything but a slowly climbing texture count.
-    const skeletons = new Set<THREE.Skeleton>();
-    cur.root.traverse((o) => {
-      if (!(o instanceof THREE.Mesh)) return;
-      o.geometry?.dispose();
-      o.geometry?.morphTexture?.dispose();
-      if (o instanceof THREE.SkinnedMesh && o.skeleton) skeletons.add(o.skeleton);
-    });
-    for (const s of skeletons) s.dispose();
+    disposeAvatar(cur);
     this.current = null;
   }
 
@@ -986,12 +697,11 @@ export class AvatarRuntime {
     this.unmount();
     this.slides.dispose();
     this.backdrop.dispose();
-    this.controls.dispose();
+    this.shotCamera.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
     this.statusListeners.clear();
     this.hudListeners.clear();
-    this.cameraListeners.clear();
     this.frameListeners.clear();
   }
 
@@ -1003,7 +713,7 @@ export class AvatarRuntime {
     // deliberately runs slow rather than integrating a step large enough to
     // throw the sway chains, which is a far more visible failure than lag.
     const dt = Math.min(this.timer.getDelta(), 0.05);
-    this.controls.update();
+    this.shotCamera.update();
     // A document is opened asynchronously and may never open at all, so the
     // moment it is actually up is not the moment it was asked for.
     if (this.slides.up !== this.documentUp) this.updateBackground();
@@ -1028,7 +738,8 @@ export class AvatarRuntime {
       this.hudAcc += dt;
       if (this.hudAcc >= HUD_INTERVAL && this.hudListeners.size > 0) {
         this.hudAcc = 0;
-        this.publishHud(cur);
+        const hud = buildHud(cur, { fps: this.fps, voiceBlocked: this.voice.isBlocked });
+        for (const fn of this.hudListeners) fn(hud);
       }
     }
 
@@ -1043,67 +754,4 @@ export class AvatarRuntime {
       for (const fn of this.frameListeners) fn(frame);
     }
   }
-
-  private publishHud(cur: LoadedAvatar): void {
-    const { director, profile, avatar } = cur;
-    const channel = profile.arkit.supported
-      ? `ARKit ${profile.arkit.count}/52`
-      : avatar.emotionShapes
-        ? translate('console.hud.channel.custom', getLocale())
-        : translate('console.hud.channel.vrm', getLocale());
-    // Resolved here rather than carried as a pair: the HUD is this page's own
-    // instrument, so the locale in force on this page is the right answer.
-    const gestureLabel = director.body.gesture?.def.label ?? null;
-    const hud: Hud = {
-      fps: this.fps,
-      channel,
-      morphs: Object.keys(profile.dict).length,
-      sway: director.spring.enabled ? director.spring.count : null,
-      breath: director.body.breath,
-      blink: director.blink,
-      gazeX: director.body.gaze.x,
-      speaking: director.mouth.speaking,
-      gesture: gestureLabel ? pick(gestureLabel, getLocale()) : null,
-      expression: director.expression,
-      auto: director.auto,
-      voiceBlocked: this.voice.isBlocked,
-    };
-    for (const fn of this.hudListeners) fn(hud);
-  }
-}
-
-/**
- * The room, as a session may reach it.
- *
- * Deliberately not `BackdropStage` itself, which is the same object and the
- * wrong door. Changing a room takes the standing one down, and what is behind
- * the character afterwards depends on the document layer and on how the source
- * was opened — neither of which a room knows. A `backdrop` on a line that went
- * straight to the stage would leave the character's canvas opaque over a page
- * until the document came down and the frame loop noticed. `updateBackground`
- * is the only thing allowed to decide what is behind both layers, and this is
- * what keeps every route to a room going past it.
- */
-function sceneryPort(runtime: AvatarRuntime): Scenery {
-  return {
-    get backdrops(): LabelledId[] {
-      return runtime.backdrops;
-    },
-    setBackdrop: (id) => runtime.setBackdrop(id),
-  };
-}
-
-/**
- * The renderer's shading, as the one switch a session may reach.
- *
- * A free function rather than an object literal inside the class, because the
- * getter has to close over the runtime and a getter cannot be an arrow.
- */
-function shadingPort(runtime: AvatarRuntime): Shading {
-  return {
-    get toon(): boolean {
-      return runtime.toonEnabled;
-    },
-    setToon: (on) => runtime.setToon(on),
-  };
 }
