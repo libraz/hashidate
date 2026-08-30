@@ -2,6 +2,10 @@
 
 A PDF put up behind the character, so she can present from it.
 
+![A page of the demo deck, with the character standing in the corner of the same frame](../images/slides.webp)
+
+That is one browser source, exactly as OBS receives it: the page fills the frame, the character is placed in a corner of it, and the page turns arrive on the lines.
+
 ![The layers of the output frame](../images/frame.svg)
 
 It is flat. The page is not geometry in the room and not a texture on a screen somewhere in the scene — it is a DOM layer directly behind the render, at the frame's own resolution. Everything that would otherwise happen to it on the way through a 3D pipeline is what makes slide text unreadable: tone mapping moves the white, filtering softens strokes a pixel wide, and a page turn becomes a texture upload rather than an image swap. Drawing it flat costs the ability to tilt it, which no one wanted, and buys type as sharp as the file is.
@@ -10,7 +14,7 @@ It is flat. The page is not geometry in the room and not a texture on a screen s
 
 Put the documents in `show/slides/` — `--slides <dir>` moves that anywhere, including outside the repository, and either way they are ignored by git. A document's id is its filename without the extension.
 
-One document ships: `hashidate.pdf`, five pages about this runtime, which is what the demo script presents from. It is the exception to the ignore rule for the same reason `demo.yaml` is — it belongs to the project rather than to a broadcast.
+One document ships: `hashidate.pdf`, three pages about this runtime and the person who wrote it, which is what the demo script presents from. It is the exception to the ignore rule for the same reason `demo.yaml` is — it belongs to the project rather than to a broadcast.
 
 ```sh
 yarn ctl deck intro          # up, at page 1

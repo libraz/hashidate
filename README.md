@@ -35,6 +35,10 @@ Swap the model, the provider or the framework: nothing on the right-hand side ch
 | **A broadcast run by hand** | The panel is a full operating surface, and everything it does goes through the same API. | `/panel/` |
 | **Checking a model you rigged** | What the avatar can be asked for is discovered from its own shapes and meshes. | `yarn ctl vocab` |
 
+![A page of the demo deck, with the character standing in the corner of the same frame](docs/images/slides.webp)
+
+The third of those, on air. The deck is a PDF the server reads off disk, the character is placed in a corner of the same frame, and the page turns arrive on the lines — one browser source, and OBS composites nothing.
+
 Worked versions of all eight: [Use cases](docs/en/use-cases.md).
 
 ## What you need
@@ -72,7 +76,7 @@ yarn ctl perform happy                          # a face and a movement, named t
 yarn ctl say "Good evening." --perform hello --wait
 yarn ctl say "[hello]Good evening. [explain]Tonight I want to talk about this."
 yarn ctl bgm list && yarn ctl bgm play opening.mp3
-yarn ctl idle on
+yarn ctl idle on                                # let her perform by herself; breath and gaze were already running
 yarn ctl watch                                  # follow the turn events
 ```
 

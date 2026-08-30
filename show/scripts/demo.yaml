@@ -102,14 +102,10 @@ lines:
   - text: "[explain]さっきの境界の話も、こうして図にしておけます。"
     stage: { slide: 2 }
 
-  - text: "[explain]ターンの中身。台詞と、その読みと、演技と、ショット。この四つです。"
+  - text: "[bashful]最後の一枚は、わたしを書いた人の紹介です。"
     stage: { slide: 3 }
 
-  - text: "[present]置き方も三通りあって、今わたしが右下にいるのが、真ん中のこれです。"
-    stage: { slide: 4 }
-
   - text: "[interested]しかも中の文章は読めるので、資料を見て台本を書くところまで、外側の誰かに任せられます。"
-    stage: { slide: 5 }
 
   # Down and back to the middle in one line, for the same reason as going up.
   - text: "[explain]下ろすのも、戻るのも、一行です。"
@@ -121,8 +117,8 @@ lines:
 
   - text: "[secret]それから、ここだけの話。"
 
-  - text: "[explain]この仕組みは 127.0.0.1、つまりこの機械の中からしか届きません。"
-    reading: "このしくみは、いちにーななのぜろのぜろのいち、つまりこのきかいのなかからしかとどきません。"
+  - text: "[explain]この仕組みは、ローカルホスト、つまりこの機械の中からしか届きません。"
+    reading: "このしくみは、ローカルホスト、つまりこのきかいのなかからしかとどきません。"
 
   - text: "[calm]わたしの見た目も声も借りものだからです。外に出さないのは、遠慮ではなくて約束のほう。"
     emotion:

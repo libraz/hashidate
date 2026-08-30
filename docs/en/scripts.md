@@ -55,7 +55,7 @@ That split is the one the command set already makes between what outlives a turn
 
 The `text` field can contain the legacy `[performanceId]` shorthand and typed cues such as `[@camera bust]`, `[@slide 2]`, and `[@bgm play opening.mp3]`. A cue fires at that point in the spoken line, so it can change the shot or BGM without adding a gap. `[@bgm play]` resumes the selected track; a track name may contain spaces and Japanese characters. Square brackets are reserved and are not spoken. The full syntax is in [Lines and cues](lines-and-cues.md).
 
-Inline cues use the same text that `speak`, `say`, and `queue` accept. They are not a second script dialect. Line-start `stage` remains the place for `room`, `backdrop`, `deck`, and `place`, while BGM volume, looping, and DSP stay in the `bgm` command or its panel/MCP controls.
+Inline cues use the same text that `speak`, `say`, and `queue` accept. They are not a second script dialect. Line-start `stage` remains the place for `room`, `backdrop`, `deck`, and `place`, while BGM volume, looping, fade durations, and DSP stay in the `bgm` command or its panel/MCP controls. BGM play cues use the current fade settings.
 
 ## It invents no vocabulary
 
@@ -103,7 +103,7 @@ lines   22
 
 It names no avatar, no drawn expression and no overlay. Those are one model's data and a fresh checkout has no model in it — a demo that used them would be a demo that runs on one machine.
 
-The deck it presents from, `show/slides/hashidate.pdf`, does ship: it is five pages about this runtime and it is ours to publish. Its source is a separate deck repository rather than this one, so rebuilding it is not a step a checkout needs — the built file is what belongs here.
+The deck it presents from, `show/slides/hashidate.pdf`, does ship: it is three pages about this runtime and it is ours to publish. Its source is a separate deck repository rather than this one, so rebuilding it is not a step a checkout needs — the built file is what belongs here.
 
 ## Next
 
