@@ -14,7 +14,7 @@
 
 | Tool | What it does |
 |---|---|
-| `speak` | Queue lines. A run of them travels in one call. |
+| `speak` | Queue lines. A run of them travels in one call, and each `text` can carry inline performance, shot, slide, or BGM cues. |
 | `status` | What to branch on: speaking, queue depth, the face and movement that are up, strain. |
 | `interrupt` | Stop mid-line and drop the queue. |
 | `react` | The immediate half of everything else — a performance, a gesture, a glance. |
@@ -36,6 +36,18 @@ Every tool is one of the endpoints in [The control API](control-api.md), and it 
 ## Where the lines go
 
 Lines go on the server's queue rather than out as a `say`, so they survive a viewer reload, they appear in the panel where they can be reordered and rewritten, and they carry `source: mcp` to tell them from a comment or from something typed by hand.
+
+## Cue notation in `speak`
+
+The `text` field accepts the legacy `[performanceId]` shorthand and these typed forms:
+
+```text
+[@perform id] [@expression id] [@gesture id] [@hop id]
+[@camera face|bust|upper|full] [@slide 3]
+[@bgm play] [@bgm play track filename] [@bgm pause] [@bgm stop]
+```
+
+`[@bgm play]` resumes the selected track. The remainder after `play` is the exact BGM filename, so spaces and Japanese characters are allowed. The same remainder rule applies to dynamic performance, expression, gesture, and hop ids. `[` and `]` are reserved. Typed cues are ordinary line text and travel through `speak` and script queues. `room`, `backdrop`, `deck`, and `place` stay in line-start `stage` setup. BGM volume, looping, and DSP stay in the panel or the `bgm` tool's settings action. Relative slides are not inline cues. See [Lines and cues](lines-and-cues.md) for the timing rules.
 
 ## Background music
 

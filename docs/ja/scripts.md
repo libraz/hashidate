@@ -29,6 +29,9 @@ setup:
   - cmd: reset
   - cmd: idle
     on: true
+  - cmd: bgm
+    action: play
+    track: opening.mp3
   - cmd: place
     avatar: { anchor: bottom-right, width: 0.32 }
 
@@ -47,6 +50,12 @@ lines:
 半分ずつに分かれているのは、寿命が違うからです。`setup` は何か喋る前に一度だけ適用されるもの——どのアバターか、何を着ているか、フレームのどこに絵を置くか。`lines` はターンで、1 行ずつが自分の届けられるショットを持ち歩きます。
 
 この分け方はコマンド体系がすでに持っているもの、ターンより長く残るものと、ターンと一緒に解かれるものの区別と同じです。[コマンド](commands.md)を参照してください。
+
+## 行の中のキュー
+
+`text` フィールドには従来の `[performanceId]` 省略記法と、`[@camera bust]`、`[@slide 2]`、`[@bgm play opening.mp3]` のような型付きキューを書けます。キューは発話のその位置で動作するので、間を追加せずにショットや BGM を変えられます。`[@bgm play]` は選択中のトラックを再開し、トラック名には空白と日本語を含められます。角括弧は予約文字で、読み上げられません。完全な構文は[台詞とキュー](lines-and-cues.md)にあります。
+
+インラインキューは `speak`、`say`、`queue` が受け取るテキストと同じものです。台本だけの別方言ではありません。`room`、`backdrop`、`deck`、`place` は行頭の `stage` に置き、BGM の音量、ループ、DSP は `bgm` コマンドまたはパネルと MCP の設定で操作します。
 
 ## 語彙を増やしません
 

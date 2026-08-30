@@ -44,6 +44,19 @@ For example:
 
 `status` returns the selected track, transport, position, duration, level, loop setting and resolved DSP values. A caller should use the id returned by `list`, not construct a `/bgm/` URL itself.
 
+## Inline BGM cues
+
+BGM transport can also be placed inside a spoken line, where it runs on the line's mouth clock:
+
+```text
+The opening starts here. [@bgm play opening.mp3]
+The next line pauses it. [@bgm pause]
+This line resumes the selected track. [@bgm play]
+The segment ends here. [@bgm stop]
+```
+
+The track name is optional for `play`; without it, the selected track resumes. The remainder after `play` is the exact filename, so spaces and Japanese characters are allowed. The `[` and `]` characters are reserved. These cues work through ordinary `speak`, `say`, `queue`, and script text, and need no separate MCP or CLI operation. Use the panel or the `bgm` MCP tool for volume, looping, and DSP; those settings are not line cues.
+
 ## BGM-only effects
 
 The fixed chain is provided by libsonare: tone tilt, compressor, stereo imager and plate reverb, in that order. The public controls are deliberately smaller than the plug-ins' full parameter sets:

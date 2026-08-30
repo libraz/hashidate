@@ -29,6 +29,9 @@ setup:
   - cmd: reset
   - cmd: idle
     on: true
+  - cmd: bgm
+    action: play
+    track: opening.mp3
   - cmd: place
     avatar: { anchor: bottom-right, width: 0.32 }
 
@@ -47,6 +50,12 @@ lines:
 Two halves, because they have two lifetimes. `setup` is applied once, before anything is said: which avatar, what it is wearing, where the picture sits in the frame. `lines` are the turns, and each carries the shot it is delivered in.
 
 That split is the one the command set already makes between what outlives a turn and what is released with it — see [Commands](commands.md).
+
+## Cues in lines
+
+The `text` field can contain the legacy `[performanceId]` shorthand and typed cues such as `[@camera bust]`, `[@slide 2]`, and `[@bgm play opening.mp3]`. A cue fires at that point in the spoken line, so it can change the shot or BGM without adding a gap. `[@bgm play]` resumes the selected track; a track name may contain spaces and Japanese characters. Square brackets are reserved and are not spoken. The full syntax is in [Lines and cues](lines-and-cues.md).
+
+Inline cues use the same text that `speak`, `say`, and `queue` accept. They are not a second script dialect. Line-start `stage` remains the place for `room`, `backdrop`, `deck`, and `place`, while BGM volume, looping, and DSP stay in the `bgm` command or its panel/MCP controls.
 
 ## It invents no vocabulary
 
