@@ -3,14 +3,18 @@ import { type ZodError, type ZodType, z } from 'zod';
 import {
   bgmDspPatchSchema,
   bgmFadePatchSchema,
+  bgmTrackIdSchema,
   cameraFrameSchema,
   emotionVectorSchema,
   type LabelledId,
   lookCommandSchema,
   overlayCommandSchema,
+  placeStageSchema,
   pointCommandSchema,
+  stageSchema,
   turnSchema,
   type Vocabulary,
+  wearCommandSchema,
 } from '../protocol';
 
 /**
@@ -237,7 +241,12 @@ const speakLine = turnSchema.omit({ id: true }).extend({
 });
 
 /** The three staging axes a line can carry, before any ids are injected. */
-const speakStage = turnSchema.shape.stage.unwrap();
+const speakStage = stageSchema.extend({
+  // Keep this nested protocol schema explicit at the consumer boundary. The
+  // base stage schema already carries it, but reaching through `.shape` on a
+  // turn would make this adapter depend on how that larger schema is built.
+  place: placeStageSchema.optional(),
+});
 
 /** The run of lines, however narrow the line itself has been made. */
 const lineList = <T extends ZodType>(line: T) =>
@@ -307,18 +316,17 @@ const pointSpec = pointCommandSchema.omit({ cmd: true, id: true }).extend({
 });
 
 /**
- * Dressing, as the two things it actually is: one slot changed, or a whole
- * preset put on. The command carries both under one flat object because the wire
- * has no unions, and a caller that sends a slot and a preset together has said
- * two things and gets whichever the renderer applies last.
+ * Dressing, as the command's own flat payload. Every field is optional on the
+ * wire: a caller can change one slot, put on a preset, or send both. The
+ * renderer resolves that wire-valid combination; currently a preset takes
+ * precedence. Keeping this rooted in the protocol schema means a future
+ * wire-valid field cannot be dropped here.
  */
-const wearSpec = z.union([
-  z.object({
-    slot: z.string().describe(WEAR_SLOT_NOTE),
-    item: z.string().nullable().describe(WEAR_ITEM_NOTE),
-  }),
-  z.object({ preset: z.string().describe(WEAR_PRESET_NOTE) }),
-]);
+const wearSpec = wearCommandSchema.omit({ cmd: true, id: true }).extend({
+  slot: wearCommandSchema.shape.slot.describe(WEAR_SLOT_NOTE),
+  item: wearCommandSchema.shape.item.describe(WEAR_ITEM_NOTE),
+  preset: wearCommandSchema.shape.preset.describe(WEAR_PRESET_NOTE),
+});
 
 const reactInput = z.object({
   reset: z.boolean().optional().describe(RESET_NOTE),
@@ -503,7 +511,7 @@ const bgmInput = z.discriminatedUnion('action', [
   z
     .object({
       action: z.literal('play'),
-      track: z.string().min(1).describe(BGM_TRACK_NOTE),
+      track: bgmTrackIdSchema.describe(BGM_TRACK_NOTE),
       volume: z.number().finite().min(0).max(1).optional().describe(BGM_VOLUME_NOTE),
       loop: z.boolean().optional().describe(BGM_LOOP_NOTE),
       dsp: bgmDspInput.optional(),
@@ -649,13 +657,11 @@ function wearField(vocabulary: Partial<Vocabulary>) {
   const wardrobe = vocabulary.wardrobe ?? {};
   const slots = Object.keys(wardrobe);
   const items = Object.values(wardrobe).flatMap((slot) => slot.items);
-  return z.union([
-    z.object({
-      slot: (slots.length > 0 ? z.enum(slots) : z.string()).describe(WEAR_SLOT_NOTE),
-      item: idEnum(items).nullable().describe(WEAR_ITEM_NOTE),
-    }),
-    z.object({ preset: idEnum(vocabulary.wardrobePresets).describe(WEAR_PRESET_NOTE) }),
-  ]);
+  return wearSpec.extend({
+    slot: (slots.length > 0 ? z.enum(slots) : z.string()).optional().describe(WEAR_SLOT_NOTE),
+    item: idEnum(items).nullable().optional().describe(WEAR_ITEM_NOTE),
+    preset: idEnum(vocabulary.wardrobePresets).optional().describe(WEAR_PRESET_NOTE),
+  });
 }
 
 /**

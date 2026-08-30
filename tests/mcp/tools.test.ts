@@ -393,6 +393,26 @@ describe('stage', () => {
     });
   });
 
+  it('keeps slot, item, and preset when the wire receives them together', async () => {
+    h = harness();
+    const client = await connect(h.control);
+
+    await client.callTool({
+      name: 'stage',
+      arguments: { wear: { slot: 'top', item: 'coat', preset: 'stage' } },
+    });
+
+    // `wearCommandSchema` is a flat payload. The MCP input must not use a
+    // union branch that strips the preset when the slot branch happens to match.
+    expect(only(h.control.command.mock.calls[0][0])).toEqual({
+      cmd: 'wear',
+      slot: 'top',
+      item: 'coat',
+      preset: 'stage',
+    });
+    expect(survives(h.control.command.mock.calls[0][0])).toBe(true);
+  });
+
   it('takes the backdrop and the room away when told null', async () => {
     h = harness();
     const client = await connect(h.control);
@@ -439,6 +459,60 @@ describe('stage', () => {
     // Not merely undocumented: a field stripped by the parse would leave the
     // call empty, and an empty call is refused rather than answered `ok`.
     expect(offers(schema, 'voice')).toBe(false);
+    expect(result.isError).toBe(true);
+    expect(h.control.command).not.toHaveBeenCalled();
+  });
+});
+
+describe('speak staging', () => {
+  it('accepts the public stage schema, including frame placement', async () => {
+    h = harness();
+    const client = await connect(h.control);
+
+    await client.callTool({
+      name: 'speak',
+      arguments: {
+        lines: [
+          {
+            text: 'スライドを見てください。',
+            stage: {
+              camera: 'bust',
+              place: {
+                avatar: { anchor: 'bottom-right', width: 0.4 },
+                slide: { fit: 'contain', height: 0.8 },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    expect(h.control.queueAdd).toHaveBeenCalledTimes(1);
+    expect(h.control.queueAdd.mock.calls[0][0]).toEqual([
+      {
+        text: 'スライドを見てください。',
+        stage: {
+          camera: 'bust',
+          place: {
+            avatar: { anchor: 'bottom-right', width: 0.4 },
+            slide: { fit: 'contain', height: 0.8 },
+          },
+        },
+      },
+    ]);
+  });
+});
+
+describe('bgm', () => {
+  it('rejects a play track without a supported extension', async () => {
+    h = harness();
+    const client = await connect(h.control);
+
+    const result = await client.callTool({
+      name: 'bgm',
+      arguments: { action: 'play', track: 'opening' },
+    });
+
     expect(result.isError).toBe(true);
     expect(h.control.command).not.toHaveBeenCalled();
   });
