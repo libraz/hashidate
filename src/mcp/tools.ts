@@ -80,7 +80,10 @@ const SPEAK_NOTE = [
   '',
   '- Pass several lines at once. Calling one line at a time puts silence between them',
   '- Write reading. Only the writer knows how numbers, dates, proper nouns and homographs are read',
-  '- [performance_id] is where a performance starts, and the brackets are not spoken. It cannot be written in reading',
+  '- [performance_id] is shorthand for [@perform performance_id]. Typed cues are [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@bgm play], [@bgm play track filename], [@bgm pause] and [@bgm stop]. The brackets are not spoken',
+  '- For perform, expression, gesture and hop, the whole remainder is the id, so spaces and Japanese characters are allowed',
+  '- [@bgm play] resumes the selected track. The filename after play may contain spaces and Japanese characters; [ and ] are reserved',
+  '- BGM volume, looping and DSP stay in the bgm tool or panel settings. room, backdrop, deck and place stay in line-start stage',
   '- A document page goes in stage.slide. Write it on the line that talks about that page',
   '- Queue lines carrying pages in order and the document follows the speech. This is the only way to keep script and document together',
 ].join('\n');
@@ -109,6 +112,7 @@ const BGM_NOTE = [
   '- play needs an id returned by list; resume continues the selected track without selecting another',
   '- volume is the BGM mix level from 0 (silent) to 1 (full); loop controls end-of-track behavior',
   '- settings changes only the named BGM mix/DSP fields and requires at least one setting',
+  '- The transport actions can also be placed in speak text as [@bgm play], [@bgm play track filename], [@bgm pause] and [@bgm stop]. The filename remainder may contain spaces and Japanese characters; [ and ] are reserved',
   '- DSP is BGM-only: it never changes synthesized voice processing or the staged room',
 ].join('\n');
 const BGM_TRACK_NOTE =
@@ -141,7 +145,7 @@ const REACT_NOTE = [
   '',
   '- Only what is named arrives, together, in one round trip. A call that names nothing sends nothing',
   '- perform is an expression and a motion together. expression / gesture replace only one of the two',
-  "- Performance timed to a line is written with speak's [performance_id], not with react",
+  "- An action timed to a line is written with speak's [performance_id] or typed cue, not with react",
 ].join('\n');
 
 const STAGE_NOTE = [
@@ -161,7 +165,7 @@ const REVISE_NOTE = [
 ].join('\n');
 
 const TEXT_NOTE =
-  'The line to say. A [performance_id] placed in it starts that performance at that point. The brackets are reserved and are not spoken.';
+  'The line to say. [performance_id] is shorthand for [@perform performance_id]. Typed cues are [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@bgm play], [@bgm play track filename], [@bgm pause] and [@bgm stop]. Dynamic ids and BGM filename remainders may contain spaces and Japanese characters. [@bgm play] resumes the selected track. The brackets are reserved and are not spoken.';
 const READING_NOTE =
   'The kana reading of text. Numbers, dates, proper nouns and homographs get their reading decided here. Brackets cannot be written.';
 const PERFORM_NOTE = 'A named expression and motion. In effect only for the duration of the line.';
@@ -636,7 +640,7 @@ function define(name: ToolName, description: string, schema: ZodType): Tool {
  * and a discriminated union does not say so on its own: `revise` comes out as a
  * bare `oneOf`, which is a valid schema and an invalid tool. A client that
  * validates the tool list rejects **the whole list** over it, so the cost of
- * getting this wrong is all six tools rather than the one.
+ * getting this wrong is every tool rather than the one.
  *
  * Stating it here rather than writing the branch out by hand. What is added is
  * not content — no field, no id, nothing that could fall out of step with the
@@ -694,7 +698,7 @@ function advise(issue: ZodError['issues'][number], tools: Tools): string {
   if (issue.code === 'custom' && field === 'text') {
     const ids = tools.vocabulary.performances?.map((item) => item.id) ?? [];
     const known = ids.length > 0 ? `\n    performance ids this avatar has: ${ids.join(', ')}` : '';
-    return `The brackets do not match up. Written as: [performance_id]the line — the brackets are not spoken.${known}`;
+    return `The brackets do not match up. Accepted forms: [performance_id], [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@bgm play], [@bgm play track filename], [@bgm pause] and [@bgm stop]. BGM filenames may contain spaces and Japanese characters; [ and ] are reserved. The brackets are not spoken.${known}`;
   }
   if (issue.code === 'custom' && field === 'reading') {
     return 'Brackets cannot be written in a reading. A cue is a position inside the line, so it goes on the text side.';
