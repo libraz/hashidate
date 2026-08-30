@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 448" width="960" height="448" role="img" aria-labelledby="ttl dsc">
+  <title id="ttl">What yarn shell starts</title>
+  <desc id="dsc">The native shell is an Electron main process that opens two windows — the broadcast panel and the stage — and starts the control server underneath them, adopting one that is already running on this checkout rather than replacing it. Both windows are ordinary pages served by that control server on 127.0.0.1. The speech sidecar is started too when the checkout has its Python environment, and the server reaches it through POST /api/speech. OBS opens the renderer on the same server, which is the third page and is not a shell window. The shell writes shell-state.json for window placement and the stage mute, and appends its children's output to control.log and speech.log.</desc>
+
+  <style>
+    .bg    { fill:#f7f5f1 }
+    .frame { fill:none; stroke:#cfcbc3 }
+    .box   { fill:#ffffff; stroke:#d7d4cd }
+    .box2  { fill:#fbfaf7; stroke:#d7d4cd }
+    .ext   { fill:none; stroke:#c3bfb7; stroke-dasharray:5 4 }
+    .rule  { stroke:#e2ded7 }
+    .ln    { fill:none; stroke:#1a6873; stroke-width:1.4 }
+    .lnb   { fill:none; stroke:#8c8b86; stroke-width:1.2; stroke-dasharray:5 4 }
+    .ah    { fill:#1a6873 }
+    .ahb   { fill:#8c8b86 }
+    text   { font-family:Inter,"Helvetica Neue",Arial,sans-serif; fill:#1f2328 }
+    .h     { font-size:13px }
+    .h2    { font-size:12px }
+    .s     { font-size:10.5px; fill:#6e7781 }
+    .xs    { font-size:9.5px; fill:#6e7781 }
+    .lbl   { font-size:10.5px; fill:#6e7781; letter-spacing:.08em }
+    .mono  { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace }
+    .edg   { font-size:10.5px; fill:#1a6873; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace }
+    .edgb  { font-size:10.5px; fill:#6e7781; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace }
+    @media (prefers-color-scheme: dark) {
+      .bg{fill:#0d1117} .frame{stroke:#30363d}
+      .box{fill:#161b22;stroke:#30363d} .box2{fill:#12171e;stroke:#30363d}
+      .ext{stroke:#3d444d} .rule{stroke:#262c34}
+      .ln{stroke:#6fbcc7} .lnb{stroke:#6e7781} .ah{fill:#6fbcc7} .ahb{fill:#6e7781}
+      text{fill:#e6edf3} .s{fill:#8b949e} .xs{fill:#8b949e} .lbl{fill:#8b949e}
+      .edg{fill:#6fbcc7} .edgb{fill:#8b949e}
+    }
+  </style>
+
+  <defs>
+    <marker id="a" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path class="ah" d="M0,0 L9,4.5 L0,9 z"/>
+    </marker>
+    <marker id="b" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path class="ahb" d="M0,0 L9,4.5 L0,9 z"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="960" height="448" rx="12"/>
+
+  <text class="s" x="24" y="28">yarn shell — two windows, and the children it starts and stops again</text>
+
+  <rect class="frame" x="16" y="48" width="792" height="376" rx="10"/>
+
+  <text class="lbl" x="32"  y="72">launcher</text>
+  <text class="lbl" x="302" y="72">windows</text>
+  <text class="lbl" x="596" y="72">what it starts</text>
+
+  <!-- the launcher -->
+  <rect class="box" x="32" y="84" width="196" height="176" rx="8"/>
+  <text class="h"       x="130" y="112" text-anchor="middle">hashidate shell</text>
+  <text class="xs mono" x="130" y="128" text-anchor="middle">src/shell · Electron main</text>
+  <line class="rule" x1="46" y1="142" x2="214" y2="142"/>
+  <text class="s" x="130" y="164" text-anchor="middle">the application menu</text>
+  <text class="s" x="130" y="184" text-anchor="middle">window placement</text>
+  <text class="s" x="130" y="204" text-anchor="middle">child supervision</text>
+  <text class="s" x="130" y="224" text-anchor="middle">two allowed URLs</text>
+
+  <!-- the windows -->
+  <rect class="box" x="302" y="84" width="214" height="84" rx="8"/>
+  <text class="h"       x="409" y="110" text-anchor="middle">hashidate — Control</text>
+  <text class="xs mono" x="409" y="130" text-anchor="middle">127.0.0.1:8765/panel/</text>
+  <text class="xs"      x="409" y="150" text-anchor="middle">the broadcast panel</text>
+
+  <rect class="box" x="302" y="208" width="214" height="84" rx="8"/>
+  <text class="h"       x="409" y="234" text-anchor="middle">hashidate — Stage</text>
+  <text class="xs mono" x="409" y="254" text-anchor="middle">127.0.0.1:8765/monitor/[?mute=1]</text>
+  <text class="xs"      x="409" y="274" text-anchor="middle">Window ▸ Mute Stage decides</text>
+
+  <!-- what it starts -->
+  <rect class="box" x="596" y="112" width="192" height="124" rx="8"/>
+  <text class="h"       x="692" y="140" text-anchor="middle">control server</text>
+  <text class="xs mono" x="692" y="156" text-anchor="middle">src/server · :8765</text>
+  <line class="rule" x1="610" y1="170" x2="774" y2="170"/>
+  <text class="s" x="692" y="192" text-anchor="middle">serves the three pages</text>
+  <text class="s" x="692" y="212" text-anchor="middle">already ours? adopted</text>
+
+  <rect class="box2" x="596" y="300" width="192" height="64" rx="8"/>
+  <text class="h2"      x="692" y="326" text-anchor="middle">speech sidecar</text>
+  <text class="xs mono" x="692" y="344" text-anchor="middle">tools/tts · optional</text>
+
+  <!-- outside this repository -->
+  <rect class="ext" x="822" y="112" width="130" height="124" rx="6"/>
+  <text class="h2"      x="887" y="140" text-anchor="middle">OBS</text>
+  <text class="xs"      x="887" y="158" text-anchor="middle">browser source</text>
+  <line class="rule" x1="836" y1="174" x2="938" y2="174"/>
+  <text class="xs mono" x="887" y="196" text-anchor="middle">:8765/</text>
+  <text class="xs"      x="887" y="214" text-anchor="middle">the third page,</text>
+  <text class="xs"      x="887" y="228" text-anchor="middle">not a shell window</text>
+
+  <!-- edges -->
+  <path class="ln" d="M232,120 L298,120" marker-end="url(#a)"/>
+  <text class="edgb" x="265" y="112" text-anchor="middle">opens</text>
+
+  <path class="ln" d="M232,244 L298,244" marker-end="url(#a)"/>
+  <text class="edgb" x="265" y="236" text-anchor="middle">opens</text>
+
+  <path class="ln" d="M232,188 L592,188" marker-end="url(#a)"/>
+  <text class="edgb" x="404" y="180" text-anchor="middle">starts · adopts · stops on quit</text>
+
+  <path class="lnb" d="M516,120 H556 V152 H592" marker-end="url(#b)"/>
+  <text class="edgb" x="536" y="112" text-anchor="middle">loads</text>
+  <path class="lnb" d="M516,244 H556 V204 H592" marker-end="url(#b)"/>
+  <text class="edgb" x="536" y="266" text-anchor="middle">loads</text>
+
+  <path class="ln" d="M692,236 L692,296" marker-end="url(#a)"/>
+  <text class="edg" x="680" y="272" text-anchor="end">POST /api/speech</text>
+
+  <path class="lnb" d="M818,190 L792,190" marker-end="url(#b)"/>
+
+  <text class="lbl" x="32" y="304">WRITES</text>
+  <text class="s"  x="32" y="326">shell-state.json — placement, stage mute</text>
+  <text class="s"  x="32" y="346">control.log · speech.log — the children</text>
+
+  <text class="s" x="32" y="400">both windows are ordinary pages, served by the control server on the same loopback address</text>
+
+  <text class="s" x="16"  y="442">loopback only — the shell configures a port and never an address</text>
+  <text class="s" x="944" y="442" text-anchor="end">dashed · outside this repository</text>
+</svg>

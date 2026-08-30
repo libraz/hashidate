@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 448" width="960" height="448" role="img" aria-labelledby="ttl dsc">
+  <title id="ttl">yarn shell が起動するもの</title>
+  <desc id="dsc">ネイティブシェルは Electron のメインプロセスです。配信パネルとステージの 2 枚のウィンドウを開き、その下で制御サーバを起動します。同じチェックアウトのサーバがすでに動いていれば、置き換えずにそれを引き継ぎます。どちらのウィンドウも、そのサーバが 127.0.0.1 で配信するただのページです。チェックアウトに Python 環境があれば音声サイドカーも起動し、サーバは POST /api/speech でそこへ中継します。OBS は同じサーバのレンダラを開きますが、それは 3 つめのページであってシェルのウィンドウではありません。シェルは、ウィンドウ位置とステージのミュートを shell-state.json に書き、子プロセスの出力を control.log と speech.log に追記します。</desc>
+
+  <style>
+    .bg    { fill:#f7f5f1 }
+    .frame { fill:none; stroke:#cfcbc3 }
+    .box   { fill:#ffffff; stroke:#d7d4cd }
+    .box2  { fill:#fbfaf7; stroke:#d7d4cd }
+    .ext   { fill:none; stroke:#c3bfb7; stroke-dasharray:5 4 }
+    .rule  { stroke:#e2ded7 }
+    .ln    { fill:none; stroke:#1a6873; stroke-width:1.4 }
+    .lnb   { fill:none; stroke:#8c8b86; stroke-width:1.2; stroke-dasharray:5 4 }
+    .ah    { fill:#1a6873 }
+    .ahb   { fill:#8c8b86 }
+    text   { font-family:Inter,"Helvetica Neue","Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic UI","Noto Sans JP",Meiryo,Arial,sans-serif; fill:#1f2328 }
+    .h     { font-size:13px }
+    .h2    { font-size:12px }
+    .s     { font-size:10.5px; fill:#6e7781 }
+    .xs    { font-size:9.5px; fill:#6e7781 }
+    .lbl   { font-size:10.5px; fill:#6e7781; letter-spacing:.08em }
+    .mono  { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace }
+    .edg   { font-size:10.5px; fill:#1a6873; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace }
+    .edgb  { font-size:10.5px; fill:#6e7781 }
+    @media (prefers-color-scheme: dark) {
+      .bg{fill:#0d1117} .frame{stroke:#30363d}
+      .box{fill:#161b22;stroke:#30363d} .box2{fill:#12171e;stroke:#30363d}
+      .ext{stroke:#3d444d} .rule{stroke:#262c34}
+      .ln{stroke:#6fbcc7} .lnb{stroke:#6e7781} .ah{fill:#6fbcc7} .ahb{fill:#6e7781}
+      text{fill:#e6edf3} .s{fill:#8b949e} .xs{fill:#8b949e} .lbl{fill:#8b949e}
+      .edg{fill:#6fbcc7} .edgb{fill:#8b949e}
+    }
+  </style>
+
+  <defs>
+    <marker id="a" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path class="ah" d="M0,0 L9,4.5 L0,9 z"/>
+    </marker>
+    <marker id="b" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path class="ahb" d="M0,0 L9,4.5 L0,9 z"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="960" height="448" rx="12"/>
+
+  <text class="s" x="24" y="28">yarn shell — ウィンドウ 2 枚と、自分で起動して自分で落とす子プロセス</text>
+
+  <rect class="frame" x="16" y="48" width="792" height="376" rx="10"/>
+
+  <text class="lbl" x="32"  y="72">起動役</text>
+  <text class="lbl" x="302" y="72">ウィンドウ</text>
+  <text class="lbl" x="596" y="72">起動するもの</text>
+
+  <!-- 起動役 -->
+  <rect class="box" x="32" y="84" width="196" height="176" rx="8"/>
+  <text class="h"       x="130" y="112" text-anchor="middle">hashidate シェル</text>
+  <text class="xs mono" x="130" y="128" text-anchor="middle">src/shell · Electron main</text>
+  <line class="rule" x1="46" y1="142" x2="214" y2="142"/>
+  <text class="s" x="130" y="164" text-anchor="middle">アプリケーションメニュー</text>
+  <text class="s" x="130" y="184" text-anchor="middle">ウィンドウ位置の記憶</text>
+  <text class="s" x="130" y="204" text-anchor="middle">子プロセスの管理</text>
+  <text class="s" x="130" y="224" text-anchor="middle">許可する URL は 2 つだけ</text>
+
+  <!-- ウィンドウ -->
+  <rect class="box" x="302" y="84" width="214" height="84" rx="8"/>
+  <text class="h"       x="409" y="110" text-anchor="middle">hashidate — Control</text>
+  <text class="xs mono" x="409" y="130" text-anchor="middle">127.0.0.1:8765/panel/</text>
+  <text class="xs"      x="409" y="150" text-anchor="middle">配信パネル</text>
+
+  <rect class="box" x="302" y="208" width="214" height="84" rx="8"/>
+  <text class="h"       x="409" y="234" text-anchor="middle">hashidate — Stage</text>
+  <text class="xs mono" x="409" y="254" text-anchor="middle">127.0.0.1:8765/monitor/[?mute=1]</text>
+  <text class="xs"      x="409" y="274" text-anchor="middle">Window ▸ Mute Stage で決まる</text>
+
+  <!-- 起動するもの -->
+  <rect class="box" x="596" y="112" width="192" height="124" rx="8"/>
+  <text class="h"       x="692" y="140" text-anchor="middle">制御サーバ</text>
+  <text class="xs mono" x="692" y="156" text-anchor="middle">src/server · :8765</text>
+  <line class="rule" x1="610" y1="170" x2="774" y2="170"/>
+  <text class="s" x="692" y="192" text-anchor="middle">3 つのページを配信</text>
+  <text class="s" x="692" y="212" text-anchor="middle">同じ checkout なら引き継ぐ</text>
+
+  <rect class="box2" x="596" y="300" width="192" height="64" rx="8"/>
+  <text class="h2"      x="692" y="326" text-anchor="middle">音声サイドカー</text>
+  <text class="xs mono" x="692" y="344" text-anchor="middle">tools/tts · 任意</text>
+
+  <!-- このリポジトリの外 -->
+  <rect class="ext" x="822" y="112" width="130" height="124" rx="6"/>
+  <text class="h2"      x="887" y="140" text-anchor="middle">OBS</text>
+  <text class="xs"      x="887" y="158" text-anchor="middle">ブラウザソース</text>
+  <line class="rule" x1="836" y1="174" x2="938" y2="174"/>
+  <text class="xs mono" x="887" y="196" text-anchor="middle">:8765/</text>
+  <text class="xs"      x="887" y="214" text-anchor="middle">3 つめのページ。</text>
+  <text class="xs"      x="887" y="230" text-anchor="middle">シェルは開きません</text>
+
+  <!-- 経路 -->
+  <path class="ln" d="M232,120 L298,120" marker-end="url(#a)"/>
+  <text class="edgb" x="265" y="112" text-anchor="middle">開く</text>
+
+  <path class="ln" d="M232,244 L298,244" marker-end="url(#a)"/>
+  <text class="edgb" x="265" y="236" text-anchor="middle">開く</text>
+
+  <path class="ln" d="M232,188 L592,188" marker-end="url(#a)"/>
+  <text class="edgb" x="404" y="180" text-anchor="middle">起動・引き継ぎ・終了時に停止</text>
+
+  <path class="lnb" d="M516,120 H556 V152 H592" marker-end="url(#b)"/>
+  <text class="edgb" x="540" y="112" text-anchor="middle">読み込む</text>
+  <path class="lnb" d="M516,244 H556 V204 H592" marker-end="url(#b)"/>
+  <text class="edgb" x="540" y="268" text-anchor="middle">読み込む</text>
+
+  <path class="ln" d="M692,236 L692,296" marker-end="url(#a)"/>
+  <text class="edg" x="680" y="272" text-anchor="end">POST /api/speech</text>
+
+  <path class="lnb" d="M818,190 L792,190" marker-end="url(#b)"/>
+
+  <text class="lbl" x="32" y="304">書き出すもの</text>
+  <text class="s"  x="32" y="326">shell-state.json — ウィンドウ位置とミュート</text>
+  <text class="s"  x="32" y="346">control.log · speech.log — 子プロセスの出力</text>
+
+  <text class="s" x="32" y="400">どちらのウィンドウも、同じループバックアドレスの制御サーバが配信するただのページです</text>
+
+  <text class="s" x="16"  y="442">ループバック限定 — シェルが設定するのはポートで、アドレスではありません</text>
+  <text class="s" x="944" y="442" text-anchor="end">破線 · このリポジトリの外</text>
+</svg>
