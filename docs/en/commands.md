@@ -29,6 +29,22 @@ Every command goes to `POST /api/command`, one at a time or several under `batch
 | `pause` | Hold the queue where it is, or let it move again. The line on air finishes and nothing is discarded — it is the third thing that can be done to a run of turns, and the only one that keeps them. |
 | `interrupt` / `clear` / `reset` | Stop mid-line and drop the queue / drop the queue and let the line finish / back to nothing. |
 
+## What `ctl` adds on top
+
+`yarn ctl` is a thin client for the table above, so `yarn ctl camera bust` is a `camera` command and nothing else. Eight of its verbs are not commands, though — they read the API, or they do something in the terminal that no renderer needs to hear about:
+
+| `yarn ctl …` | What it is |
+|---|---|
+| `vocab` | `GET /api/vocabulary` — what this avatar can be asked for. The object to paste into a system prompt |
+| `state` | `GET /api/state` — the snapshot, printed. Says so when no renderer is attached |
+| `watch` | The event tail, followed until Ctrl-C. How to see the order turns actually happen in |
+| `decks` | The documents on disk, with their page counts. See [Slides](slides.md) |
+| `motions` | The gestures in `show/motions/`, with any file that would not parse and why. See [Motions](motions.md) |
+| `play` | Run a script. `--check` validates it with no server running. See [Scripts](scripts.md) |
+| `hold` / `resume` | The two halves of the `pause` command, spelled apart. See [Recording](recording.md) |
+
+`yarn ctl` with no arguments prints the whole list with worked examples, which is the fastest reference there is.
+
 ## Typed cues in a line
 
 The `text` field accepts these inline forms. `[performanceId]` remains shorthand for `[@perform performanceId]`.

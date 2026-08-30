@@ -10,7 +10,7 @@ AITuber のためのアバターランタイムです。ブラウザで描いた
 [![three.js](https://img.shields.io/badge/three.js-r185-000000?logo=three.js&logoColor=white)](https://threejs.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
 [![MCP](https://img.shields.io/badge/MCP-8%20tools-1a6873)](docs/ja/mcp.md)
-[![docs](https://img.shields.io/badge/docs-%E8%A7%A3%E8%AA%AC-b5892e)](docs/ja/introduction.md)
+[![docs](https://img.shields.io/badge/docs-guides-b5892e)](docs/ja/introduction.md)
 
 ![台本を流している配信パネル](docs/images/panel.webp)
 
@@ -94,7 +94,7 @@ yarn ctl watch                                  # 発話のイベントを追う
 
 動かす：[制御 API](docs/ja/control-api.md)、[コマンド](docs/ja/commands.md)、[プリセット](docs/ja/performances.md)、[原稿と演出](docs/ja/lines-and-cues.md)、[台本](docs/ja/scripts.md)、[MCP アダプタ](docs/ja/mcp.md)。
 
-絵と音：[音声](docs/ja/speech.md)、[BGM](docs/ja/bgm.md)、[ステージ](docs/ja/stage.md)、[スライド](docs/ja/slides.md)、[モーション](docs/ja/motions.md)、[録画](docs/ja/recording.md)、[操作面](docs/ja/surfaces.md)。
+絵と音：[音声](docs/ja/speech.md)、[BGM](docs/ja/bgm.md)、[ステージ](docs/ja/stage.md)、[スライド](docs/ja/slides.md)、[モーション](docs/ja/motions.md)、[録画](docs/ja/recording.md)、[操作面](docs/ja/surfaces.md)、[ネイティブシェル](docs/ja/shell.md)。
 
 その下：[構成](docs/ja/architecture.md)、[アバター](docs/ja/avatars.md)。
 

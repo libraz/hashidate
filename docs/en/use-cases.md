@@ -1,6 +1,17 @@
 # Use cases
 
-Six things people set this up to do. Each one is the same runtime with a different caller in front of it.
+Eight things people set this up to do. Each one is the same runtime with a different caller in front of it.
+
+| # | The shape it takes | Who drives it |
+|---|---|---|
+| [1](#1-an-ai-vtuber-that-answers-chat) | An AI VTuber that answers chat | An LLM loop, over HTTP or MCP |
+| [2](#2-commentary-over-a-game-capture) | Commentary over a game capture | Anything; OBS does the compositing |
+| [3](#3-a-talk-given-from-slides) | A talk given from slides | A script, or a model that read the deck |
+| [4](#4-a-scripted-segment-with-no-model-at-all) | A scripted segment, with no model at all | A shell script |
+| [5](#5-a-segment-recorded-to-a-file) | A segment recorded to a file | An operator at the panel |
+| [6](#6-background-music-under-a-segment) | Background music under a segment | The BGM tab, or the `bgm` tool |
+| [7](#7-running-a-broadcast-by-hand) | A broadcast run by hand | An operator at the panel |
+| [8](#8-checking-a-model-you-just-rigged) | Checking a model you just rigged | You, at a terminal |
 
 ## 1. An AI VTuber that answers chat
 

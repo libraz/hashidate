@@ -26,8 +26,12 @@ That is also why the hold is released by *evidence* rather than by a timer. The 
 The hold is a command like any other, so it also stands alone:
 
 ```sh
-yarn ctl play opening --hold    # queue it without starting it
+yarn ctl play opening --hold   # queue it without starting it
+yarn ctl resume                # let it go
+yarn ctl hold                  # stop it again
 ```
+
+`hold` and `resume` are the two halves of the one wire command, `pause` — the CLI spells them apart because a flag with two states is one more thing to get the wrong way round at the top of a take. See [Commands](commands.md).
 
 The line being spoken when a hold arrives finishes normally. Nothing is discarded — cutting a line off is `interrupt`, and dropping the rest is `clear`.
 

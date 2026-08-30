@@ -80,7 +80,35 @@ Background music is optional and needs no import step. Put `.mp3` or `.flac` fil
 
 `yarn build` produces a static viewer in `dist/`; `yarn start` serves it from the control server alone, without vite.
 
-`yarn shell` does both and opens the panel and the stage as native windows, with the control server and the speech sidecar started underneath and stopped again on quit. It is the same three pages on the same loopback addresses — what it adds is windows that come back where they were left, a stage allowed to start its audio without being clicked first, and one menu item deciding whether this machine hears the character. See [The surfaces](surfaces.md).
+`yarn shell` does both and opens the panel and the stage as native windows, with the control server and the speech sidecar started underneath and stopped again on quit. It is the same three pages on the same loopback addresses — what it adds is windows that come back where they were left, a stage allowed to start its audio without being clicked first, and one menu item deciding whether this machine hears the character. See [The native shell](shell.md).
+
+## Configuration
+
+There is very little of it, and the omissions are the interesting part. **Nothing here sets an address.** There is no `--host`, no CORS header and no tunnel, because the avatars used for validation may not be republished — see [Avatars](avatars.md#licensing-is-why-the-runtime-is-loopback-only).
+
+The control server takes seven flags, all of them paths except the first:
+
+| Flag | Default | What it moves |
+|---|---|---|
+| `--port` | `8765` | The control API's port. The bind address is always `127.0.0.1` |
+| `--root` | `dist` | The built viewer it serves the three pages from |
+| `--slides` | `show/slides` | The documents. See [Slides](slides.md) |
+| `--scripts` | `show/scripts` | The scripts the panel and `ctl play` both read. See [Scripts](scripts.md) |
+| `--motions` | `show/motions` | Gestures loaded off disk. See [Motions](motions.md) |
+| `--bgm` | `show/bgm` | The music library. See [Background music](bgm.md) |
+| `--recordings` | `show/recordings` | Where a take is written. See [Recording](recording.md) |
+
+Five environment variables, read by whichever process needs them:
+
+| Variable | Read by | What it does |
+|---|---|---|
+| `HASHIDATE_CONTROL_PORT` | the native shell, `make dev`, `make stop` | The control port, when `--port` is not the thing doing the asking |
+| `HASHIDATE_VOICE_DIR` | `make voice`, the sidecar | Moves the reference clips and their encoded latents, including out of the repository |
+| `HASHIDATE_TTS_SOCKET` | the control server, the sidecar | Where the voice answers. Both work it out independently — neither is told by the other |
+| `HASHIDATE_TTS_PORT` | the control server, the sidecar | Points the proxy at `127.0.0.1` on a port instead of a socket, for a stand-in written as an ordinary HTTP service. See [Speech](speech.md#using-a-different-voice) |
+| `HASHIDATE_LOCALE` | everything | Pins `en` or `ja` for a run, between the built-in default and what the environment says |
+
+Everything else about a broadcast is either standing state on the server — the avatar, the costume, the shot, the set, the acoustic, the tuning — or a property of one browser source, on that source's URL. See [The renderer's URL](surfaces.md#the-renderers-url) and [The standing state](surfaces.md#the-standing-state).
 
 ## Give her a voice
 
@@ -119,3 +147,4 @@ The numbers in `src/engine` were arrived at by watching two real avatars, and mo
 - [Use cases](use-cases.md) — what to build with it
 - [The control API](control-api.md) — the thing an orchestrator talks to
 - [Commands](commands.md) — the full vocabulary
+- [The native shell](shell.md) — running the whole thing as one application

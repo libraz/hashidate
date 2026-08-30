@@ -18,6 +18,17 @@ The sidecar answers on a UNIX socket at `tools/tts/.run/speech.sock`, in a direc
 
 The control server prints what it found of the voice at startup and says so again if that changes, and the panel carries the same warning: a sidecar that stops answering mid-broadcast is otherwise invisible, because the queue still drains and the mouth still moves.
 
+It is four states rather than a boolean, and the difference between the last two is the whole reason:
+
+| `speech` | What it means | What to do |
+|---|---|---|
+| `ready` | The model is loaded and answering | Nothing |
+| `loading` | A sidecar is up and still bringing its model in — the better part of a minute | Wait. Lines queued now go out silently |
+| `absent` | No sidecar was ever found | Ordinary for a checkout that has not run `make voice`. Nothing is wrong |
+| `down` | One answered earlier and has stopped | The one worth acting on. Look at what it printed — under the native shell, `speech.log` |
+
+The same value is on `GET /api/state` and in the native shell's Window menu. See [The native shell](shell.md#the-menu).
+
 ## Why the audio is in hand before the turn opens
 
 Three things follow from having the finished take before playback starts, which is worth the second it costs.

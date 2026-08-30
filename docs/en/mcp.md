@@ -23,7 +23,15 @@
 | `deck` | Read a document, so a script can be written about it. |
 | `bgm` | List and play local MP3/FLAC tracks; set their level, loop, crossfade durations and BGM-only libsonare effects. |
 
-The vocabulary is a resource — `hashidate://vocabulary` — and so is what has already been said.
+The vocabulary is a resource — `hashidate://vocabulary` — and so is what has already been said, on `hashidate://history`.
+
+Three of the tools are bounded, and the bounds are there because past them the caller is doing something else:
+
+| Tool | Limit | Why |
+|---|---|---|
+| `speak` | 16 lines per call | Past that a model is not answering a comment, it is running a segment — which is a [script](scripts.md), written down and reviewable |
+| `status` | 50 queued lines | Past that the queue is a script too, and reading it back a line at a time is not how to look at one |
+| `deck` | 20 pages per call | A whole deck in one context is rarely what a page-numbered script needs, and it is the answer that gets truncated silently |
 
 ## It is an adapter, not a second control plane
 

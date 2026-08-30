@@ -22,6 +22,40 @@ The page OBS points at. It opens as the character and nothing else: no console, 
 
 `?console=1` brings back the operator console, which reaches *into* the live scene — `director.rig.measure('R')`, joint angles against their anatomical ranges, the resolved profile. That is a development instrument rather than a second control surface, and it is the answer to "why does that pose look wrong". (`?stage=1` is still accepted and now says nothing the default does not; it stays because it is written into browser sources configured before the default changed.)
 
+## The renderer's URL
+
+Everything a source is configured *as* rides on the address, because a browser source is a text field OBS reloads whenever it feels like it. Everything about the show, by contrast, lives in the server's standing state and is handed to a renderer the moment it attaches.
+
+| Parameter | Value | Default | What it decides |
+|---|---|---|---|
+| `size` | `1920x1080` | fill the window | The render size in pixels. Match the source size configured in OBS, or the picture is resampled twice |
+| `backdrop` | a set id | flat background | Which room the character is seen in. See [The stage](stage.md#the-set) |
+| `transparent` | `1` | off | Draw nothing behind her, so OBS composites over a game capture. A set still wins over it |
+| `deck` | a document id | none | Which document the source opens on. See [Slides](slides.md) |
+| `place` | `bottom-right:0.32x0.6` | full frame | Where she stands in the frame, as an anchor and two fractions of it. See [The stage](stage.md#where-she-stands-in-the-frame) |
+| `mute` | `1` | off | Whether this renderer makes a sound. See below |
+| `console` | `1` | off | The operator console, the HUD and the cursor — one flag for all three, because they are one decision |
+| `debug` | `1` | off | The measurement readout, as the renderer *opens*. The backquote key and the `debug` command move it afterwards |
+| `stage` | `1` | — | Accepted and ignored. It says nothing the default does not |
+
+Anything unparseable degrades rather than failing: an unknown set is the flat background, a bad `place` is the full frame, an oversized `size` fills the window. There is nowhere for a renderer to report an error to — the URL was typed into a field inside OBS — and nobody watching if there were, so a typo has to leave something that still streams.
+
+Three of these are the panel's business too: the address above the tabs is composed from `size`, `backdrop`, `deck`, `place` and `transparent`, which is why the panel is where a browser source gets set up rather than a document to copy from.
+
+`/monitor/` passes its own query string straight through to the viewer it holds, so all of these work there as well.
+
+### Whether a renderer makes a sound is decided by its URL
+
+`?mute=1` is the whole mechanism, and there is deliberately no command that silences a renderer without changing its address. A page that is quiet has to be quiet for a reason somebody can read off the bar.
+
+It silences the **output and not the synthesis**. A muted renderer still asks for every line and still plays the take, into a gain of zero — skipping the request would put it on a different clock, with the mouth falling back to the text estimate and lines ending at moments they do not end at on air. A monitor that runs ahead of the thing it monitors is worse than no monitor.
+
+Three consequences follow from that one flag:
+
+- The panel's preview is opened muted, so an operator does not hear every line twice.
+- The stage window is opened with or without it by `Window → Mute Stage`. See [The native shell](shell.md#mute-stage).
+- The renderer that is **not** muted is the one that writes a recording. See [Recording](recording.md).
+
 ## The stage, on `/monitor/`
 
 The same renderer, letterboxed to 16:9 and framed by nothing else — no console, no controls, no application around it. It is what an operator watches, and it is the one page in this project that is meant to be listened to: the browser source OBS opens sends its audio to the stream, and on an ordinary desk nobody in the room hears the character at all.
@@ -33,6 +67,8 @@ It ships none of the panel's code and none of the queue editor. What it holds is
 `yarn shell` builds the pages and opens two windows on them — the panel and the stage — with the control server and, if the checkout has one, the speech sidecar started underneath and stopped again on quit. A server already running on this checkout is used rather than replaced, so a `yarn dev` left up is not taken down; a server running on a *different* checkout is refused by name rather than adopted, because two windows quietly loaded from somebody else's build look exactly like a renderer that will not come up.
 
 It is a convenience, not a fourth surface. Everything in it is the same three pages on the same loopback addresses, and everything it can do to the show it does through the same control API. What it adds is the things a browser cannot: the windows come back where they were left, the stage is allowed to start its audio without anybody having clicked the page first, and `Window → Mute Stage` decides whether this machine hears the character — the one question about a broadcast that no orchestrator and no line of script can answer, because it is about the desk rather than the show.
+
+The menu, the status lines, where it writes its logs and what its windows are allowed to reach: [The native shell](shell.md).
 
 ## The readout
 
@@ -51,7 +87,7 @@ The panel has it on the measure button above the preview, and the preview then s
 
 ## The standing state
 
-The panel is the full surface and the renderer is opened last, at the top of the broadcast. That is only true because the control server keeps the setup: the avatar, the costume, the shot, the set, the acoustic, the voice chain and the tuning are folded into a standing state as they are chosen, and handed to a renderer the moment it attaches — along with the pending queue, which is what has always made a reload survivable mid-stream.
+The panel is the full surface and the renderer is opened last, at the top of the broadcast. That is only true because the control server keeps the setup: the avatar, the costume, the shot, the set, the acoustic, the voice chain, the BGM transport and the tuning are folded into a standing state as they are chosen, and handed to a renderer the moment it attaches — along with the pending queue, which is what has always made a reload survivable mid-stream.
 
 Nothing about the show lives in the URL a browser source was configured with.
 
@@ -59,6 +95,7 @@ What is *not* replayed is anything that was a moment rather than a setting. A ge
 
 ## Next
 
+- [The native shell](shell.md) — the two of these it opens as windows
 - [Recording](recording.md) — which of these pages writes the file
 - [Architecture](architecture.md) — where the standing state lives
 - [The control API](control-api.md) — what the panel is sending

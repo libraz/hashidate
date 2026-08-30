@@ -16,6 +16,8 @@ yarn ctl play show/scripts/opening.yaml
 
 The panel has the same list, at the top of its Queue tab — above the queue a script fills, so the lines appear underneath the moment one is pressed. There it holds by default, and the toggle beside the list is what decides that; see [Recording](recording.md).
 
+The native shell has `File → Run Script…` (`⌘⇧O` / `Ctrl+Shift+O`), which is the same thing from a file dialog and is the way to run one that lives outside the directory the panel lists. See [The native shell](shell.md).
+
 A name is looked for in `show/scripts/`, under `.yaml`, `.yml` and `.json` in that order when it carries no extension of its own. Anything with a separator in it, or an absolute path, is read exactly where it says — so a script in the working directory is `./opening.yaml`, spelled out.
 
 ## What a script is

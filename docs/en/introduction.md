@@ -61,8 +61,44 @@ It is also deliberately loopback-only. There is no `--host` flag, no CORS header
 
 The engine is a runtime, not an editor. Rigging, weighting and garment authoring happen in Blender, and `tools/blender` is the seam between the two.
 
-## Next
+## The guides
 
-- [Use cases](use-cases.md) — what people actually build with it
-- [Getting started](getting-started.md) — running it
-- [Architecture](architecture.md) — how the pieces fit together
+Read the first three in order. The rest are reference, and each one is reachable from wherever it is needed.
+
+**Start here**
+
+| Guide | What it answers |
+|---|---|
+| [Use cases](use-cases.md) | What people actually build with it — eight worked shapes |
+| [Getting started](getting-started.md) | What you need, what a first run looks like, what is configurable |
+| [Architecture](architecture.md) | Which process holds what, and which seams are load-bearing |
+
+**Driving it** — the four callers all go down this path
+
+| Guide | What it answers |
+|---|---|
+| [The control API](control-api.md) | The endpoints, batching a whole answer, what comes back in state |
+| [Commands](commands.md) | The full vocabulary, in one table |
+| [Performances](performances.md) | `perform` — a face and a movement, named together |
+| [Lines and cues](lines-and-cues.md) | `say` — the bracket syntax written into a line |
+| [Scripts](scripts.md) | A run of turns, written down in a file |
+| [The MCP adapter](mcp.md) | The same API as eight tools a model can be handed |
+
+**The picture and the sound**
+
+| Guide | What it answers |
+|---|---|
+| [Speech](speech.md) | The sidecar, the watermark, the room, swapping the voice |
+| [Background music](bgm.md) | The library, its transport, its own level and effects |
+| [The stage](stage.md) | The set, transparency over a game, where she stands in the frame |
+| [Slides](slides.md) | A PDF behind her, and reading one as text |
+| [Motions](motions.md) | A keyframed gesture of your own, loaded off disk |
+| [Recording](recording.md) | Writing a take to a file, and what comes out |
+| [The surfaces](surfaces.md) | The three pages, the renderer's URL, the standing state |
+| [The native shell](shell.md) | Running the whole thing as one application |
+
+**Under it**
+
+| Guide | What it answers |
+|---|---|
+| [Avatars](avatars.md) | The descriptor, the wardrobe, and why this is loopback-only |
