@@ -12,6 +12,8 @@ make tts           # or run the voice on its own
 
 The clips are the one part that cannot be automated: they are recordings of whoever the voice is supposed to be, and nobody else's are a substitute. A minute or two of clean single-speaker speech is enough — the model conditions on a reference rather than training on a corpus. `make tts-vet` reports on a set without building anything, and `HASHIDATE_VOICE_DIR` moves the whole directory, including out of the repository.
 
+What it runs is Irodori-TTS — the `Aratako/Irodori-TTS-v4.1-Small` checkpoint over the `Aratako/Semantic-DACVAE-Japanese-32dim` codec, installed from upstream at a pinned commit because a voice has to come out the same tomorrow. Both are fetched from Hugging Face the first time the sidecar starts. None of that is configurable, and the omission is deliberate: what gets swapped is the sidecar rather than the model inside it — see [Using a different voice](#using-a-different-voice).
+
 The sidecar answers on a UNIX socket at `tools/tts/.run/speech.sock`, in a directory it creates with mode `0700`, and opens no port at all. Its only caller is the control server on this machine — see [Using a different voice](#using-a-different-voice) — so the voice is reachable by this user and nobody else, which is the strongest form of the rule the rest of the runtime follows by binding loopback.
 
 The control server prints what it found of the voice at startup and says so again if that changes, and the panel carries the same warning: a sidecar that stops answering mid-broadcast is otherwise invisible, because the queue still drains and the mouth still moves.
