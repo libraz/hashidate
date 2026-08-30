@@ -24,6 +24,7 @@ export const recordEn = {
   'panel.record.take.written': 'Written',
   'panel.record.take.waiting': 'waiting for the first frames',
   'panel.record.take.format': 'Format',
+  'panel.record.take.error': 'Recording failed: {error}',
   'panel.recording': 'Recording',
   'panel.recording.title': 'A take is being written. The Recording tab has the details.',
 } as const;
@@ -50,6 +51,7 @@ export const recordJa: Record<keyof typeof recordEn, string> = {
   'panel.record.take.written': '書き込み済み',
   'panel.record.take.waiting': '最初のフレーム待ち',
   'panel.record.take.format': '形式',
+  'panel.record.take.error': '録画に失敗しました：{error}',
   'panel.recording': '録画中',
   'panel.recording.title': '録画を書き込んでいる。詳細は録画タブ。',
 };

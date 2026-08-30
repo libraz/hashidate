@@ -28,6 +28,8 @@ export function InspectTab({ snapshot }: { snapshot: Snapshot }) {
   const { state, vocabulary, voice, events, avatars } = snapshot;
   const { t, tx } = useT();
   const strain = state.strain;
+  const avatarName = vocabulary.avatar?.label ? tx(vocabulary.avatar.label) : '—';
+  const avatarStatus = formatAvatarStatus(snapshot.avatar);
   // Newest first: the row anybody is looking for is the one that just happened.
   const log = [...events].reverse().slice(0, SHOWN);
 
@@ -42,7 +44,7 @@ export function InspectTab({ snapshot }: { snapshot: Snapshot }) {
           <Fact label={t('panel.inspect.viewers')} value={`${snapshot.viewers}`} />
           <Fact
             label={t('panel.inspect.avatar')}
-            value={vocabulary.avatar?.label ? tx(vocabulary.avatar.label) : '—'}
+            value={avatarStatus ? `${avatarName} · ${avatarStatus}` : avatarName}
           />
           <Fact
             label={t('panel.inspect.loadable')}
@@ -130,6 +132,12 @@ export function InspectTab({ snapshot }: { snapshot: Snapshot }) {
       </Section>
     </>
   );
+}
+
+/** Keep a renderer that is connected but still loading distinguishable from one that failed. */
+export function formatAvatarStatus(status: Snapshot['avatar']): string {
+  if (!status) return '';
+  return status.error ? `${status.phase}: ${status.error}` : status.phase;
 }
 
 /** Wall-clock, since an event is remembered as "the one just before it broke". */

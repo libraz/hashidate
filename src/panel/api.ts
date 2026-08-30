@@ -1,12 +1,13 @@
-import type { EmotionVector, FingerName, Placement, Side, SlidePlacement } from '@/engine/types';
 import { getLocale, translate } from '@/i18n';
 import type {
   BgmCommand,
   BgmResponse,
   Command,
   DecksResponse,
+  EmotionVector,
+  FingerName,
   HistoryResponse,
-  QueueEntry,
+  Placement,
   QueueResponse,
   QueueRewind,
   RecordResponse,
@@ -14,6 +15,8 @@ import type {
   ScriptRunResponse,
   ScriptsResponse,
   Shot,
+  Side,
+  SlidePlacement,
   Snapshot,
   TuningPatch,
   TurnRequest,
@@ -171,7 +174,7 @@ export const recordStop = (session?: string): Promise<RecordResponse | Failure> 
 // --- the queue --------------------------------------------------------------
 
 /** What a queue mutation answers with. `entry` only comes back from shift/pop. */
-export type QueueResult = (QueueResponse & { entry?: QueueEntry | null }) | Failure;
+export type QueueResult = QueueResponse | Failure;
 
 export interface AddOptions {
   at?: 'push' | 'unshift';

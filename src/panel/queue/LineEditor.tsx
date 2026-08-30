@@ -52,6 +52,22 @@ interface Props {
   onSecondary?: (turn: TurnRequest) => void;
 }
 
+export function lineEditorKeyAction({
+  key,
+  metaKey,
+  ctrlKey,
+  isComposing,
+}: {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  isComposing: boolean;
+}): 'submit' | 'cancel' | null {
+  if (key === 'Enter' && (metaKey || ctrlKey)) return 'submit';
+  if (key === 'Escape' && !isComposing) return 'cancel';
+  return null;
+}
+
 export function LineEditor({
   initial,
   vocabulary,
@@ -139,14 +155,20 @@ export function LineEditor({
         placeholder="こんばんは。[explain]今日はこの話をします。"
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
+          const action = lineEditorKeyAction({
+            key: e.key,
+            metaKey: e.metaKey,
+            ctrlKey: e.ctrlKey,
+            isComposing: e.nativeEvent.isComposing,
+          });
           // Enter is a newline — a line of dialogue has paragraphs in it. The
           // modifier submits, which is the convention every chat client trained
           // everyone on and the only one that does not cost a lost line.
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          if (action === 'submit') {
             e.preventDefault();
             submit();
           }
-          if (e.key === 'Escape') onCancel();
+          if (action === 'cancel') onCancel();
         }}
       />
 

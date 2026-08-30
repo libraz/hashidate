@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { type Anchor, PLACEMENT_LIMITS, type Placement, type SlidePlacement } from '@/engine/types';
+import { PLACEMENT_LIMITS } from '@/engine/types';
 import { getLocale, type MessageKey, translate, useT } from '@/i18n';
-import type { Snapshot } from '@/protocol';
+import type { Anchor, Placement, SlidePlacement, Snapshot } from '@/protocol';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { Field } from '@/ui/Field';
 import { Section } from '@/ui/Section';

@@ -47,6 +47,49 @@ const RATES = [
   { value: '60', label: '60 fps' },
 ] as const;
 
+type FrameValue = (typeof SIZES)[number]['value'];
+type RateValue = (typeof RATES)[number]['value'];
+type RecordingDetails = NonNullable<Snapshot['recording']>;
+
+/**
+ * The setting the open take is actually using.
+ *
+ * The panel's controls are also used to start a take, so they have a local
+ * value before one exists. Once the server says a take is open, that local
+ * value is no longer authoritative: another panel or an orchestrator may have
+ * started it with a different output. An unlisted output gets an explicit
+ * `custom` selection so the UI never claims that a preset is active when it is
+ * not.
+ */
+export function recordingFrameValue(
+  recording: RecordingDetails | null | undefined,
+  fallback: FrameValue,
+): FrameValue | 'custom' {
+  if (recording === null || recording === undefined) return fallback;
+  const value = `${recording.width}x${recording.height}`;
+  return SIZES.some((entry) => entry.value === value) ? (value as FrameValue) : 'custom';
+}
+
+/** The rate the server has open, or the panel's pending choice before a take. */
+export function recordingRateValue(
+  recording: RecordingDetails | null | undefined,
+  fallback: RateValue,
+): RateValue | 'custom' {
+  if (recording === null || recording === undefined) return fallback;
+  const value = String(recording.fps);
+  return RATES.some((entry) => entry.value === value) ? (value as RateValue) : 'custom';
+}
+
+/** The label for an output that is not one of the panel's presets. */
+export function recordingFrameLabel(recording: RecordingDetails): string {
+  return `${recording.width}×${recording.height}`;
+}
+
+/** A recording error is state from the server, not a local button notice. */
+export function recordingError(recording: RecordingDetails | null | undefined): string | null {
+  return recording?.error ?? null;
+}
+
 /** `12:34`, which is how long a take reads as. Hours are spelled out past one. */
 export function elapsed(seconds: number): string {
   const whole = Math.max(0, Math.floor(seconds));
@@ -97,6 +140,20 @@ export function RecordTab({ snapshot, refresh }: Props) {
 
   const recording = snapshot.recording;
   const paused = snapshot.paused;
+  const selectedFrame = recordingFrameValue(recording, frame);
+  const selectedRate = recordingRateValue(recording, fps);
+  const frameOptions = [
+    ...SIZES.map((entry) => ({ ...entry, disabled: recording !== null })),
+    ...(recording !== null && selectedFrame === 'custom'
+      ? [{ value: 'custom' as const, label: recordingFrameLabel(recording), disabled: true }]
+      : []),
+  ];
+  const rateOptions = [
+    ...RATES.map((entry) => ({ ...entry, disabled: recording !== null })),
+    ...(recording !== null && selectedRate === 'custom'
+      ? [{ value: 'custom' as const, label: `${recording.fps} fps`, disabled: true }]
+      : []),
+  ];
 
   const roll = async (): Promise<void> => {
     setBusy(true);
@@ -143,25 +200,21 @@ export function RecordTab({ snapshot, refresh }: Props) {
       <Field label={t('panel.record.take.size')}>
         <Segmented
           ariaLabel={t('panel.record.take.size')}
-          options={SIZES.map((entry) => ({
-            value: entry.value,
-            label: entry.label,
-            disabled: recording !== null,
-          }))}
-          value={frame}
-          onChange={setFrame}
+          options={frameOptions}
+          value={selectedFrame}
+          onChange={(value) => {
+            if (value !== 'custom') setFrame(value);
+          }}
         />
       </Field>
       <Field label={t('panel.record.take.fps')}>
         <Segmented
           ariaLabel={t('panel.record.take.fps')}
-          options={RATES.map((entry) => ({
-            value: entry.value,
-            label: entry.label,
-            disabled: recording !== null,
-          }))}
-          value={fps}
-          onChange={setFps}
+          options={rateOptions}
+          value={selectedRate}
+          onChange={(value) => {
+            if (value !== 'custom') setFps(value);
+          }}
         />
       </Field>
       <Toggle
@@ -193,6 +246,12 @@ export function RecordTab({ snapshot, refresh }: Props) {
       </div>
 
       {notice !== null ? <p className={styles.error}>{notice}</p> : null}
+
+      {recordingError(recording) !== null ? (
+        <p className={styles.error} role="alert">
+          {t('panel.record.take.error', { error: recordingError(recording) ?? '' })}
+        </p>
+      ) : null}
 
       {recording !== null ? (
         <dl className={styles.readout}>

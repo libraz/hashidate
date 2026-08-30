@@ -1,9 +1,15 @@
 import { useState } from 'react';
 import { GESTURE_GROUPS } from '@/engine/motion';
 import { PERFORMANCE_GROUPS } from '@/engine/performance';
-import type { EmotionName, EmotionVector, FingerName, Side } from '@/engine/types';
 import { type Localized, type MessageKey, type Translator, useT } from '@/i18n';
-import type { LabelledId, Snapshot } from '@/protocol';
+import type {
+  EmotionName,
+  EmotionVector,
+  FingerName,
+  LabelledId,
+  Side,
+  Snapshot,
+} from '@/protocol';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { Field } from '@/ui/Field';
 import { Section } from '@/ui/Section';
