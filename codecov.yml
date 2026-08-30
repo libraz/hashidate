@@ -1,0 +1,19 @@
+# Coverage is measured over the layers that can be exercised without an avatar
+# and without a GPU — the engine, the wire vocabulary and the server's hub. The
+# viewer, the panel and the shell are absent from it by construction, not by
+# neglect; see the `include` list in vitest.config.ts.
+#
+# Which means the number moves when a change lands inside that subset and stays
+# still when it lands outside, so it reports well and gates badly. Both statuses
+# are informational for that reason: a red tick here would be measuring where a
+# change happened to fall.
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+comment: false

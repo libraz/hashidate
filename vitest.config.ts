@@ -9,6 +9,9 @@ export default defineConfig({
     include: ['tests/**/*.test.ts'],
     coverage: {
       provider: 'v8',
+      // `lcov` is what Codecov reads; `html` is what a local run is looked at
+      // in. The default set adds clover and json, which nothing here consumes.
+      reporter: ['text', 'html', 'lcov'],
       include: ['src/engine/**', 'src/protocol/**', 'src/server/hub.ts'],
     },
   },

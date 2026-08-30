@@ -2,6 +2,8 @@
 
 An avatar runtime for an AI VTuber: a browser-rendered character that something else drives over a local HTTP API, one turn of dialogue at a time. The renderer holds the character; the caller holds the script.
 
+[![CI](https://img.shields.io/github/actions/workflow/status/libraz/hashidate/ci.yml?branch=main&label=CI)](https://github.com/libraz/hashidate/actions)
+[![codecov](https://codecov.io/gh/libraz/hashidate/branch/main/graph/badge.svg)](https://codecov.io/gh/libraz/hashidate)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)

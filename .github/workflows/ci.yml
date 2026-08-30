@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags-ignore: ['**']
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, typecheck, assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Before anything installs, so the only files present are the ones a
+      # commit actually put there. This repository sits next to 1.5 GB of
+      # purchased avatar packages and built GLB, all of it ignored; the check
+      # measures what git is tracking rather than trusting the ignore list, so
+      # a `git add -f` or an unanticipated directory is caught here instead of
+      # becoming permanent history.
+      - name: No large file entered git
+        run: tools/check-assets.sh
+
+      # Node and Yarn come from mise.toml, which is the same pin a checkout
+      # gets locally.
+      - uses: jdx/mise-action@v4
+
+      - run: yarn install --immutable
+
+      # `biome check` is the linter and the formatter both, so there is no
+      # separate format-check step to keep in sync with it.
+      - run: yarn lint
+
+      - run: yarn typecheck
+
+  test:
+    name: Test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v4
+      - run: yarn install --immutable
+
+      # The suite builds a synthetic avatar in code rather than loading a GLB —
+      # a suite that needed the purchased 16 MB model could only run on a
+      # machine that had bought it, which is no machine here.
+      - run: yarn test:coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          name: codecov-hashidate
+          # Codecov being unreachable is not a failed test run.
+          fail_ci_if_error: false
+
+      # Three entry points share one config, and the split between them is a
+      # design decision rather than a build detail: a rollup input that stopped
+      # resolving would ship the panel a WebGL context it never uses. Nothing
+      # in the suite exercises the bundler, so this is the only thing that
+      # notices.
+      - run: yarn build
