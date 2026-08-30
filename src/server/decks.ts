@@ -115,6 +115,15 @@ interface Parsed {
 export class Decks implements DeckSource {
   private readonly root: string;
   private readonly parsed = new Map<string, Parsed>();
+  /**
+   * Composed id to the name the directory actually holds.
+   *
+   * The roster composes every id on the way out and the filesystem stores
+   * whatever was typed, which for anything outside ASCII is usually decomposed.
+   * Keeping what the scan saw is what lets a later lookup ask for the file that
+   * is there rather than for the spelling the id was rendered in.
+   */
+  private paths = new Map<string, string>();
   private decks: Deck[] = [];
   private scannedAt = 0;
   /** The scan in flight, so two callers arriving together read the disk once. */
@@ -160,16 +169,43 @@ export class Decks implements DeckSource {
    * pattern to have thought of every spelling is the one that eventually does
    * not.
    *
-   * The id is normalised on the way in. A name with a Japanese character in it
-   * is decomposed on disk here and composed in the URL a browser sends, and the
-   * two are the same name everywhere except in a string comparison — which is
-   * the one place this would notice.
+   * The last scan answers first, because it is the only thing that knows which
+   * spelling the directory holds. A name with a Japanese character in it is
+   * decomposed on disk and composed in the URL a browser sends, and the two are
+   * the same name everywhere except in a string comparison — macOS looks a path
+   * up without regard to the form and hides that, and ext4 compares bytes.
+   * Composing the path back out of the id is therefore a guess, kept only for
+   * the id that no scan has seen yet, where it is still better than nothing.
    */
   path(id: string): string | null {
     if (!isId(id)) return null;
-    const target = resolve(this.root, `${id.normalize('NFC')}${DECK_EXTENSION}`);
+    const name = id.normalize('NFC');
+    const known = this.paths.get(name);
+    if (known !== undefined) return known;
+    const target = resolve(this.root, `${name}${DECK_EXTENSION}`);
     if (!target.startsWith(this.root + sep)) return null;
     return target;
+  }
+
+  /**
+   * Where an id's bytes are, reading the directory again if the last scan had
+   * no such id.
+   *
+   * The asynchronous half of `path`, and the one every caller that can wait
+   * should use. A document saved a moment ago is not in the last scan, and a
+   * guessed path is exactly the case that resolves to a file which is not there
+   * on the machine a broadcast runs on — so the miss is answered by looking
+   * rather than by spelling.
+   */
+  async file(id: string): Promise<string | null> {
+    if (!isId(id)) return null;
+    const name = id.normalize('NFC');
+    const known = this.paths.get(name);
+    if (known !== undefined && (await stat(known).catch(() => null))?.isFile()) return known;
+    await this.rescan();
+    const refreshed = this.paths.get(name);
+    if (refreshed === undefined) return null;
+    return (await stat(refreshed).catch(() => null))?.isFile() ? refreshed : null;
   }
 
   /**
@@ -184,7 +220,7 @@ export class Decks implements DeckSource {
    * wrong page's words.
    */
   async text(id: string, from?: number, to?: number): Promise<DeckTextResponse | null> {
-    const target = this.path(id);
+    const target = await this.file(id);
     if (target === null) return null;
     const info = await stat(target).catch(() => null);
     if (!info?.isFile()) return null;
@@ -219,17 +255,25 @@ export class Decks implements DeckSource {
     const names = await readdir(this.root).catch(() => [] as string[]);
     const found: Deck[] = [];
     const live = new Set<string>();
+    const paths = new Map<string, string>();
     for (const name of names) {
       if (extname(name).toLowerCase() !== DECK_EXTENSION) continue;
       // Composed, because this is the form that goes out on the wire and comes
       // back in a URL. The directory hands back whatever the filesystem stored,
       // which on this one is decomposed for anything outside ASCII.
       const id = basename(name, extname(name)).normalize('NFC');
-      const target = this.path(id);
-      if (target === null) continue;
+      if (!isId(id) || paths.has(id)) continue;
+      // The entry as the directory spells it, and not as `path` would spell it
+      // back out of the id. Composing it again asks for a name the directory
+      // may not hold, which macOS answers anyway and Linux does not — and the
+      // document then fails to appear in its own roster, which the module
+      // docstring above says is the worst way for it to fail.
+      const target = resolve(this.root, name);
+      if (!target.startsWith(this.root + sep)) continue;
       const info = await stat(target).catch(() => null);
       if (!info?.isFile()) continue;
       live.add(target);
+      paths.set(id, target);
       // A file that will not parse is listed with no pages rather than dropped.
       // The operator put it there and needs to see that it arrived and that it
       // is broken; a document that silently does not appear reads as a name
@@ -237,8 +281,10 @@ export class Decks implements DeckSource {
       const parsed = await this.open(target, key(info), { withText: false });
       found.push({
         id,
-        // The filename, which is the same string in either language.
-        label: same(name),
+        // The filename, which is the same string in either language, composed to
+        // match the id beside it rather than left in whichever form the disk
+        // happened to hold.
+        label: same(name.normalize('NFC')),
         pages: parsed.pages,
         bytes: info.size,
         at: info.mtimeMs / 1000,
@@ -249,6 +295,7 @@ export class Decks implements DeckSource {
     // files written in the same millisecond do not swap places between polls.
     found.sort((a, b) => b.at - a.at || a.id.localeCompare(b.id));
     for (const path of this.parsed.keys()) if (!live.has(path)) this.parsed.delete(path);
+    this.paths = paths;
     this.decks = found;
     this.scannedAt = Date.now() / 1000;
     return found;

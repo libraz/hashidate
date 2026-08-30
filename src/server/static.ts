@@ -1,7 +1,7 @@
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { extname, join, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 
 /**
  * File serving for the document root, and for the slide directory beside it.
@@ -89,6 +89,13 @@ async function send(
   if (target !== root && !target.startsWith(root + sep)) return plain(res, 404, 'not found');
 
   let info = await stat(target).catch(() => null);
+  if (info === null) {
+    const spelled = await otherSpelling(root, target);
+    if (spelled !== null) {
+      target = spelled;
+      info = await stat(target).catch(() => null);
+    }
+  }
   if (info?.isDirectory()) {
     // A relative import inside index.html resolves against the directory, so
     // the trailing slash has to be there before the page loads.
@@ -124,6 +131,37 @@ async function send(
   res.on('error', () => file.destroy());
   file.on('error', () => res.end());
   file.pipe(res);
+}
+
+/**
+ * The same file under the other normalisation form, or null.
+ *
+ * A filename with a Japanese character in it is stored decomposed by the
+ * filesystem it was typed on and arrives composed in the URL a browser sends.
+ * One name, two strings: macOS looks a path up without regard to which form it
+ * is in and never notices, and ext4 compares bytes, so the document an operator
+ * saved is a 404 on the machine the broadcast actually runs on.
+ *
+ * Reached only after a miss, so an ordinary request pays nothing for it and the
+ * cost lands on a path that was about to be answered with `not found` anyway. A
+ * name that both forms leave alone — which is every ASCII name, and so nearly
+ * everything under the document root — is refused before the directory is read.
+ *
+ * The name comes back out of a directory that is already inside the root, so it
+ * cannot climb out; checked again regardless, because the module docstring says
+ * there is one guard here and this is it.
+ */
+async function otherSpelling(root: string, target: string): Promise<string | null> {
+  const name = basename(target);
+  if (name.normalize('NFC') === name && name.normalize('NFD') === name) return null;
+  const directory = dirname(target);
+  const wanted = name.normalize('NFC');
+  for (const entry of await readdir(directory).catch(() => [] as string[])) {
+    if (entry.normalize('NFC') !== wanted) continue;
+    const found = resolve(directory, entry);
+    if (found === root || found.startsWith(root + sep)) return found;
+  }
+  return null;
 }
 
 function plain(res: ServerResponse, status: number, message: string): void {

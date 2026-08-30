@@ -258,4 +258,22 @@ describe('reading the words', () => {
     await writeFile(join(root, 'broken.pdf'), 'this is not a PDF at all');
     expect(await decks.text('broken')).toEqual({ id: 'broken', pages: 0, from: 1, text: [] });
   });
+
+  it('lists and opens a name that is decomposed on disk and composed in the id', async () => {
+    // The filesystem stores this decomposed and every surface downstream of the
+    // roster composes it — the URL a browser sends most of all. They are one
+    // name except in a string comparison.
+    const onDisk = await write('資料ダ.pdf'.normalize('NFD'), ['One', 'Two']);
+    const [deck] = await decks.list();
+    expect(deck?.id).toBe('資料ダ'.normalize('NFC'));
+    expect(deck?.pages).toBe(2);
+
+    // The path is asserted rather than only the lookup succeeding, because the
+    // two come apart per platform: a lookup on macOS ignores the normalisation
+    // form, so a path composed back out of the id opens there and opens nothing
+    // on Linux. Pinning the name the directory holds fails on both.
+    expect(await decks.file('資料ダ'.normalize('NFC'))).toBe(onDisk);
+    expect(decks.path('資料ダ'.normalize('NFC'))).toBe(onDisk);
+    expect(await decks.text('資料ダ'.normalize('NFC'))).toMatchObject({ text: ['One', 'Two'] });
+  });
 });
