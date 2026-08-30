@@ -13,7 +13,7 @@ The renderer reads the directory when it connects, so the loop is: edit the file
 
 ## It is keyframes, and the built-in table is not
 
-A built-in gesture is a function of time. `wave` is a sine whose amplitude decays, because a wave held at constant amplitude for three seconds is a metronome rather than a greeting; `nod` is a damped oscillation, because one beat reads as a twitch and it is the second, smaller beat that makes it read as agreement. Those are not values anybody types into a file. They were arrived at by watching a render, and the comments beside them in `src/engine/motion/gestures.ts` say which failure each number exists to prevent.
+A built-in gesture is a function of time. `wave` is a sine whose amplitude decays, because a wave held at constant amplitude for three seconds is a metronome rather than a greeting; `nod` is a damped oscillation, because one beat reads as a twitch and it is the second, smaller beat that makes it read as agreement. Those are not values anybody types into a file. They were arrived at by watching a render, and the comments beside them in `src/engine/motion/gestures/` say which failure each number exists to prevent.
 
 So this format is poses at times, interpolated between — which is what a person editing a text file can actually control. It expresses less than the built-in form does, and is meant to. The gesture table is not migrated to it and will not be: a keyframed `nod` is a nod with the tuning taken out.
 
