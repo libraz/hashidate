@@ -179,7 +179,7 @@ export class ControlClient {
       this.pending.push(ev);
       // Turn boundaries are what a caller blocks on, so they go up immediately
       // rather than on the next tick of the reporting timer.
-      if (ev.type.startsWith('turn.')) void this.report();
+      if (ev.type.startsWith('turn.') || ev.type === 'cue.fire') void this.report();
     });
     if (this.awaiting === null || this.awaiting === avatar) this.flush();
     if (this.status === 'online') void this.report(true);

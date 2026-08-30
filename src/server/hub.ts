@@ -144,12 +144,16 @@ function now(): number {
 /**
  * What an event is about, or null when it is about nothing in particular.
  *
- * Only the turn lifecycle and a drop name something, and only those are worth
- * matching a repeat against. `queue.empty` and `queue.replaced` say that a list
+ * Turn lifecycle events, drops and inline cue fires name something worth
+ * matching across renderers. `queue.empty` and `queue.replaced` say that a list
  * reached a state rather than that a thing happened to a line, so a second
- * renderer saying it too is left in the log.
+ * renderer saying it too is left in the log. BGM cue ids are additionally kept
+ * beyond the short echo window by `acceptedCueIds` below.
  */
 function eventSubject(event: SessionEvent): string | null {
+  if (event.type === 'cue.fire' && event.cueId !== undefined) {
+    return `cue:${event.cueId}`;
+  }
   if (event.turn !== undefined) return `turn:${event.turn}`;
   if (event.turns !== undefined) return `turns:${event.turns.join(',')}`;
   return null;
@@ -164,6 +168,12 @@ export class Hub {
   private readonly clients = new Set<ViewerListener>();
   private readonly waiters = new Set<Waiter>();
   private readonly events: SessionEvent[] = [];
+  /**
+   * BGM cues are emitted by every renderer, so the event log's short echo
+   * window is not enough to keep a reload from applying one twice. Keep the
+   * accepted cue ids in arrival order and bound the memory like the event log.
+   */
+  private readonly acceptedCueIds = new Set<string>();
   private seq = 0;
   private state: Partial<SessionState> = {};
   private vocabulary: Partial<Vocabulary> = {};
@@ -345,10 +355,11 @@ export class Hub {
   /**
    * Whether another renderer already reported this. See `ECHO_SECONDS`.
    *
-   * Only events that name a turn or a set of them are matched: those are the
-   * ones an orchestrator counts, and they are the ones with a subject to match
-   * on. The scan stops at the newest event about the same subject, so a repeat
-   * only counts as an echo while nothing has happened to that turn in between.
+   * Normal events that name a turn or a set of them are matched here: those are
+   * the ones an orchestrator counts. Inline BGM cues take the stronger bounded
+   * id path in `routeBgmCue`. The scan stops at the newest event about the same
+   * subject, so a repeat only counts as an echo while nothing has happened to
+   * that turn in between.
    */
   private isEcho(event: SessionEvent, at: number): boolean {
     const subject = eventSubject(event);
@@ -359,6 +370,50 @@ export class Hub {
       return logged.type === event.type && at - (logged.at ?? 0) < ECHO_SECONDS;
     }
     return false;
+  }
+
+  /**
+   * Route one inline BGM cue from an audible renderer.
+   *
+   * A muted preview still runs the same session clock and therefore still
+   * emits the cue. It cannot be the source of truth for the shared transport,
+   * though: wait for an explicit `muted: false` report and leave the cue id
+   * untouched so an audible renderer can claim it later. The normal `send`
+   * path is intentional — it is where BgmCoordinator stamps the revision,
+   * position and timestamp and where the standing state is fanned out.
+   */
+  private routeBgmCue(event: SessionEvent, report: ReportBody['bgm']): boolean {
+    if (report?.muted !== false) return false;
+    if (event.type !== 'cue.fire') return false;
+    if (
+      typeof event.turn !== 'string' ||
+      event.turn.length === 0 ||
+      typeof event.cueId !== 'string' ||
+      event.cueId.length === 0 ||
+      event.cue?.kind !== 'bgm'
+    ) {
+      return false;
+    }
+
+    const { cueId, cue } = event;
+    if (this.acceptedCueIds.has(cueId)) return true;
+    this.acceptedCueIds.add(cueId);
+    if (this.acceptedCueIds.size > EVENT_LOG_MAX) {
+      const oldest = this.acceptedCueIds.values().next().value;
+      if (oldest !== undefined) this.acceptedCueIds.delete(oldest);
+    }
+
+    const at = event.at ?? now();
+    this.seq += 1;
+    this.events.push({ ...event, seq: this.seq, at });
+
+    const command: Command = {
+      cmd: 'bgm',
+      action: cue.action,
+      ...('track' in cue && cue.track !== undefined ? { track: cue.track } : {}),
+    };
+    this.send({ type: 'command', commands: [command] });
+    return true;
   }
 
   /**
@@ -560,6 +615,14 @@ export class Hub {
       this.broadcast({ type: 'command', commands: [bgmTransition] });
     }
     for (const event of body.events ?? []) {
+      // BGM cues are transport intents, not renderer observations. A muted or
+      // unknown renderer is deliberately ignored, and its id is left free for
+      // the audible renderer's report. Once accepted, the id is consumed even
+      // if another renderer reports the same cue much later.
+      if (event.type === 'cue.fire') {
+        this.routeBgmCue(event, body.bgm);
+        continue;
+      }
       const at = event.at ?? now();
       // Dropped before anything acts on it, not merely kept out of the log:
       // the second renderer's answer to one interrupt must not reach the kill

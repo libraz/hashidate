@@ -3,7 +3,7 @@ import { Director } from '@/engine/director';
 import { buildProfile } from '@/engine/profile';
 import { Session } from '@/engine/session';
 import { same } from '@/i18n/locale';
-import type { BgmCommand, BgmReport, Command } from '@/protocol';
+import type { BgmCommand, BgmReport, Command, SessionEvent } from '@/protocol';
 import { ControlClient, type RendererControls } from '@/viewer/control-client';
 import { buildRig } from '../helpers/scene';
 
@@ -147,6 +147,73 @@ describe('ControlClient.apply', () => {
     try {
       await (harness.client as unknown as { report(): Promise<void> }).report();
       expect(JSON.parse(body ?? '{}').bgm).toEqual(harness.bgmState);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it('reports an inline BGM cue immediately rather than waiting for the heartbeat', async () => {
+    const bodies: Array<{ events?: SessionEvent[] }> = [];
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as { events?: SessionEvent[] });
+      return { ok: true } as Response;
+    });
+    try {
+      // `emit` is private because callers should use Session's public actions;
+      // this test only needs to inject the event that a BGM cue produces.
+      (
+        harness.session as unknown as {
+          emit(type: 'cue.fire', event: SessionEvent): void;
+        }
+      ).emit('cue.fire', {
+        type: 'cue.fire',
+        turn: 'turn-1',
+        cueId: 'turn-1:cue:0',
+        cue: { kind: 'bgm', action: 'play', track: 'song.mp3' },
+      });
+
+      await vi.waitFor(() => expect(bodies).toHaveLength(1));
+      expect(bodies[0].events).toMatchObject([
+        {
+          type: 'cue.fire',
+          turn: 'turn-1',
+          cueId: 'turn-1:cue:0',
+        },
+      ]);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it('retries an inline BGM cue after a report fails', async () => {
+    const bodies: Array<{ events?: SessionEvent[] }> = [];
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as { events?: SessionEvent[] });
+      if (bodies.length === 1) throw new Error('offline');
+      return { ok: true } as Response;
+    });
+    try {
+      (
+        harness.session as unknown as {
+          emit(type: 'cue.fire', event: SessionEvent): void;
+        }
+      ).emit('cue.fire', {
+        type: 'cue.fire',
+        turn: 'turn-1',
+        cueId: 'turn-1:cue:0',
+        cue: { kind: 'bgm', action: 'play', track: 'song.mp3' },
+      });
+
+      await vi.waitFor(() => expect(bodies).toHaveLength(1));
+      await (harness.client as unknown as { report(): Promise<void> }).report();
+      expect(bodies).toHaveLength(2);
+      expect(bodies[1].events).toMatchObject([
+        {
+          type: 'cue.fire',
+          turn: 'turn-1',
+          cueId: 'turn-1:cue:0',
+        },
+      ]);
     } finally {
       fetch.mockRestore();
     }

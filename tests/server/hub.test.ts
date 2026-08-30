@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { same } from '@/i18n/locale';
 import type {
+  BgmReport,
   Command,
   Deck,
   PlacementReport,
@@ -11,6 +12,7 @@ import type {
   StreamMessage,
   Vocabulary,
 } from '@/protocol';
+import { BgmCoordinator } from '@/server/bgm-state';
 import {
   ECHO_SECONDS,
   EVENT_LOG_MAX,
@@ -124,6 +126,35 @@ const placement = (over: Partial<PlacementReport> = {}): PlacementReport => ({
   avatar: { anchor: 'bottom-right', width: 0.32, height: 0.6, margin: 0.04 },
   slide: { anchor: 'center', width: 1, height: 1, margin: 0, fit: 'contain' },
   ...over,
+});
+
+/** A renderer heartbeat, with the mute bit explicit for authority tests. */
+const bgm = (over: Partial<BgmReport> = {}): BgmReport => ({
+  revision: 0,
+  track: null,
+  transport: 'stopped',
+  position: 0,
+  duration: null,
+  muted: false,
+  blocked: false,
+  error: null,
+  dspDegraded: false,
+  ...over,
+});
+
+/** One inline BGM request as emitted by a session at its mouth-clock cue. */
+const bgmCue = (
+  cueId: string,
+  action: 'play' | 'pause' | 'stop' = 'play',
+  track?: string,
+): SessionEvent => ({
+  type: 'cue.fire',
+  turn: 'turn-1',
+  cueId,
+  cue:
+    action === 'play'
+      ? { kind: 'bgm', action, ...(track === undefined ? {} : { track }) }
+      : { kind: 'bgm', action },
 });
 
 let hub: Hub;
@@ -885,6 +916,74 @@ describe('an event reported by more than one renderer', () => {
     hub.report({ events: [{ type: 'queue.empty' }] });
     hub.report({ events: [{ type: 'queue.empty' }] });
     expect(hub.snapshot().events.filter((e) => e.type === 'queue.empty')).toHaveLength(2);
+  });
+});
+
+describe('inline BGM cues', () => {
+  function routed() {
+    const coordinator = new BgmCoordinator(() => EPOCH_MS / 1000);
+    const next = new Hub(null, null, null, null, null, coordinator);
+    const seen: StreamMessage[] = [];
+    next.subscribe((message) => seen.push(message));
+    return { hub: next, seen };
+  }
+
+  it('waits for an audible renderer and leaves muted or unknown cues available', () => {
+    const { hub: next, seen } = routed();
+    const cue = bgmCue('turn-1:cue:0', 'play', 'song.mp3');
+
+    next.report({ bgm: bgm({ muted: true }), events: [cue] });
+    next.report({ events: [cue] });
+    expect(next.snapshot().events).toEqual([]);
+    expect(seen).toEqual([]);
+
+    next.report({ bgm: bgm(), events: [cue] });
+    expect(next.snapshot().events).toHaveLength(1);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].commands[0]).toMatchObject({
+      cmd: 'bgm',
+      action: 'play',
+      track: 'song.mp3',
+      revision: 1,
+    });
+  });
+
+  it('deduplicates a cue across audible renderers and gives late subscribers the command', () => {
+    const { hub: next, seen } = routed();
+    const cue = bgmCue('turn-1:cue:0', 'play', 'song.mp3');
+
+    next.report({ bgm: bgm(), events: [cue] });
+    next.report({ bgm: bgm(), events: [cue] });
+    expect(seen).toHaveLength(1);
+    expect(next.snapshot().events).toHaveLength(1);
+    expect(next.snapshot().bgm).toMatchObject({
+      track: 'song.mp3',
+      transport: 'playing',
+      revision: 1,
+    });
+
+    const late: StreamMessage[] = [];
+    next.subscribe((message) => late.push(message));
+    expect(late[0].commands[0]).toMatchObject({
+      cmd: 'bgm',
+      track: 'song.mp3',
+      revision: 1,
+    });
+  });
+
+  it('keeps the cue id set bounded and accepts an id again after eviction', () => {
+    const { hub: next, seen } = routed();
+    const first = bgmCue('first', 'play', 'first.mp3');
+    next.report({ bgm: bgm(), events: [first] });
+    for (let i = 0; i < EVENT_LOG_MAX; i += 1) {
+      next.report({ bgm: bgm(), events: [bgmCue(`cue-${i}`, 'play', `${i}.mp3`)] });
+    }
+
+    next.report({ bgm: bgm(), events: [first] });
+
+    expect(seen).toHaveLength(EVENT_LOG_MAX + 2);
+    expect(next.snapshot().events).toHaveLength(EVENT_LOG_MAX);
+    expect(next.snapshot().events.filter((event) => event.cueId === 'first')).toHaveLength(1);
   });
 });
 
