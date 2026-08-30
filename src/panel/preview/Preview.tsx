@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { type Translator, useT } from '@/i18n';
 import type { CameraFrame, Shot, Snapshot } from '@/protocol';
+import { Field } from '@/ui/Field';
 import { Segmented } from '@/ui/Segmented';
 import { Toggle } from '@/ui/Toggle';
 import { onMonitorShot } from '@/viewer/monitor-link';
@@ -13,6 +14,7 @@ import {
   setIdle,
 } from '../api';
 import styles from './Preview.module.css';
+import { SpeakingLine } from './SpeakingLine';
 
 /**
  * The character, beside the controls that drive it.
@@ -280,6 +282,12 @@ export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: ()
         )}
       </div>
 
+      {/* Under the picture and inside this block, so it is carried by the same
+          sticky column and is on screen whichever tab is up. See
+          `SpeakingLine`, which is also why it is here rather than beside the
+          queue's own on-air strip. */}
+      <SpeakingLine snapshot={snapshot} />
+
       {/* Not a control, and deliberately not dismissible: nothing sent from this
           panel can clear it. A browser will not start an audio device until the
           page it is on has been interacted with, so a viewer nobody has clicked
@@ -287,59 +295,75 @@ export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: ()
           speech sidecar that is not running. */}
       {blocked ? <p className={styles.blocked}>{t('panel.preview.blocked')}</p> : null}
 
+      {/*
+        Named, and they were not.
+
+        Three anonymous tracks under the picture are readable to whoever built
+        them and to nobody else: an avatar's own name, a framing and a set are
+        all just words, and stacked with no left column there is nothing that
+        says which question each row answers. The labels also put these rows on
+        the same axis as every control in the tabs beside them, which is what
+        makes the two halves read as one instrument.
+      */}
       <div className={styles.staging}>
         {/* Who is on screen. The renderer holds every command sent behind a swap
             until the model is standing, so the tab below can be used the moment
             this is clicked rather than after the picture comes back. */}
         {snapshot.avatars.length > 1 ? (
-          <Segmented
-            ariaLabel={t('panel.preview.avatarAria')}
-            options={snapshot.avatars.map((a) => ({ value: a.id, label: tx(a.label) }))}
-            value={avatar}
-            onChange={(id) => void setAvatar(id).then(refresh)}
-          />
+          <Field label={t('panel.preview.avatarAria')}>
+            <Segmented
+              ariaLabel={t('panel.preview.avatarAria')}
+              options={snapshot.avatars.map((a) => ({ value: a.id, label: tx(a.label) }))}
+              value={avatar}
+              onChange={(id) => void setAvatar(id).then(refresh)}
+            />
+          </Field>
         ) : null}
 
-        <div className={styles.shot}>
-          <Segmented
-            ariaLabel={t('panel.preview.cameraAria')}
-            options={CAMERA_FRAMES.map((f) => ({ value: f, label: tx(CAMERA_LABELS[f]) }))}
-            value={shot.frame}
-            onChange={frameAt}
-          />
-          {/* Only offered once there is something to undo, and it undoes only
-              the offsets: the framing is a choice, standing off it is a nudge. */}
-          <button
-            type="button"
-            className={styles.reset}
-            disabled={!moved}
-            onClick={straightOn}
-            title={t('panel.preview.straightOn.title')}
-          >
-            {moved
-              ? t('panel.preview.straightOnFrom', { offset: describe(shot, t) })
-              : t('panel.preview.straightOn')}
-          </button>
-        </div>
+        <Field label={t('panel.preview.cameraAria')}>
+          <div className={styles.shot}>
+            <Segmented
+              ariaLabel={t('panel.preview.cameraAria')}
+              options={CAMERA_FRAMES.map((f) => ({ value: f, label: tx(CAMERA_LABELS[f]) }))}
+              value={shot.frame}
+              onChange={frameAt}
+            />
+            {/* Only offered once there is something to undo, and it undoes only
+                the offsets: the framing is a choice, standing off it is a nudge. */}
+            <button
+              type="button"
+              className={styles.reset}
+              disabled={!moved}
+              onClick={straightOn}
+              title={t('panel.preview.straightOn.title')}
+            >
+              {moved
+                ? t('panel.preview.straightOnFrom', { offset: describe(shot, t) })
+                : t('panel.preview.straightOn')}
+            </button>
+          </div>
+        </Field>
 
         {backdrops.length ? (
-          <Segmented
-            ariaLabel={t('panel.preview.backdropAria')}
-            options={[
-              {
-                value: NO_BACKDROP,
-                label: t('panel.preview.backdropNone'),
-                title: t('panel.preview.backdropNone.title'),
-              },
-              ...backdrops.map((b) => ({ value: b.id, label: tx(b.label) })),
-            ]}
-            value={backdrop ?? NO_BACKDROP}
-            onChange={(id) => {
-              const next = id === NO_BACKDROP ? null : id;
-              setBackdrop(next);
-              void sendBackdrop(next);
-            }}
-          />
+          <Field label={t('panel.preview.backdropAria')}>
+            <Segmented
+              ariaLabel={t('panel.preview.backdropAria')}
+              options={[
+                {
+                  value: NO_BACKDROP,
+                  label: t('panel.preview.backdropNone'),
+                  title: t('panel.preview.backdropNone.title'),
+                },
+                ...backdrops.map((b) => ({ value: b.id, label: tx(b.label) })),
+              ]}
+              value={backdrop ?? NO_BACKDROP}
+              onChange={(id) => {
+                const next = id === NO_BACKDROP ? null : id;
+                setBackdrop(next);
+                void sendBackdrop(next);
+              }}
+            />
+          </Field>
         ) : null}
 
         <Toggle

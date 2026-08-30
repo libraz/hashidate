@@ -109,7 +109,16 @@
   cursor: default;
 }
 
+/*
+ * Sized to its label, like the transport buttons above it.
+ *
+ * It is the only direct child of the tab's column that is a control, so it was
+ * being stretched to the full width by the column's default `stretch` — a
+ * half-metre bar reading "reset the effects" under a stack of faders that are
+ * all shorter than it.
+ */
 .reset {
+  align-self: flex-start;
   margin-top: var(--space-3);
   background: transparent;
 }

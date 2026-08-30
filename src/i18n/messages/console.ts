@@ -203,7 +203,7 @@ export const consoleEn = {
   'console.tune.sway.note.missing': 'Unresolved: {names}',
   'console.tune.sway.enabled': 'Enable sway',
   'console.tune.sway.stiffness': 'Stiffness',
-  'console.tune.sway.inertia': 'How long it keeps swaying',
+  'console.tune.sway.inertia': 'Sway duration',
   'console.tune.sway.gravity': 'Gravity',
   'console.tune.sway.settle': 'Settle it',
 

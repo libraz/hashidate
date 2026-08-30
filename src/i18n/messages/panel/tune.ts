@@ -25,7 +25,7 @@ export const tuneEn = {
     'Solved on a fixed step, so how far things swing does not change with the frame rate.',
   'panel.tune.swayEnabled': 'Enable sway',
   'panel.tune.stiffness': 'Stiffness',
-  'panel.tune.inertia': 'How long it keeps swinging',
+  'panel.tune.inertia': 'Sway duration',
   'panel.tune.gravity': 'Gravity',
   'panel.tune.settle': 'Settle',
   'panel.tune.hop': 'Hop',

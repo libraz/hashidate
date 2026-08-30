@@ -1,24 +1,28 @@
 /*
- * A fader row.
+ * A fader row: label, track, readout, in three columns that never move.
  *
- * The label absorbs the slack and the track sits at the right, so a column of
- * these lines up whatever the labels say. That works because the console is a
- * fixed 384 px — but the broadcast panel is twice that, and unbounded the same
- * rule puts half a metre of nothing between "フォルマント適用量" (formant amount)
- * and the fader it belongs to. The cap is wide enough to change nothing in the
- * console and narrow enough that the two stay one control.
+ * The label used to absorb the slack with the track pinned at the right, capped
+ * so that the two did not drift apart on the wider panel. That kept a fader
+ * beside its own label but not beside its neighbours: the track began wherever
+ * the label happened to end, the cap left the readouts short of every other
+ * control's right edge, and a section holding both a field and a fader started
+ * its two controls a hundred and fifty pixels apart.
+ *
+ * Fixed columns instead — `--row-label` on the left and `--row-readout` on the
+ * right, both shared with `Field` — so the tracks line up down a section the way
+ * faders do on the desk this panel is modelled on, and every row ends on the
+ * same edge. The track takes whatever is between them, which on the panel makes
+ * it three times the length it had and correspondingly finer to drag.
  */
 .row {
   display: flex;
   align-items: center;
   gap: var(--space-4);
   height: 22px;
-  max-width: 420px;
 }
 
 .label {
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: 0 0 var(--row-label);
   font-size: var(--text-sm);
   color: var(--fg-dim);
   white-space: nowrap;
@@ -27,8 +31,10 @@
 }
 
 .input {
-  flex: 0 0 auto;
-  width: 140px;
+  flex: 1 1 auto;
+  /* Without this the range input's intrinsic width keeps the row from ever
+     narrowing, which on the console's 384 px pushes the readout off the edge. */
+  min-width: 0;
   height: 14px;
   margin: 0;
   appearance: none;
@@ -80,8 +86,7 @@
 }
 
 .value {
-  flex: 0 0 auto;
-  width: 42px;
+  flex: 0 0 var(--row-readout);
   text-align: right;
   font-family: var(--font-mono);
   font-size: var(--text-xs);

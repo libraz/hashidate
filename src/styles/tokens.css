@@ -75,6 +75,27 @@
   --console-width: 384px;
   --control-height: 26px;
 
+  /*
+   * The two columns every control row is built out of.
+   *
+   * A section stacks rows of four different kinds — a fader, a toggle, a
+   * segmented picker, a wrap of chips — and until these were shared each kind
+   * measured its own label and started its control wherever that landed. The
+   * document tab shows the cost in one screen: an anchor grid and a fader sit
+   * in the same section under labels of different lengths, and the two controls
+   * began 150 px apart.
+   *
+   * 128 px is the longest label either language actually has plus air. Japanese
+   * tops out at "フォルマント適用量" (104 px at `--text-sm`); English runs longer
+   * because it spells out what a word like inertia would have hidden, and
+   * "Head micro-movement" is 125 px of it. Anything past that is ellipsed and
+   * keeps its `title`.
+   */
+  --row-label: 128px;
+  /* Wide enough for the longest readout a fader produces — `-55dB`, `100%`,
+     `0.0半音` — without the column moving as the figure changes. */
+  --row-readout: 46px;
+
   /* Fast enough to feel like a switch rather than an animation. */
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --dur: 120ms;

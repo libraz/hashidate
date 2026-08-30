@@ -1,3 +1,11 @@
+/*
+ * A label beside a control.
+ *
+ * The label column is `--row-label` rather than sized to content, so that a
+ * field, a fader and a toggle stacked in one section all start their control at
+ * the same x. See the token, which is where the width is argued.
+ */
+
 .row {
   display: flex;
   align-items: flex-start;
@@ -5,7 +13,7 @@
 }
 
 .label {
-  flex: 0 0 68px;
+  flex: 0 0 var(--row-label);
   padding-top: 5px;
   font-size: var(--text-sm);
   color: var(--fg-faint);

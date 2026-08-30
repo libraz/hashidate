@@ -16,8 +16,10 @@
   gap: var(--space-4);
 }
 
+/* The same left column the controls in every other tab hang off, so moving
+   between a readout and the thing that sets it does not move the eye. */
 .factLabel {
-  flex: 0 0 92px;
+  flex: 0 0 var(--row-label);
   color: var(--fg-faint);
 }
 
