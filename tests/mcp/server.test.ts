@@ -335,6 +335,7 @@ describe('status', () => {
       seq: 3,
       bgm: expect.objectContaining({
         dsp: expect.objectContaining({ toneDb: 0, width: 1 }),
+        fade: { inSeconds: 1, outSeconds: 1 },
         dspDegraded: false,
       }),
     });
@@ -522,6 +523,7 @@ describe('bgm', () => {
         volume: 0.35,
         loop: false,
         dsp: { toneDb: 2, compression: 0.4, width: 1.2, reverb: { mix: 0.2 } },
+        fade: { inSeconds: 1.5, outSeconds: 0.75 },
       },
     });
 
@@ -532,6 +534,7 @@ describe('bgm', () => {
       volume: 0.35,
       loop: false,
       dsp: { toneDb: 2, compression: 0.4, width: 1.2, reverb: { mix: 0.2 } },
+      fade: { inSeconds: 1.5, outSeconds: 0.75 },
     });
     expect(payloadOf(result)).toMatchObject({
       ok: true,
@@ -548,19 +551,45 @@ describe('bgm', () => {
     expect(h.control.command).toHaveBeenCalledWith({ cmd: 'bgm', action: 'play' });
   });
 
-  it('requires a setting for settings and rejects out-of-range DSP values', async () => {
+  it('requires a setting for settings and rejects empty or out-of-range patches', async () => {
     h = harness();
     const client = await connect(h.control);
 
     const empty = await client.callTool({ name: 'bgm', arguments: { action: 'settings' } });
+    const emptyFade = await client.callTool({
+      name: 'bgm',
+      arguments: { action: 'settings', fade: {} },
+    });
     const invalid = await client.callTool({
       name: 'bgm',
       arguments: { action: 'settings', dsp: { reverb: { mix: 0.6 } } },
     });
+    const invalidFade = await client.callTool({
+      name: 'bgm',
+      arguments: { action: 'settings', fade: { outSeconds: 10.1 } },
+    });
 
     expect(empty.isError).toBe(true);
+    expect(emptyFade.isError).toBe(true);
     expect(invalid.isError).toBe(true);
+    expect(invalidFade.isError).toBe(true);
     expect(h.control.command).not.toHaveBeenCalled();
+  });
+
+  it('passes a partial fade settings patch through unchanged', async () => {
+    h = harness();
+    const client = await connect(h.control);
+
+    const result = await client.callTool({
+      name: 'bgm',
+      arguments: { action: 'settings', fade: { inSeconds: 0, outSeconds: 2.5 } },
+    });
+
+    expect(h.control.command).toHaveBeenCalledWith({
+      cmd: 'bgm',
+      fade: { inSeconds: 0, outSeconds: 2.5 },
+    });
+    expect(result.isError).toBeFalsy();
   });
 });
 

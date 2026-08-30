@@ -2,6 +2,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { type ZodError, type ZodType, z } from 'zod';
 import {
   bgmDspPatchSchema,
+  bgmFadePatchSchema,
   cameraFrameSchema,
   emotionVectorSchema,
   type LabelledId,
@@ -83,7 +84,7 @@ const SPEAK_NOTE = [
   '- [performance_id] is shorthand for [@perform performance_id]. Typed cues are [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@bgm play], [@bgm play track filename], [@bgm pause] and [@bgm stop]. The brackets are not spoken',
   '- For perform, expression, gesture and hop, the whole remainder is the id, so spaces and Japanese characters are allowed',
   '- [@bgm play] resumes the selected track. The filename after play may contain spaces and Japanese characters; [ and ] are reserved',
-  '- BGM volume, looping and DSP stay in the bgm tool or panel settings. room, backdrop, deck and place stay in line-start stage',
+  '- BGM volume, looping, fade and DSP stay in the bgm tool or panel settings. room, backdrop, deck and place stay in line-start stage',
   '- A document page goes in stage.slide. Write it on the line that talks about that page',
   '- Queue lines carrying pages in order and the document follows the speech. This is the only way to keep script and document together',
 ].join('\n');
@@ -111,14 +112,24 @@ const BGM_NOTE = [
   '- list rescans the configured show/bgm directory and returns exact .mp3/.flac track ids',
   '- play needs an id returned by list; resume continues the selected track without selecting another',
   '- volume is the BGM mix level from 0 (silent) to 1 (full); loop controls end-of-track behavior',
-  '- settings changes only the named BGM mix/DSP fields and requires at least one setting',
+  '- settings changes only the named BGM mix/DSP/fade fields and requires at least one setting',
+  '- fade.inSeconds and fade.outSeconds are seconds in the range 0..10. Different-track play crossfades both tracks; 0 is a hard edge. The first/stopped play uses only fade-in, and pause/resume/stop are immediate',
   '- The transport actions can also be placed in speak text as [@bgm play], [@bgm play track filename], [@bgm pause] and [@bgm stop]. The filename remainder may contain spaces and Japanese characters; [ and ] are reserved',
+  '- Inline [@bgm play track] uses the current fade settings; fade is not part of inline cue syntax',
   '- DSP is BGM-only: it never changes synthesized voice processing or the staged room',
 ].join('\n');
 const BGM_TRACK_NOTE =
   'The exact filename returned by bgm action=list, including its .mp3 or .flac extension. Track ids are directory-local strings, not URLs.';
 const BGM_VOLUME_NOTE = 'BGM-only mix level, 0..1. This does not change synthesized voice volume.';
 const BGM_LOOP_NOTE = 'Whether the selected BGM track restarts at its end.';
+const BGM_FADE_NOTE = [
+  'Optional BGM crossfade policy for track changes. Durations are seconds, each 0..10.',
+  'On a different-track play while another track is playing, the old track fades out while the new one fades in. 0 is a hard edge.',
+  'The first play, or a play from stopped, uses only fade-in. Pause, resume and stop are immediate.',
+  'Inline [@bgm play track] cues inherit the current fade settings; fade is not part of the cue syntax.',
+].join('\n');
+const BGM_FADE_IN_NOTE = 'Fade in duration in seconds, 0..10. 0 starts at full level.';
+const BGM_FADE_OUT_NOTE = 'Fade out duration in seconds, 0..10. 0 cuts at the track change.';
 const BGM_DSP_NOTE = [
   'Optional BGM-only libsonare Mixer controls. These leave synthesized voice processing and room acoustics untouched.',
   'toneDb: -6..6 dB tone tilt; compression: 0..1 amount; width: 0..2 stereo width.',
@@ -165,7 +176,7 @@ const REVISE_NOTE = [
 ].join('\n');
 
 const TEXT_NOTE =
-  'The line to say. [performance_id] is shorthand for [@perform performance_id]. Typed cues are [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@bgm play], [@bgm play track filename], [@bgm pause] and [@bgm stop]. Dynamic ids and BGM filename remainders may contain spaces and Japanese characters. [@bgm play] resumes the selected track. The brackets are reserved and are not spoken.';
+  'The line to say. [performance_id] is shorthand for [@perform performance_id]. Typed cues are [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@bgm play], [@bgm play track filename], [@bgm pause] and [@bgm stop]. Dynamic ids and BGM filename remainders may contain spaces and Japanese characters. [@bgm play] resumes the selected track. BGM play cues inherit the current fade settings; fade is not written in the cue. The brackets are reserved and are not spoken.';
 const READING_NOTE =
   'The kana reading of text. Numbers, dates, proper nouns and homographs get their reading decided here. Brackets cannot be written.';
 const PERFORM_NOTE = 'A named expression and motion. In effect only for the duration of the line.';
@@ -435,6 +446,14 @@ const bgmDspInput = bgmDspPatchSchema
   .strict()
   .describe(BGM_DSP_NOTE);
 
+const bgmFadeInput = bgmFadePatchSchema
+  .extend({
+    inSeconds: bgmFadePatchSchema.shape.inSeconds.describe(BGM_FADE_IN_NOTE),
+    outSeconds: bgmFadePatchSchema.shape.outSeconds.describe(BGM_FADE_OUT_NOTE),
+  })
+  .strict()
+  .describe(BGM_FADE_NOTE);
+
 /** `dsp: {}` is not a setting; at least one actual BGM control must be named. */
 function hasDspSetting(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false;
@@ -446,17 +465,29 @@ function hasDspSetting(value: unknown): boolean {
   return Object.values(dsp.reverb).some((setting) => setting !== undefined);
 }
 
+/** `fade: {}` is not a setting; at least one actual transition control must be named. */
+function hasFadeSetting(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const fade = value as Record<string, unknown>;
+  return fade.inSeconds !== undefined || fade.outSeconds !== undefined;
+}
+
 const bgmSettingsInput = z
   .object({
     action: z.literal('settings'),
     volume: z.number().finite().min(0).max(1).optional().describe(BGM_VOLUME_NOTE),
     loop: z.boolean().optional().describe(BGM_LOOP_NOTE),
     dsp: bgmDspInput.optional(),
+    fade: bgmFadeInput.optional(),
   })
   .strict()
   .refine(
-    (value) => value.volume !== undefined || value.loop !== undefined || hasDspSetting(value.dsp),
-    'settings requires at least one of volume, loop, or a DSP control',
+    (value) =>
+      value.volume !== undefined ||
+      value.loop !== undefined ||
+      hasDspSetting(value.dsp) ||
+      hasFadeSetting(value.fade),
+    'settings requires at least one of volume, loop, DSP control, or fade control',
   );
 
 /** BGM is one independent tool so a caller can list and mutate it explicitly. */
@@ -469,6 +500,7 @@ const bgmInput = z.discriminatedUnion('action', [
       volume: z.number().finite().min(0).max(1).optional().describe(BGM_VOLUME_NOTE),
       loop: z.boolean().optional().describe(BGM_LOOP_NOTE),
       dsp: bgmDspInput.optional(),
+      fade: bgmFadeInput.optional(),
     })
     .strict(),
   z.object({ action: z.literal('pause') }).strict(),

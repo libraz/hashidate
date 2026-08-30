@@ -505,6 +505,7 @@ export function createServer(control: Control): Server {
           ...(call.volume === undefined ? {} : { volume: call.volume }),
           ...(call.loop === undefined ? {} : { loop: call.loop }),
           ...(call.dsp === undefined ? {} : { dsp: call.dsp }),
+          ...(call.fade === undefined ? {} : { fade: call.fade }),
         };
       case 'pause':
         return { cmd: 'bgm', action: 'pause' };
@@ -520,6 +521,7 @@ export function createServer(control: Control): Server {
           ...(call.volume === undefined ? {} : { volume: call.volume }),
           ...(call.loop === undefined ? {} : { loop: call.loop }),
           ...(call.dsp === undefined ? {} : { dsp: call.dsp }),
+          ...(call.fade === undefined ? {} : { fade: call.fade }),
         };
     }
   }

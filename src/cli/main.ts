@@ -64,6 +64,8 @@ const localized = (text: Localized): string => pick(text, getLocale());
  *     yarn ctl camera bust
  *     yarn ctl backdrop dusk
  *     yarn ctl wear --preset stream
+ *     yarn ctl bgm play opening.mp3 --fade-in 1.5 --fade-out 0.75
+ *     yarn ctl bgm fade 1.5 0.75
  *     yarn ctl play demo
  *     yarn ctl watch
  *
@@ -643,15 +645,18 @@ const decks: Handler = async (client) => {
 /**
  * BGM transport and mix convenience commands.
  *
- * `bgm play` also accepts `--volume` and `--loop` so a selected track can be
- * started in one command. DSP flags stay on the MCP/panel surfaces: tone,
- * compression, width and reverb are mix decisions that need to be judged
- * against the rendered broadcast, not guessed from a terminal.
+ * `bgm play` also accepts `--volume`, `--loop`, `--fade-in` and `--fade-out`
+ * so a selected track can be started in one command. DSP flags stay on the
+ * MCP/panel surfaces: tone, compression, width and reverb are mix decisions
+ * that need to be judged against the rendered broadcast, not guessed from a
+ * terminal.
  */
 const bgm: Handler = async (client, args) => {
   const action = args[0];
   if (action === undefined)
-    fail('bgm list|play <filename>|pause|resume|stop|volume <0..1>|loop on|off');
+    fail(
+      'bgm list|play <filename>|pause|resume|stop|volume <0..1>|loop on|off|fade <inSeconds> <outSeconds>',
+    );
 
   if (action === 'list') {
     const extra = args.slice(1);
@@ -670,7 +675,12 @@ const bgm: Handler = async (client, args) => {
   if (action === 'play') {
     const { values, positionals } = parseArgs({
       args: args.slice(1),
-      options: { volume: { type: 'string' }, loop: { type: 'string' } },
+      options: {
+        volume: { type: 'string' },
+        loop: { type: 'string' },
+        'fade-in': { type: 'string' },
+        'fade-out': { type: 'string' },
+      },
       allowPositionals: true,
     });
     const track = positionals[0];
@@ -680,6 +690,21 @@ const bgm: Handler = async (client, args) => {
       fail(`bgm play takes one filename: ${positionals.slice(1).join(' ')}`);
     const volume = values.volume === undefined ? undefined : bgmVolume(values.volume);
     const loop = values.loop === undefined ? undefined : bgmLoop(values.loop);
+    const fadeIn =
+      values['fade-in'] === undefined
+        ? undefined
+        : bgmFadeSeconds(values['fade-in'], 'bgm --fade-in');
+    const fadeOut =
+      values['fade-out'] === undefined
+        ? undefined
+        : bgmFadeSeconds(values['fade-out'], 'bgm --fade-out');
+    const fade =
+      fadeIn === undefined && fadeOut === undefined
+        ? undefined
+        : {
+            ...(fadeIn === undefined ? {} : { inSeconds: fadeIn }),
+            ...(fadeOut === undefined ? {} : { outSeconds: fadeOut }),
+          };
     show(
       await client.command(
         build(bgmCommandSchema, {
@@ -688,6 +713,7 @@ const bgm: Handler = async (client, args) => {
           track,
           ...(volume === undefined ? {} : { volume }),
           ...(loop === undefined ? {} : { loop }),
+          ...(fade === undefined ? {} : { fade }),
         }),
       ),
     );
@@ -721,7 +747,24 @@ const bgm: Handler = async (client, args) => {
     return;
   }
 
-  fail(`bgm list|play <filename>|pause|resume|stop|volume <0..1>|loop on|off: ${action}`);
+  if (action === 'fade') {
+    if (args.length !== 3) fail('bgm fade needs fade-in and fade-out seconds, each from 0..10');
+    const inSeconds = bgmFadeSeconds(args[1], 'bgm fade-in');
+    const outSeconds = bgmFadeSeconds(args[2], 'bgm fade-out');
+    show(
+      await client.command(
+        build(bgmCommandSchema, {
+          cmd: 'bgm',
+          fade: { inSeconds, outSeconds },
+        }),
+      ),
+    );
+    return;
+  }
+
+  fail(
+    `bgm list|play <filename>|pause|resume|stop|volume <0..1>|loop on|off|fade <inSeconds> <outSeconds>: ${action}`,
+  );
 };
 
 function bgmVolume(raw: string | undefined): number {
@@ -734,6 +777,12 @@ function bgmLoop(raw: string | undefined): boolean {
   if (raw === 'on') return true;
   if (raw === 'off') return false;
   fail(`bgm loop takes on or off: ${raw}`);
+}
+
+function bgmFadeSeconds(raw: string | undefined, label: string): number {
+  const seconds = toNumber(raw, 0, label);
+  if (seconds < 0 || seconds > 10) fail(`${label} takes 0..10 seconds: ${raw}`);
+  return seconds;
 }
 
 /** Same shape as `room` beside it, and the same rule: no id is the bare stage. */
@@ -1004,7 +1053,8 @@ function usage(): never {
       '  yarn ctl avatar manuka',
       '  yarn ctl tune sway.stiffness=2 idle.breathDepth=1.2',
       '  yarn ctl deck intro --page 3',
-      '  yarn ctl bgm list && yarn ctl bgm play opening.mp3 --volume 0.2',
+      '  yarn ctl bgm list && yarn ctl bgm play opening.mp3 --volume 0.2 --fade-in 1 --fade-out 1',
+      '  yarn ctl bgm fade 1 1',
       '  yarn ctl slide next',
       '  yarn ctl play demo --check   # read show/scripts/demo.yaml without a server',
       '  yarn ctl play demo --replace # drop what is pending and run it',

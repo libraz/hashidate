@@ -135,6 +135,19 @@ describe('the tool surface once everything is on it', () => {
     const bgm = tools.find((tool) => tool.name === 'bgm');
     expect(bgm).toBeDefined();
     expect(offers(bgm?.inputSchema, 'dsp')).toBe(true);
+    expect(offers(bgm?.inputSchema, 'fade')).toBe(true);
+  });
+
+  it('advertises bounded crossfade controls on BGM play and settings', async () => {
+    h = harness();
+    const client = await connect(h.control);
+    const { tools } = await client.listTools();
+    const bgm = tools.find((tool) => tool.name === 'bgm');
+    expect(bgm).toBeDefined();
+
+    const fade = propertyNode(bgm?.inputSchema, 'fade');
+    expect(JSON.stringify(fade)).toContain('0..10');
+    expect(JSON.stringify(bgm?.description)).toContain('crossfade');
   });
 });
 
