@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { bgmCommandSchema, parseCommand } from '@/protocol';
+import {
+  bgmCommandSchema,
+  bgmTrackIdSchema,
+  isPayloadIdCommand,
+  PAYLOAD_ID_COMMAND_NAMES,
+  PAYLOAD_ID_COMMANDS,
+  parseCommand,
+  parseInlineCue,
+} from '@/protocol';
 import { SWITCH_CASES, unionTags } from './cases';
 
 /**
@@ -26,6 +34,27 @@ describe('the command set', () => {
         expect(parseCommand(JSON.parse(JSON.stringify(payload)))).toEqual(payload);
       }
     }
+  });
+});
+
+describe('payload-id command vocabulary', () => {
+  it('contains exactly the commands whose id belongs to the payload', () => {
+    const expected = [
+      'expression',
+      'overlay',
+      'gesture',
+      'perform',
+      'avatar',
+      'room',
+      'backdrop',
+      'deck',
+    ] as const;
+    expect(PAYLOAD_ID_COMMAND_NAMES).toEqual(expected);
+    expect([...PAYLOAD_ID_COMMANDS]).toEqual(expected);
+    expect(expected.every((cmd) => isPayloadIdCommand(cmd))).toBe(true);
+    expect(isPayloadIdCommand('slide')).toBe(false);
+    const room = parseCommand({ cmd: 'room', id: null });
+    expect(room && isPayloadIdCommand(room)).toBe(true);
   });
 });
 
@@ -91,10 +120,39 @@ describe('parseCommand degrading rather than throwing', () => {
     expect(parseCommand({ cmd: 'emotion', vec: { joy: 1, smug: 1 } })).toBeNull();
   });
 
-  it('keeps BGM DSP patches strict and independent from the voice chain', () => {
+  it('shares one validated track id format between commands and cues', () => {
+    for (const track of ['opening.mp3', '日本語の曲 name.flac']) {
+      expect(bgmTrackIdSchema.safeParse(track).success, track).toBe(true);
+      expect(parseCommand({ cmd: 'bgm', action: 'play', track })).toMatchObject({ track });
+      expect(parseInlineCue(`@bgm play ${track}`)).toMatchObject({ track });
+    }
+    for (const track of [
+      'opening',
+      'opening.wav',
+      '.opening.mp3',
+      'sub/opening.mp3',
+      'opening\u0085.mp3',
+      'opening\u009f.mp3',
+    ]) {
+      expect(bgmTrackIdSchema.safeParse(track).success, track).toBe(false);
+      expect(parseCommand({ cmd: 'bgm', action: 'play', track })).toBeNull();
+      expect(parseInlineCue(`@bgm play ${track}`)).toBeNull();
+    }
+  });
+
+  it('strips unknown BGM DSP and fade fields, including nested ones', () => {
     expect(
-      bgmCommandSchema.safeParse({ cmd: 'bgm', dsp: { reverb: { timeMs: 640 } } }).success,
-    ).toBe(false);
+      bgmCommandSchema.parse({
+        cmd: 'bgm',
+        dsp: { toneDb: -6, future: true, reverb: { mix: 0.2, timeMs: 640 } },
+        fade: { inSeconds: 1, curve: 'equal-power' },
+        future: 'ignored',
+      }),
+    ).toEqual({
+      cmd: 'bgm',
+      dsp: { toneDb: -6, reverb: { mix: 0.2 } },
+      fade: { inSeconds: 1 },
+    });
     expect(bgmCommandSchema.safeParse({ cmd: 'bgm', dsp: { toneDb: -6, width: 2 } }).success).toBe(
       true,
     );
@@ -113,9 +171,8 @@ describe('parseCommand degrading rather than throwing', () => {
       );
     }
     expect(
-      bgmCommandSchema.safeParse({ cmd: 'bgm', fade: { inSeconds: 1, curve: 'equal-power' } })
-        .success,
-    ).toBe(false);
+      bgmCommandSchema.parse({ cmd: 'bgm', fade: { inSeconds: 1, curve: 'equal-power' } }),
+    ).toEqual({ cmd: 'bgm', fade: { inSeconds: 1 } });
   });
 });
 

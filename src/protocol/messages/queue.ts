@@ -131,6 +131,8 @@ export const queueResponseSchema = z.object({
   queue: z.array(queueEntrySchema),
   /** How many viewers the resulting queue was delivered to. */
   viewers: z.number(),
+  /** The entry removed by shift/pop, when the operation had one. */
+  entry: queueEntrySchema.nullable().optional(),
 });
 
 export type QueueResponse = z.infer<typeof queueResponseSchema>;

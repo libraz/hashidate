@@ -46,6 +46,14 @@ describe('tune', () => {
     expect(parseCommand({ cmd: 'tune', settle: true })).toEqual({ cmd: 'tune', settle: true });
   });
 
+  it('rejects a misspelled field instead of stripping a tuning operation', () => {
+    expect(parseCommand({ cmd: 'tune', sway: { stifness: 2 } })).toBeNull();
+  });
+
+  it('rejects an unknown tuning group at the command boundary', () => {
+    expect(parseCommand({ cmd: 'tune', swya: { stiffness: 2 } })).toBeNull();
+  });
+
   it('parses with no groups at all, which asks for nothing and is not an error', () => {
     expect(parseCommand({ cmd: 'tune' })).toEqual({ cmd: 'tune' });
   });

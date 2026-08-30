@@ -104,6 +104,7 @@ export const sayCommandSchema = z.object({
    */
   reading: z
     .string()
+    .min(1, { error: 'reading may not be empty' })
     .refine((value) => !hasCueMarkup(value), { error: 'cue markup does not belong in a reading' })
     .optional(),
   emotion: emotionVectorSchema.nullable().optional(),
@@ -178,7 +179,7 @@ type _TurnPayloadIsTurnRequest = Expect<Equals<z.infer<typeof turnSchema>, TurnR
  * names are the same type, checked at compile time, so the protocol is not
  * publishing a second opinion about what a turn is.
  */
-export type { TurnRequest };
+export type { Staging, TurnRequest };
 
 /**
  * Replace everything pending with this list, in order.

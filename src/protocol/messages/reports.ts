@@ -156,6 +156,25 @@ export type PlacementReport = z.infer<typeof placementReportSchema>;
 type _PlacementReportMatchesEngine = Assert<PlacementReport, EnginePlacementReport>;
 type _EngineMatchesPlacementReport = Assert<EnginePlacementReport, PlacementReport>;
 
+/** The renderer's avatar loading lifecycle, independent of the heartbeat. */
+export const avatarStatusPhaseSchema = z.enum(['idle', 'loading', 'ready', 'failed']);
+
+export type AvatarStatusPhase = z.infer<typeof avatarStatusPhaseSchema>;
+
+/**
+ * What the renderer knows about its avatar load.
+ *
+ * This is separate from `connected`: a renderer can keep reporting heartbeats
+ * while a model is loading or after it failed to load. The optional error is
+ * bounded so a loader cannot turn a periodic report into an unbounded payload.
+ */
+export const avatarStatusSchema = z.object({
+  phase: avatarStatusPhaseSchema,
+  error: z.string().max(1024).nullable().optional(),
+});
+
+export type AvatarStatus = z.infer<typeof avatarStatusSchema>;
+
 /**
  * What the viewer POSTs to `/api/report`, on a timer.
  *
@@ -168,6 +187,8 @@ type _EngineMatchesPlacementReport = Assert<EnginePlacementReport, PlacementRepo
 export const reportBodySchema = z.object({
   state: sessionStateSchema.optional(),
   events: z.array(sessionEventSchema).optional(),
+  /** Avatar loading is reported even before a session exists. */
+  avatar: avatarStatusSchema.optional(),
   vocabulary: vocabularySchema.optional(),
   voice: voiceReportSchema.optional(),
   tuning: tuningSchema.optional(),

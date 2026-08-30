@@ -6,6 +6,8 @@ import { Session } from '@/engine/session';
 import type { WardrobeTable } from '@/engine/types';
 import { same } from '@/i18n/locale';
 import {
+  avatarStatusPhaseSchema,
+  avatarStatusSchema,
   bgmReportSchema,
   bgmStateSchema,
   commandRequestSchema,
@@ -14,8 +16,13 @@ import {
   deckTextResponseSchema,
   eventsResponseSchema,
   historyEntrySchema,
+  parseCommandRequest,
+  parseStreamMessage,
   placementReportSchema,
+  queueResponseSchema,
   queueRewindSchema,
+  recordingSchema,
+  rendererIdSchema,
   reportBodySchema,
   sessionEventSchema,
   sessionStateSchema,
@@ -290,6 +297,79 @@ describe('reportBodySchema', () => {
       }).success,
     ).toBe(false);
   });
+
+  it('carries avatar loading state independently of the heartbeat state', () => {
+    const body = { avatar: { phase: 'failed', error: 'missing model.glb' } };
+    const result = reportBodySchema.safeParse(body);
+    expect(result.error?.issues ?? []).toEqual([]);
+    expect(result.data).toEqual(body);
+  });
+
+  it('keeps avatar state optional for reports from older renderers', () => {
+    expect(reportBodySchema.safeParse({}).success).toBe(true);
+    expect(reportBodySchema.safeParse({ avatar: { phase: 'loading' } }).success).toBe(true);
+  });
+
+  it('bounds an avatar load failure without changing heartbeat semantics', () => {
+    expect(avatarStatusSchema.safeParse({ phase: 'ready' }).success).toBe(true);
+    expect(avatarStatusSchema.safeParse({ phase: 'failed', error: 'x'.repeat(1024) }).success).toBe(
+      true,
+    );
+    expect(avatarStatusSchema.safeParse({ phase: 'failed', error: 'x'.repeat(1025) }).success).toBe(
+      false,
+    );
+    expect(avatarStatusSchema.safeParse({ phase: 'failed', error: null }).success).toBe(true);
+    expect(avatarStatusPhaseSchema.safeParse('loading').success).toBe(true);
+    expect(avatarStatusPhaseSchema.safeParse('connected').success).toBe(false);
+  });
+});
+
+describe('recordingSchema', () => {
+  it('adds a nullable failure field when reading an older recording report', () => {
+    const oldReport = {
+      session: 'r1',
+      file: '/tmp/take.webm',
+      mime: null,
+      since: 1_700_000_000,
+      bytes: 0,
+      autoStop: true,
+      width: 1920,
+      height: 1080,
+      fps: 30,
+    };
+    expect(recordingSchema.parse(oldReport)).toEqual({ ...oldReport, error: null });
+  });
+
+  it('carries a write/open failure without pretending bytes were written', () => {
+    const report = recordingSchema.parse({
+      session: 'r2',
+      file: '/tmp/take.webm',
+      mime: null,
+      since: 1_700_000_000,
+      bytes: 0,
+      autoStop: true,
+      width: 1920,
+      height: 1080,
+      fps: 30,
+      error: 'EEXIST: file already exists',
+    });
+    expect(report.error).toBe('EEXIST: file already exists');
+    expect(report.bytes).toBe(0);
+    expect(report.mime).toBeNull();
+  });
+});
+
+describe('rendererIdSchema', () => {
+  it('accepts browser-generated UUIDs and opaque non-UUID ids', () => {
+    expect(rendererIdSchema.safeParse('550e8400-e29b-41d4-a716-446655440000').success).toBe(true);
+    expect(rendererIdSchema.safeParse('stage-window-7f2c').success).toBe(true);
+  });
+
+  it('rejects empty and control-character identities', () => {
+    expect(rendererIdSchema.safeParse('').success).toBe(false);
+    expect(rendererIdSchema.safeParse('stage\nwindow').success).toBe(false);
+    expect(rendererIdSchema.safeParse('stage\u0000window').success).toBe(false);
+  });
 });
 
 describe('BGM reports and state', () => {
@@ -547,12 +627,27 @@ describe('historyEntrySchema', () => {
   });
 });
 
+describe('queueResponseSchema', () => {
+  const entry = { id: 'q1', text: 'あい', at: 1_800_000_000 };
+
+  it('carries the removed entry for shift/pop undo', () => {
+    const response = { queue: [], viewers: 1, entry };
+    expect(queueResponseSchema.safeParse(response).data).toEqual(response);
+  });
+
+  it('allows entry to be absent or explicitly null', () => {
+    expect(queueResponseSchema.safeParse({ queue: [], viewers: 0 }).success).toBe(true);
+    expect(queueResponseSchema.safeParse({ queue: [], viewers: 0, entry: null }).success).toBe(
+      true,
+    );
+  });
+});
+
 describe('commandRequestSchema', () => {
   it('accepts a single bare command', () => {
-    expect(commandRequestSchema.safeParse({ cmd: 'say', text: 'あ' }).data).toEqual({
-      cmd: 'say',
-      text: 'あ',
-    });
+    expect(commandRequestSchema.safeParse({ cmd: 'say', text: 'あ' }).data).toEqual([
+      { cmd: 'say', text: 'あ' },
+    ]);
   });
 
   it('accepts several commands under batch, delivered as one round trip', () => {
@@ -565,21 +660,40 @@ describe('commandRequestSchema', () => {
     };
     const result = commandRequestSchema.safeParse(batch);
     expect(result.error?.issues ?? []).toEqual([]);
-    expect(result.data).toEqual(batch);
+    expect(result.data).toEqual(batch.batch);
   });
 
-  it('accepts an empty batch', () => {
-    expect(commandRequestSchema.safeParse({ batch: [] }).success).toBe(true);
+  it('rejects an empty batch because there is no command to deliver', () => {
+    expect(commandRequestSchema.safeParse({ batch: [] }).success).toBe(false);
   });
 
-  it('rejects a batch containing one command it does not know', () => {
-    expect(
-      commandRequestSchema.safeParse({ batch: [{ cmd: 'say' }, { cmd: 'teleport' }] }).success,
-    ).toBe(false);
+  it('keeps known elements and drops unknown ones in a mixed batch', () => {
+    expect(commandRequestSchema.parse({ batch: [{ cmd: 'say' }, { cmd: 'teleport' }] })).toEqual([
+      { cmd: 'say' },
+    ]);
+    expect(parseCommandRequest({ batch: [{ cmd: 'say' }, { cmd: 'teleport' }] })).toEqual({
+      commands: [{ cmd: 'say' }],
+      rejected: [{ cmd: 'teleport' }],
+    });
+  });
+
+  it('fails when every element is unknown', () => {
+    expect(commandRequestSchema.safeParse({ batch: [{ cmd: 'teleport' }] }).success).toBe(false);
   });
 
   it('rejects a body that is neither a command nor a batch', () => {
     expect(commandRequestSchema.safeParse({ commands: [{ cmd: 'say' }] }).success).toBe(false);
+  });
+
+  it('gives a real batch precedence over a direct cmd on the same object', () => {
+    expect(commandRequestSchema.parse({ cmd: 'say', batch: [{ cmd: 'idle', on: true }] })).toEqual([
+      { cmd: 'idle', on: true },
+    ]);
+  });
+
+  it('canonicalizes unknown fields while keeping the command list typed', () => {
+    const result = commandRequestSchema.parse({ batch: [{ cmd: 'say', text: 'あ', future: 1 }] });
+    expect(result).toEqual([{ cmd: 'say', text: 'あ' }]);
   });
 });
 
@@ -633,6 +747,54 @@ describe('snapshotSchema', () => {
       recording: null,
     });
     expect(result.error?.issues ?? []).toEqual([]);
+  });
+
+  it('carries a renderer avatar failure while remaining connected', () => {
+    const result = snapshotSchema.safeParse({
+      connected: true,
+      viewers: 1,
+      seq: 2,
+      state: {},
+      vocabulary: {},
+      events: [],
+      avatar: { phase: 'failed', error: 'could not load model' },
+      voice: null,
+      tuning: null,
+      placement: null,
+      avatars: [],
+      decks: [],
+      slides: null,
+      speech: 'absent',
+      queue: [],
+      paused: false,
+      recording: null,
+    });
+    expect(result.error?.issues ?? []).toEqual([]);
+    expect(result.data?.connected).toBe(true);
+    expect(result.data?.avatar).toEqual({ phase: 'failed', error: 'could not load model' });
+  });
+
+  it('accepts an older snapshot without avatar lifecycle state', () => {
+    const result = snapshotSchema.safeParse({
+      connected: false,
+      viewers: 0,
+      seq: 0,
+      state: {},
+      vocabulary: {},
+      events: [],
+      voice: null,
+      tuning: null,
+      placement: null,
+      avatars: [],
+      decks: [],
+      slides: null,
+      speech: 'absent',
+      queue: [],
+      paused: false,
+      recording: null,
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.avatar).toBeUndefined();
   });
 
   it('carries the documents on disk, which are a listing rather than vocabulary', () => {
@@ -786,9 +948,25 @@ describe('streamMessageSchema', () => {
     expect(streamMessageSchema.safeParse({ type: 'state', commands: [] }).success).toBe(false);
   });
 
-  it('rejects a frame carrying a command the renderer does not know', () => {
+  it('drops an unknown command while keeping the stream frame valid', () => {
+    expect(streamMessageSchema.parse({ type: 'command', commands: [{ cmd: 'teleport' }] })).toEqual(
+      {
+        type: 'command',
+        commands: [],
+      },
+    );
+  });
+
+  it('lets the viewer observe rejected elements without changing canonical commands', () => {
     expect(
-      streamMessageSchema.safeParse({ type: 'command', commands: [{ cmd: 'teleport' }] }).success,
-    ).toBe(false);
+      parseStreamMessage({
+        type: 'command',
+        commands: [{ cmd: 'gesture', id: 'wave' }, { cmd: 'teleport' }],
+      }),
+    ).toEqual({
+      type: 'command',
+      commands: [{ cmd: 'gesture', id: 'wave' }],
+      rejected: [{ cmd: 'teleport' }],
+    });
   });
 });

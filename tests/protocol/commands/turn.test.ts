@@ -148,6 +148,10 @@ describe('say', () => {
     expect(parseCommand({ cmd: 'say', text: 'あ', reading: 42 })).toBeNull();
   });
 
+  it('rejects an empty reading instead of treating it as a pronunciation', () => {
+    expect(parseCommand({ cmd: 'say', text: 'あ', reading: '' })).toBeNull();
+  });
+
   it('accepts an explicit null emotion, which is not the same as omitting it', () => {
     expect(parseCommand({ cmd: 'say', text: 'あ', emotion: null })).toEqual({
       cmd: 'say',

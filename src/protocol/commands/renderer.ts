@@ -98,41 +98,52 @@ export const avatarCommandSchema = z.object({
  * it", never "reset it" — which is what makes a knob turn cost one small message
  * rather than a full statement of the layer.
  */
-export const tuneCommandSchema = z.object({
-  cmd: z.literal('tune'),
-  id: correlationId,
-  idle: z
-    .object({
-      breathDepth: within(TUNING_RANGES.idle.breathDepth).optional(),
-      breathPeriod: within(TUNING_RANGES.idle.breathPeriod).optional(),
-      idleAmount: within(TUNING_RANGES.idle.idleAmount).optional(),
-      weightShift: within(TUNING_RANGES.idle.weightShift).optional(),
-      gazeAmount: within(TUNING_RANGES.idle.gazeAmount).optional(),
-      /** A multiplier over the avatar's measured limits, not an angle. */
-      eyeLimit: within(TUNING_RANGES.idle.eyeLimit).optional(),
-      blink: z.boolean().optional(),
-    })
-    .optional(),
-  sway: z
-    .object({
-      enabled: z.boolean().optional(),
-      stiffness: within(TUNING_RANGES.sway.stiffness).optional(),
-      inertia: within(TUNING_RANGES.sway.inertia).optional(),
-      gravity: within(TUNING_RANGES.sway.gravity).optional(),
-    })
-    .optional(),
-  hop: z
-    .object({
-      /** Metres. */
-      height: within(TUNING_RANGES.hop.height).optional(),
-      gravity: within(TUNING_RANGES.hop.gravity).optional(),
-    })
-    .optional(),
-  tail: z.object({ amount: within(TUNING_RANGES.tail.amount).optional() }).optional(),
-  render: z.object({ toon: z.boolean().optional(), arkit: z.boolean().optional() }).optional(),
-  /** Snap the spring chains to rest, after the values above have landed. */
-  settle: z.boolean().optional(),
-});
+export const tuneCommandSchema = z
+  .object({
+    cmd: z.literal('tune'),
+    id: correlationId,
+    idle: z
+      .object({
+        breathDepth: within(TUNING_RANGES.idle.breathDepth).optional(),
+        breathPeriod: within(TUNING_RANGES.idle.breathPeriod).optional(),
+        idleAmount: within(TUNING_RANGES.idle.idleAmount).optional(),
+        weightShift: within(TUNING_RANGES.idle.weightShift).optional(),
+        gazeAmount: within(TUNING_RANGES.idle.gazeAmount).optional(),
+        /** A multiplier over the avatar's measured limits, not an angle. */
+        eyeLimit: within(TUNING_RANGES.idle.eyeLimit).optional(),
+        blink: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+    sway: z
+      .object({
+        enabled: z.boolean().optional(),
+        stiffness: within(TUNING_RANGES.sway.stiffness).optional(),
+        inertia: within(TUNING_RANGES.sway.inertia).optional(),
+        gravity: within(TUNING_RANGES.sway.gravity).optional(),
+      })
+      .strict()
+      .optional(),
+    hop: z
+      .object({
+        /** Metres. */
+        height: within(TUNING_RANGES.hop.height).optional(),
+        gravity: within(TUNING_RANGES.hop.gravity).optional(),
+      })
+      .strict()
+      .optional(),
+    tail: z
+      .object({ amount: within(TUNING_RANGES.tail.amount).optional() })
+      .strict()
+      .optional(),
+    render: z
+      .object({ toon: z.boolean().optional(), arkit: z.boolean().optional() })
+      .strict()
+      .optional(),
+    /** Snap the spring chains to rest, after the values above have landed. */
+    settle: z.boolean().optional(),
+  })
+  .strict();
 
 /**
  * The payload is a `TuningPatch` and nothing else, on the same footing as `say`

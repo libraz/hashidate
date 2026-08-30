@@ -51,10 +51,21 @@ export {
   type CommandResponse,
   commandRequestSchema,
   commandResponseSchema,
+  type ParsedCommandElements,
+  type ParsedCommandRequest,
+  type ParsedStreamMessage,
+  parseCommandRequest,
+  parseStreamMessage,
   type StreamMessage,
   streamMessageSchema,
 } from './envelope';
-export { type LabelledId, labelledIdSchema, localizedSchema } from './primitives';
+export {
+  type LabelledId,
+  labelledIdSchema,
+  localizedSchema,
+  type RendererId,
+  rendererIdSchema,
+} from './primitives';
 export {
   type HistoryEntry,
   type HistoryResponse,
@@ -82,6 +93,10 @@ export {
   recordStopSchema,
 } from './recording';
 export {
+  type AvatarStatus,
+  type AvatarStatusPhase,
+  avatarStatusPhaseSchema,
+  avatarStatusSchema,
   type PlacementReport,
   placementReportSchema,
   type ReportBody,
@@ -104,6 +119,7 @@ export {
   scriptsResponseSchema,
 } from './scripts';
 export {
+  gestureGroupSchema,
   type SessionEvent,
   type SessionState,
   sessionEventSchema,

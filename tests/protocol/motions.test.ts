@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  gestureGroupSchema,
+  localizedSchema,
   MOTION_MAX_FRAMES,
   MOTION_MAX_SECONDS,
   motionBodySchema,
@@ -30,6 +32,14 @@ const body = (over: Record<string, unknown> = {}) => ({
 describe('motionBodySchema', () => {
   it('accepts a motion with one keyframe', () => {
     expect(motionBodySchema.safeParse(body()).success).toBe(true);
+  });
+
+  it('keeps the shared localized and gesture-group wire shapes', () => {
+    expect(gestureGroupSchema.parse('greeting')).toBe('greeting');
+    expect(localizedSchema.parse(body().label)).toEqual(body().label);
+    expect(
+      motionBodySchema.parse(body({ label: { en: 'Wave', ja: '手を振る', future: true } })),
+    ).toEqual(expect.objectContaining({ label: { en: 'Wave', ja: '手を振る' } }));
   });
 
   it('wants at least one keyframe', () => {

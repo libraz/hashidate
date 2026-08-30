@@ -91,7 +91,14 @@ export const sessionStateSchema = z.object({
 export type SessionState = z.infer<typeof sessionStateSchema>;
 type _StateMatchesEngine = Expect<Equals<SessionState, EngineSessionState>>;
 
-const gestureGroupSchema = z.enum(['reaction', 'greeting', 'explain', 'emote', 'cute', 'pose']);
+export const gestureGroupSchema = z.enum([
+  'reaction',
+  'greeting',
+  'explain',
+  'emote',
+  'cute',
+  'pose',
+]);
 type _GestureGroupsMatchEngine = Expect<Equals<z.infer<typeof gestureGroupSchema>, GestureGroup>>;
 
 const performanceGroupSchema = z.enum([

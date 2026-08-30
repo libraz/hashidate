@@ -49,6 +49,8 @@ export const slidePlacementSchema = placementSchema.extend({
 type _SlidePlacementMatchesEngine = Assert<z.infer<typeof slidePlacementSchema>, SlidePlacement>;
 type _EngineMatchesSlidePlacement = Assert<SlidePlacement, z.infer<typeof slidePlacementSchema>>;
 
+export type { Anchor, Placement, SlidePlacement };
+
 /** Both layers of a layout: the command's payload, and `stage.place`. */
 export const placeStageSchema = z.object({
   avatar: placementSchema.optional(),

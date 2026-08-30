@@ -40,6 +40,8 @@ export const recordingSchema = z.object({
   width: z.number(),
   height: z.number(),
   fps: z.number(),
+  /** Failure observed while opening or writing this take, if any. */
+  error: z.string().nullable().default(null),
 });
 
 export type Recording = z.infer<typeof recordingSchema>;

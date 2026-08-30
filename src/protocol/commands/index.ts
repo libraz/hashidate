@@ -69,7 +69,7 @@ import { voiceCommandSchema } from './voice';
  * the only public door, and this is the one it opens.
  */
 
-export { bgmActionSchema, cameraFrameSchema } from '../cues';
+export { bgmActionSchema, bgmTrackIdSchema, cameraFrameSchema } from '../cues';
 export {
   BGM_DEFAULT_LOOP,
   BGM_DEFAULT_VOLUME,
@@ -108,12 +108,23 @@ export {
   resetCommandSchema,
 } from './face';
 export type { Assert, Equals, Expect } from './guards';
-export { placementSchema, placeStageSchema, slidePlacementSchema } from './layout';
+export {
+  type Anchor,
+  type Placement,
+  placementSchema,
+  placeStageSchema,
+  type SlidePlacement,
+  slidePlacementSchema,
+} from './layout';
 export {
   type CameraFrame,
+  type EmotionName,
+  type EmotionVector,
   emotionNameSchema,
   emotionVectorSchema,
+  type FingerName,
   fingerNameSchema,
+  type Side,
   sideSchema,
 } from './primitives';
 export { RECORD_DEFAULTS, RECORD_LIMITS, recordCommandSchema } from './record';
@@ -138,6 +149,7 @@ export {
   interruptCommandSchema,
   pauseCommandSchema,
   queueCommandSchema,
+  type Staging,
   sayCommandSchema,
   stageSchema,
   type TurnRequest,
@@ -187,6 +199,34 @@ export type Command = z.infer<typeof commandSchema>;
 /** The `cmd` tag on its own, for a caller that only needs the verb. */
 export type CommandName = Command['cmd'];
 
+/** Commands whose `id` belongs to the payload rather than to correlation. */
+export const PAYLOAD_ID_COMMAND_NAMES = [
+  'expression',
+  'overlay',
+  'gesture',
+  'perform',
+  'avatar',
+  'room',
+  'backdrop',
+  'deck',
+] as const satisfies readonly CommandName[];
+
+export type PayloadIdCommandName = (typeof PAYLOAD_ID_COMMAND_NAMES)[number];
+
+/** Set form for callers that need to test a command tag while stamping it. */
+export const PAYLOAD_ID_COMMANDS: ReadonlySet<PayloadIdCommandName> = new Set(
+  PAYLOAD_ID_COMMAND_NAMES,
+);
+
+export function isPayloadIdCommand(
+  command: Command,
+): command is Extract<Command, { cmd: PayloadIdCommandName }>;
+export function isPayloadIdCommand(command: CommandName): boolean;
+export function isPayloadIdCommand(command: Command | CommandName): boolean {
+  const name = typeof command === 'string' ? command : command.cmd;
+  return PAYLOAD_ID_COMMANDS.has(name as PayloadIdCommandName);
+}
+
 /**
  * Parse one command, returning null rather than throwing.
  *
@@ -195,7 +235,8 @@ export type CommandName = Command['cmd'];
  * degrade rather than crash the stream: the command it does not understand is
  * dropped and everything else keeps flowing. Unknown *fields* are stripped for
  * the same reason, so a command that gained an argument upstream still applies
- * here, minus the argument.
+ * here, minus the argument. Operation groups whose keys select a named action,
+ * such as `tune`, are strict so a typo cannot look like a successful no-op.
  */
 export function parseCommand(value: unknown): Command | null {
   const parsed = commandSchema.safeParse(value);

@@ -25,16 +25,13 @@ const typedIdSchema = z
 const legacyIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/);
 
 /** BGM filenames are flat, direct-directory ids, just like the BGM endpoint. */
-const bgmTrackSchema = z
+export const bgmTrackIdSchema = z
   .string()
   .min(1)
   .max(255)
   .refine((value) => {
     if (value.startsWith('.') || /[/\\[\]]/u.test(value)) return false;
-    return [...value].every((character) => {
-      const code = character.codePointAt(0) ?? 0;
-      return code >= 0x20 && code !== 0x7f;
-    });
+    return !/\p{Cc}/u.test(value);
   }, 'invalid BGM filename')
   .regex(/\.(?:mp3|flac)$/iu, 'BGM tracks must be .mp3 or .flac');
 
@@ -57,7 +54,7 @@ export const inlineCueActionSchema = z.union([
     .object({
       kind: z.literal('bgm'),
       action: z.literal('play'),
-      track: bgmTrackSchema.optional(),
+      track: bgmTrackIdSchema.optional(),
     })
     .strict(),
   z.object({ kind: z.literal('bgm'), action: z.enum(['pause', 'stop']) }).strict(),

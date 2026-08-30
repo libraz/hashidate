@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { bgmActionSchema } from '../cues';
+import { bgmActionSchema, bgmTrackIdSchema } from '../cues';
 import { correlationId } from './primitives';
 
 /**
@@ -42,40 +42,36 @@ export const BGM_FADE_DEFAULT_IN_SECONDS = BGM_FADE_DEFAULTS.inSeconds;
 export const BGM_FADE_DEFAULT_OUT_SECONDS = BGM_FADE_DEFAULTS.outSeconds;
 
 /** Fully resolved transition settings kept by the server and sent to viewers. */
-export const bgmFadeSchema = z
-  .object({
-    inSeconds: z
-      .number()
-      .finite()
-      .min(BGM_FADE_LIMITS.inSeconds.min)
-      .max(BGM_FADE_LIMITS.inSeconds.max),
-    outSeconds: z
-      .number()
-      .finite()
-      .min(BGM_FADE_LIMITS.outSeconds.min)
-      .max(BGM_FADE_LIMITS.outSeconds.max),
-  })
-  .strict();
+export const bgmFadeSchema = z.object({
+  inSeconds: z
+    .number()
+    .finite()
+    .min(BGM_FADE_LIMITS.inSeconds.min)
+    .max(BGM_FADE_LIMITS.inSeconds.max),
+  outSeconds: z
+    .number()
+    .finite()
+    .min(BGM_FADE_LIMITS.outSeconds.min)
+    .max(BGM_FADE_LIMITS.outSeconds.max),
+});
 
 export type BgmFade = z.infer<typeof bgmFadeSchema>;
 
 /** Partial crossfade settings; absent fields retain their server-side values. */
-export const bgmFadePatchSchema = z
-  .object({
-    inSeconds: z
-      .number()
-      .finite()
-      .min(BGM_FADE_LIMITS.inSeconds.min)
-      .max(BGM_FADE_LIMITS.inSeconds.max)
-      .optional(),
-    outSeconds: z
-      .number()
-      .finite()
-      .min(BGM_FADE_LIMITS.outSeconds.min)
-      .max(BGM_FADE_LIMITS.outSeconds.max)
-      .optional(),
-  })
-  .strict();
+export const bgmFadePatchSchema = z.object({
+  inSeconds: z
+    .number()
+    .finite()
+    .min(BGM_FADE_LIMITS.inSeconds.min)
+    .max(BGM_FADE_LIMITS.inSeconds.max)
+    .optional(),
+  outSeconds: z
+    .number()
+    .finite()
+    .min(BGM_FADE_LIMITS.outSeconds.min)
+    .max(BGM_FADE_LIMITS.outSeconds.max)
+    .optional(),
+});
 
 export type BgmFadePatch = z.infer<typeof bgmFadePatchSchema>;
 
@@ -94,39 +90,32 @@ export const BGM_DSP_DEFAULTS = {
 } as const;
 
 /** The fully resolved BGM DSP state, matching the Mixer controls. */
-export const bgmDspSchema = z
-  .object({
-    toneDb: z.number().min(-6).max(6),
-    compression: z.number().min(0).max(1),
-    width: z.number().min(0).max(2),
-    reverb: z
-      .object({
-        mix: z.number().min(0).max(0.5),
-        decay: z.number().min(0).max(0.9),
-        damping: z.number().min(0).max(1),
-      })
-      .strict(),
-  })
-  .strict();
+export const bgmDspSchema = z.object({
+  toneDb: z.number().min(-6).max(6),
+  compression: z.number().min(0).max(1),
+  width: z.number().min(0).max(2),
+  reverb: z.object({
+    mix: z.number().min(0).max(0.5),
+    decay: z.number().min(0).max(0.9),
+    damping: z.number().min(0).max(1),
+  }),
+});
 
 export type BgmDsp = z.infer<typeof bgmDspSchema>;
 
-/** A strict partial patch for one or more independent BGM DSP controls. */
-export const bgmDspPatchSchema = z
-  .object({
-    toneDb: z.number().min(-6).max(6).optional(),
-    compression: z.number().min(0).max(1).optional(),
-    width: z.number().min(0).max(2).optional(),
-    reverb: z
-      .object({
-        mix: z.number().min(0).max(0.5).optional(),
-        decay: z.number().min(0).max(0.9).optional(),
-        damping: z.number().min(0).max(1).optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict();
+/** A partial patch for one or more independent BGM DSP controls. */
+export const bgmDspPatchSchema = z.object({
+  toneDb: z.number().min(-6).max(6).optional(),
+  compression: z.number().min(0).max(1).optional(),
+  width: z.number().min(0).max(2).optional(),
+  reverb: z
+    .object({
+      mix: z.number().min(0).max(0.5).optional(),
+      decay: z.number().min(0).max(0.9).optional(),
+      damping: z.number().min(0).max(1).optional(),
+    })
+    .optional(),
+});
 
 export type BgmDspPatch = z.infer<typeof bgmDspPatchSchema>;
 
@@ -148,7 +137,7 @@ export const bgmCommandSchema = z.object({
   cmd: z.literal('bgm'),
   id: correlationId,
   action: bgmActionSchema.optional(),
-  track: z.string().nullable().optional(),
+  track: bgmTrackIdSchema.nullable().optional(),
   volume: z.number().finite().min(0).max(1).optional(),
   loop: z.boolean().optional(),
   /** A partial libsonare Mixer DSP patch; omitted leaves the active chain unchanged. */

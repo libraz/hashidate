@@ -2,6 +2,8 @@ import { z } from 'zod';
 import type { MotionArm, MotionDef, MotionFrame } from '../engine/motion';
 import type { GestureGroup, SpineSlot } from '../engine/types';
 import { type Equals, type Expect, fingerNameSchema, sideSchema } from './commands';
+import { localizedSchema } from './messages/primitives';
+import { gestureGroupSchema } from './messages/session';
 
 /**
  * Motions the operator wrote, on their way from the control server to the
@@ -21,7 +23,6 @@ import { type Equals, type Expect, fingerNameSchema, sideSchema } from './comman
 /** Character space: x outward from the midline, y up, z forward. */
 const vec3 = z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]);
 
-const gestureGroupSchema = z.enum(['reaction', 'greeting', 'explain', 'emote', 'cute', 'pose']);
 type _GestureGroupsMatchEngine = Expect<Equals<z.infer<typeof gestureGroupSchema>, GestureGroup>>;
 
 const spineSlotSchema = z.enum(['hips', 'spine', 'chest', 'neck', 'head']);
@@ -81,7 +82,7 @@ export const MOTION_MAX_FRAMES = 240;
  * the directory listing says.
  */
 const motionFields = z.object({
-  label: z.object({ en: z.string(), ja: z.string() }),
+  label: localizedSchema,
   group: gestureGroupSchema,
   lead: z.number().finite().min(0).max(MOTION_MAX_SECONDS),
   hold: z.number().finite().min(0).max(MOTION_MAX_SECONDS),

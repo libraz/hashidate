@@ -5,6 +5,7 @@ import { labelledIdSchema } from './primitives';
 import { queueEntrySchema } from './queue';
 import { recordingSchema } from './recording';
 import {
+  avatarStatusSchema,
   placementReportSchema,
   slideReportSchema,
   tuningSchema,
@@ -83,6 +84,8 @@ export const snapshotSchema = z.object({
   state: sessionStateSchema.partial(),
   vocabulary: vocabularySchema.partial(),
   events: z.array(sessionEventSchema),
+  /** The renderer's avatar lifecycle, if a renderer has reported one. */
+  avatar: avatarStatusSchema.nullable().optional(),
   /** What the voice is running. Null until a viewer with a voice has reported. */
   voice: voiceReportSchema.nullable(),
   /** What the set-once layer is running. Null until a viewer has reported. */
