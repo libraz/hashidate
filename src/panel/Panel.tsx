@@ -4,6 +4,7 @@ import type { SpeechState } from '@/protocol';
 import { LocaleSwitch } from '@/ui/LocaleSwitch';
 import { Segmented } from '@/ui/Segmented';
 import { clear, interrupt } from './api';
+import { BgmTab } from './bgm/BgmTab';
 import { DressTab } from './dress/DressTab';
 import { EMPTY, useRuntime } from './hooks';
 import { InspectTab } from './inspect/InspectTab';
@@ -41,19 +42,28 @@ import { VoiceTab } from './voice/VoiceTab';
 /**
  * The tabs, in the order a broadcast uses them.
  *
- * The first five are touched during one: the script, the take being recorded,
- * the acting, the voice, and the document being presented — a page is turned
- * between two sentences, which puts the slides with the live half rather than
- * with the setup half. The last three are set before it and looked at when
- * something is wrong — a costume, the layer underneath the character, and the
- * readouts. The four names borrowed from the console are the console's,
+ * The first six are touched during one: the script, the take being recorded,
+ * the acting, the voice, the music, and the document being presented — a page
+ * is turned between two sentences, which puts the slides with the live half
+ * rather than with the setup half. The last three are set before it and looked
+ * at when something is wrong — a costume, the layer underneath the character,
+ * and the readouts. The four names borrowed from the console are the console's,
  * deliberately: an operator moving between the two screens should not have to
  * learn a second vocabulary for the same jobs.
  *
  * Recording sits second because it is where a segment *begins*: a script is
  * loaded there, and what it puts on the queue is what the first tab then shows.
  */
-type Tab = 'queue' | 'record' | 'perform' | 'voice' | 'slides' | 'dress' | 'tune' | 'inspect';
+type Tab =
+  | 'queue'
+  | 'record'
+  | 'perform'
+  | 'voice'
+  | 'bgm'
+  | 'slides'
+  | 'dress'
+  | 'tune'
+  | 'inspect';
 
 /**
  * What the header says about the voice, per state, and null for the two states
@@ -78,6 +88,7 @@ const TAB_LABELS: Array<{ value: Tab; key: MessageKey }> = [
   { value: 'record', key: 'panel.tabs.record' },
   { value: 'perform', key: 'panel.tabs.perform' },
   { value: 'voice', key: 'panel.tabs.voice' },
+  { value: 'bgm', key: 'panel.tabs.bgm' },
   { value: 'slides', key: 'panel.tabs.slides' },
   { value: 'dress', key: 'panel.tabs.dress' },
   { value: 'tune', key: 'panel.tabs.tune' },
@@ -195,6 +206,7 @@ export function Panel() {
           {tab === 'record' ? <RecordTab snapshot={data} refresh={refresh} /> : null}
           {tab === 'perform' ? <PerformTab snapshot={data} refresh={refresh} /> : null}
           {tab === 'voice' ? <VoiceTab snapshot={data} refresh={refresh} /> : null}
+          {tab === 'bgm' ? <BgmTab snapshot={data} refresh={refresh} /> : null}
           {tab === 'slides' ? <SlidesTab snapshot={data} refresh={refresh} /> : null}
           {tab === 'dress' ? <DressTab snapshot={data} refresh={refresh} /> : null}
           {tab === 'tune' ? <TuneTab snapshot={data} /> : null}

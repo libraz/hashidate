@@ -44,6 +44,13 @@ describe('the catalogues', () => {
       expect(placeholders(CATALOGS.ja[key]), key).toEqual(placeholders(CATALOGS.en[key]));
     }
   });
+
+  it('includes the BGM controls in both operator languages', () => {
+    expect(CATALOGS.en['panel.tabs.bgm']).toBe('BGM');
+    expect(CATALOGS.ja['panel.tabs.bgm']).toBe('BGM');
+    expect(CATALOGS.en['panel.bgm.effects.note']).toContain('Voice effects');
+    expect(CATALOGS.ja['panel.bgm.effects.note']).toContain('声');
+  });
 });
 
 describe('translate', () => {

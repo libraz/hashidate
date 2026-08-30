@@ -1,0 +1,137 @@
+/*
+ * BGM is a compact operator surface: the roster, transport and six DSP leaves
+ * stay in one reading order, using the panel's existing tokens and controls.
+ */
+
+.tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.empty {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-5) var(--space-4);
+  text-align: center;
+  color: var(--fg-faint);
+  font-size: var(--text-sm);
+  line-height: 1.8;
+  border: 1px dashed var(--line-soft);
+  border-radius: var(--radius-md);
+}
+
+.selected {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.selectedName {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.selectedName strong {
+  overflow: hidden;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selectedName span {
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+}
+
+.timeline {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-2);
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.transport {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.action,
+.reset {
+  min-height: var(--control-height);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.action:hover:not(:disabled),
+.reset:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent-edge);
+  color: var(--fg);
+}
+
+.primary {
+  background: var(--accent-tint);
+  border-color: var(--accent-edge);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.action:disabled,
+.reset:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.reset {
+  margin-top: var(--space-3);
+  background: transparent;
+}
+
+.error,
+.warning {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+}
+
+.error {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 28%, var(--line));
+  background: color-mix(in srgb, var(--bad) 10%, var(--surface-raised));
+}
+
+.warning {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 28%, var(--line));
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface-raised));
+}

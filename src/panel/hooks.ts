@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Snapshot } from '@/protocol';
+import {
+  BGM_DEFAULT_LOOP,
+  BGM_DEFAULT_VOLUME,
+  BGM_DSP_DEFAULTS,
+  type BgmState,
+  type Snapshot,
+} from '@/protocol';
 import { isFailure, POLL_INTERVAL, readState } from './api';
 
 /**
@@ -22,6 +28,25 @@ export interface Runtime {
   /** Re-read now, without waiting for the timer. Every mutation calls it. */
   refresh: () => void;
 }
+
+/** A stable first render, even before a renderer has reported BGM state. */
+const EMPTY_BGM: BgmState = {
+  track: null,
+  volume: BGM_DEFAULT_VOLUME,
+  loop: BGM_DEFAULT_LOOP,
+  dsp: {
+    ...BGM_DSP_DEFAULTS,
+    reverb: { ...BGM_DSP_DEFAULTS.reverb },
+  },
+  transport: 'stopped',
+  position: 0,
+  revision: 0,
+  at: 0,
+  duration: null,
+  blocked: false,
+  error: null,
+  dspDegraded: false,
+};
 
 /**
  * An empty snapshot is not the same as no snapshot.
@@ -47,6 +72,8 @@ export const EMPTY: Snapshot = {
   queue: [],
   paused: false,
   recording: null,
+  bgm: EMPTY_BGM,
+  bgmTracks: [],
 };
 
 export function useRuntime(): Runtime {

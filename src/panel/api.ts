@@ -1,6 +1,8 @@
 import type { EmotionVector, FingerName, Placement, Side, SlidePlacement } from '@/engine/types';
 import { getLocale, translate } from '@/i18n';
 import type {
+  BgmCommand,
+  BgmResponse,
   Command,
   DecksResponse,
   HistoryResponse,
@@ -117,6 +119,9 @@ export const readDecks = (): Promise<DecksResponse | Failure> => request<DecksRe
  */
 export const readScripts = (): Promise<ScriptsResponse | Failure> =>
   request<ScriptsResponse>('/scripts');
+
+/** The BGM files on disk, rescanned for this request. */
+export const readBgm = (): Promise<BgmResponse | Failure> => request<BgmResponse>('/bgm');
 
 // --- running a script -------------------------------------------------------
 
@@ -248,6 +253,16 @@ export const setCamera = (shot: Shot): Promise<unknown> => send({ cmd: 'camera',
 
 export const setVoice = (preset: string | null | undefined, dsp?: VoiceDsp): Promise<unknown> =>
   send({ cmd: 'voice', ...(preset === undefined ? {} : { preset }), ...(dsp ? { dsp } : {}) });
+
+/**
+ * Send BGM intent through the same canonical command endpoint as every other
+ * panel control. Synchronisation fields are deliberately not accepted here:
+ * the server owns the revision and timeline, while this helper only sends
+ * selection, transport, level, loop and independent DSP patches.
+ */
+export type BgmIntent = Pick<BgmCommand, 'action' | 'track' | 'volume' | 'loop' | 'dsp'>;
+
+export const setBgm = (intent: BgmIntent): Promise<unknown> => send({ cmd: 'bgm', ...intent });
 
 // --- the stage --------------------------------------------------------------
 

@@ -14,6 +14,7 @@ export const panelEn = {
   'panel.tabs.record': 'Recording',
   'panel.tabs.perform': 'Perform',
   'panel.tabs.voice': 'Voice',
+  'panel.tabs.bgm': 'BGM',
   'panel.tabs.slides': 'Slides',
   'panel.tabs.dress': 'Dress',
   'panel.tabs.tune': 'Tune',
@@ -252,7 +253,7 @@ export const panelEn = {
   'panel.slides.layout.note1':
     'The camera does not move. What moves is where the character’s picture sits in the frame and how large it is; the framing and the performance come out as they were shot.',
   'panel.slides.layout.note2':
-    'At a size of 1.00 the picture fills the frame, so the position has nowhere to move it. Bring the size down first.',
+    'Choosing a position away from centre while the picture fills the frame automatically scales it to the standard broadcast scale of 0.32, so the anchor has room to work.',
   'panel.slides.stand': 'Position',
   'panel.slides.stand.aria': 'Where the character stands',
   'panel.slides.size': 'Size',
@@ -423,6 +424,54 @@ export const panelEn = {
   'panel.voice.wet': 'Processed amount',
   'panel.voice.ceiling': 'Limiter ceiling',
 
+  // --- background music -----------------------------------------------------
+  'panel.bgm.title': 'Background music',
+  'panel.bgm.note1':
+    'Tracks are read from show/bgm/. Put an MP3 or FLAC there, then press Rescan; the runtime keeps the files outside the build and serves them only on loopback.',
+  'panel.bgm.note2':
+    'BGM is its own stream. Its volume and effects do not change the voice chain or the room applied to speech.',
+  'panel.bgm.rescan': 'Rescan',
+  'panel.bgm.rescan.title': 'Read the BGM directory again',
+  'panel.bgm.empty': 'No MP3 or FLAC tracks. Put one in show/bgm/ and press Rescan.',
+  'panel.bgm.missing':
+    'The selected track is no longer in the BGM directory. Rescan to update the list.',
+  'panel.bgm.none': 'No track selected',
+  'panel.bgm.selected': 'Selected',
+  'panel.bgm.status.playing': 'Playing',
+  'panel.bgm.status.paused': 'Paused',
+  'panel.bgm.status.stopped': 'Stopped',
+  'panel.bgm.status.ended': 'Ended',
+  'panel.bgm.play': 'Play / restart',
+  'panel.bgm.play.title': 'Play the selected track from its beginning',
+  'panel.bgm.pause': 'Pause',
+  'panel.bgm.pause.title': 'Pause the selected track where it is',
+  'panel.bgm.resume': 'Resume',
+  'panel.bgm.resume.title': 'Resume the selected track where it is paused',
+  'panel.bgm.stop': 'Stop',
+  'panel.bgm.stop.title': 'Stop and return the selected track to its beginning',
+  'panel.bgm.unload': 'Unload',
+  'panel.bgm.unload.title': 'Take the selected track out of the player',
+  'panel.bgm.position': 'Position',
+  'panel.bgm.volume': 'Volume',
+  'panel.bgm.loop': 'Loop',
+  'panel.bgm.loop.title': 'Repeat the selected track after it ends',
+  'panel.bgm.effects': 'Effects — BGM only',
+  'panel.bgm.effects.note':
+    'These controls are the libsonare insert chain for BGM. Voice effects and the room are unaffected.',
+  'panel.bgm.tone': 'Tone',
+  'panel.bgm.compression': 'Compression',
+  'panel.bgm.width': 'Stereo width',
+  'panel.bgm.reverbMix': 'Reverb mix',
+  'panel.bgm.reverbDecay': 'Reverb decay',
+  'panel.bgm.damping': 'Damping',
+  'panel.bgm.resetEffects': 'Reset effects',
+  'panel.bgm.resetEffects.title': 'Reset the BGM libsonare effects to their defaults',
+  'panel.bgm.blocked':
+    'BGM audio is blocked. Interact with the audible stage or OBS source once; do not click the muted preview.',
+  'panel.bgm.degraded':
+    'BGM effects are running dry because the libsonare DSP path is unavailable. Voice effects and room are unaffected.',
+  'panel.bgm.error': 'BGM playback error',
+
   // --- what the last line measured -------------------------------------------
   'panel.meters.loudness': 'Loudness',
   'panel.meters.target': 'Target {value} LUFS',
@@ -483,6 +532,7 @@ export const panelJa: Record<keyof typeof panelEn, string> = {
   'panel.tabs.record': '録画',
   'panel.tabs.perform': '演じる',
   'panel.tabs.voice': '音声',
+  'panel.tabs.bgm': 'BGM',
   'panel.tabs.slides': '資料',
   'panel.tabs.dress': '装う',
   'panel.tabs.tune': '調律',
@@ -704,7 +754,7 @@ export const panelJa: Record<keyof typeof panelEn, string> = {
   'panel.slides.layout.note1':
     'カメラは動きません。動かしているのは画面の中でキャラクターの絵が占める場所と大きさで、画角も演技も撮られたときのまま出ます。',
   'panel.slides.layout.note2':
-    '大きさが 1.00 のままだと絵は画面いっぱいなので、立ち位置には動く先がありません。先に大きさを下げてください。',
+    '絵が画面いっぱいのとき中央以外を選ぶと、立ち位置を効かせるため、配信の標準倍率である 0.32 に自動で縮めます。',
   'panel.slides.stand': '立ち位置',
   'panel.slides.stand.aria': 'キャラクターの位置',
   'panel.slides.size': '大きさ',
@@ -866,6 +916,53 @@ export const panelJa: Record<keyof typeof panelEn, string> = {
   'panel.voice.outputGain': '出力ゲイン',
   'panel.voice.wet': '加工量',
   'panel.voice.ceiling': 'リミッター天井',
+
+  'panel.bgm.title': 'BGM',
+  'panel.bgm.note1':
+    '曲は show/bgm/ から読み込みます。MP3 か FLAC を置いて「再読込」を押してください。実行時のファイルはビルドの外にあり、ループバックからだけ配信されます。',
+  'panel.bgm.note2':
+    'BGM は独立した音声です。音量とエフェクトは、声のチェーンや声にかかる部屋の響きを変えません。',
+  'panel.bgm.rescan': '再読込',
+  'panel.bgm.rescan.title': 'BGM ディレクトリを読み直す',
+  'panel.bgm.empty': 'MP3 / FLAC がありません。show/bgm/ に置いて「再読込」を押してください。',
+  'panel.bgm.missing':
+    '選択中の曲が BGM ディレクトリからなくなっています。再読込で一覧を更新してください。',
+  'panel.bgm.none': '曲を選択していません',
+  'panel.bgm.selected': '選択中',
+  'panel.bgm.status.playing': '再生中',
+  'panel.bgm.status.paused': '一時停止中',
+  'panel.bgm.status.stopped': '停止中',
+  'panel.bgm.status.ended': '再生終了',
+  'panel.bgm.play': '再生 / 最初から',
+  'panel.bgm.play.title': '選択した曲を最初から再生する',
+  'panel.bgm.pause': '一時停止',
+  'panel.bgm.pause.title': '選択した曲をその位置で一時停止する',
+  'panel.bgm.resume': '再開',
+  'panel.bgm.resume.title': '一時停止した位置から選択した曲を再開する',
+  'panel.bgm.stop': '停止',
+  'panel.bgm.stop.title': '選択した曲を停止して最初に戻す',
+  'panel.bgm.unload': '取り外す',
+  'panel.bgm.unload.title': '選択した曲をプレーヤーから外す',
+  'panel.bgm.position': '位置',
+  'panel.bgm.volume': '音量',
+  'panel.bgm.loop': 'ループ',
+  'panel.bgm.loop.title': '曲が終わったら選択した曲を繰り返す',
+  'panel.bgm.effects': 'エフェクト — BGM のみ',
+  'panel.bgm.effects.note':
+    'ここは BGM 用 libsonare インサートチェーンの操作です。声のエフェクトと部屋の響きには影響しません。',
+  'panel.bgm.tone': '音色',
+  'panel.bgm.compression': 'コンプレッション',
+  'panel.bgm.width': 'ステレオ幅',
+  'panel.bgm.reverbMix': '残響ミックス',
+  'panel.bgm.reverbDecay': '残響の減衰',
+  'panel.bgm.damping': 'ダンピング',
+  'panel.bgm.resetEffects': 'エフェクトを初期化',
+  'panel.bgm.resetEffects.title': 'BGM の libsonare エフェクトを既定値に戻す',
+  'panel.bgm.blocked':
+    'BGM の音声がブロックされています。ミュートされたプレビューではなく、音の出るステージか OBS ソースを一度操作してください。',
+  'panel.bgm.degraded':
+    'libsonare の DSP 経路が使えないため、BGM エフェクトなしで再生しています。声のエフェクトと部屋の響きには影響しません。',
+  'panel.bgm.error': 'BGM 再生エラー',
 
   'panel.meters.loudness': 'ラウドネス',
   'panel.meters.target': '目安 {value} LUFS',
