@@ -1,6 +1,11 @@
 import wasmUrl from '@libraz/libsonare/wasm?url';
-import type { BgmCommand, BgmDsp, BgmReport, BgmTransport } from '@/protocol';
-import { BGM_DEFAULT_LOOP, BGM_DEFAULT_VOLUME, BGM_DSP_DEFAULTS } from '@/protocol';
+import type { BgmCommand, BgmDsp, BgmFade, BgmReport, BgmTransport } from '@/protocol';
+import {
+  BGM_DEFAULT_LOOP,
+  BGM_DEFAULT_VOLUME,
+  BGM_DSP_DEFAULTS,
+  BGM_FADE_DEFAULTS,
+} from '@/protocol';
 import type { BrowserAudioOutput } from './audio-output';
 import { type BgmDspPlan, buildBgmDspPlan, mergeBgmDsp } from './bgm-dsp';
 import bgmWorkletUrl from './bgm-worklet.ts?worker&url';
@@ -37,12 +42,39 @@ export interface BrowserBgmOptions {
 
 type LegacyBrowserBgmOptions = Omit<BrowserBgmOptions, 'output'>;
 
+interface EnvelopeState {
+  from: number;
+  to: number;
+  start: number;
+  duration: number;
+}
+
+interface TrackRoute {
+  readonly epoch: number;
+  readonly track: string;
+  readonly audio: HTMLAudioElement;
+  readonly source: MediaElementAudioSourceNode;
+  readonly envelope: GainNode;
+  envelopeState: EnvelopeState;
+  retired: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+  started: boolean;
+}
+
+interface PendingSwitch {
+  incomingEpoch: number;
+  outgoing: TrackRoute[];
+  fade: BgmFade;
+}
+
 /**
  * The browser-side BGM transport.
  *
- * The server's revision/position/at fields are authoritative. The HTML audio
- * element supplies streaming and seeking while a separate libsonare Mixer
- * worklet handles the BGM strip; it never enters BrowserVoice's DSP or room.
+ * The server's revision/position/at fields are authoritative. Every media
+ * source enters its own envelope, then a persistent mix bus feeds one shared
+ * libsonare Mixer worklet (or its dry fallback) and finally the BGM bus. The
+ * mix is deliberately separate from voice and the final master remains the
+ * only renderer mute point.
  */
 export class BrowserBgm {
   private readonly output: BrowserAudioOutput;
@@ -55,19 +87,24 @@ export class BrowserBgm {
   private readonly suppliedPlan: BrowserBgmOptions['dspPlan'];
   private readonly onReport?: (report: BgmReport) => void;
   private readonly offUnlock: (() => void) | null;
+  /** All track envelopes feed this one persistent route into BGM DSP. */
+  private readonly mixBus: GainNode;
+  private readonly routes = new Set<TrackRoute>();
 
-  private audio: HTMLAudioElement | null = null;
-  private source: MediaElementAudioSourceNode | null = null;
+  private currentRoute: TrackRoute | null = null;
+  private pendingSwitch: PendingSwitch | null = null;
   private dspNode: AudioWorkletNode | null = null;
   private plan: BgmDspPlan | null = null;
   private workletLoad: Promise<void> | null = null;
   private wasmLoad: Promise<ArrayBuffer> | null = null;
   private workletInitialized = false;
-  /** Invalidates every async DSP install when the source route changes. */
+  /** Invalidates every async shared DSP install when its route is rebuilt. */
   private dspGeneration = 0;
+  private dspInstall: Promise<void> | null = null;
   private pendingPlay: {
     epoch: number;
-    audio: HTMLAudioElement;
+    route: TrackRoute;
+    generation: number;
     promise: Promise<void>;
   } | null = null;
 
@@ -75,6 +112,7 @@ export class BrowserBgm {
   private volume: number = BGM_DEFAULT_VOLUME;
   private loop: boolean = BGM_DEFAULT_LOOP;
   private dsp: BgmDsp = cloneDsp(BGM_DSP_DEFAULTS);
+  private fade: BgmFade = { ...BGM_FADE_DEFAULTS };
   private transport: BgmTransport = 'stopped';
   private position = 0;
   private positionAt = 0;
@@ -84,6 +122,7 @@ export class BrowserBgm {
   private dspDegraded = false;
   private revision = 0;
   private epoch = 0;
+  private playGeneration = 0;
   private disposed = false;
 
   constructor(options: BrowserBgmOptions);
@@ -110,6 +149,9 @@ export class BrowserBgm {
     this.loadWasm = options.wasmLoader ?? fetchBgmWasm;
     this.suppliedPlan = options.dspPlan;
     this.onReport = options.onReport;
+    this.mixBus = this.output.context.createGain();
+    this.mixBus.gain.value = 1;
+    this.connectDry();
     this.offUnlock = this.output.onUnlock(() => {
       void this.retryPlay();
     });
@@ -125,15 +167,19 @@ export class BrowserBgm {
     this.revision = nextRevision;
     if (revisionChanged) this.dspDegraded = false;
 
+    const previousTransport = this.transport;
+    const previousTrack = this.track;
+
     if (command.volume !== undefined) {
       this.volume = command.volume;
       this.setBusVolume();
     }
     if (command.loop !== undefined) {
       this.loop = command.loop;
-      if (this.audio) this.audio.loop = this.loop;
+      for (const route of this.routes) route.audio.loop = this.loop;
     }
     if (command.dsp !== undefined) this.dsp = mergeBgmDsp(this.dsp, command.dsp);
+    if (command.fade !== undefined) this.fade = mergeFade(this.fade, command.fade);
 
     const selected = command.track === undefined ? undefined : normalizeTrack(command.track);
     const commandTransport = command.transport ?? actionTransport(command.action);
@@ -143,45 +189,96 @@ export class BrowserBgm {
     if (command.position !== undefined || command.at !== undefined) {
       this.position = projected;
       this.positionAt = this.now();
-      this.syncPosition(projected);
+      if (this.currentRoute !== null) this.syncPosition(this.currentRoute, projected);
     }
 
-    if (selected !== undefined && selected !== this.track) {
+    if (selected !== undefined && selected !== previousTrack) {
       mediaChanged = true;
       this.epoch += 1;
+      this.playGeneration += 1;
       const epoch = this.epoch;
-      this.detachMedia();
       this.track = selected;
       this.duration = null;
       this.error = null;
       this.blocked = false;
+      this.currentRoute = null;
       this.position = selected === null ? 0 : projected;
       this.positionAt = this.now();
       if (selected === null) {
+        // Unload is a hard boundary. No old tail or timer may survive it.
+        this.hardUnload();
         this.transport = 'stopped';
         this.emitReport();
       } else {
+        if (command.action === 'stop') {
+          this.hardUnload();
+        } else if (commandTransport === 'playing') {
+          const outgoing = this.chooseOutgoing();
+          this.pendingSwitch = {
+            incomingEpoch: epoch,
+            outgoing,
+            fade: cloneFade(this.fade),
+          };
+          for (const route of [...this.routes]) {
+            if (!outgoing.includes(route)) this.finalizeRoute(route);
+          }
+        } else {
+          const outgoing = this.chooseOutgoing();
+          this.pendingSwitch = null;
+          const at = outgoing.length > 0 ? this.audioTime() : 0;
+          for (const route of [...this.routes]) {
+            if (outgoing.includes(route)) this.retireRouteAt(route, this.fade.outSeconds, at);
+            else this.finalizeRoute(route);
+          }
+        }
+        // A track selection without an explicit transport is a stopped load.
+        if (commandTransport === undefined) this.transport = 'stopped';
         void this.loadTrack(selected, epoch, this.position);
       }
     }
 
-    if (command.action === 'stop') {
+    if (command.action === 'stop' && !mediaChanged) {
       this.stopAtBoundary();
     } else if (!mediaChanged && this.transport === 'playing') {
-      void this.playCurrent(this.epoch);
+      const resumed = previousTransport === 'paused' && previousTrack === this.track;
+      const route = this.currentRoute ?? this.reloadCurrentTrack(previousTransport !== 'paused');
+      if (route !== null && resumed) this.scheduleEnvelope(route, 1, 0);
+      const pending =
+        route !== null && this.pendingSwitch?.incomingEpoch === route.epoch
+          ? this.pendingSwitch
+          : null;
+      void this.playCurrent(
+        route,
+        !resumed && (previousTransport !== 'playing' || route?.started !== true),
+        pending?.fade,
+      );
     } else if (this.transport === 'paused' || this.transport === 'ended') {
-      this.audio?.pause();
+      const route = this.currentRoute;
+      if (this.pendingSwitch !== null) {
+        this.pendingSwitch = null;
+        for (const pending of [...this.routes]) this.finalizeRoute(pending);
+        this.currentRoute = null;
+        this.duration = null;
+      } else if (route !== null) {
+        this.holdEnvelope(route);
+        route.audio.pause();
+      }
+      for (const retired of [...this.routes]) {
+        if (retired !== route) this.finalizeRoute(retired);
+      }
+      this.playGeneration += 1;
+      this.pendingPlay = null;
       this.emitReport();
     }
 
-    // A settings-only DSP patch applies to the existing node without replacing
-    // media. Initial construction also sends the complete macro state.
+    // A settings-only DSP patch applies to the one shared node without
+    // replacing media. The complete resolved macro state is always applied.
     const dspNode = this.dspNode;
     if (dspNode && this.plan && command.dsp !== undefined) {
       try {
         this.plan.apply(dspNode, this.dsp);
       } catch {
-        this.failDsp(this.epoch, dspNode);
+        this.failDsp(this.dspGeneration, dspNode);
       }
     }
     return true;
@@ -190,16 +287,13 @@ export class BrowserBgm {
   /** The last canonical revision and the renderer's diagnostic state. */
   report(): BgmReport {
     const at = this.now();
+    const audio = this.currentRoute?.audio ?? null;
     let position = this.position;
     if (this.transport === 'playing') {
-      const current = this.audio?.currentTime;
+      const current = audio?.currentTime;
       position = Number.isFinite(current) ? Math.max(0, current as number) : this.projectPosition();
-    } else if (
-      this.transport === 'paused' &&
-      this.audio &&
-      Number.isFinite(this.audio.currentTime)
-    ) {
-      position = Math.max(0, this.audio.currentTime);
+    } else if (this.transport === 'paused' && audio && Number.isFinite(audio.currentTime)) {
+      position = Math.max(0, audio.currentTime);
     }
     return {
       revision: this.revision,
@@ -221,8 +315,17 @@ export class BrowserBgm {
     if (this.disposed) return;
     this.disposed = true;
     this.epoch += 1;
+    this.playGeneration += 1;
+    this.pendingSwitch = null;
+    this.dspGeneration += 1;
+    this.dspInstall = null;
     this.offUnlock?.();
-    this.detachMedia();
+    for (const route of [...this.routes]) this.finalizeRoute(route);
+    this.currentRoute = null;
+    destroyNode(this.dspNode);
+    this.dspNode = null;
+    this.plan = null;
+    safeDisconnect(this.mixBus);
   }
 
   get currentTrack(): string | null {
@@ -241,9 +344,16 @@ export class BrowserBgm {
     return this.dspDegraded;
   }
 
-  private async loadTrack(track: string, epoch: number, position: number): Promise<void> {
-    let audio: HTMLAudioElement;
-    let generation = 0;
+  private async loadTrack(
+    track: string,
+    epoch: number,
+    position: number,
+    fadeIn = true,
+  ): Promise<void> {
+    let audio: HTMLAudioElement | null = null;
+    let source: MediaElementAudioSourceNode | null = null;
+    let envelope: GainNode | null = null;
+    let route: TrackRoute | null = null;
     try {
       audio = this.makeAudio();
       audio.preload = 'auto';
@@ -252,15 +362,38 @@ export class BrowserBgm {
       // final master owns the immutable renderer mute.
       audio.volume = 1;
       audio.src = `${this.base}/${encodeURIComponent(track)}`;
-      const source = this.output.context.createMediaElementSource(audio);
-      source.connect(this.output.bgmBus);
-      this.audio = audio;
-      this.source = source;
-      generation = ++this.dspGeneration;
-      this.bindMediaEvents(audio, epoch);
-      this.syncPosition(position);
+      source = this.output.context.createMediaElementSource(audio);
+      envelope = this.output.context.createGain();
+      envelope.gain.value = 0;
+      source.connect(envelope);
+      envelope.connect(this.mixBus);
+      route = {
+        epoch,
+        track,
+        audio,
+        source,
+        envelope,
+        envelopeState: { from: 0, to: 0, start: this.audioTime(), duration: 0 },
+        retired: false,
+        timer: null,
+        started: false,
+      };
+      this.routes.add(route);
+      if (epoch !== this.epoch || this.disposed || this.track !== track) {
+        this.finalizeRoute(route);
+        return;
+      }
+      this.currentRoute = route;
+      this.bindMediaEvents(route);
+      this.syncPosition(route, position);
       audio.load();
     } catch (reason) {
+      if (route !== null) this.finalizeRoute(route);
+      else {
+        safeDisconnect(envelope);
+        safeDisconnect(source);
+        cleanupAudio(audio);
+      }
       if (epoch !== this.epoch) return;
       this.error = reason instanceof Error ? reason.message : String(reason);
       this.emitReport();
@@ -268,31 +401,46 @@ export class BrowserBgm {
     }
 
     // Dry audio is already connected. A successful worklet replaces that edge;
-    // a failed worklet leaves media playing and marks only the DSP degraded.
-    void this.installDsp(epoch, generation);
-    if (this.transport === 'playing') void this.playCurrent(epoch);
+    // a failed worklet leaves the shared mix playing and marks only DSP degraded.
+    this.installDsp();
+    const pending = this.pendingSwitch?.incomingEpoch === epoch ? this.pendingSwitch : null;
+    if (this.transport === 'playing' && route !== null)
+      void this.playCurrent(route, fadeIn, pending?.fade);
     this.emitReport();
   }
 
-  private bindMediaEvents(audio: HTMLAudioElement, epoch: number): void {
+  private bindMediaEvents(route: TrackRoute): void {
+    const { audio } = route;
     audio.onloadedmetadata = () => {
-      if (epoch !== this.epoch || this.audio !== audio) return;
+      if (!this.isCurrent(route)) return;
       this.duration = finiteDuration(audio.duration);
-      this.syncPosition(this.position);
+      this.syncPosition(route, this.position);
       this.emitReport();
     };
     audio.onerror = () => {
-      if (epoch !== this.epoch || this.audio !== audio) return;
+      if (!this.isCurrent(route)) return;
       this.error = mediaError(audio);
       this.blocked = false;
       this.emitReport();
     };
     audio.onended = () => {
-      if (epoch !== this.epoch || this.audio !== audio) return;
+      route.started = false;
+      if (route.retired) {
+        this.finalizeRoute(route);
+        return;
+      }
+      if (this.pendingSwitch?.outgoing.includes(route)) {
+        this.pendingSwitch.outgoing = this.pendingSwitch.outgoing.filter(
+          (candidate) => candidate !== route,
+        );
+        this.finalizeRoute(route);
+        return;
+      }
+      if (!this.isCurrent(route)) return;
       if (this.loop) {
         this.position = 0;
-        this.syncPosition(0);
-        if (this.transport === 'playing') void this.playCurrent(epoch);
+        this.syncPosition(route, 0);
+        if (this.transport === 'playing') void this.playCurrent(route, false);
         return;
       }
       this.position = 0;
@@ -302,44 +450,40 @@ export class BrowserBgm {
     };
   }
 
-  private async installDsp(epoch: number, generation: number): Promise<void> {
-    if (this.source === null || this.track === null) return;
-    const source = this.source;
+  /** Install one shared worklet route for every overlapping track. */
+  private installDsp(): void {
+    if (this.disposed || this.dspNode !== null || this.dspInstall !== null) return;
+    const generation = this.dspGeneration;
+    const task = this.installDspAsync(generation);
+    let tracked: Promise<void>;
+    tracked = task.finally(() => {
+      if (this.dspInstall === tracked) this.dspInstall = null;
+    });
+    this.dspInstall = tracked;
+  }
+
+  private async installDspAsync(generation: number): Promise<void> {
     let plan: BgmDspPlan;
     try {
       plan = await this.getPlan();
       await this.ensureWorklet();
-      if (
-        epoch !== this.epoch ||
-        generation !== this.dspGeneration ||
-        this.source !== source ||
-        this.disposed
-      )
-        return;
+      if (generation !== this.dspGeneration || this.disposed) return;
       const node = await this.createDspNode(plan.sceneJson);
-      if (
-        epoch !== this.epoch ||
-        generation !== this.dspGeneration ||
-        this.source !== source ||
-        this.disposed
-      ) {
+      if (generation !== this.dspGeneration || this.disposed) {
         destroyNode(node);
         return;
       }
-      // A media source has exactly one active edge. The generation check above
-      // prevents an older async install from restoring a stale DSP connection.
       if (this.dspNode !== null && this.dspNode !== node) destroyNode(this.dspNode);
-      source.disconnect();
-      source.connect(node);
+      safeDisconnect(this.mixBus);
+      this.mixBus.connect(node);
       node.connect(this.output.bgmBus);
       this.dspNode = node;
       this.plan = plan;
-      attachProcessorError(node, () => this.failDsp(epoch, node));
+      attachProcessorError(node, () => this.failDsp(generation, node));
       plan.apply(node, this.dsp);
       this.emitReport();
     } catch {
-      if (epoch === this.epoch && generation === this.dspGeneration && this.source === source)
-        this.failDsp(epoch);
+      if (generation === this.dspGeneration && !this.disposed) this.failDsp(generation);
     }
   }
 
@@ -395,13 +539,23 @@ export class BrowserBgm {
     return this.wasmLoad;
   }
 
-  private async playCurrent(epoch: number): Promise<void> {
-    const audio = this.audio;
-    if (audio === null || epoch !== this.epoch || this.transport !== 'playing') return;
+  private async playCurrent(
+    route: TrackRoute | null,
+    fadeIn: boolean,
+    switchFade?: BgmFade,
+  ): Promise<void> {
+    if (route === null || !this.isCurrent(route) || this.transport !== 'playing') return;
+    if (route.started && !route.audio.paused) return;
     const pending = this.pendingPlay;
-    if (pending?.epoch === epoch && pending.audio === audio) return pending.promise;
-    const promise = this.startPlay(audio, epoch);
-    this.pendingPlay = { epoch, audio, promise };
+    if (
+      pending?.epoch === route.epoch &&
+      pending.route === route &&
+      pending.generation === this.playGeneration
+    )
+      return pending.promise;
+    const generation = this.playGeneration;
+    const promise = this.startPlay(route, fadeIn, generation, switchFade);
+    this.pendingPlay = { epoch: route.epoch, route, generation, promise };
     void promise.then(
       () => this.clearPendingPlay(promise),
       () => this.clearPendingPlay(promise),
@@ -409,10 +563,21 @@ export class BrowserBgm {
     return promise;
   }
 
-  private async startPlay(audio: HTMLAudioElement, epoch: number): Promise<void> {
+  private async startPlay(
+    route: TrackRoute,
+    fadeIn: boolean,
+    generation: number,
+    switchFade?: BgmFade,
+  ): Promise<void> {
+    const { audio } = route;
     const context = await this.output.ensureRunning();
-    if (context === null || epoch !== this.epoch || this.audio !== audio) {
-      if (epoch === this.epoch) {
+    if (
+      context === null ||
+      !this.isCurrent(route) ||
+      this.transport !== 'playing' ||
+      generation !== this.playGeneration
+    ) {
+      if (this.isCurrent(route) && generation === this.playGeneration) {
         this.blocked = true;
         this.error = null;
         this.emitReport();
@@ -422,17 +587,40 @@ export class BrowserBgm {
     try {
       // A renderer can spend seconds behind autoplay policy while the
       // server-owned transport keeps moving. Seek from the canonical command
-      // clock again at the moment playback is actually allowed, rather than
-      // starting the delayed renderer from the position it first received.
-      this.syncPosition(this.projectPosition());
+      // clock again at the moment playback is actually allowed.
+      this.syncPosition(route, this.projectPosition());
       await audio.play();
-      if (epoch !== this.epoch || this.audio !== audio) return;
+      if (
+        !this.isCurrent(route) ||
+        this.transport !== 'playing' ||
+        generation !== this.playGeneration
+      ) {
+        audio.pause();
+        return;
+      }
+      route.started = true;
+      const pending = this.pendingSwitch?.incomingEpoch === route.epoch ? this.pendingSwitch : null;
+      if (pending !== null) {
+        this.pendingSwitch = null;
+        this.beginCrossfade(route, pending.outgoing, pending.fade);
+      } else {
+        this.scheduleEnvelope(
+          route,
+          1,
+          fadeIn ? (switchFade?.inSeconds ?? this.fade.inSeconds) : 0,
+        );
+      }
       this.blocked = false;
       this.error = null;
       this.positionAt = this.now();
       this.emitReport();
     } catch (reason) {
-      if (epoch !== this.epoch || this.audio !== audio) return;
+      if (
+        !this.isCurrent(route) ||
+        this.transport !== 'playing' ||
+        generation !== this.playGeneration
+      )
+        return;
       if (isBlockedPlayError(reason)) {
         this.blocked = true;
         this.error = null;
@@ -449,62 +637,59 @@ export class BrowserBgm {
   }
 
   private async retryPlay(): Promise<void> {
-    if (this.disposed || this.transport !== 'playing' || this.audio === null) return;
-    await this.playCurrent(this.epoch);
+    if (this.disposed || this.transport !== 'playing' || this.currentRoute === null) return;
+    if (this.currentRoute.started && !this.currentRoute.audio.paused) {
+      this.syncPosition(this.currentRoute, this.projectPosition());
+      return;
+    }
+    await this.playCurrent(this.currentRoute, true);
+  }
+
+  private reloadCurrentTrack(fadeIn: boolean): TrackRoute | null {
+    if (this.track === null || this.disposed) return null;
+    this.epoch += 1;
+    this.playGeneration += 1;
+    const epoch = this.epoch;
+    if (this.pendingSwitch !== null) this.pendingSwitch.incomingEpoch = epoch;
+    void this.loadTrack(this.track, epoch, this.position, fadeIn);
+    return null;
   }
 
   private stopAtBoundary(): void {
     this.transport = 'stopped';
     this.position = 0;
     this.positionAt = this.now();
-    this.audio?.pause();
-    this.syncPosition(0);
+    const route = this.currentRoute;
+    if (this.pendingSwitch !== null) {
+      this.pendingSwitch = null;
+      for (const pending of [...this.routes]) this.finalizeRoute(pending);
+      this.currentRoute = null;
+      this.duration = null;
+    } else if (route !== null) {
+      route.audio.pause();
+      this.scheduleEnvelope(route, 0, 0);
+      this.syncPosition(route, 0);
+    }
+    for (const retired of [...this.routes]) {
+      if (retired !== route) this.finalizeRoute(retired);
+    }
+    this.pendingPlay = null;
     this.epoch += 1;
-    const epoch = this.epoch;
+    this.playGeneration += 1;
     // Stop is a hard transport boundary: remove the old worklet instance so a
     // plate tail cannot leak into the next take. Pause intentionally skips this.
-    this.recreateDsp(epoch);
+    this.recreateDsp();
     this.emitReport();
   }
 
-  private recreateDsp(epoch: number): void {
-    const source = this.source;
-    const generation = ++this.dspGeneration;
-    destroyNode(this.dspNode);
-    this.dspNode = null;
-    this.plan = null;
-    if (source === null || this.track === null) return;
-    // The epoch also guards media callbacks. Stop/replay keeps the same audio
-    // element, so install handlers that accept the new generation before the
-    // async DSP rebuild starts.
-    if (this.audio !== null) this.bindMediaEvents(this.audio, epoch);
-    safeDisconnect(source);
-    source.connect(this.output.bgmBus);
-    void this.installDsp(epoch, generation);
-  }
-
-  private detachMedia(): void {
+  private recreateDsp(): void {
     this.dspGeneration += 1;
-    const source = this.source;
-    this.source = null;
+    this.dspInstall = null;
     destroyNode(this.dspNode);
     this.dspNode = null;
     this.plan = null;
-    safeDisconnect(source);
-    const audio = this.audio;
-    this.audio = null;
-    if (audio) {
-      audio.onloadedmetadata = null;
-      audio.onerror = null;
-      audio.onended = null;
-      try {
-        audio.pause();
-        audio.removeAttribute('src');
-        audio.load();
-      } catch {
-        /* a test host may expose only a partial media element */
-      }
-    }
+    this.connectDry();
+    if (this.currentRoute !== null && !this.disposed) this.installDsp();
   }
 
   private projectPosition(position?: number, at?: number, transport?: BgmTransport): number {
@@ -518,11 +703,10 @@ export class BrowserBgm {
     return Math.max(0, base);
   }
 
-  private syncPosition(position: number): void {
-    const audio = this.audio;
-    if (audio === null) return;
+  private syncPosition(route: TrackRoute, position: number): void {
+    const audio = route.audio;
     const duration = this.duration ?? finiteDuration(audio.duration);
-    if (duration !== null) this.duration = duration;
+    if (duration !== null && this.isCurrent(route)) this.duration = duration;
     const target =
       duration !== null && duration > 0
         ? this.loop
@@ -540,26 +724,138 @@ export class BrowserBgm {
     this.output.bgmBus.gain.value = this.volume;
   }
 
-  private failDsp(epoch: number, failedNode?: AudioWorkletNode): void {
-    if (epoch !== this.epoch || (failedNode !== undefined && this.dspNode !== failedNode)) return;
+  private failDsp(generation: number, failedNode?: AudioWorkletNode): void {
+    if (
+      generation !== this.dspGeneration ||
+      (failedNode !== undefined && this.dspNode !== failedNode)
+    )
+      return;
     this.dspGeneration += 1;
     destroyNode(this.dspNode);
     this.dspNode = null;
     this.plan = null;
-    if (this.source !== null) {
-      safeDisconnect(this.source);
-      this.source.connect(this.output.bgmBus);
-    }
+    this.connectDry();
     this.dspDegraded = true;
-    // A worklet failure is distinct from a media error: the dry element keeps
-    // playing, and the server must still accept a healthy natural end. The
-    // reason is intentionally diagnostic-only and is represented by
-    // `dspDegraded`, not by the transport-blocking `error` field.
+    // A worklet failure is distinct from a media error: dry media keeps
+    // playing, and the server can still accept a healthy natural end.
     this.emitReport();
   }
 
   private emitReport(): void {
     this.onReport?.(this.report());
+  }
+
+  private isCurrent(route: TrackRoute): boolean {
+    return !this.disposed && this.currentRoute === route && this.track === route.track;
+  }
+
+  /** Keep every live route that may still contribute to the audible mix. */
+  private chooseOutgoing(): TrackRoute[] {
+    return [...this.routes].filter((route) => this.isAudible(route));
+  }
+
+  private isAudible(route: TrackRoute): boolean {
+    return route.started && !route.audio.paused;
+  }
+
+  private audioTime(): number {
+    const value = this.output.context.currentTime;
+    return Number.isFinite(value) ? value : this.now();
+  }
+
+  private connectDry(): void {
+    safeDisconnect(this.mixBus);
+    this.mixBus.connect(this.output.bgmBus);
+  }
+
+  /** Start both sides of a switch from one AudioContext timestamp. */
+  private beginCrossfade(incoming: TrackRoute, outgoing: TrackRoute[], fade: BgmFade): void {
+    const at = this.audioTime();
+    for (const route of outgoing) {
+      if (route === incoming || !this.routes.has(route) || !this.isAudible(route)) continue;
+      this.retireRouteAt(route, fade.outSeconds, at);
+    }
+    this.scheduleEnvelopeAt(incoming, 1, fade.inSeconds, at);
+  }
+
+  private retireRouteAt(route: TrackRoute, duration: number, at: number): void {
+    if (route.timer !== null) {
+      clearTimeout(route.timer);
+      route.timer = null;
+    }
+    route.retired = true;
+    this.scheduleEnvelopeAt(route, 0, duration, at);
+    if (duration <= 0) {
+      this.finalizeRoute(route);
+      return;
+    }
+    route.timer = setTimeout(() => this.finalizeRoute(route), duration * 1000);
+  }
+
+  private finalizeRoute(route: TrackRoute): void {
+    if (route.timer !== null) {
+      clearTimeout(route.timer);
+      route.timer = null;
+    }
+    route.audio.onloadedmetadata = null;
+    route.audio.onerror = null;
+    route.audio.onended = null;
+    route.audio.pause();
+    safeDisconnect(route.source);
+    safeDisconnect(route.envelope);
+    this.routes.delete(route);
+    if (this.pendingSwitch?.outgoing.includes(route)) {
+      this.pendingSwitch.outgoing = this.pendingSwitch.outgoing.filter(
+        (candidate) => candidate !== route,
+      );
+    }
+    if (this.currentRoute === route) this.currentRoute = null;
+    cleanupAudio(route.audio);
+  }
+
+  private hardUnload(): void {
+    this.pendingSwitch = null;
+    for (const route of [...this.routes]) this.finalizeRoute(route);
+    this.currentRoute = null;
+    this.dspGeneration += 1;
+    this.dspInstall = null;
+    destroyNode(this.dspNode);
+    this.dspNode = null;
+    this.plan = null;
+    this.connectDry();
+  }
+
+  private holdEnvelope(route: TrackRoute): void {
+    const at = this.audioTime();
+    const current = envelopeValue(route.envelopeState, at);
+    cancelParam(route.envelope.gain, at);
+    route.envelope.gain.setValueAtTime(current, at);
+    route.envelopeState = { from: current, to: current, start: at, duration: 0 };
+  }
+
+  private scheduleEnvelope(route: TrackRoute, target: number, duration: number): void {
+    const at = this.audioTime();
+    this.scheduleEnvelopeAt(route, target, duration, at);
+  }
+
+  private scheduleEnvelopeAt(
+    route: TrackRoute,
+    target: number,
+    duration: number,
+    at: number,
+  ): void {
+    const from = envelopeValue(route.envelopeState, at);
+    const boundedDuration = Math.max(0, duration);
+    cancelParam(route.envelope.gain, at);
+    route.envelope.gain.setValueAtTime(from, at);
+    if (boundedDuration === 0) route.envelope.gain.setValueAtTime(target, at);
+    else route.envelope.gain.linearRampToValueAtTime(target, at + boundedDuration);
+    route.envelopeState = {
+      from,
+      to: target,
+      start: at,
+      duration: boundedDuration,
+    };
   }
 }
 
@@ -569,6 +865,17 @@ function isOutput(value: BrowserAudioOutput | BrowserBgmOptions): value is Brows
 
 function cloneDsp(dsp: BgmDsp): BgmDsp {
   return { ...dsp, reverb: { ...dsp.reverb } };
+}
+
+function cloneFade(fade: BgmFade): BgmFade {
+  return { inSeconds: fade.inSeconds, outSeconds: fade.outSeconds };
+}
+
+function mergeFade(base: BgmFade, patch: Partial<BgmFade>): BgmFade {
+  return {
+    inSeconds: patch.inSeconds ?? base.inSeconds,
+    outSeconds: patch.outSeconds ?? base.outSeconds,
+  };
 }
 
 function normalizeTrack(track: string | null): string | null {
@@ -611,12 +918,37 @@ function isBlockedPlayError(reason: unknown): boolean {
   );
 }
 
+function envelopeValue(state: EnvelopeState, at: number): number {
+  if (state.duration <= 0) return state.to;
+  const fraction = Math.min(1, Math.max(0, (at - state.start) / state.duration));
+  return state.from + (state.to - state.from) * fraction;
+}
+
+function cancelParam(param: AudioParam, at: number): void {
+  try {
+    param.cancelScheduledValues(at);
+  } catch {
+    /* a test host may expose only a partial AudioParam */
+  }
+}
+
 function safeDisconnect(node: AudioNode | null): void {
   if (node === null) return;
   try {
     node.disconnect();
   } catch {
     /* already disconnected */
+  }
+}
+
+function cleanupAudio(audio: HTMLAudioElement | null): void {
+  if (audio === null) return;
+  try {
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+  } catch {
+    /* a test host may expose only a partial media element */
   }
 }
 
