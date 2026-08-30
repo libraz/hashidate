@@ -20,8 +20,12 @@ note: |
 # commands because that is what they are; see src/script/index.ts.
 setup:
   - cmd: reset
+  # Off for the same reason any recorded script wants it off: the autopilot
+  # holds a pose until something replaces it, the shot is framed while it runs,
+  # and the take therefore opens on whatever it was holding. Breath, sway and
+  # blink live in other layers and are unaffected.
   - cmd: idle
-    on: true
+    on: false
   - cmd: look
     amount: 1
 
