@@ -49,6 +49,23 @@ const _gX = new THREE.Vector3();
 // gives roughly ten degrees of depression and twenty of retraction, and a swing
 // away from a target in front of the face is a mix of the two.
 const GIRDLE_ROM = 0.38;
+const _slewAxis = new THREE.Vector3();
+const _slewPerp = new THREE.Vector3();
+/**
+ * How fast the limiter's own correction may travel, in radians a second.
+ *
+ * The lowest value that leaves the movement alone, which is the only property
+ * that matters: a cap has to be invisible to everything except a seam. Measured
+ * over every gesture in the table, a link asks for more than ten radians a
+ * second on one frame in a hundred and more than fifteen on one in five hundred,
+ * while a seam asks for seventy and upward — the two do not overlap, and
+ * fourteen sits in the gap. Played from rest at this cap, every entrance in the
+ * table is unchanged to the last digit of its peak speed and its path length
+ * except the two that were teleporting. At ten, half a dozen of them lose about
+ * a tenth of their peak, which is the movement being damped rather than a jump
+ * being caught.
+ */
+const LIMIT_SLEW = 14;
 const _palmCur = new THREE.Vector3();
 const _palmWant = new THREE.Vector3();
 const _palmAxis = new THREE.Vector3();
@@ -138,6 +155,9 @@ type LimitedDirs = Partial<Record<ArmSlot, THREE.Vector3>> & {
   hand: THREE.Vector3;
 };
 
+/** The three the clamp bounds, in the order the slew walks them. */
+const LIMITED_SLOTS = ['upperArm', 'lowerArm', 'hand'] as const;
+
 export type { PointRequest } from './point';
 export type { OffsetSlot } from './spine';
 
@@ -164,7 +184,30 @@ export class Rig {
    * wrong, the first question is whether the limiter caused it or revealed
    * it, and that is one toggle rather than an afternoon.
    */
-  limitsEnabled = true;
+  get limitsEnabled(): boolean {
+    return this._limitsEnabled;
+  }
+
+  set limitsEnabled(on: boolean) {
+    if (on === this._limitsEnabled) return;
+    this._limitsEnabled = on;
+    // The slew below carries the limiter's own output from frame to frame, and
+    // the frames while it was off are not part of that history: switching it
+    // back on with a stale hold would crawl the arm back from wherever the
+    // unbounded pose had left it.
+    this._heldLimit.L = false;
+    this._heldLimit.R = false;
+  }
+
+  private _limitsEnabled = true;
+
+  /**
+   * Seconds since the last frame, for the limiter's slew. Written by the body
+   * layer at the top of its own update; a caller that poses the rig by hand and
+   * never sets it gets the nominal frame, which is what a single-shot pose
+   * wants anyway.
+   */
+  dt = 1 / 60;
 
   // Two buffers alternated down an arm chain. `aim` reads the parent's world
   // rotation and writes the child's, so the two cannot be the same object —
@@ -193,6 +236,10 @@ export class Rig {
   // Scratch for the anatomical clamp, which needs all three arm directions at
   // once — the chain walk in `aimArm` only ever holds one.
   private readonly _limited: Record<Side, LimitedDirs>;
+  // Where the limiter actually left each link last frame, and whether that is
+  // known for this side. See `slew`.
+  private readonly _held: Record<Side, LimitedDirs>;
+  private readonly _heldLimit: Record<Side, boolean> = { L: false, R: false };
   private readonly _palmWorld: Record<Side, THREE.Vector3> = {
     L: new THREE.Vector3(),
     R: new THREE.Vector3(),
@@ -224,6 +271,7 @@ export class Rig {
       hand: new THREE.Vector3(),
     });
     this._limited = { L: trio(), R: trio() };
+    this._held = { L: trio(), R: trio() };
   }
 
   /** Curl axis per finger bone, in that bone's own space. */
@@ -674,7 +722,66 @@ export class Rig {
     out.lowerArm.copy(_vTarget(l));
     out.hand.copy(_vTarget(h));
     this.anat.clamp(side, out.upperArm, out.lowerArm, out.hand, this.palmWorld(side, palm));
+    this.slew(side, out);
     return out;
+  }
+
+  /**
+   * Hold the limiter's output to a speed a limb can move at.
+   *
+   * The body layer takes great care that nothing it hands down here steps — the
+   * followers in `motion/follow.ts` exist for that and nothing else — and then
+   * this layer puts a step back in. A clamp is a projection onto the set of
+   * poses a joint allows, that set is not convex, and projection onto a
+   * non-convex set is discontinuous by construction: the humeral rotation is
+   * bounded to half a circle, so a request that drifts past the far side of it
+   * is equally close to both stops and the nearest one changes in a single
+   * frame. The forearm then swings a hundred and eighty degrees between two
+   * frames. Measured across every ordered switch between two gestures, one in
+   * six carried the wrist faster than four metres a second and the worst carried
+   * it at twenty-six, against a peak of two or three for the movement itself.
+   * Switching the limiter off entirely left five in a thousand over four, which
+   * is what said the clamp was the whole of it rather than a part.
+   *
+   * The elevation ceiling, the elbow and the wrist each have a seam of their own
+   * and no one of them accounts for it, so this bounds the result rather than
+   * chasing them: whatever the clamp asks for, the arm travels there at a speed
+   * a limb has. Below the cap nothing changes at all, which is what makes it
+   * safe — see `LIMIT_SLEW`. The cost is that for the tenth of a second after a
+   * seam the arm is outside the stop it was being pulled inside, and that is the
+   * trade: `measure` reads the posed bones, so the panel shows the excursion
+   * honestly rather than reporting the pose the clamp asked for.
+   */
+  private slew(side: Side, out: LimitedDirs): void {
+    const held = this._held[side];
+    const step = LIMIT_SLEW * this.dt;
+    if (!(this._heldLimit[side] && step > 0)) {
+      for (const slot of LIMITED_SLOTS) held[slot].copy(out[slot]);
+      this._heldLimit[side] = true;
+      return;
+    }
+    for (const slot of LIMITED_SLOTS) {
+      const cur = held[slot];
+      const want = out[slot];
+      const axis = _slewAxis.crossVectors(cur, want);
+      const sin = axis.length();
+      const cos = THREE.MathUtils.clamp(cur.dot(want), -1, 1);
+      if (Math.atan2(sin, cos) <= step) {
+        cur.copy(want);
+      } else if (sin > 1e-9) {
+        cur.applyAxisAngle(axis.divideScalar(sin), step).normalize();
+      } else {
+        // Exactly opposed, which is the half-turn this exists for and the one
+        // case where the shortest rotation does not name an axis. Any
+        // perpendicular is as short as any other and one has to be picked —
+        // leaving the axis at zero would park the link on the far side of the
+        // sphere and call it arrived, which is the teleport rather than a fix.
+        _slewPerp.set(1, 0, 0);
+        if (Math.abs(cur.x) > 0.9) _slewPerp.set(0, 1, 0);
+        cur.applyAxisAngle(axis.crossVectors(cur, _slewPerp).normalize(), step).normalize();
+      }
+      out[slot].copy(cur);
+    }
   }
 
   /**

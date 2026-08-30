@@ -666,6 +666,9 @@ export class Body {
   update(dt: number, { headWorldTarget = null }: BodyContext = {}): void {
     this.t += dt;
     const { rig, p } = this;
+    // The rig's anatomical limiter is the one thing below this line with a
+    // speed of its own — see `Rig.slew` — and this is where it learns the frame.
+    rig.dt = dt;
 
     // --- gesture envelopes ------------------------------------------------
     let g: Pose | null = null;
