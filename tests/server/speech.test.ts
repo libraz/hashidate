@@ -294,4 +294,25 @@ describe('a sidecar that is not there', () => {
     expect(answer.status).toBe(502);
     expect(JSON.parse(answer.body.toString('utf8'))).toMatchObject({ error: expect.any(String) });
   });
+
+  it('refuses and does not cache a 2xx response that is not audio', async () => {
+    asked
+      .mockResolvedValueOnce({
+        status: 200,
+        contentType: 'text/html; charset=utf-8',
+        // The proxy must not pass a potentially large non-audio body through.
+        body: Buffer.alloc(1024 * 1024, 0x78),
+      })
+      .mockResolvedValueOnce(take());
+
+    const refusedTake = await speak({ text: 'retry me' });
+    expect(refusedTake.status).toBe(502);
+    expect(refusedTake.ok).toBe(false);
+    expect(refusedTake.body.length).toBeLessThan(256);
+
+    const retriedTake = await speak({ text: 'retry me' });
+    expect(retriedTake.status).toBe(200);
+    expect(retriedTake.ok).toBe(true);
+    expect(asked).toHaveBeenCalledTimes(2);
+  });
 });

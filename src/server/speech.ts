@@ -193,6 +193,14 @@ async function synthesise(line: string): Promise<Take> {
     return refusal(502, `speech sidecar answered ${upstream.status}`);
   }
 
+  // A successful HTTP status is not enough to make a take playable. A proxy,
+  // login page or error handler can all answer 2xx with text, and retaining
+  // that body would poison the line cache for every renderer asking for it.
+  const mediaType = upstream.contentType.split(';', 1)[0]?.trim().toLowerCase();
+  if (!mediaType?.startsWith('audio/')) {
+    return refusal(502, 'speech sidecar returned non-audio content');
+  }
+
   // The sidecar's `X-Speech-Seconds` is deliberately not forwarded. The viewer
   // decodes the audio before it plays any of it, and the decoded buffer's own
   // duration is the length that will actually be heard — measuring it there

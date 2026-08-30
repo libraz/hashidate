@@ -62,7 +62,10 @@ export function defaultSocketPath(sourceFile = fileURLToPath(import.meta.url)): 
 /** A port, or null for anything that is not one. Loopback is the only host. */
 function portOf(value: string | undefined): number | null {
   if (value === undefined || value === '') return null;
-  const port = Number.parseInt(value, 10);
+  if (!/^\d+$/.test(value)) return null;
+  const significant = value.replace(/^0+/, '') || '0';
+  if (significant.length > 5) return null;
+  const port = Number(significant);
   return Number.isInteger(port) && port >= 1 && port <= 65_535 ? port : null;
 }
 

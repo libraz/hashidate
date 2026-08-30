@@ -52,9 +52,32 @@ describe('which sidecar this process talks to', () => {
   it('ignores a port that is not one rather than falling back to 8770', () => {
     // A typo there would otherwise point the voice at a port nobody is on, and
     // silence is the one failure this whole layer exists to explain.
-    for (const bad of ['nope', '0', '-1', '65536', '']) {
+    for (const bad of [
+      'nope',
+      '8770x',
+      '1e3',
+      ' 8770',
+      '8770 ',
+      '+8770',
+      '-8770',
+      '0',
+      '65536',
+      '',
+    ]) {
       expect(speechEndpoint({ HASHIDATE_TTS_PORT: bad })).toMatchObject({ kind: 'socket' });
     }
+    expect(speechEndpoint({ HASHIDATE_TTS_PORT: '1' })).toEqual({ kind: 'port', port: 1 });
+    expect(speechEndpoint({ HASHIDATE_TTS_PORT: '65535' })).toEqual({
+      kind: 'port',
+      port: 65535,
+    });
+    expect(speechEndpoint({ HASHIDATE_TTS_PORT: `${'0'.repeat(5000)}1` })).toEqual({
+      kind: 'port',
+      port: 1,
+    });
+    expect(speechEndpoint({ HASHIDATE_TTS_PORT: '1'.repeat(5001) })).toMatchObject({
+      kind: 'socket',
+    });
   });
 
   it('reads back as the place an operator would look', () => {

@@ -31,9 +31,11 @@ usage: .venv/bin/python server.py [--uds .run/speech.sock] [--port 8770]
 """
 
 import argparse
+import errno
 import io
 import os
 import socket
+import stat
 import threading
 import time
 from contextlib import asynccontextmanager, suppress
@@ -231,8 +233,13 @@ def speak(req: SpeakRequest) -> Response:
 def env_port() -> int | None:
     """A port from the environment, or None for anything that is not one."""
     raw = os.environ.get("HASHIDATE_TTS_PORT", "")
+    if not raw or any(char not in "0123456789" for char in raw):
+        return None
+    significant = raw.lstrip("0") or "0"
+    if len(significant) > 5:
+        return None
     try:
-        port = int(raw)
+        port = int(significant)
     except ValueError:
         return None
     return port if 1 <= port <= 65535 else None
@@ -270,18 +277,104 @@ def clear_stale(path: Path) -> None:
     file is a leftover, and a successful one means there is a voice here
     already and this process has nothing to add.
     """
-    if not path.exists():
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
         return
+    except OSError:
+        raise SystemExit(f"HASHIDATE_TTS_SOCKET path cannot be inspected: {path}") from None
+    if not stat.S_ISSOCK(mode):
+        raise SystemExit(f"HASHIDATE_TTS_SOCKET path is not a UNIX socket: {path}")
+
     probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     probe.settimeout(0.5)
     try:
         probe.connect(str(path))
-    except OSError:
-        path.unlink(missing_ok=True)
+    except OSError as error:
+        if error.errno == errno.ENOENT:
+            return
+        if error.errno != errno.ECONNREFUSED:
+            raise SystemExit(f"HASHIDATE_TTS_SOCKET path cannot be probed: {path}") from None
+        try:
+            # Re-check after probing so a path replaced while connect() was in
+            # flight is never unlinked merely because the old node was a socket.
+            if not stat.S_ISSOCK(path.lstat().st_mode):
+                raise SystemExit(f"HASHIDATE_TTS_SOCKET path is not a UNIX socket: {path}")
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            raise SystemExit(f"HASHIDATE_TTS_SOCKET stale path cannot be removed: {path}") from None
         return
     finally:
         probe.close()
-    raise SystemExit(f"a speech sidecar is already answering at {path}")
+    raise SystemExit(f"HASHIDATE_TTS_SOCKET path is already in use: {path}")
+
+
+def _socket_parent(path: Path) -> None:
+    """Create private parents, or validate an existing private parent."""
+    parent = path.parent
+    missing: list[Path] = []
+    current = parent
+    while True:
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            missing.append(current)
+            if current.parent == current:
+                break
+            current = current.parent
+            continue
+        except OSError:
+            raise SystemExit(
+                f"HASHIDATE_TTS_SOCKET path parent cannot be inspected: {path}"
+            ) from None
+        if not stat.S_ISDIR(info.st_mode):
+            raise SystemExit(
+                f"HASHIDATE_TTS_SOCKET path parent is not a directory: {path}"
+            ) from None
+        break
+
+    created: set[Path] = set()
+    for directory in reversed(missing):
+        try:
+            directory.mkdir(mode=0o700)
+        except FileExistsError:
+            # Another process won a creation race. It is treated as existing,
+            # and therefore must pass the same private-directory check below.
+            pass
+        except OSError:
+            raise SystemExit(
+                f"HASHIDATE_TTS_SOCKET path parent cannot be created: {path}"
+            ) from None
+        else:
+            created.add(directory)
+
+    for directory in missing or [parent]:
+        try:
+            info = directory.lstat()
+        except OSError:
+            raise SystemExit(
+                f"HASHIDATE_TTS_SOCKET path parent is inaccessible: {path}"
+            ) from None
+        if not stat.S_ISDIR(info.st_mode):
+            raise SystemExit(
+                f"HASHIDATE_TTS_SOCKET path parent is not a directory: {path}"
+            ) from None
+        if directory in created:
+            try:
+                directory.chmod(0o700)
+            except OSError:
+                raise SystemExit(
+                    f"HASHIDATE_TTS_SOCKET path parent cannot be secured: {path}"
+                ) from None
+            continue
+        if stat.S_IMODE(info.st_mode) != 0o700 or not os.access(
+            directory, os.R_OK | os.W_OK | os.X_OK
+        ):
+            raise SystemExit(
+                f"HASHIDATE_TTS_SOCKET path parent is not a private accessible directory: {path}"
+            ) from None
 
 
 def listen(path: Path) -> socket.socket:
@@ -291,8 +384,7 @@ def listen(path: Path) -> socket.socket:
             f"the socket path is too long for the kernel to hold ({path}); "
             "set HASHIDATE_TTS_SOCKET to a shorter one"
         )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.parent.chmod(0o700)
+    _socket_parent(path)
     clear_stale(path)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.bind(str(path))
