@@ -56,7 +56,7 @@ A clone of this repository is the runtime and nothing else. Two of the things it
 
 Setting the voice up is putting a minute or two of WAV clips in `tools/tts/reference/clips/`, which ships empty for the purpose, and running `make voice` once. Without one everything still runs: the line is mouthed silently on the timing the text implies, which is what the tests do. It is worth knowing that this works, and it is not what you want on a stream.
 
-The voice is swappable for the same reason the model is — anything that answers `POST /speak` → WAV can stand in for the sidecar. See [Speech](docs/en/speech.md).
+The voice is swappable for the same reason the model is. A sidecar substitute accepts `{ "text": string }` at `POST /speak`, returns `audio/*`, and answers `GET /health` with a JSON boolean `ready`. See [Speech](docs/en/speech.md).
 
 The details, and what a first run looks like: [Getting started](docs/en/getting-started.md).
 

@@ -72,10 +72,10 @@ The contract is two routes:
 
 | Route | What it takes, what it returns |
 |---|---|
-| `POST /speak` | `{ text, reading? }` → a WAV body. |
-| `GET /health` | Whether the model is loaded, and what it is running on. |
+| `POST /speak` | A JSON body `{ "text": string }` → an `audio/*` response body. |
+| `GET /health` | A JSON body with the required boolean field `ready`; other fields are optional. |
 
-Anything that answers those can stand in. `HASHIDATE_TTS_SOCKET` moves the target, which is how you run a second one beside the first while comparing voices, and `HASHIDATE_TTS_PORT` points the proxy at `127.0.0.1` on that port instead — a stand-in written as an ordinary HTTP service will want one. Nothing above the proxy knows or cares which of the two answered.
+Anything that answers those can stand in. The `/speak` contract requires `text` only; `reading` is not part of it and is not sent. `HASHIDATE_TTS_SOCKET` moves the target, which is how you run a second one beside the first while comparing voices, and `HASHIDATE_TTS_PORT` points the proxy at `127.0.0.1` on that port instead — a stand-in written as an ordinary HTTP service will want one. Nothing above the proxy knows or cares which of the two answered.
 
 Both variables are read by the control server and by `tools/tts/server.py`, in that order of precedence and without either being told by the other: neither has a way to ask, so the socket has to be somewhere both can work out alone.
 

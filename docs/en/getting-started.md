@@ -32,7 +32,7 @@ Clean speech, one speaker, no music and no second voice. A minute or two in tota
 
 Strictly speaking the sidecar is optional: without it a line is mouthed silently on the timing the text implies, which is what the tests do and what a machine without the voice does. In practice a VTuber that never makes a sound is a test fixture, so budget for this rather than treating it as an extra.
 
-If a different synthesiser suits you better, the renderer never talks to this one directly — anything answering `POST /speak` with `{ text, reading? }` → WAV and `GET /health` on that port can stand in. See [Speech](speech.md#using-a-different-voice).
+If a different synthesiser suits you better, the renderer never talks to this one directly. Anything accepting `{ "text": string }` at `POST /speak`, returning `audio/*`, and answering `GET /health` with a JSON boolean `ready` can stand in. See [Speech](speech.md#using-a-different-voice).
 
 ### Only if you need them
 

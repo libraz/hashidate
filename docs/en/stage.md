@@ -4,9 +4,9 @@ The room the character is *seen* in, which is a separate axis from the one she i
 
 ## The set
 
-Four of them — `dusk`, `night`, `morning`, `rain` — and they are one room lit four ways rather than four rooms: the shell, the window and most of the furniture are shared, and what differs is where the light comes from, its colour temperature, and where the brightest and darkest values fall in the frame. A backdrop has to hold up behind a face for two hours, so each is built to a value structure rather than to a colour scheme.
+Four of them — `dusk`, `night`, `morning`, `rain` — use one room lit four ways rather than four rooms: the shell, the window and most of the furniture are shared, and what differs is where the light comes from, its colour temperature, and where the brightest and darkest values fall in the frame. A backdrop has to hold up behind a face for two hours, so each is built to a value structure rather than to a colour scheme.
 
-None of it is a model file. The geometry is written out and the surfaces — plaster, floorboards, woven cloth, what is outside the window — are generated into a canvas at startup. Nothing to license, nothing to redistribute, and a wall whose mottling can be reviewed in a diff.
+The room shell, lighting and surface textures — plaster, floorboards, woven cloth and what is outside the window — are generated procedurally at startup. The viewer can also load four local furniture GLBs: `gothic-bed.glb`, `gothic-commode.glb`, `sofa.glb` and `pillows.glb`. Those files are ignored by git and absent in a fresh clone, so the furniture is optional runtime data.
 
 Set it on the URL, which is what a browser source in OBS is given:
 
