@@ -39,6 +39,7 @@ const vocabulary: Partial<Vocabulary> = {
     },
   ],
   gestures: [{ id: 'wave', label: same('手を振る'), group: 'greeting', sustain: false }],
+  hops: [{ id: 'jump', label: same('跳ぶ') }],
   expressions: [{ id: 'F_DOYA', label: same('ドヤ') }],
 };
 
@@ -56,6 +57,27 @@ describe('checkLine, on cues', () => {
     expect(check.findings).toEqual([]);
   });
 
+  it('keeps typed cues generic and gives each kind a concise label', () => {
+    const check = checkLine(
+      {
+        text: '[@perform hello]あ[@expression F_DOYA]い[@gesture wave]う[@hop jump]え[@camera bust]お[@slide 3]か[@bgm play opening.mp3]き[@bgm pause]く[@bgm stop]',
+      },
+      vocabulary,
+    );
+    expect(check.cues.map((cue) => [cue.action.kind, cue.label, cue.known])).toEqual([
+      ['perform', 'performance hello', true],
+      ['expression', 'expression F_DOYA', true],
+      ['gesture', 'gesture wave', true],
+      ['hop', 'hop jump', true],
+      ['camera', 'camera bust', true],
+      ['slide', 'slide 3', true],
+      ['bgm', 'bgm play opening.mp3', true],
+      ['bgm', 'bgm pause', true],
+      ['bgm', 'bgm stop', true],
+    ]);
+    expect(check.spoken).toBe('あいうえおかきく');
+  });
+
   it('flags a cue the performance table does not have', () => {
     // The session drops this rather than playing it, and drops it silently —
     // releasing the face mid-sentence over a typo would be worse. So this
@@ -63,6 +85,31 @@ describe('checkLine, on cues', () => {
     expect(messages({ text: '[greet]こんばんは' })).toEqual([
       '[greet] is not in the performance table',
     ]);
+  });
+
+  it('flags unknown typed dynamic ids but accepts protocol-only actions', () => {
+    const check = checkLine(
+      {
+        text: '[@perform nope][@expression nope][@gesture nope][@hop nope][@camera full][@slide 2][@bgm stop]',
+      },
+      vocabulary,
+    );
+    const warnings = check.findings
+      .filter((finding) => finding.severity === 'warn')
+      .map((finding) => finding.message);
+    expect(warnings).toEqual([
+      'performance nope does not exist',
+      'expression nope does not exist',
+      'gesture nope does not exist',
+      'hop nope does not exist',
+    ]);
+  });
+
+  it('treats an explicitly empty vocabulary group as known to have no ids', () => {
+    const check = checkLine({ text: '[@expression nope]あ' }, { expressions: [] });
+    expect(check.findings.map((finding) => finding.message)).toContain(
+      'expression nope does not exist',
+    );
   });
 
   it('judges nothing before a vocabulary has arrived', () => {
@@ -145,6 +192,11 @@ describe('checkLine, on length and spacing', () => {
   it('notes two cues that land close enough that only the second is seen', () => {
     const found = messages({ text: '[hello]あ[explain]いうえおかきくけこさしすせそ' });
     expect(found.some((m) => m.includes('land too close together'))).toBe(true);
+  });
+
+  it('crowds typed cues by their labels, regardless of kind', () => {
+    const found = messages({ text: '[@camera bust]あ[@bgm stop]いうえお' });
+    expect(found.some((m) => m.includes('camera bust') && m.includes('bgm stop'))).toBe(true);
   });
 
   it('does not flag cues that are comfortably apart', () => {

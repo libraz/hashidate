@@ -152,15 +152,15 @@ export function QueueRow({
             ) : null}
             {check.cues.map((cue) => (
               <span
-                // Cues have no ids and the same performance may be cued twice in
-                // one line, so the position in the utterance is what tells two
-                // apart — and two cues cannot share one, since a position is
-                // where in the line the markup was written.
-                key={`${cue.perform}-${cue.at}`}
+                // Adjacent cues share a mouth-clock position, and the same
+                // action may legitimately be repeated. Source order therefore
+                // completes the key while the generic label keeps the row
+                // useful for camera, slide and BGM as well as performances.
+                key={`${cue.ordinal}-${cue.label}`}
                 className={`${styles.cue} ${cue.known ? '' : styles.unknown}`}
                 title={t('panel.row.cue.title', { percent: Math.round(cue.at * 100) })}
               >
-                {cue.perform}
+                {cue.label}
               </span>
             ))}
           </div>

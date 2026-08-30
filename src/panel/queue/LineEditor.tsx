@@ -187,7 +187,8 @@ export function LineEditor({
       {showCues ? (
         <div className={styles.palette}>
           <p className={styles.paletteNote}>
-            {t('panel.editor.palette.before')} <code>[id]</code> {t('panel.editor.palette.after')}
+            {t('panel.editor.palette.before')} <code>[id]</code> {t('panel.editor.palette.after')}{' '}
+            <code>[@kind value]</code> {t('panel.editor.palette.typedAfter')}
           </p>
           <ChipRow>
             {(vocabulary.performances ?? []).map((p) => (
