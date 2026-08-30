@@ -1,0 +1,83 @@
+/*
+ * The closed face of a native `select`, drawn in the panel's own materials.
+ *
+ * `appearance: none` takes the system rectangle off and takes the disclosure
+ * arrow with it, so the chevron is drawn here — on the wrapper rather than on
+ * the control, because a `select` has no room for a pseudo-element of its own.
+ */
+
+.wrap {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
+/*
+ * Two borders rotated into a chevron rather than a glyph: at this size a text
+ * arrow lands on a different baseline in every font the stack falls back
+ * through, and this one is always a chevron of exactly five pixels.
+ */
+.wrap::after {
+  content: "";
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border-right: 1px solid var(--fg-faint);
+  border-bottom: 1px solid var(--fg-faint);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+  transition: border-color var(--dur) var(--ease);
+}
+
+.wrap:hover::after {
+  border-color: var(--accent);
+}
+
+.wrap:has(.select:disabled)::after {
+  opacity: 0.35;
+}
+
+.wrap:has(.select:disabled):hover::after {
+  border-color: var(--fg-faint);
+}
+
+.select {
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--control-height);
+  padding: 0 22px 0 var(--space-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.select:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent-edge);
+}
+
+.select:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/*
+ * The popup is the system's and inherits nothing from here. Naming the two
+ * colours on the options at least keeps the list from being white-on-white in a
+ * browser that takes the control's colours as the menu's defaults.
+ */
+.select option {
+  background: var(--surface-raised);
+  color: var(--fg);
+}

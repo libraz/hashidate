@@ -1,46 +1,110 @@
+/*
+ * The browser-source bar.
+ *
+ * One line between the header and the tabs, and it is read left to right as a
+ * sentence: what is being composed, the four things that go into it, the
+ * address that comes out, and the button that takes it away. It carries the
+ * header's own padding and its own bottom rule, so the three fixed strips at
+ * the top of the page — header, this, tabs — start on the same left edge. It
+ * did not, and "OBS ソース" sat a dozen pixels left of the title above it.
+ */
+
 .source {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  /* Between settings. Inside one, `.group` closes the label to its control,
+     which is what makes four pairs read as four rather than as eight. */
+  gap: var(--space-5);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--line);
+}
+
+.title {
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.group {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  flex-wrap: wrap;
+  min-width: 0;
 }
-.label {
-  color: var(--fg-dim);
-  font-size: var(--text-xs);
-}
-.source label {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
+
+.name {
   color: var(--fg-faint);
   font-size: var(--text-xs);
-}
-.source select,
-.copy {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--fg);
-  font: inherit;
-  padding: 3px 5px;
-}
-.check {
   white-space: nowrap;
 }
-.url {
-  flex: 1 1 320px;
+
+/*
+ * The address and the button that takes it away, wrapping as one.
+ *
+ * Separately they do not: the address takes whatever is left of the line, which
+ * on a narrow window leaves the button alone on a second row under a field it
+ * belongs to. They are one thing — a value and the only way to get it out of
+ * the window — so they move together.
+ */
+.address {
+  flex: 1 1 260px;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/*
+ * The address, and it is the output of the row rather than another control.
+ *
+ * Sunken and monospace, so it reads as a value that was produced — the four
+ * pickers are raised and this is the thing they write into.
+ */
+.url {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--control-height);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-3);
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--fg-dim);
-  font-size: var(--text-xs);
+  /* The address is long and the operator is often reading the tail of it —
+     the size, the room, the page. Selectable, because in a browser this is
+     still the fallback the copy button's failure leaves them. */
+  user-select: all;
 }
+
 .copy {
-  cursor: pointer;
+  flex: 0 0 auto;
+  height: var(--control-height);
+  padding: 0 var(--space-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
   white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
 }
+
 .copy:hover {
   background: var(--surface-hover);
+  border-color: var(--accent-edge);
   color: var(--accent);
 }
 
@@ -58,10 +122,4 @@
   border-color: var(--warn);
   background: color-mix(in srgb, var(--warn) 10%, var(--surface));
   color: var(--warn);
-}
-
-.source input:disabled + span {
-  color: var(--fg-faint);
-  opacity: 0.55;
-  cursor: help;
 }
