@@ -556,12 +556,20 @@ function reactCommands(input: ReactInput): Command[] {
   const batch: Command[] = [];
   if (input.reset === true) batch.push({ cmd: 'reset' });
   if (input.emotion !== undefined) batch.push({ cmd: 'emotion', vec: input.emotion });
-  if (input.perform !== undefined) batch.push({ cmd: 'perform', id: input.perform });
+  // `side` travels with whichever of the two carries a motion, and with neither
+  // on its own: a hand named beside nothing to put it on is not a reaction.
+  if (input.perform !== undefined) {
+    batch.push({ cmd: 'perform', id: input.perform, ...(input.side ? { side: input.side } : {}) });
+  }
   if (input.expression !== undefined) batch.push({ cmd: 'expression', id: input.expression });
   // A gesture is stopped by a command with no id at all — `gestureCommandSchema`
   // has no null to send — so the release drops the field rather than emptying it.
   if (input.gesture !== undefined) {
-    batch.push(input.gesture === null ? { cmd: 'gesture' } : { cmd: 'gesture', id: input.gesture });
+    batch.push(
+      input.gesture === null
+        ? { cmd: 'gesture' }
+        : { cmd: 'gesture', id: input.gesture, ...(input.side ? { side: input.side } : {}) },
+    );
   }
   if (input.overlay !== undefined) batch.push({ cmd: 'overlay', ...input.overlay });
   if (input.hop !== undefined) batch.push({ cmd: 'hop', hop: input.hop });

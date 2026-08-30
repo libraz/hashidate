@@ -258,6 +258,16 @@ export const sayCommandSchema = z.object({
    * unless `hold`; its mood persists either way.
    */
   perform: z.string().nullable().optional(),
+  /**
+   * Which hand this turn's movement uses, pinning what the gesture layer would
+   * otherwise pick at random. See `gestureCommandSchema.side` for what it does
+   * and why absent is the ordinary case.
+   *
+   * One field for the line rather than one per field, because a turn plays one
+   * movement — `gesture`'s, or the one `perform` names — and a hand stated
+   * twice could only ever disagree with itself.
+   */
+  side: sideSchema.optional(),
   hold: z.boolean().optional(),
   /**
    * The shot this line is delivered in, applied when the turn starts.
@@ -441,6 +451,8 @@ export const resetCommandSchema = z.object({
 export const performCommandSchema = z.object({
   cmd: z.literal('perform'),
   id: z.string().nullable().optional(),
+  /** Which hand the movement it names uses. See `gestureCommandSchema.side`. */
+  side: sideSchema.optional(),
 });
 
 /**
@@ -452,6 +464,20 @@ export const performCommandSchema = z.object({
 export const gestureCommandSchema = z.object({
   cmd: z.literal('gesture'),
   id: z.string().optional(),
+  /**
+   * Which hand acts, pinning what is otherwise drawn per playback.
+   *
+   * Absent is the ordinary case and stays random. The built-in table authors
+   * one pose and mirrors it onto whichever hand is free — every entry was
+   * checked on both — and a character that always waves with the same arm reads
+   * as a mechanism rather than a person. So this is for the caller that has a
+   * reason: the hand away from the document, or the one the line before used.
+   *
+   * On a two-handed gesture there is no hand to choose and it fixes which way
+   * the head turns instead, which is the same axis seen from the other end. On
+   * a motion loaded from disk it does nothing: a file states `L` or `R` itself.
+   */
+  side: sideSchema.optional(),
 });
 
 /**

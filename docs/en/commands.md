@@ -4,12 +4,12 @@ Every command goes to `POST /api/command`, one at a time or several under `batch
 
 | Command | What it does |
 |---|---|
-| `perform` | A named face and movement. No id releases the one that is up. |
-| `say` | Queue a turn. Takes a `perform`, or the parts spelled out, or cues written into the text itself. The legacy `[performanceId]` shorthand and typed `[@perform]`, `[@expression]`, `[@gesture]`, `[@hop]`, `[@camera]`, `[@slide]`, and `[@bgm]` forms are available. `hold` keeps the face up past the line. `reading` gives the kana pronunciation where the writing does not determine it, and carries no cues of its own. `stage` names the shot. |
+| `perform` | A named face and movement. No id releases the one that is up. `side` names the hand its movement uses. |
+| `say` | Queue a turn. Takes a `perform`, or the parts spelled out, or cues written into the text itself. The legacy `[performanceId]` shorthand and typed `[@perform]`, `[@expression]`, `[@gesture]`, `[@hop]`, `[@camera]`, `[@slide]`, and `[@bgm]` forms are available. `hold` keeps the face up past the line. `reading` gives the kana pronunciation where the writing does not determine it, and carries no cues of its own. `side` names the hand. `stage` names the shot. |
 | `emotion` | The persistent mood, as a blend rather than a choice. |
 | `expression` | One of the avatar's own drawn faces. `null` hands the face back to the emotion. |
 | `overlay` | A drawn effect, at a weight. It layers over whatever face is showing, so several can be up at once. |
-| `gesture` | One movement from the gesture table. No id stops it. |
+| `gesture` | One movement from the gesture table. No id stops it. `side` names the hand. |
 | `hop` | A run of hops. Its own command rather than a gesture because it translates the whole skeleton, and runs alongside whatever the arms are doing. |
 | `point` | Aim a fingertip at a bearing — degrees on the wire, and any of the five fingers. Held until released. |
 | `look` | How much the gaze tracks the camera, 0 to 1. |
@@ -43,6 +43,22 @@ The `text` field accepts these inline forms. `[performanceId]` remains shorthand
 | `[@bgm pause]` / `[@bgm stop]` | Pause or stop the selected track. |
 
 Typed cues travel through ordinary `say`, `queue`, and script text. For `perform`, `expression`, `gesture`, and `hop`, the whole remainder is the id, so spaces and Japanese characters are allowed. Both square brackets are reserved and are not spoken. `room`, `backdrop`, `deck`, and `place` remain line-start `stage` setup. BGM volume, looping, fade durations and DSP are mixer settings in the panel or through the `bgm` command. Relative slides are not inline cues.
+
+## Which hand
+
+A one-handed gesture picks an arm afresh every time it plays. The table authors one pose and mirrors it onto whichever hand is free — every entry was checked on both — and the draw is there because a character who waves with the same arm every time reads as a mechanism rather than a person.
+
+`side`, `L` or `R`, pins it for a caller that has a reason to: the hand away from the document, or the same hand the line before used.
+
+```
+yarn ctl gesture peace --side L
+yarn ctl perform nice --side R
+yarn ctl say "こっちだよ" --gesture pointUp --side L
+```
+
+It is one field per line rather than one per field, because a turn plays one movement — `gesture`'s, or the one `perform` names — and a hand written twice could only ever disagree with itself. On a two-handed gesture there is no hand to choose and it fixes which way the head turns instead. A [motion loaded from a file](motions.md) states `L` or `R` itself and ignores it.
+
+Inline cues do not carry it. `[@gesture peace]` mid-sentence draws its hand as before; a line that needs a particular one names the movement on the line rather than inside it.
 
 ## What is deliberately absent
 

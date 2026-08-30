@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { JOINTS } from '@/engine/anatomy';
 import { Body } from '@/engine/motion/body';
+import { compileMotion } from '@/engine/motion/custom';
 import { GESTURES } from '@/engine/motion/gestures';
 import { buildProfile } from '@/engine/profile';
 import { Rig } from '@/engine/rig';
@@ -352,6 +353,98 @@ describe('gesture entrance', () => {
     }
     expect(releaseStep).toBeLessThan(peak * 0.5);
     expect(baseline.angleTo(previous)).toBeLessThan(1e-4);
+  });
+});
+
+/**
+ * Which hand a one-handed gesture acts with.
+ *
+ * Measured at the two wrists rather than off the variation the layer stored,
+ * because the variation is only a request: what a caller pinned has to be the
+ * arm that actually moves, and every step between the two — the mirror, the
+ * pose lookup, the per-side follower — is where that could quietly stop being
+ * true.
+ */
+describe('the acting hand', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = harness();
+  });
+
+  /** A gesture the table poses on one arm and leaves the other out of. */
+  const ONE_HANDED = 'peace';
+
+  /** How far each wrist travelled over a run of frames, in metres. */
+  function travel(id: string, side?: Side): Record<Side, number> {
+    h.rig.reset();
+    h.body.update(DT);
+    h.body.play(id, side);
+    const previous: Record<Side, THREE.Vector3> = {
+      L: wristOf(h.profile, 'L'),
+      R: wristOf(h.profile, 'R'),
+    };
+    const out: Record<Side, number> = { L: 0, R: 0 };
+    for (let i = 0; i < 60; i++) {
+      h.rig.reset();
+      h.body.update(DT);
+      for (const s of ['L', 'R'] as const) {
+        const now = wristOf(h.profile, s);
+        out[s] += previous[s].distanceTo(now);
+        previous[s] = now;
+      }
+    }
+    return out;
+  }
+
+  it('is the one the caller named', () => {
+    // The draw is rigged to the *other* hand each time round, so a `side` that
+    // was accepted and then dropped fails here rather than passing half of the
+    // time on the roll it would have made anyway.
+    const random = vi.spyOn(Math, 'random');
+    for (const side of ['L', 'R'] as const) {
+      random.mockReturnValue(side === 'L' ? 0.9 : 0.1);
+      h = harness();
+      const moved = travel(ONE_HANDED, side);
+      const other = side === 'L' ? 'R' : 'L';
+      expect(moved[side]).toBeGreaterThan(moved[other] * 4);
+    }
+    random.mockRestore();
+  });
+
+  it('is drawn afresh when the caller names none', () => {
+    const seen = new Set<number>();
+    const random = vi.spyOn(Math, 'random');
+    // Low and high across the whole draw. Only the third call decides the side;
+    // the rate, scale and speed around it take the same roll and stay in range.
+    for (const roll of [0.1, 0.9]) {
+      random.mockReturnValue(roll);
+      h = harness();
+      h.body.play(ONE_HANDED);
+      seen.add(h.body.gesture?.v.side ?? 0);
+    }
+    random.mockRestore();
+    expect(seen).toEqual(new Set([-1, 1]));
+  });
+
+  it('leaves a loaded motion to state its own hands', () => {
+    // `compileMotion` never reads `v.side`, so pinning one may not move the
+    // pose. A file that keyframed the right arm keeps the right arm.
+    const def = compileMotion({
+      id: 'salute',
+      label: { en: 'Salute', ja: '敬礼' },
+      group: 'greeting',
+      lead: 0.2,
+      hold: 0.6,
+      frames: [
+        { at: 0, arms: { R: { upperArm: [0, -1, 0], lowerArm: [0, -1, 0] } } },
+        { at: 0.8, arms: { R: { upperArm: [0.3, 0.4, 0.6], lowerArm: [0.2, 0.8, 0.3] } } },
+      ],
+    });
+    for (const side of ['L', 'R'] as const) {
+      const pose = def.build(0.8, { rate: 1, scale: 1, side: side === 'R' ? 1 : -1 });
+      expect(pose.arms?.R).toBeDefined();
+      expect(pose.arms?.L).toBeUndefined();
+    }
   });
 });
 

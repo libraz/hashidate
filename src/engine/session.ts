@@ -326,6 +326,7 @@ export class Session {
     expression = null,
     gesture = null,
     perform = null,
+    side,
     hold = false,
     stage,
   }: TurnRequest): Turn {
@@ -344,6 +345,7 @@ export class Session {
       expression,
       gesture,
       perform,
+      side,
       hold,
       stage,
       // Absent means "still being made". A session with no voice, and a turn
@@ -393,6 +395,7 @@ export class Session {
             expression: request.expression ?? null,
             gesture: request.gesture ?? null,
             perform: request.perform ?? null,
+            side: request.side,
             hold: request.hold ?? false,
             stage: request.stage,
           });
@@ -522,9 +525,10 @@ export class Session {
     this.d.resetExpression();
   }
 
-  gesture(id: string): void {
+  /** One movement. `side` pins the hand; absent leaves it to the per-playback draw. */
+  gesture(id: string, side?: Side): void {
     this.wake();
-    this.d.gesture(id);
+    this.d.gesture(id, side);
   }
 
   stopGesture(): void {
@@ -538,10 +542,13 @@ export class Session {
    *
    * The coarsest of the direct controls and the one to reach for first: the
    * finer ones below it exist for what the table has no name for.
+   *
+   * `side` pins the hand of the movement it names, exactly as it does on
+   * `gesture`. A release carries none: there is no hand in stopping.
    */
-  perform(id: string | null): void {
+  perform(id: string | null, side?: Side): void {
     this.wake();
-    this.d.perform(id);
+    this.d.perform(id, side);
   }
 
   /** A run of hops. Runs alongside whatever the arms are doing. */
@@ -890,13 +897,16 @@ export class Session {
     d.auto = false;
     // Then the performance, so the three fields below override parts of it
     // rather than being overwritten by it.
-    if (turn.perform) d.perform(turn.perform);
+    // `side` reaches whichever of the two actually plays a movement. A turn
+    // that names both overrides the performance's gesture with its own, so the
+    // hand travels with the one that survives rather than being applied twice.
+    if (turn.perform) d.perform(turn.perform, turn.side);
     this._performing = turn.perform ?? null;
     if (turn.emotion) d.setEmotion(turn.emotion);
     if (turn.expression !== null && turn.expression !== undefined) {
       d.setExpression(turn.expression);
     }
-    if (turn.gesture) d.gesture(turn.gesture);
+    if (turn.gesture) d.gesture(turn.gesture, turn.side);
     // The audio starts and the track is stretched onto its length, in that
     // order: `elapsed` is measured from `play`, so a track scheduled first
     // would be read against a clock that had not started.

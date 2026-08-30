@@ -995,6 +995,61 @@ describe('turn ids', () => {
   });
 });
 
+/**
+ * A named hand, from the four places a caller can name one.
+ *
+ * The gesture layer decides which arm acts and is tested at the wrist in
+ * `tests/motion/body.test.ts`; what is checked here is that the hand a caller
+ * wrote survives the trip — through a direct call, through a performance that
+ * owns the movement, through a queued line, and through the in-place update a
+ * queue replacement makes.
+ */
+describe('the hand a caller names', () => {
+  /** ±1 as `GestureVariation` states it: R is positive. */
+  const acting = (director: Director): number | undefined => director.body.gesture?.v.side;
+
+  it('reaches a gesture asked for directly', () => {
+    const { session, director, step } = build();
+    session.gesture('peace', 'L');
+    step(1);
+    expect(director.body.gesture?.id).toBe('peace');
+    expect(acting(director)).toBe(-1);
+  });
+
+  it('reaches the movement a performance names', () => {
+    const { session, director, step } = build();
+    session.perform('peace', 'R');
+    step(1);
+    expect(director.body.gesture?.id).toBe('peace');
+    expect(acting(director)).toBe(1);
+  });
+
+  it('travels on a line, beside either field that carries a movement', () => {
+    for (const [line, id, side, expected] of [
+      [{ gesture: 'peace' }, 'peace', 'L', -1],
+      [{ perform: 'hello' }, 'wave', 'R', 1],
+    ] as const) {
+      const { session, director, step } = build();
+      session.say({ id: 'a', ...line, side });
+      step(1);
+      expect(director.body.gesture?.id).toBe(id);
+      expect(acting(director)).toBe(expected);
+    }
+  });
+
+  it('survives the in-place update a queue replacement makes', () => {
+    // A line whose words did not change keeps its take and is updated in place.
+    // Everything applied at `start` has to be updated with it, or an edited
+    // script plays the hand the operator replaced.
+    const { session, director, step } = build();
+    session.say({ id: 'a', text: 'あいうえお', gesture: 'peace', side: 'R' });
+    session.replaceQueue([{ id: 'a', text: 'あいうえお', gesture: 'peace', side: 'L' }]);
+    step(1);
+    expect(director.body.gesture?.id).toBe('peace');
+    expect(acting(director)).toBe(-1);
+  });
+});
+
 describe('performances', () => {
   it('sets the mood and plays the movement in one call', () => {
     const { session, director, step } = build();

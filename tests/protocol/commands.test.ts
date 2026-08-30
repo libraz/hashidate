@@ -25,6 +25,7 @@ const SWITCH_CASES: Record<CommandName, Command[]> = {
       expression: 'F_DOYA',
       gesture: 'wave',
       perform: 'hello',
+      side: 'L',
       hold: true,
     },
     { cmd: 'say', emotion: null, expression: null, gesture: null, perform: null },
@@ -53,8 +54,17 @@ const SWITCH_CASES: Record<CommandName, Command[]> = {
     { cmd: 'overlay', id: 'FX_BLUSH', on: false },
   ],
   reset: [{ cmd: 'reset' }, { cmd: 'reset', id: 'c-3' }],
-  perform: [{ cmd: 'perform', id: 'happy' }, { cmd: 'perform', id: null }, { cmd: 'perform' }],
-  gesture: [{ cmd: 'gesture', id: 'wave' }, { cmd: 'gesture' }],
+  perform: [
+    { cmd: 'perform', id: 'happy' },
+    { cmd: 'perform', id: 'wave', side: 'L' },
+    { cmd: 'perform', id: null },
+    { cmd: 'perform' },
+  ],
+  gesture: [
+    { cmd: 'gesture', id: 'wave' },
+    { cmd: 'gesture', id: 'peace', side: 'R' },
+    { cmd: 'gesture' },
+  ],
   hop: [{ cmd: 'hop', hop: 'bounce' }, { cmd: 'hop', id: 'c-4' }, { cmd: 'hop' }],
   point: [
     { cmd: 'point', side: 'L', azimuth: 40, elevation: -10, extent: 0.5, finger: 'thumb' },
@@ -296,6 +306,35 @@ describe('commands whose absent argument means stop', () => {
 
   it('point with only a side and no angle still means release', () => {
     expect(parseCommand({ cmd: 'point', side: 'L' })).toEqual({ cmd: 'point', side: 'L' });
+  });
+});
+
+describe('the hand a movement uses', () => {
+  it('is left out of an ordinary call, which is what keeps it varying', () => {
+    expect(parseCommand({ cmd: 'gesture', id: 'peace' })).toEqual({ cmd: 'gesture', id: 'peace' });
+  });
+
+  it('takes the same two names everywhere a side is written', () => {
+    for (const cmd of ['gesture', 'perform'] as const) {
+      for (const side of ['L', 'R'] as const) {
+        expect(parseCommand({ cmd, id: 'peace', side })).toEqual({ cmd, id: 'peace', side });
+      }
+    }
+  });
+
+  it('rejects a spelling the engine has no hand for', () => {
+    expect(parseCommand({ cmd: 'gesture', id: 'peace', side: 'left' })).toBeNull();
+    expect(parseCommand({ cmd: 'gesture', id: 'peace', side: 'l' })).toBeNull();
+    expect(parseCommand({ cmd: 'say', text: 'やあ', gesture: 'wave', side: 'both' })).toBeNull();
+  });
+
+  it('rides on a line, which is how a script states one', () => {
+    expect(parseCommand({ cmd: 'say', text: 'やあ', perform: 'hello', side: 'R' })).toEqual({
+      cmd: 'say',
+      text: 'やあ',
+      perform: 'hello',
+      side: 'R',
+    });
   });
 });
 

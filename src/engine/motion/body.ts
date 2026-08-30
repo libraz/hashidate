@@ -1068,14 +1068,21 @@ export class Body {
     this.playDef(def, `point.${side}`);
   }
 
-  play(id: string): void {
+  play(id: string, side?: Side): void {
     const def = gestureDef(id);
     if (!def) return;
-    this.playDef(def, id);
+    this.playDef(def, id, side);
   }
 
-  /** Start a gesture from a definition object, named or synthesised. */
-  playDef(def: GestureDef, id: string): void {
+  /**
+   * Start a gesture from a definition object, named or synthesised.
+   *
+   * `side` pins the mirror axis the variation would otherwise pick at random —
+   * which hand a one-handed gesture acts with, and which way the head turns on
+   * the rest. A loaded motion states its own hands and ignores it; see
+   * `compileMotion`.
+   */
+  playDef(def: GestureDef, id: string, side?: Side): void {
     if (!def) return;
     // Hand the outgoing gesture to the second slot so it fades out while the
     // new one fades in. Dropping it outright leaves the standing blend weight
@@ -1094,7 +1101,12 @@ export class Body {
       // snaps the limb into the gesture instead of easing it in.
       rate: 0.92 + Math.random() * 0.16,
       scale: 0.9 + Math.random() * 0.2,
-      side: Math.random() < 0.5 ? -1 : 1,
+      // Random unless the caller named a hand. Left random on purpose when it
+      // did not: a character that greets with the same arm every single time
+      // reads as a mechanism, and the table was authored so that either hand
+      // works. What a caller pins is a hand it has a reason for — the one away
+      // from the slide, the one it used on the line before.
+      side: side === undefined ? (Math.random() < 0.5 ? -1 : 1) : sideMirror(side),
     };
     this.gesture = {
       def,

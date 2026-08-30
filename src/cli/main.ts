@@ -52,6 +52,7 @@ const localized = (text: Localized): string => pick(text, getLocale());
  *     yarn ctl perform happy
  *     yarn ctl say "こんばんは" --perform hello --wait
  *     yarn ctl say "こんばんは" --emotion joy=0.8 --gesture wave --wait
+ *     yarn ctl gesture peace --side L
  *     yarn ctl say "[hello]こんばんは。[explain]今日はこの話をします。"
  *     yarn ctl say "8月27日だよ" --reading "はちがつにじゅうしちにちだよ"
  *     yarn ctl say "これが、ホール。" --camera full --room hall
@@ -224,6 +225,7 @@ const say: Handler = async (client, args) => {
       expression: { type: 'string' },
       gesture: { type: 'string' },
       perform: { type: 'string' },
+      side: { type: 'string' },
       hold: { type: 'boolean' },
       camera: { type: 'string' },
       backdrop: { type: 'string' },
@@ -273,6 +275,7 @@ const say: Handler = async (client, args) => {
     expression: values.expression,
     gesture: values.gesture,
     perform: values.perform,
+    side: values.side,
     hold: values.hold ? true : undefined,
     stage,
   });
@@ -332,24 +335,38 @@ const overlay: Handler = async (client, args) => {
  * With no id it releases the one that is up, like `gesture`.
  */
 const perform: Handler = async (client, args) => {
-  const { positionals } = parseArgs({ args, allowPositionals: true });
+  const { values, positionals } = parseArgs({
+    args,
+    options: { side: { type: 'string' } },
+    allowPositionals: true,
+  });
   show(
     await client.command(
       build(performCommandSchema, {
         cmd: 'perform',
         id: positionals[0],
+        side: values.side,
       }),
     ),
   );
 };
 
+/**
+ * One movement. `--side L` pins the hand a one-handed gesture acts with, which
+ * is otherwise a fresh draw on every playback.
+ */
 const gesture: Handler = async (client, args) => {
-  const { positionals } = parseArgs({ args, allowPositionals: true });
+  const { values, positionals } = parseArgs({
+    args,
+    options: { side: { type: 'string' } },
+    allowPositionals: true,
+  });
   show(
     await client.command(
       build(gestureCommandSchema, {
         cmd: 'gesture',
         id: positionals[0],
+        side: values.side,
       }),
     ),
   );
@@ -1047,6 +1064,7 @@ function usage(): never {
       '  yarn ctl say "こんばんは" --perform hello --wait',
       '  yarn ctl say "[hello]こんばんは。[explain]今日はこの話をします。"',
       '  yarn ctl say "コメント3件ありがとう" --reading "コメントさんけんありがとう"',
+      '  yarn ctl gesture peace --side L',
       '  yarn ctl point 40 25 --extent 0.9',
       '  yarn ctl idle on',
       '  yarn ctl debug        # overlay the measurements on every viewer (off clears them)',

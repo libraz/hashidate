@@ -31,6 +31,8 @@ Typed cues are part of the ordinary `text` field. They travel through `speak`, `
 
 For `perform`, `expression`, `gesture`, and `hop`, everything after the cue kind is the id. That lets a loaded motion such as `big wave` be written as `[@gesture big wave]`; spaces and Japanese characters are valid in these dynamic ids.
 
+A cue carries no `side`, so a movement started mid-sentence draws its hand the way it always has. A line that needs a particular one names the movement in the line's own `gesture` or `perform` and pins it there — see [Which hand](commands.md#which-hand).
+
 Camera and slide cues act at the point in the line where they occur. `room`, `backdrop`, `deck`, and `place` remain line-start `stage` setup because they describe the state for the line rather than a point inside it. BGM volume, looping, fade durations, and libsonare DSP remain panel and MCP mixer settings. Inline BGM play cues use the current fade settings. Relative slides are not inline cues; use an absolute page.
 
 ## Brackets are reserved, and nothing inside them is ever spoken

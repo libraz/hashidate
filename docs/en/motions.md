@@ -86,6 +86,7 @@ A gesture is played with a little variation so that two playbacks are not identi
 
 - `rate` scales **time** — the only reading of "faster" a keyframe track has.
 - `scale` reaches the **spine** alone. A direction has no amplitude to vary; scaling one aims it somewhere else, which is a different pose rather than the same pose done smaller.
+- `side` does **nothing**. The built-in table authors one pose and mirrors it onto whichever hand is free, and can do that because every entry was checked on both. A file states `L` or `R` and gets it, so `--side` on a loaded motion is ignored rather than flipping a pose nobody checked flipped.
 
 ## When it does not work
 

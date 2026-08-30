@@ -470,6 +470,7 @@ export class ControlClient {
           expression: c.expression,
           gesture: c.gesture,
           perform: c.perform,
+          side: c.side,
           hold: c.hold,
           stage: c.stage,
         });
@@ -508,10 +509,10 @@ export class ControlClient {
         return;
       // No id means release, on the same rule as `gesture` below.
       case 'perform':
-        s.perform(c.id ?? null);
+        s.perform(c.id ?? null, c.side);
         return;
       case 'gesture':
-        if (c.id) s.gesture(c.id);
+        if (c.id) s.gesture(c.id, c.side);
         else s.stopGesture();
         return;
       case 'hop':

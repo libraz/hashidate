@@ -157,6 +157,7 @@ const REACT_NOTE = [
   '',
   '- Only what is named arrives, together, in one round trip. A call that names nothing sends nothing',
   '- perform is an expression and a motion together. expression / gesture replace only one of the two',
+  '- side names the hand for whichever of the two carries a motion. On its own it sends nothing',
   "- An action timed to a line is written with speak's [performance_id] or typed cue, not with react",
 ].join('\n');
 
@@ -184,6 +185,8 @@ const PERFORM_NOTE = 'A named expression and motion. In effect only for the dura
 const EXPRESSION_NOTE =
   'A drawn expression. With perform given, this replaces the expression alone.';
 const GESTURE_NOTE = 'A body motion. With perform given, this replaces the motion alone.';
+const SIDE_NOTE =
+  'Which hand the motion uses, L or R. Left out, it is picked afresh each time, which is what you want unless the shot gives a reason: the hand away from the slide, or the same hand the line before used. It applies to whichever motion plays, whether named by gesture or by perform, and a motion loaded from a file states its own hands and ignores it.';
 const BACKDROP_NOTE =
   'Where the figure is seen. null for no backdrop. It stays on past the line that set it.';
 const ROOM_NOTE = 'Where the voice resonates. null for no reverb. A separate axis from backdrop.';
@@ -230,6 +233,7 @@ const REWIND_INTERRUPT_NOTE =
 const speakLine = turnSchema.omit({ id: true }).extend({
   text: turnSchema.shape.text.unwrap().describe(TEXT_NOTE),
   reading: turnSchema.shape.reading.describe(READING_NOTE),
+  side: turnSchema.shape.side.describe(SIDE_NOTE),
 });
 
 /** The three staging axes a line can carry, before any ids are injected. */
@@ -322,6 +326,7 @@ const reactInput = z.object({
   perform: z.string().nullable().optional().describe(PERFORM_NOTE),
   expression: z.string().nullable().optional().describe(EXPRESSION_NOTE),
   gesture: z.string().nullable().optional().describe(GESTURE_NOTE),
+  side: turnSchema.shape.side.describe(SIDE_NOTE),
   overlay: overlaySpec.optional().describe(OVERLAY_NOTE),
   hop: z.string().optional().describe(HOP_NOTE),
   point: pointSpec.nullable().optional().describe(POINT_NOTE),
@@ -356,6 +361,7 @@ export type StageInput = z.infer<typeof stageInput>;
 const reviseLine = turnSchema.omit({ id: true }).extend({
   text: turnSchema.shape.text.describe(TEXT_NOTE),
   reading: turnSchema.shape.reading.describe(READING_NOTE),
+  side: turnSchema.shape.side.describe(SIDE_NOTE),
 });
 
 const entryId = z.string().describe(REVISE_ID_NOTE);

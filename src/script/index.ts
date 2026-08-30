@@ -172,6 +172,7 @@ export function outline(script: Script): string[] {
     const marks = [
       line.perform && `perform ${line.perform}`,
       line.gesture && `gesture ${line.gesture}`,
+      line.side && `side ${line.side}`,
       line.expression && `expression ${line.expression}`,
       line.emotion && `emotion ${Object.keys(line.emotion).join('+')}`,
       line.stage &&

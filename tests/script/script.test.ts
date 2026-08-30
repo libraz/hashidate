@@ -31,6 +31,19 @@ lines:
     expect(parsed.lines[0].stage).toEqual({ camera: 'bust', room: 'hall' });
   });
 
+  it('reads the hand a line names, and refuses one that is not a hand', () => {
+    const parsed = script('lines:\n  - { text: "ピース。", gesture: peace, side: L }');
+    expect(parsed.lines[0].side).toBe('L');
+    expect(() => script('lines:\n  - { text: "x", gesture: peace, side: left }')).toThrow(
+      ScriptError,
+    );
+  });
+
+  it('shows the hand in the outline, since that is what --check is read against', () => {
+    const parsed = script('lines:\n  - { text: "ピース。", gesture: peace, side: L }');
+    expect(outline(parsed).join('\n')).toContain('side L');
+  });
+
   it('refuses a line whose cue markup does not close', () => {
     expect(() => script('lines:\n  - text: "[hello こんばんは"')).toThrow(ScriptError);
   });

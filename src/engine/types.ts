@@ -336,7 +336,10 @@ export interface Pose {
 export interface GestureVariation {
   rate: number;
   scale: number;
-  /** ±1. Which hand a one-handed gesture uses. */
+  /**
+   * ±1. Which hand a one-handed gesture uses, and which way the head turns on
+   * a two-handed one. Drawn at random per playback unless the caller pinned it.
+   */
   side: number;
 }
 
@@ -789,6 +792,18 @@ export interface TurnRequest {
    * unless `hold`; its mood persists either way.
    */
   perform?: string | null;
+  /**
+   * Which hand the turn's movement uses, pinning what the gesture layer would
+   * otherwise draw at random. Applies to whichever gesture the turn plays —
+   * `gesture`'s, or the one `perform` names — because a line has one movement
+   * in it and stating the hand twice could only ever disagree with itself.
+   *
+   * Absent is the ordinary case and stays random: the table is authored so that
+   * either hand reads, and a character that always waves with the same arm
+   * reads as a mechanism. A line pins it when the shot gives it a reason — the
+   * hand away from the slide, or the one the line before used.
+   */
+  side?: Side;
   /** Keep the drawn face up after the line ends. Off by default: held past its
    *  line a drawn face stops reading as a reaction and starts reading as a mask. */
   hold?: boolean;

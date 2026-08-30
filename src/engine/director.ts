@@ -389,8 +389,12 @@ export class Director {
     return this.mouth.schedule(seconds === undefined ? track : scaleTrack(track, seconds));
   }
 
-  gesture(id: string): void {
-    this.body.play(id);
+  /**
+   * Play one movement. `side` pins the hand a one-handed gesture acts with,
+   * which is otherwise drawn per playback — see `Body.playDef`.
+   */
+  gesture(id: string, side?: Side): void {
+    this.body.play(id, side);
   }
 
   /**
@@ -419,8 +423,11 @@ export class Director {
    * name for still sets the vector directly — but everything a character
    * routinely does has a name here. Idle uses a transient counterpart so it
    * cannot rewrite this caller-owned state.
+   *
+   * `side` reaches the movement the performance names, and nothing else: a
+   * performance is a face and a gesture, and only the gesture has a hand.
    */
-  perform(id: string | null): void {
+  perform(id: string | null, side?: Side): void {
     if (this._auto) this.auto = false;
     this.releaseAct();
     if (!id) return;
@@ -444,7 +451,7 @@ export class Director {
       this._lookBefore = this.body.lookAt;
       this.body.lookAt = def.look;
     }
-    if (def.gesture) this.body.play(def.gesture);
+    if (def.gesture) this.body.play(def.gesture, side);
     if (def.hop) this.hop(def.hop);
   }
 

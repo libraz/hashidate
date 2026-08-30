@@ -45,9 +45,15 @@ lines:
     stage:
       deck: intro
       slide: 1
+
+  - text: "This side."
+    gesture: pointUp
+    side: L
 ```
 
 Two halves, because they have two lifetimes. `setup` is applied once, before anything is said: which avatar, what it is wearing, where the picture sits in the frame. `lines` are the turns, and each carries the shot it is delivered in.
+
+`side` on the last line is how a script pins the hand a movement uses, which is otherwise drawn afresh on every playback — worth writing when the document is on one half of the frame and the arm should not cross it. See [Which hand](commands.md#which-hand).
 
 That split is the one the command set already makes between what outlives a turn and what is released with it — see [Commands](commands.md).
 
