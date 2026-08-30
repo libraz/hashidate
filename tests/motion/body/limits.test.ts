@@ -71,18 +71,33 @@ function switchSpeed(from: string | null, to: string): number {
   return worst;
 }
 
+/**
+ * Long enough for a hundred switches on a shared runner under coverage.
+ *
+ * Every ordered pair below is five seconds of simulated body, and the layer it
+ * exercises is the one the coverage provider instruments — three seconds here,
+ * half a minute on a cold CI machine, against a default of five. The number is
+ * not a budget for the suite: it is only what keeps a slow machine from
+ * reporting a timeout where the property under test is what it always was.
+ */
+const SLOW = 120_000;
+
 describe('the anatomical limiter', () => {
-  it('never carries a wrist faster than a body can, on any switch between poses', () => {
-    const over: string[] = [];
-    for (const from of [null, ...AGAINST_A_STOP] as Array<string | null>) {
-      for (const to of AGAINST_A_STOP) {
-        if (from === to) continue;
-        const speed = switchSpeed(from, to);
-        if (speed > TELEPORT) over.push(`${from ?? 'rest'} -> ${to}: ${speed.toFixed(1)} m/s`);
+  it(
+    'never carries a wrist faster than a body can, on any switch between poses',
+    () => {
+      const over: string[] = [];
+      for (const from of [null, ...AGAINST_A_STOP] as Array<string | null>) {
+        for (const to of AGAINST_A_STOP) {
+          if (from === to) continue;
+          const speed = switchSpeed(from, to);
+          if (speed > TELEPORT) over.push(`${from ?? 'rest'} -> ${to}: ${speed.toFixed(1)} m/s`);
+        }
       }
-    }
-    expect(over).toEqual([]);
-  });
+      expect(over).toEqual([]);
+    },
+    SLOW,
+  );
 
   it('still lets every held pose arrive inside its own entrance', () => {
     // The other half of the bargain, and the one a cap set too low would break:
