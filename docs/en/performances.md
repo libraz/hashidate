@@ -24,6 +24,12 @@ For what the table has no name for, `emotion`, `expression`, `overlay`, `gesture
 
 The idle autopilot draws from the same table, so what the character does on its own and what it can be asked to do are one vocabulary. Turn it on with `idle on` and she will keep herself occupied between turns without the caller sending anything.
 
+## What runs without being asked
+
+Under all of it the character is never still. Breathing, a weight shift from one foot to the other, blinks on a scheduler, gaze with saccades and a head that springs after it, hair and garments catching up a beat late — none of it is a command and none of it waits for a caller.
+
+`idle` sits above that layer rather than switching it on: with it off she stops *performing* by herself and goes on breathing. What reaches those numbers is `tune`, a fader per curve rather than a switch.
+
 ## Finding out what this avatar has
 
 `GET /api/vocabulary` lists the performances the loaded avatar actually has, grouped. Over MCP the same ids are compiled into the tool schemas, so a model picks from a list rather than inventing one.
