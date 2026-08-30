@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -104,5 +104,70 @@ describe('serving a file under a prefix', () => {
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * The document root, which is served without a prefix and is reached by three
+ * directory URLs rather than by naming a file.
+ *
+ * Every page in the application arrives this way — `/`, `/panel/`, `/monitor/`
+ * — so a guard that refuses a name with no extension takes all three down at
+ * once and leaves the shell showing two windows that say "not found".
+ */
+describe('serving the document root', () => {
+  let pages: Server;
+  let root2: string;
+
+  beforeEach(async () => {
+    root2 = await mkdtemp(join(tmpdir(), 'hashidate-static-root-'));
+    pages = createServer((req, res) => serveStatic(req, res, root2));
+    await new Promise<void>((ready) => pages.listen(0, '127.0.0.1', ready));
+    const address = pages.address();
+    if (address === null || typeof address === 'string') throw new Error('no port');
+    origin = `http://127.0.0.1:${address.port}`;
+    await writeFile(join(root2, 'index.html'), '<!doctype html>viewer');
+    for (const page of ['panel', 'monitor']) {
+      await mkdir(join(root2, page));
+      await writeFile(join(root2, page, 'index.html'), `<!doctype html>${page}`);
+    }
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((closed) => pages.close(() => closed()));
+    await rm(root2, { recursive: true, force: true });
+  });
+
+  it('answers each page directory with its index', async () => {
+    for (const [path, body] of [
+      ['/', 'viewer'],
+      ['/panel/', 'panel'],
+      ['/monitor/', 'monitor'],
+    ]) {
+      const response = await fetch(`${origin}${path}`);
+      expect(response.status, path).toBe(200);
+      expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
+      expect(await response.text()).toBe(`<!doctype html>${body}`);
+    }
+  });
+
+  it('keeps the query when it adds the trailing slash a page directory needs', async () => {
+    // The stage window is opened muted by asking for `/monitor?mute=1`, and a
+    // redirect that drops the query is a window that quietly makes a sound.
+    const response = await fetch(`${origin}/monitor?mute=1`, { redirect: 'manual' });
+    expect(response.status).toBe(301);
+    expect(response.headers.get('location')).toBe('/monitor/?mute=1');
+  });
+
+  it('does not list a directory that has no index', async () => {
+    await mkdir(join(root2, 'assets'));
+    await writeFile(join(root2, 'assets', 'app.js'), 'console.log(1)');
+    expect((await fetch(`${origin}/assets/`)).status).toBe(404);
+    expect((await fetch(`${origin}/assets/app.js`)).status).toBe(200);
+  });
+
+  it('still refuses a file the root does not serve', async () => {
+    await writeFile(join(root2, 'notes.md'), '# no');
+    expect((await fetch(`${origin}/notes.md`)).status).toBe(404);
   });
 });

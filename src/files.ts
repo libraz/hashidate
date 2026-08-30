@@ -176,7 +176,11 @@ export async function inspectSafePath(
 ): Promise<SafePathResult> {
   const policy = normaliseOptions(options);
   const rootPath = resolve(root);
-  if (!validRequest(request, policy)) return failure('invalid', 'invalid file name');
+  // The final entry may be a directory, and a directory has no extension, so
+  // the name check cannot demand one here. Nothing is loosened by that: the
+  // inspection below applies the extension policy to the final entry once it is
+  // known to be a file, which is the only case the caller streams.
+  if (!validRequest(request, policy, true)) return failure('invalid', 'invalid file name');
   if (policy.logicalPath) return inspectLogicalPath(rootPath, request, policy);
   const target = resolve(rootPath, request);
   return inspectTarget(rootPath, target, policy);
@@ -288,7 +292,18 @@ function validExactRequest(target: string, policy: Required<SafeFileOptions>): b
   return policy.extensions.includes(normaliseExtension(extname(basename(target))));
 }
 
-function validRequest(request: string, policy: Required<SafeFileOptions>): boolean {
+/**
+ * Whether a request is a name this module will look at all.
+ *
+ * `finalMayBeDirectory` is for the one caller whose target legitimately has no
+ * extension — see `inspectSafePath`. Everywhere else an extensionless final
+ * component is a request for something no surface here serves.
+ */
+function validRequest(
+  request: string,
+  policy: Required<SafeFileOptions>,
+  finalMayBeDirectory = false,
+): boolean {
   if (request.length === 0 && !policy.allowNested) return false;
   if (request.includes('\\')) return false;
   const parts = policy.allowNested ? request.split('/').filter((part) => part !== '') : [request];
@@ -302,7 +317,7 @@ function validRequest(request: string, policy: Required<SafeFileOptions>): boole
   if (policy.logical) {
     if (parts.length !== 1 || policy.extensions.length === 0) return false;
     if (policy.extensions.includes(normaliseExtension(extname(request)))) return false;
-  } else if (policy.extensions.length > 0) {
+  } else if (policy.extensions.length > 0 && !finalMayBeDirectory) {
     const extension = normaliseExtension(extname(basename(request)));
     if (!policy.extensions.includes(extension)) return false;
   }
