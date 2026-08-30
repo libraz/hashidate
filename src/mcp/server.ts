@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
   CallToolRequestSchema,
@@ -142,9 +143,20 @@ export interface Control {
   deckText(id: string, opts?: { from?: number; to?: number }): Promise<DeckTextResponse>;
 }
 
+/**
+ * The version this adapter introduces itself with, read from the manifest.
+ *
+ * An MCP client displays it, so it is a published number rather than a detail —
+ * and a second copy of a version string is a copy that is correct until the
+ * release nobody remembers to edit it in. Read through `createRequire` rather
+ * than as an import attribute because the module target this compiles against
+ * does not allow one; `decks.ts` reaches for the same thing the same way.
+ */
+const { version } = createRequire(import.meta.url)('../../package.json') as { version: string };
+
 export function createServer(control: Control): Server {
   const server = new Server(
-    { name: 'hashidate', version: '0.2.0' },
+    { name: 'hashidate', version },
     {
       capabilities: { tools: { listChanged: true }, resources: {} },
       instructions: INSTRUCTIONS,
