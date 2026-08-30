@@ -1,4 +1,3 @@
-import wasmUrl from '@libraz/libsonare/wasm?url';
 import type { BgmCommand, BgmDsp, BgmFade, BgmReport, BgmTransport } from '@/protocol';
 import {
   BGM_DEFAULT_LOOP,
@@ -6,66 +5,34 @@ import {
   BGM_DSP_DEFAULTS,
   BGM_FADE_DEFAULTS,
 } from '@/protocol';
-import type { BrowserAudioOutput } from './audio-output';
-import { type BgmDspPlan, buildBgmDspPlan, mergeBgmDsp } from './bgm-dsp';
-import bgmWorkletUrl from './bgm-worklet.ts?worker&url';
+import type { BrowserAudioOutput } from '../audio-output';
+import { mergeBgmDsp } from '../bgm-dsp';
+import bgmWorkletUrl from '../bgm-worklet.ts?worker&url';
+import { BgmDspChain } from './dsp-chain';
+import type { BrowserBgmOptions, LegacyBrowserBgmOptions } from './options';
+import {
+  cleanupAudio,
+  finiteDuration,
+  holdEnvelope,
+  isBlockedPlayError,
+  mediaError,
+  releaseRoute,
+  safeDisconnect,
+  scheduleEnvelopeAt,
+  type TrackRoute,
+} from './route';
+import {
+  actionTransport,
+  cloneDsp,
+  cloneFade,
+  isOutput,
+  mergeFade,
+  normalizeTrack,
+  trimBase,
+} from './settings';
+import { type BgmNodeFactory, fetchBgmWasm } from './worklet';
 
-const PROCESSOR_NAME = 'hashidate-bgm';
-const BLOCK_SIZE = 128;
-
-type BgmNodeFactory = (
-  context: BaseAudioContext,
-  name: string,
-  options: AudioWorkletNodeOptions,
-) => AudioWorkletNode;
-
-export interface BrowserBgmOptions {
-  /** The page-owned output graph. */
-  output: BrowserAudioOutput;
-  /** URL prefix for the direct server asset route. */
-  base?: string;
-  /** Injectable media element factory for tests/embedding hosts. */
-  audioFactory?: () => HTMLAudioElement;
-  /** Injectable clock, in epoch seconds, for late-join tests. */
-  now?: () => number;
-  /** Vite-emitted local worklet module; override only for tests. */
-  workletUrl?: string | URL;
-  /** Injectable AudioWorkletNode constructor for graph tests. */
-  nodeFactory?: BgmNodeFactory;
-  /** Injectable WASM byte loader for browser tests. */
-  wasmLoader?: () => Promise<ArrayBuffer>;
-  /** Injectable plan for tests; production validates libsonare's scene/IDs. */
-  dspPlan?: BgmDspPlan | ((dsp: BgmDsp) => Promise<BgmDspPlan>);
-  /** Called when a report-worthy media event occurs. */
-  onReport?: (report: BgmReport) => void;
-}
-
-type LegacyBrowserBgmOptions = Omit<BrowserBgmOptions, 'output'>;
-
-interface EnvelopeState {
-  from: number;
-  to: number;
-  start: number;
-  duration: number;
-}
-
-interface TrackRoute {
-  readonly epoch: number;
-  readonly track: string;
-  readonly audio: HTMLAudioElement;
-  readonly source: MediaElementAudioSourceNode;
-  readonly envelope: GainNode;
-  envelopeState: EnvelopeState;
-  retired: boolean;
-  timer: ReturnType<typeof setTimeout> | null;
-  started: boolean;
-}
-
-interface PendingSwitch {
-  incomingEpoch: number;
-  outgoing: TrackRoute[];
-  fade: BgmFade;
-}
+export type { BrowserBgmOptions } from './options';
 
 /**
  * The browser-side BGM transport.
@@ -75,32 +42,31 @@ interface PendingSwitch {
  * libsonare Mixer worklet (or its dry fallback) and finally the BGM bus. The
  * mix is deliberately separate from voice and the final master remains the
  * only renderer mute point.
+ *
+ * What is left here is the transport and the routes: which track is selected,
+ * where the timeline says it is, which routes are still sounding, and how one
+ * hands over to the next. The processing between the mix bus and the BGM bus
+ * is `dsp-chain.ts`, the envelope arithmetic is `route.ts`, and the value work
+ * — merging a patch, reading a verb as a transport — is `settings.ts`.
  */
+interface PendingSwitch {
+  incomingEpoch: number;
+  outgoing: TrackRoute[];
+  fade: BgmFade;
+}
+
 export class BrowserBgm {
   private readonly output: BrowserAudioOutput;
   private readonly base: string;
   private readonly makeAudio: () => HTMLAudioElement;
   private readonly now: () => number;
-  private readonly workletUrl: string | URL;
-  private readonly nodeFactory: BgmNodeFactory;
-  private readonly loadWasm: () => Promise<ArrayBuffer>;
-  private readonly suppliedPlan: BrowserBgmOptions['dspPlan'];
   private readonly onReport?: (report: BgmReport) => void;
   private readonly offUnlock: (() => void) | null;
-  /** All track envelopes feed this one persistent route into BGM DSP. */
-  private readonly mixBus: GainNode;
+  private readonly chain: BgmDspChain;
   private readonly routes = new Set<TrackRoute>();
 
   private currentRoute: TrackRoute | null = null;
   private pendingSwitch: PendingSwitch | null = null;
-  private dspNode: AudioWorkletNode | null = null;
-  private plan: BgmDspPlan | null = null;
-  private workletLoad: Promise<void> | null = null;
-  private wasmLoad: Promise<ArrayBuffer> | null = null;
-  private workletInitialized = false;
-  /** Invalidates every async shared DSP install when its route is rebuilt. */
-  private dspGeneration = 0;
-  private dspInstall: Promise<void> | null = null;
   private pendingPlay: {
     epoch: number;
     route: TrackRoute;
@@ -121,7 +87,6 @@ export class BrowserBgm {
   private duration: number | null = null;
   private blocked = false;
   private error: string | null = null;
-  private dspDegraded = false;
   private revision = 0;
   private epoch = 0;
   private playGeneration = 0;
@@ -140,34 +105,36 @@ export class BrowserBgm {
         return document.createElement('audio');
       });
     this.now = options.now ?? (() => Date.now() / 1000);
-    this.workletUrl = options.workletUrl ?? bgmWorkletUrl;
-    this.nodeFactory =
+    const nodeFactory: BgmNodeFactory =
       options.nodeFactory ??
       ((context, name, nodeOptions) => {
         if (typeof AudioWorkletNode === 'undefined')
           throw new Error('AudioWorkletNode unavailable');
         return new AudioWorkletNode(context, name, nodeOptions);
       });
-    this.loadWasm = options.wasmLoader ?? fetchBgmWasm;
-    this.suppliedPlan = options.dspPlan;
     this.onReport = options.onReport;
-    this.mixBus = this.output.context.createGain();
-    this.mixBus.gain.value = 1;
-    this.connectDry();
+    this.chain = new BgmDspChain(
+      this.output,
+      nodeFactory,
+      options.workletUrl ?? bgmWorkletUrl,
+      options.wasmLoader ?? fetchBgmWasm,
+      options.dspPlan,
+      () => this.dsp,
+      () => this.emitReport(),
+    );
     this.offUnlock = this.output.onUnlock(() => {
       void this.retryPlay();
     });
     this.setBusVolume();
   }
 
-  /** Apply a canonical server command. False means an older revision. */
   apply(command: BgmCommand): boolean {
     if (this.disposed) return false;
     const nextRevision = command.revision ?? this.revision;
     if (nextRevision < this.revision) return false;
     const revisionChanged = nextRevision !== this.revision;
     this.revision = nextRevision;
-    if (revisionChanged) this.dspDegraded = false;
+    if (revisionChanged) this.chain.clearDegraded();
 
     const previousTransport = this.transport;
     const previousTrack = this.track;
@@ -267,7 +234,7 @@ export class BrowserBgm {
         this.currentRoute = null;
         this.duration = null;
       } else if (route !== null) {
-        this.holdEnvelope(route);
+        holdEnvelope(route, this.audioTime());
         route.audio.pause();
       }
       for (const retired of [...this.routes]) {
@@ -280,14 +247,7 @@ export class BrowserBgm {
 
     // A settings-only DSP patch applies to the one shared node without
     // replacing media. The complete resolved macro state is always applied.
-    const dspNode = this.dspNode;
-    if (dspNode && this.plan && command.dsp !== undefined) {
-      try {
-        this.plan.apply(dspNode, this.dsp);
-      } catch {
-        this.failDsp(this.dspGeneration, dspNode);
-      }
-    }
+    if (command.dsp !== undefined) this.chain.applyDsp(this.dsp);
     return true;
   }
 
@@ -312,7 +272,7 @@ export class BrowserBgm {
       muted: this.output.isMuted,
       blocked: this.blocked || this.output.isBlocked,
       error: this.error,
-      dspDegraded: this.dspDegraded,
+      dspDegraded: this.chain.degraded,
       at,
     };
   }
@@ -325,15 +285,10 @@ export class BrowserBgm {
     this.playGeneration += 1;
     this.pendingSwitch = null;
     this.clearTailTimer();
-    this.dspGeneration += 1;
-    this.dspInstall = null;
     this.offUnlock?.();
     for (const route of [...this.routes]) this.finalizeRoute(route);
     this.currentRoute = null;
-    destroyNode(this.dspNode);
-    this.dspNode = null;
-    this.plan = null;
-    safeDisconnect(this.mixBus);
+    this.chain.dispose();
   }
 
   get currentTrack(): string | null {
@@ -349,7 +304,7 @@ export class BrowserBgm {
   }
 
   get isDspDegraded(): boolean {
-    return this.dspDegraded;
+    return this.chain.degraded;
   }
 
   private async loadTrack(
@@ -374,7 +329,7 @@ export class BrowserBgm {
       envelope = this.output.context.createGain();
       envelope.gain.value = 0;
       source.connect(envelope);
-      envelope.connect(this.mixBus);
+      envelope.connect(this.chain.input);
       route = {
         epoch,
         track,
@@ -410,7 +365,7 @@ export class BrowserBgm {
 
     // Dry audio is already connected. A successful worklet replaces that edge;
     // a failed worklet leaves the shared mix playing and marks only DSP degraded.
-    this.installDsp();
+    this.chain.ensure();
     const pending = this.pendingSwitch?.incomingEpoch === epoch ? this.pendingSwitch : null;
     if (this.transport === 'playing' && route !== null)
       void this.playCurrent(route, fadeIn, pending?.fade);
@@ -456,95 +411,6 @@ export class BrowserBgm {
       this.transport = 'ended';
       this.emitReport();
     };
-  }
-
-  /** Install one shared worklet route for every overlapping track. */
-  private installDsp(): void {
-    if (this.disposed || this.dspNode !== null || this.dspInstall !== null) return;
-    const generation = this.dspGeneration;
-    const task = this.installDspAsync(generation);
-    let tracked: Promise<void>;
-    tracked = task.finally(() => {
-      if (this.dspInstall === tracked) this.dspInstall = null;
-    });
-    this.dspInstall = tracked;
-  }
-
-  private async installDspAsync(generation: number): Promise<void> {
-    let plan: BgmDspPlan;
-    try {
-      plan = await this.getPlan();
-      await this.ensureWorklet();
-      if (generation !== this.dspGeneration || this.disposed) return;
-      const node = await this.createDspNode(plan.sceneJson);
-      if (generation !== this.dspGeneration || this.disposed) {
-        destroyNode(node);
-        return;
-      }
-      if (this.dspNode !== null && this.dspNode !== node) destroyNode(this.dspNode);
-      safeDisconnect(this.mixBus);
-      this.mixBus.connect(node);
-      node.connect(this.output.bgmBus);
-      this.dspNode = node;
-      this.plan = plan;
-      attachProcessorError(node, () => this.failDsp(generation, node));
-      plan.apply(node, this.dsp);
-      this.emitReport();
-    } catch {
-      if (generation === this.dspGeneration && !this.disposed) this.failDsp(generation);
-    }
-  }
-
-  private async getPlan(): Promise<BgmDspPlan> {
-    if (typeof this.suppliedPlan === 'function') return this.suppliedPlan(this.dsp);
-    if (this.suppliedPlan) return this.suppliedPlan;
-    return buildBgmDspPlan(this.dsp);
-  }
-
-  private async createDspNode(sceneJson: string): Promise<AudioWorkletNode> {
-    const wasmBinary = this.workletInitialized ? undefined : await this.ensureWasm();
-    const node = this.nodeFactory(this.output.context, PROCESSOR_NAME, {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      outputChannelCount: [2],
-      processorOptions: {
-        sceneJson,
-        sampleRate: this.output.context.sampleRate,
-        blockSize: BLOCK_SIZE,
-        stripCount: 1,
-        ...(wasmBinary === undefined ? {} : { wasmBinary }),
-      },
-    });
-    try {
-      await processorReady(node);
-      this.workletInitialized = true;
-      return node;
-    } catch (reason) {
-      destroyNode(node);
-      throw reason;
-    }
-  }
-
-  private ensureWorklet(): Promise<void> {
-    if (this.workletLoad !== null) return this.workletLoad;
-    const addModule = this.output.context.audioWorklet?.addModule;
-    if (!addModule) return Promise.reject(new Error('AudioWorklet is unavailable'));
-    this.workletLoad = addModule
-      .call(this.output.context.audioWorklet, this.workletUrl)
-      .catch((reason) => {
-        this.workletLoad = null;
-        throw reason;
-      });
-    return this.workletLoad;
-  }
-
-  private ensureWasm(): Promise<ArrayBuffer> {
-    if (this.wasmLoad !== null) return this.wasmLoad;
-    this.wasmLoad = this.loadWasm().catch((reason) => {
-      this.wasmLoad = null;
-      throw reason;
-    });
-    return this.wasmLoad;
   }
 
   private async playCurrent(
@@ -719,11 +585,13 @@ export class BrowserBgm {
     this.playGeneration += 1;
     this.clearTailTimer();
     if (tail === 0) {
-      this.recreateDsp();
+      this.chain.reset(this.currentRoute !== null);
     } else {
       this.tailTimer = setTimeout(() => {
         this.tailTimer = null;
-        if (!this.disposed && this.currentRoute === null) this.recreateDsp();
+        if (!this.disposed && this.currentRoute === null) {
+          this.chain.reset(this.currentRoute !== null);
+        }
       }, outSeconds * 1000);
     }
     this.emitReport();
@@ -733,16 +601,6 @@ export class BrowserBgm {
     if (this.tailTimer === null) return;
     clearTimeout(this.tailTimer);
     this.tailTimer = null;
-  }
-
-  private recreateDsp(): void {
-    this.dspGeneration += 1;
-    this.dspInstall = null;
-    destroyNode(this.dspNode);
-    this.dspNode = null;
-    this.plan = null;
-    this.connectDry();
-    if (this.currentRoute !== null && !this.disposed) this.installDsp();
   }
 
   private projectPosition(position?: number, at?: number, transport?: BgmTransport): number {
@@ -777,23 +635,6 @@ export class BrowserBgm {
     this.output.bgmBus.gain.value = this.volume;
   }
 
-  private failDsp(generation: number, failedNode?: AudioWorkletNode): void {
-    if (
-      generation !== this.dspGeneration ||
-      (failedNode !== undefined && this.dspNode !== failedNode)
-    )
-      return;
-    this.dspGeneration += 1;
-    destroyNode(this.dspNode);
-    this.dspNode = null;
-    this.plan = null;
-    this.connectDry();
-    this.dspDegraded = true;
-    // A worklet failure is distinct from a media error: dry media keeps
-    // playing, and the server can still accept a healthy natural end.
-    this.emitReport();
-  }
-
   private emitReport(): void {
     this.onReport?.(this.report());
   }
@@ -816,11 +657,6 @@ export class BrowserBgm {
     return Number.isFinite(value) ? value : this.now();
   }
 
-  private connectDry(): void {
-    safeDisconnect(this.mixBus);
-    this.mixBus.connect(this.output.bgmBus);
-  }
-
   /** Start both sides of a switch from one AudioContext timestamp. */
   private beginCrossfade(incoming: TrackRoute, outgoing: TrackRoute[], fade: BgmFade): void {
     const at = this.audioTime();
@@ -828,7 +664,7 @@ export class BrowserBgm {
       if (route === incoming || !this.routes.has(route) || !this.isAudible(route)) continue;
       this.retireRouteAt(route, fade.outSeconds, at);
     }
-    this.scheduleEnvelopeAt(incoming, 1, fade.inSeconds, at);
+    scheduleEnvelopeAt(incoming, 1, fade.inSeconds, at);
   }
 
   private retireRouteAt(route: TrackRoute, duration: number, at: number): void {
@@ -837,7 +673,7 @@ export class BrowserBgm {
       route.timer = null;
     }
     route.retired = true;
-    this.scheduleEnvelopeAt(route, 0, duration, at);
+    scheduleEnvelopeAt(route, 0, duration, at);
     if (duration <= 0) {
       this.finalizeRoute(route);
       return;
@@ -846,16 +682,7 @@ export class BrowserBgm {
   }
 
   private finalizeRoute(route: TrackRoute): void {
-    if (route.timer !== null) {
-      clearTimeout(route.timer);
-      route.timer = null;
-    }
-    route.audio.onloadedmetadata = null;
-    route.audio.onerror = null;
-    route.audio.onended = null;
-    route.audio.pause();
-    safeDisconnect(route.source);
-    safeDisconnect(route.envelope);
+    releaseRoute(route);
     this.routes.delete(route);
     if (this.pendingSwitch?.outgoing.includes(route)) {
       this.pendingSwitch.outgoing = this.pendingSwitch.outgoing.filter(
@@ -863,7 +690,6 @@ export class BrowserBgm {
       );
     }
     if (this.currentRoute === route) this.currentRoute = null;
-    cleanupAudio(route.audio);
   }
 
   private hardUnload(): void {
@@ -874,193 +700,10 @@ export class BrowserBgm {
     this.clearTailTimer();
     for (const route of [...this.routes]) this.finalizeRoute(route);
     this.currentRoute = null;
-    this.dspGeneration += 1;
-    this.dspInstall = null;
-    destroyNode(this.dspNode);
-    this.dspNode = null;
-    this.plan = null;
-    this.connectDry();
-  }
-
-  private holdEnvelope(route: TrackRoute): void {
-    const at = this.audioTime();
-    const current = envelopeValue(route.envelopeState, at);
-    cancelParam(route.envelope.gain, at);
-    route.envelope.gain.setValueAtTime(current, at);
-    route.envelopeState = { from: current, to: current, start: at, duration: 0 };
+    this.chain.reset(false);
   }
 
   private scheduleEnvelope(route: TrackRoute, target: number, duration: number): void {
-    const at = this.audioTime();
-    this.scheduleEnvelopeAt(route, target, duration, at);
+    scheduleEnvelopeAt(route, target, duration, this.audioTime());
   }
-
-  private scheduleEnvelopeAt(
-    route: TrackRoute,
-    target: number,
-    duration: number,
-    at: number,
-  ): void {
-    const from = envelopeValue(route.envelopeState, at);
-    const boundedDuration = Math.max(0, duration);
-    cancelParam(route.envelope.gain, at);
-    route.envelope.gain.setValueAtTime(from, at);
-    if (boundedDuration === 0) route.envelope.gain.setValueAtTime(target, at);
-    else route.envelope.gain.linearRampToValueAtTime(target, at + boundedDuration);
-    route.envelopeState = {
-      from,
-      to: target,
-      start: at,
-      duration: boundedDuration,
-    };
-  }
-}
-
-function isOutput(value: BrowserAudioOutput | BrowserBgmOptions): value is BrowserAudioOutput {
-  return 'context' in value && 'bgmBus' in value;
-}
-
-function cloneDsp(dsp: BgmDsp): BgmDsp {
-  return { ...dsp, reverb: { ...dsp.reverb } };
-}
-
-function cloneFade(fade: BgmFade): BgmFade {
-  return { inSeconds: fade.inSeconds, outSeconds: fade.outSeconds };
-}
-
-function mergeFade(base: BgmFade, patch: Partial<BgmFade>): BgmFade {
-  return {
-    inSeconds: patch.inSeconds ?? base.inSeconds,
-    outSeconds: patch.outSeconds ?? base.outSeconds,
-  };
-}
-
-function normalizeTrack(track: string | null): string | null {
-  return track === null ? null : track.normalize('NFC');
-}
-
-function trimBase(base: string): string {
-  const trimmed = base.trim();
-  if (trimmed === '') return '';
-  return trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
-}
-
-function actionTransport(action: BgmCommand['action']): BgmTransport | undefined {
-  switch (action) {
-    case 'play':
-      return 'playing';
-    case 'pause':
-      return 'paused';
-    case 'stop':
-      return 'stopped';
-    default:
-      return undefined;
-  }
-}
-
-function finiteDuration(value: number): number | null {
-  return Number.isFinite(value) && value >= 0 ? value : null;
-}
-
-function mediaError(audio: HTMLAudioElement): string {
-  const message = audio.error?.message;
-  return message && message.length > 0 ? message : 'BGM media could not be loaded';
-}
-
-function isBlockedPlayError(reason: unknown): boolean {
-  return (
-    typeof reason === 'object' &&
-    reason !== null &&
-    ('name' in reason ? (reason as { name?: unknown }).name === 'NotAllowedError' : false)
-  );
-}
-
-function envelopeValue(state: EnvelopeState, at: number): number {
-  if (state.duration <= 0) return state.to;
-  const fraction = Math.min(1, Math.max(0, (at - state.start) / state.duration));
-  return state.from + (state.to - state.from) * fraction;
-}
-
-function cancelParam(param: AudioParam, at: number): void {
-  try {
-    param.cancelScheduledValues(at);
-  } catch {
-    /* a test host may expose only a partial AudioParam */
-  }
-}
-
-function safeDisconnect(node: AudioNode | null): void {
-  if (node === null) return;
-  try {
-    node.disconnect();
-  } catch {
-    /* already disconnected */
-  }
-}
-
-function cleanupAudio(audio: HTMLAudioElement | null): void {
-  if (audio === null) return;
-  try {
-    audio.pause();
-    audio.removeAttribute('src');
-    audio.load();
-  } catch {
-    /* a test host may expose only a partial media element */
-  }
-}
-
-function destroyNode(node: AudioWorkletNode | null): void {
-  if (node === null) return;
-  try {
-    node.port.postMessage({ type: 'destroy' });
-  } catch {
-    /* processor may already be gone */
-  }
-  safeDisconnect(node);
-}
-
-function attachProcessorError(node: AudioWorkletNode, listener: () => void): void {
-  const candidate = node as AudioWorkletNode & {
-    addEventListener?: (type: string, listener: EventListener) => void;
-    onprocessorerror?: ((event: Event) => void) | null;
-  };
-  if (candidate.addEventListener) candidate.addEventListener('processorerror', listener);
-  else candidate.onprocessorerror = listener;
-}
-
-async function fetchBgmWasm(): Promise<ArrayBuffer> {
-  const response = await fetch(wasmUrl);
-  if (!response.ok) throw new Error(`BGM DSP WASM request failed: ${response.status}`);
-  return response.arrayBuffer();
-}
-
-function processorReady(node: AudioWorkletNode): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const port = node.port;
-    const onMessage = (event: MessageEvent<unknown>): void => {
-      if (!isProcessorStatus(event.data)) return;
-      cleanup();
-      if (event.data.type === 'ready') resolve();
-      else reject(new Error(event.data.message));
-    };
-    const onProcessorError = (): void => {
-      cleanup();
-      reject(new Error('BGM DSP processor failed during initialization'));
-    };
-    const cleanup = (): void => {
-      port.removeEventListener('message', onMessage);
-      node.removeEventListener('processorerror', onProcessorError);
-    };
-    port.addEventListener('message', onMessage);
-    node.addEventListener('processorerror', onProcessorError);
-    port.start();
-  });
-}
-
-function isProcessorStatus(
-  value: unknown,
-): value is { type: 'ready' } | { type: 'error'; message: string } {
-  if (typeof value !== 'object' || value === null || !('type' in value)) return false;
-  const status = value as { type?: unknown; message?: unknown };
-  return status.type === 'ready' || (status.type === 'error' && typeof status.message === 'string');
 }
