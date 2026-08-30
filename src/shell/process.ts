@@ -56,13 +56,14 @@ export type ControlProbe =
   | { kind: 'ours' }
   | { kind: 'foreign'; roots: ServerRoots | null };
 
-/** Whether two servers were started on the same three directories. */
+/** Whether two servers were started on the same renderer and show roots. */
 function sameRoots(found: ServerRoots | undefined, expected: ServerRoots): boolean {
   return (
     found !== undefined &&
     found.document === expected.document &&
     found.slides === expected.slides &&
-    found.motions === expected.motions
+    found.motions === expected.motions &&
+    found.bgm === expected.bgm
   );
 }
 
@@ -409,6 +410,8 @@ export class ControlProcess {
       this.paths.scripts,
       '--motions',
       this.paths.motions,
+      '--bgm',
+      this.paths.bgm,
       '--recordings',
       this.paths.recordings,
     ];

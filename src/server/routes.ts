@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
+  type BgmResponse,
   type Command,
   type CommandName,
   type CommandResponse,
@@ -20,6 +21,7 @@ import {
   scriptRunSchema,
 } from '../protocol';
 import { ScriptError } from '../script';
+import { type BgmLibrary, listBgm } from './bgm';
 import type { Decks } from './decks';
 import type { Hub } from './hub';
 import type { Motions } from './motions';
@@ -97,6 +99,7 @@ export interface Stores {
   decks?: Decks | null;
   motions?: Motions | null;
   scripts?: Scripts | null;
+  bgm?: BgmLibrary | null;
 }
 
 /**
@@ -199,7 +202,7 @@ function get(
   pathname: string,
   params: URLSearchParams,
 ): void {
-  const { decks = null, motions = null, scripts = null } = stores;
+  const { decks = null, motions = null, scripts = null, bgm = null } = stores;
   switch (pathname) {
     case '/api/stream':
       stream(res, hub);
@@ -239,6 +242,9 @@ function get(
     case '/api/scripts':
       void listScripts(res, scripts);
       return;
+    case '/api/bgm':
+      void listBackgroundMusic(res, bgm);
+      return;
     default:
       // `/api/decks/<id>/text` is the one route here with a name in it, so it
       // cannot be a case above. Nothing else under `/api/` is patterned.
@@ -269,6 +275,12 @@ async function listMotions(res: ServerResponse, motions: Motions | null): Promis
 async function listScripts(res: ServerResponse, scripts: Scripts | null): Promise<void> {
   const listed = scripts === null ? { scripts: [], errors: [] } : await scripts.list();
   json(res, listed satisfies ScriptsResponse);
+}
+
+/** The operator's BGM files, rescanned for every roster request. */
+async function listBackgroundMusic(res: ServerResponse, bgm: BgmLibrary | null): Promise<void> {
+  const listed = await listBgm(bgm);
+  json(res, listed satisfies BgmResponse);
 }
 
 /**

@@ -918,6 +918,97 @@ export const wearCommandSchema = z.object({
   preset: z.string().optional(),
 });
 
+// --- background music ------------------------------------------------------
+
+/** The defaults are intentionally quiet: BGM should sit under speech. */
+export const BGM_DEFAULTS = { volume: 0.2, loop: true } as const;
+export const BGM_DEFAULT_VOLUME = BGM_DEFAULTS.volume;
+export const BGM_DEFAULT_LOOP = BGM_DEFAULTS.loop;
+
+/** The action a caller may request from the server-owned music transport. */
+export const bgmActionSchema = z.enum(['play', 'pause', 'stop']);
+export type BgmAction = z.infer<typeof bgmActionSchema>;
+
+/** The transport state that is synchronised to every renderer. */
+export const bgmTransportSchema = z.enum(['playing', 'paused', 'stopped', 'ended']);
+export type BgmTransport = z.infer<typeof bgmTransportSchema>;
+
+/** Defaults for the fixed libsonare Mixer insert chain used by BGM. */
+export const BGM_DSP_DEFAULTS = {
+  toneDb: 0,
+  compression: 0,
+  width: 1,
+  reverb: { mix: 0, decay: 0.5, damping: 0.5 },
+} as const;
+
+/** The fully resolved BGM DSP state, matching the Mixer controls. */
+export const bgmDspSchema = z
+  .object({
+    toneDb: z.number().min(-6).max(6),
+    compression: z.number().min(0).max(1),
+    width: z.number().min(0).max(2),
+    reverb: z
+      .object({
+        mix: z.number().min(0).max(0.5),
+        decay: z.number().min(0).max(0.9),
+        damping: z.number().min(0).max(1),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type BgmDsp = z.infer<typeof bgmDspSchema>;
+
+/** A strict partial patch for one or more independent BGM DSP controls. */
+export const bgmDspPatchSchema = z
+  .object({
+    toneDb: z.number().min(-6).max(6).optional(),
+    compression: z.number().min(0).max(1).optional(),
+    width: z.number().min(0).max(2).optional(),
+    reverb: z
+      .object({
+        mix: z.number().min(0).max(0.5).optional(),
+        decay: z.number().min(0).max(0.9).optional(),
+        damping: z.number().min(0).max(1).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+export type BgmDspPatch = z.infer<typeof bgmDspPatchSchema>;
+
+/**
+ * Change the server-owned BGM transport.
+ *
+ * The action, selection, level and DSP fields are caller input. `revision`,
+ * `transport`, `position` and `at` may arrive from an older/newer peer, but are
+ * server-generated and are overwritten by `BgmCoordinator` before the command
+ * is sent to a viewer.
+ * Keeping them in the schema lets the wire degrade across release cycles
+ * without allowing a caller to forge the timeline.
+ *
+ * An absent action is a settings-only patch. An absent track leaves the
+ * selection alone; `track: null` unloads it. The distinction is deliberate and
+ * is resolved by the server rather than by each renderer.
+ */
+export const bgmCommandSchema = z.object({
+  cmd: z.literal('bgm'),
+  id: correlationId,
+  action: bgmActionSchema.optional(),
+  track: z.string().nullable().optional(),
+  volume: z.number().finite().min(0).max(1).optional(),
+  loop: z.boolean().optional(),
+  /** A partial libsonare Mixer DSP patch; omitted leaves the active chain unchanged. */
+  dsp: bgmDspPatchSchema.optional(),
+  revision: z.number().int().nonnegative().optional(),
+  transport: bgmTransportSchema.optional(),
+  position: z.number().finite().min(0).optional(),
+  at: z.number().finite().nonnegative().optional(),
+});
+
+export type BgmCommand = z.infer<typeof bgmCommandSchema>;
+
 // --- the renderer -----------------------------------------------------------
 //
 // Neither a performance nor a shot: which character is on screen, and how the
@@ -1052,6 +1143,7 @@ export const commandSchema = z.discriminatedUnion('cmd', [
   wearCommandSchema,
   avatarCommandSchema,
   tuneCommandSchema,
+  bgmCommandSchema,
 ]);
 
 export type Command = z.infer<typeof commandSchema>;

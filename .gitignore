@@ -22,9 +22,10 @@ backup/
 # tracked, so a checkout arrives with somewhere to put clips; nothing that lands
 # in it ever is.
 
-# What an operator brings to a broadcast — decks, scripts, motions — lives under
-# `show/`, and each of those directories carries its own .gitignore saying what
-# it holds and why none of it is tracked. Nothing about them is stated from here.
+# What an operator brings to a broadcast — decks, scripts, motions and BGM —
+# lives under `show/`, and each of those directories carries its own .gitignore
+# saying what it holds and why none of it is tracked. Nothing about them is
+# stated from here.
 #
 # The exception is the format rather than the path. A PDF is large wherever it
 # lands, and this catches the one saved somewhere nobody wrote a rule for.

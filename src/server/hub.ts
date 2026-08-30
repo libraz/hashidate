@@ -16,6 +16,8 @@ import type {
   Vocabulary,
   VoiceReport,
 } from '../protocol';
+import type { BgmSource } from './bgm';
+import { BgmCoordinator } from './bgm-state';
 import type { DeckSource } from './decks';
 import { type RewindMode, TurnQueue } from './queue';
 import type { OpenOptions, RecordingStore } from './recordings';
@@ -224,6 +226,8 @@ export class Hub {
     private readonly speech: SpeechSource | null = null,
     private readonly roots: ServerRoots | null = null,
     private readonly recordings: RecordingStore | null = null,
+    private readonly bgmLibrary: BgmSource | null = null,
+    private readonly bgmCoordinator: BgmCoordinator = new BgmCoordinator(),
   ) {}
 
   /**
@@ -266,6 +270,8 @@ export class Hub {
   subscribe(listener: ViewerListener): () => void {
     this.clients.add(listener);
     const commands = this.standing.commands();
+    const bgm = this.bgmCoordinator.currentCommand();
+    if (bgm !== null) commands.push(bgm);
     if (this.queue.length > 0) commands.push(this.queue.command());
     if (commands.length > 0) listener({ type: 'command', commands });
     return () => this.unsubscribe(listener);
@@ -364,9 +370,17 @@ export class Hub {
    * connect later has to be able to hear it too.
    */
   send(message: StreamMessage): number {
-    for (const command of message.commands) this.standing.record(command);
-    for (const listener of this.clients) listener(message);
+    const commands = message.commands.map((command) =>
+      command.cmd === 'bgm' ? this.bgmCoordinator.apply(command) : command,
+    );
+    for (const command of commands) this.standing.record(command);
+    this.broadcast({ type: 'command', commands });
     return this.clients.size;
+  }
+
+  /** Fan out an already canonical message without applying it a second time. */
+  private broadcast(message: StreamMessage): void {
+    for (const listener of this.clients) listener(message);
   }
 
   get viewers(): number {
@@ -539,6 +553,12 @@ export class Hub {
     // Fixed for the life of a renderer, so it rides with the vocabulary rather
     // than on the timer. Not cleared by a report that omits it.
     if (body.avatars) this.avatars = body.avatars;
+    const bgmTransition = body.bgm === undefined ? null : this.bgmCoordinator.report(body.bgm);
+    if (bgmTransition !== null) {
+      // The coordinator has already advanced the revision. Bypass `send`,
+      // which is for caller input and would apply the transition a second time.
+      this.broadcast({ type: 'command', commands: [bgmTransition] });
+    }
     for (const event of body.events ?? []) {
       const at = event.at ?? now();
       // Dropped before anything acts on it, not merely kept out of the log:
@@ -604,6 +624,10 @@ export class Hub {
       // A renderer with no document layer never reports one, which is how a
       // panel tells "no such layer" from "nothing up".
       slides: this.slides,
+      // BGM is owned by this server rather than any one renderer, so it remains
+      // available even while all renderer state has gone stale.
+      bgm: this.bgmCoordinator.state(),
+      bgmTracks: this.bgmLibrary?.current ?? [],
       // A hub with nothing watching says `absent`, which is the truthful answer
       // to "is the voice up" from a server that is not looking at it.
       speech: this.speech?.current ?? ('absent' satisfies SpeechState),

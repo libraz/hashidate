@@ -3,7 +3,7 @@ import { TUNING_RANGES } from '@/engine/tuning';
 import type { Anchor } from '@/engine/types';
 import { PLACEMENT_LIMITS } from '@/engine/types';
 import type { Command, CommandName } from '@/protocol';
-import { commandSchema, parseCommand } from '@/protocol';
+import { bgmCommandSchema, commandSchema, parseCommand } from '@/protocol';
 
 /**
  * The command vocabulary as it travels on the wire.
@@ -144,6 +144,23 @@ const SWITCH_CASES: Record<CommandName, Command[]> = {
     },
     { cmd: 'tune' },
   ],
+  bgm: [
+    { cmd: 'bgm' },
+    { cmd: 'bgm', action: 'play', track: 'opening.mp3', volume: 0.2, loop: true },
+    { cmd: 'bgm', dsp: { toneDb: 1, reverb: { mix: 0.35, decay: 0.7, damping: 0.4 } } },
+    {
+      cmd: 'bgm',
+      action: 'pause',
+      track: 'opening.flac',
+      volume: 0,
+      loop: false,
+      revision: 7,
+      transport: 'paused',
+      position: 12.5,
+      at: 1_700_000_000,
+    },
+    { cmd: 'bgm', track: null },
+  ],
 };
 
 /** The `cmd` tags the union actually carries. */
@@ -231,6 +248,15 @@ describe('parseCommand degrading rather than throwing', () => {
 
   it('rejects an unknown emotion name instead of half-applying the blend', () => {
     expect(parseCommand({ cmd: 'emotion', vec: { joy: 1, smug: 1 } })).toBeNull();
+  });
+
+  it('keeps BGM DSP patches strict and independent from the voice chain', () => {
+    expect(
+      bgmCommandSchema.safeParse({ cmd: 'bgm', dsp: { reverb: { timeMs: 640 } } }).success,
+    ).toBe(false);
+    expect(bgmCommandSchema.safeParse({ cmd: 'bgm', dsp: { toneDb: -6, width: 2 } }).success).toBe(
+      true,
+    );
   });
 });
 

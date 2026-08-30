@@ -3,6 +3,8 @@ import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { SpeechState } from '../protocol';
+import { BgmLibrary, handleBgm } from './bgm';
+import { BgmCoordinator } from './bgm-state';
 import { Decks } from './decks';
 import { Hub } from './hub';
 import { Motions } from './motions';
@@ -33,7 +35,7 @@ import { serveStatic } from './static';
  *
  * usage: yarn start [--port 8765] [--root dist] [--slides show/slides]
  *                   [--scripts show/scripts] [--motions show/motions]
- *                   [--recordings show/recordings]
+ *                   [--bgm show/bgm] [--recordings show/recordings]
  */
 
 const BIND = '127.0.0.1'; // do not change; see the module docstring
@@ -90,6 +92,9 @@ const DEFAULT_SCRIPTS = 'show/scripts';
  */
 const DEFAULT_RECORDINGS = 'show/recordings';
 
+/** Where the operator's MP3/FLAC files live, beside the other show material. */
+const DEFAULT_BGM = 'show/bgm';
+
 /**
  * The two data directories pdf.js needs to draw a document it was not given the
  * fonts for.
@@ -134,6 +139,7 @@ function main(): void {
       slides: { type: 'string' },
       scripts: { type: 'string' },
       motions: { type: 'string' },
+      bgm: { type: 'string' },
       recordings: { type: 'string' },
     },
   });
@@ -147,11 +153,14 @@ function main(): void {
   const slides = resolve(values.slides ?? DEFAULT_SLIDES);
   const scriptsRoot = resolve(values.scripts ?? DEFAULT_SCRIPTS);
   const motionsRoot = resolve(values.motions ?? DEFAULT_MOTIONS);
+  const bgmRoot = resolve(values.bgm ?? DEFAULT_BGM);
   const recordingsRoot = resolve(values.recordings ?? DEFAULT_RECORDINGS);
 
   const decks = new Decks(slides);
   const scripts = new Scripts(scriptsRoot);
   const motions = new Motions(motionsRoot);
+  const bgm = new BgmLibrary(bgmRoot);
+  const bgmCoordinator = new BgmCoordinator();
   const recordings = new Recordings(recordingsRoot);
   const speech = new SpeechWatch();
   // The roots ride on the snapshot so that a launcher which finds this server
@@ -166,15 +175,19 @@ function main(): void {
       scripts: scriptsRoot,
       motions: motionsRoot,
       recordings: recordingsRoot,
+      bgm: bgmRoot,
     },
     recordings,
+    bgm,
+    bgmCoordinator,
   );
   // Null on an install without the library, which is not a reason to refuse to
   // start: a document whose fonts are all embedded — most of them — draws
   // perfectly without either directory.
   const pdfjs = pdfjsRoot();
   const server = createServer((req, res) => {
-    if (handleApi(req, res, hub, { decks, motions, scripts })) return;
+    if (handleBgm(req, res, bgm)) return;
+    if (handleApi(req, res, hub, { decks, motions, scripts, bgm })) return;
     if (req.method === 'GET' || req.method === 'HEAD') {
       // Same guard, same refusal to cache — the only difference is which root
       // the path is resolved against. See `serveStatic`.
@@ -231,6 +244,7 @@ function main(): void {
     // the line is worth most before the directory has anything in it.
     console.log(`scripts  ${scriptsRoot}`);
     console.log(`motions  ${motionsRoot}`);
+    console.log(`bgm      ${bgmRoot}`);
     // This one is where a take will be written rather than where anything is
     // read from, which is worth saying before the first one is recorded into a
     // directory the operator then has to go and find.

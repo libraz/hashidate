@@ -6,6 +6,8 @@ import { Session } from '@/engine/session';
 import type { WardrobeTable } from '@/engine/types';
 import { same } from '@/i18n/locale';
 import {
+  bgmReportSchema,
+  bgmStateSchema,
   commandRequestSchema,
   deckSchema,
   decksResponseSchema,
@@ -276,6 +278,71 @@ describe('reportBodySchema', () => {
       reportBodySchema.safeParse({
         placement: { ...PLACEMENT, avatar: { anchor: 'bottom-right', width: 0.32 } },
       }).success,
+    ).toBe(false);
+  });
+});
+
+describe('BGM reports and state', () => {
+  it('applies backwards-compatible defaults to a minimal renderer report', () => {
+    expect(bgmReportSchema.parse({ revision: 4 })).toEqual({
+      revision: 4,
+      track: null,
+      transport: 'stopped',
+      position: 0,
+      duration: null,
+      muted: false,
+      blocked: false,
+      error: null,
+      dspDegraded: false,
+    });
+  });
+
+  it('accepts the independent libsonare DSP patch in a state', () => {
+    const state = {
+      track: 'opening.flac',
+      volume: 0.2,
+      loop: true,
+      dsp: {
+        toneDb: 0,
+        compression: 0.2,
+        width: 1,
+        reverb: { mix: 0.35, decay: 0.7, damping: 0.4 },
+      },
+      transport: 'playing',
+      position: 2.5,
+      revision: 9,
+      at: 1_700_000_000,
+      duration: 120,
+      blocked: false,
+      error: null,
+      dspDegraded: false,
+    };
+    expect(bgmStateSchema.parse(state)).toEqual(state);
+  });
+
+  it('defaults the state degradation flag for older snapshots', () => {
+    const state = {
+      track: null,
+      volume: 0.2,
+      loop: true,
+      dsp: { toneDb: 0, compression: 0, width: 1, reverb: { mix: 0, decay: 0.5, damping: 0.5 } },
+      transport: 'stopped',
+      position: 0,
+      revision: 0,
+      at: 1_700_000_000,
+      duration: null,
+      blocked: false,
+      error: null,
+    };
+    expect(bgmStateSchema.parse(state).dspDegraded).toBe(false);
+  });
+
+  it('rejects normalized DSP controls outside their range', () => {
+    expect(bgmReportSchema.safeParse({ revision: 1, dsp: { reverb: { mix: 1.1 } } }).success).toBe(
+      false,
+    );
+    expect(
+      bgmReportSchema.safeParse({ revision: 1, dsp: { reverb: { mix: 0, timeMs: 640 } } }).success,
     ).toBe(false);
   });
 });

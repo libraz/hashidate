@@ -15,6 +15,8 @@ import type {
 import type { Localized } from '../i18n/locale';
 import {
   type Assert,
+  bgmDspSchema,
+  bgmTransportSchema,
   cameraFrameSchema,
   commandSchema,
   type Equals,
@@ -262,6 +264,82 @@ export const slideReportSchema = z.object({
 export type SlideReport = z.infer<typeof slideReportSchema>;
 type _SlideReportMatchesEngine = Expect<Equals<SlideReport, EngineSlideReport>>;
 
+// --- background music ------------------------------------------------------
+
+/** One playable file in the server's direct BGM directory. */
+export const bgmTrackSchema = z.object({
+  /** The NFC-normalised filename, including `.mp3` or `.flac`. */
+  id: z.string(),
+  /** The filename is the display label; BGM has no second localisation source. */
+  label: z.string(),
+  /** `audio/mpeg` for MP3 and `audio/flac` for FLAC. */
+  mime: z.enum(['audio/mpeg', 'audio/flac']),
+  bytes: z.number().finite().nonnegative(),
+  /** Epoch seconds of the file's last modification. */
+  at: z.number().finite().nonnegative(),
+});
+
+export type BgmTrack = z.infer<typeof bgmTrackSchema>;
+
+/** The server's canonical BGM transport and timeline. */
+export const bgmStateSchema = z.object({
+  track: z.string().nullable(),
+  volume: z.number().min(0).max(1),
+  loop: z.boolean(),
+  /** The server-owned libsonare DSP patch for the BGM stream. */
+  dsp: bgmDspSchema,
+  transport: bgmTransportSchema,
+  position: z.number().finite().nonnegative(),
+  revision: z.number().int().nonnegative(),
+  /** Epoch seconds at which `position` was measured. */
+  at: z.number().finite().nonnegative(),
+  /** Duration reported by a renderer, if it has decoded the selected track. */
+  duration: z.number().finite().nonnegative().nullable(),
+  /** An audible renderer's inability to play the selected track. */
+  blocked: z.boolean(),
+  error: z.string().nullable(),
+  /** True when the renderer had to fall back to a dry BGM worklet path. */
+  dspDegraded: z.boolean().default(false),
+});
+
+export type BgmState = z.infer<typeof bgmStateSchema>;
+
+/**
+ * What a renderer reports about the BGM command it most recently received.
+ *
+ * `revision` is echoed so the server can reject a delayed report from an old
+ * command. `muted` identifies preview renderers: they may contribute a decoded
+ * duration, but their blocked/error status must never hide a problem on the
+ * audible renderer. Position, timestamp and transport are diagnostics; the
+ * server's coordinator remains the timeline authority. `dspDegraded` reports
+ * a dry-worklet fallback and is sticky on the server for the current revision.
+ */
+export const bgmReportSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  track: z.string().nullable().default(null),
+  /** Optional resolved readout; the server does not accept it as authority. */
+  dsp: bgmDspSchema.optional(),
+  transport: bgmTransportSchema.default('stopped'),
+  position: z.number().finite().min(0).default(0),
+  duration: z.number().finite().nonnegative().nullable().default(null),
+  muted: z.boolean().default(false),
+  blocked: z.boolean().default(false),
+  error: z.string().nullable().default(null),
+  /** Sticky for the current revision on audible renderers; muted reports omit its effect. */
+  dspDegraded: z.boolean().default(false),
+  /** Epoch seconds at which the renderer sampled its position. */
+  at: z.number().finite().nonnegative().optional(),
+});
+
+export type BgmReport = z.infer<typeof bgmReportSchema>;
+
+/** The fresh response to `GET /api/bgm`. */
+export const bgmResponseSchema = z.object({
+  tracks: z.array(bgmTrackSchema),
+});
+
+export type BgmResponse = z.infer<typeof bgmResponseSchema>;
+
 /**
  * One document the control server can serve, as it found it on disk.
  *
@@ -494,6 +572,8 @@ export const reportBodySchema = z.object({
    * one way, on the same footing as the slide report above.
    */
   placement: placementReportSchema.optional(),
+  /** What this renderer is doing with the server-owned background track. */
+  bgm: bgmReportSchema.optional(),
   /**
    * Every avatar this renderer can load, which is not the same question as what
    * the loaded one can do. It rides with the vocabulary rather than on the timer
@@ -835,6 +915,8 @@ export const serverRootsSchema = z.object({
   scripts: z.string(),
   motions: z.string(),
   recordings: z.string(),
+  /** The direct BGM asset directory, when this server was started with one. */
+  bgm: z.string().optional(),
 });
 
 export type ServerRoots = z.infer<typeof serverRootsSchema>;
@@ -872,6 +954,10 @@ export const snapshotSchema = z.object({
   decks: z.array(deckSchema),
   /** What the document layer is showing. Null until a viewer with one reports. */
   slides: slideReportSchema.nullable(),
+  /** The server-owned BGM transport and timeline. */
+  bgm: bgmStateSchema.optional(),
+  /** The current fresh roster from the direct BGM directory. */
+  bgmTracks: z.array(bgmTrackSchema).optional(),
   /**
    * Whether the voice is answering. This one is the server's own observation
    * rather than a viewer's report — the sidecar is reached from here and only

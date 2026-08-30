@@ -137,10 +137,11 @@ describe('the checkout', () => {
     expect(paths.tsx).toBe('/work/hashidate/node_modules/tsx/dist/loader.mjs');
   });
 
-  it('names the three show directories an operator fills', () => {
+  it('names the four show directories an operator fills', () => {
     expect(paths.slides).toBe('/work/hashidate/show/slides');
     expect(paths.scripts).toBe('/work/hashidate/show/scripts');
     expect(paths.motions).toBe('/work/hashidate/show/motions');
+    expect(paths.bgm).toBe('/work/hashidate/show/bgm');
   });
 
   it('answers what a server on this checkout would say it is serving', () => {
@@ -151,6 +152,7 @@ describe('the checkout', () => {
       slides: '/work/hashidate/show/slides',
       scripts: '/work/hashidate/show/scripts',
       motions: '/work/hashidate/show/motions',
+      bgm: '/work/hashidate/show/bgm',
       recordings: '/work/hashidate/show/recordings',
     });
   });

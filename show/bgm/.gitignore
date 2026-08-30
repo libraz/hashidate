@@ -1,0 +1,7 @@
+# Background music supplied by the operator for a local broadcast.
+#
+# The runtime serves these files from loopback, but the recordings and their
+# licences belong to the operator rather than to this repository. Keep the
+# directory itself so a fresh checkout has an obvious place to put them.
+*
+!.gitignore

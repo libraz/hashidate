@@ -27,6 +27,7 @@ const OURS: ServerRoots = {
   slides: '/work/hashidate/show/slides',
   scripts: '/work/hashidate/show/scripts',
   motions: '/work/hashidate/show/motions',
+  bgm: '/work/hashidate/show/bgm',
   recordings: '/work/hashidate/show/recordings',
 };
 
@@ -35,6 +36,7 @@ const THEIRS: ServerRoots = {
   slides: '/elsewhere/hashidate/show/slides',
   scripts: '/elsewhere/hashidate/show/scripts',
   motions: '/elsewhere/hashidate/show/motions',
+  bgm: '/elsewhere/hashidate/show/bgm',
   recordings: '/elsewhere/hashidate/show/recordings',
 };
 
@@ -44,6 +46,7 @@ const PATHS: ShellPaths = {
   slides: OURS.slides,
   scripts: OURS.scripts,
   motions: OURS.motions,
+  bgm: '/work/hashidate/show/bgm',
   recordings: OURS.recordings,
   tts: '/work/hashidate/tools/tts',
   ttsPython: '/work/hashidate/tools/tts/.venv/bin/python',
@@ -161,7 +164,7 @@ describe('what is on the control port', () => {
     });
   });
 
-  it('is foreign when only one of the three directories differs', async () => {
+  it('is foreign when one of the compared directories differs', async () => {
     const fetcher = answering(snapshot({ ...OURS, slides: '/elsewhere/show/slides' }));
     expect((await probeControlAPI(8765, { fetch: fetcher, roots: OURS })).kind).toBe('foreign');
   });
@@ -300,6 +303,8 @@ describe('starting the control server', () => {
       PATHS.scripts,
       '--motions',
       PATHS.motions,
+      '--bgm',
+      PATHS.bgm,
       '--recordings',
       PATHS.recordings,
     ]);
