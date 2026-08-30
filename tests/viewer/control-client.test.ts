@@ -71,6 +71,21 @@ function build() {
   return { client, session, renderer, loads, readout, takes, bgm, bgmState };
 }
 
+/**
+ * Inject an event as the engine would have raised it.
+ *
+ * `_events` is private because callers should reach the session through its
+ * public actions; these tests only need the event a BGM cue produces, without
+ * the turn around it.
+ */
+function inject(session: Session, event: SessionEvent): void {
+  (
+    session as unknown as {
+      _events: { emit(type: SessionEvent['type'], extra: Omit<SessionEvent, 'type'>): void };
+    }
+  )._events.emit(event.type, event);
+}
+
 /** A second session, standing in for the one a swap would build. */
 function nextSession(): Session {
   const rig = buildRig({ arkit: false });
@@ -159,13 +174,7 @@ describe('ControlClient.apply', () => {
       return { ok: true } as Response;
     });
     try {
-      // `emit` is private because callers should use Session's public actions;
-      // this test only needs to inject the event that a BGM cue produces.
-      (
-        harness.session as unknown as {
-          emit(type: 'cue.fire', event: SessionEvent): void;
-        }
-      ).emit('cue.fire', {
+      inject(harness.session, {
         type: 'cue.fire',
         turn: 'turn-1',
         cueId: 'turn-1:cue:0',
@@ -193,11 +202,7 @@ describe('ControlClient.apply', () => {
       return { ok: true } as Response;
     });
     try {
-      (
-        harness.session as unknown as {
-          emit(type: 'cue.fire', event: SessionEvent): void;
-        }
-      ).emit('cue.fire', {
+      inject(harness.session, {
         type: 'cue.fire',
         turn: 'turn-1',
         cueId: 'turn-1:cue:0',
