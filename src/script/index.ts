@@ -1,7 +1,7 @@
-import { readFile } from 'node:fs/promises';
 import { extname, isAbsolute, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
+import { readExactFile, readSafeFile } from '../files';
 import { type Command, commandSchema, type TurnRequest, turnSchema } from '../protocol';
 
 /**
@@ -46,6 +46,7 @@ export const SCRIPTS_DIR = 'show/scripts';
 
 /** YAML first; JSON is YAML, so both come through one parser. */
 const EXTENSIONS = ['.yaml', '.yml', '.json'];
+const MAX_BYTES = 1024 * 1024;
 
 /**
  * The verbs that may not appear in `setup`.
@@ -122,10 +123,30 @@ export function scriptCandidates(nameOrPath: string, dir = SCRIPTS_DIR): string[
  */
 export async function loadScript(nameOrPath: string, dir = SCRIPTS_DIR): Promise<LoadedScript> {
   const candidates = scriptCandidates(nameOrPath, dir);
-  for (const path of candidates) {
-    const raw = await readFile(path, 'utf8').catch(() => null);
-    if (raw === null) continue;
-    return { id: scriptId(path), path, script: parseScript(path, raw) };
+  const explicit = isAbsolute(nameOrPath) || nameOrPath.includes('/');
+  const extension = extname(nameOrPath).toLowerCase();
+  const loaded = explicit
+    ? await readExactFile(candidates[0], { extensions: EXTENSIONS, maxBytes: MAX_BYTES })
+    : EXTENSIONS.includes(extension)
+      ? await readSafeFile(resolve(dir), nameOrPath.slice(0, -extension.length), {
+          extensions: [extension],
+          logical: true,
+          maxBytes: MAX_BYTES,
+        })
+      : await readSafeFile(resolve(dir), nameOrPath, {
+          extensions: EXTENSIONS,
+          logical: true,
+          maxBytes: MAX_BYTES,
+        });
+  if (loaded.ok) {
+    return {
+      id: scriptId(loaded.path),
+      path: loaded.path,
+      script: parseScript(loaded.path, loaded.bytes.toString('utf8')),
+    };
+  }
+  if (loaded.code !== 'missing') {
+    throw new ScriptError(`${candidates[0]}: ${loaded.error}`);
   }
   throw new ScriptError(
     candidates.length === 1

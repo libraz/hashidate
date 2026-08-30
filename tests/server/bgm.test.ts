@@ -166,6 +166,20 @@ describe('BGM byte serving', () => {
     expect((await fetch(`${base}/bgm/${encodeURIComponent('../song.mp3')}`)).status).toBe(404);
     expect((await fetch(`${base}/bgm/missing.flac`)).status).toBe(404);
   });
+
+  it('does not serve a symlink to a file outside the library root', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'hashidate-bgm-outside-'));
+    try {
+      await writeFile(join(outside, 'secret.mp3'), Buffer.from('secret'));
+      await symlink(join(outside, 'secret.mp3'), join(root, 'linked.mp3'));
+      const { base } = await listenBgm();
+
+      expect(await fetch(`${base}/bgm/linked.mp3`)).toMatchObject({ status: 404 });
+      expect(await library.list()).toEqual([]);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('BGM roster route', () => {
@@ -490,7 +504,9 @@ describe('Hub BGM integration', () => {
     hub.subscribe((message) => seen.push(message));
 
     hub.send({ type: 'command', commands: [{ cmd: 'bgm', track: 'song.mp3', action: 'play' }] });
-    expect(seen[0].commands[0]).toMatchObject({
+    const bgmMessages = () =>
+      seen.filter((message) => message.commands.some((c) => c.cmd === 'bgm'));
+    expect(bgmMessages()[0].commands[0]).toMatchObject({
       cmd: 'bgm',
       track: 'song.mp3',
       revision: 1,
@@ -513,8 +529,8 @@ describe('Hub BGM integration', () => {
       duration: 8,
     });
     hub.report({ bgm: ended });
-    expect(seen).toHaveLength(2);
+    expect(bgmMessages()).toHaveLength(2);
     hub.report({ bgm: ended });
-    expect(seen).toHaveLength(2);
+    expect(bgmMessages()).toHaveLength(2);
   });
 });

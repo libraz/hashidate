@@ -1,6 +1,7 @@
-import { readdir, readFile } from 'node:fs/promises';
-import { basename, extname, resolve, sep } from 'node:path';
+import { basename, extname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
+import { isBuiltInGestureName } from '../engine/motion';
+import { readSafeDirectory, readSafeFile } from '../files';
 import { type Motion, type MotionsResponse, parseMotion } from '../protocol';
 
 /**
@@ -58,9 +59,10 @@ export class Motions {
    * than one that is simply alphabetical.
    */
   async list(): Promise<MotionsResponse> {
-    const names = await readdir(this.root).catch(() => [] as string[]);
+    const names = (await readSafeDirectory(this.root)) ?? [];
     const motions: Motion[] = [];
     const errors: MotionsResponse['errors'] = [];
+    const candidates = new Map<string, string[]>();
     for (const name of names) {
       const extension = extname(name).toLowerCase();
       if (!EXTENSIONS.includes(extension)) continue;
@@ -69,13 +71,22 @@ export class Motions {
       // everywhere else, and the two are one name except in a comparison.
       const id = basename(name, extname(name)).normalize('NFC');
       if (!isId(id)) continue;
-      const target = resolve(this.root, name);
-      // The listing is the only thing that names a file here, so this cannot be
-      // reached by an id from outside. Checked anyway, on the rule the document
-      // reader follows: a path guard that is only correct because of who calls
-      // it stops being correct the first time somebody else calls it.
-      if (!target.startsWith(this.root + sep)) continue;
-      const found = await this.read(id, target);
+      candidates.set(id, [...(candidates.get(id) ?? []), name]);
+    }
+    for (const [id, matching] of candidates) {
+      if (matching.length > 1) {
+        errors.push({
+          id,
+          error: `ambiguous normalization-equivalent files: ${matching.join(', ')}`,
+        });
+        continue;
+      }
+      const name = matching[0];
+      if (isBuiltInGestureName(id)) {
+        errors.push({ id, error: 'reserved built-in gesture name' });
+        continue;
+      }
+      const found = await this.read(id, name);
       if ('error' in found) errors.push({ id, error: found.error });
       else motions.push(found.motion);
     }
@@ -84,15 +95,14 @@ export class Motions {
     return { motions, errors };
   }
 
-  private async read(id: string, path: string): Promise<{ motion: Motion } | { error: string }> {
-    let raw: string;
-    try {
-      const bytes = await readFile(path);
-      if (bytes.byteLength > MAX_BYTES) return { error: `larger than ${MAX_BYTES} bytes` };
-      raw = bytes.toString('utf8');
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
+  private async read(id: string, name: string): Promise<{ motion: Motion } | { error: string }> {
+    const bytes = await readSafeFile(this.root, name, {
+      extensions: EXTENSIONS,
+      maxBytes: MAX_BYTES,
+      maxIdLength: MAX_ID_LENGTH,
+    });
+    if (!bytes.ok) return { error: bytes.error };
+    const raw = bytes.bytes.toString('utf8');
     let value: unknown;
     try {
       value = parseYaml(raw) as unknown;

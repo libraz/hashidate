@@ -1,4 +1,4 @@
-import { mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -134,6 +134,19 @@ describe('scanning the directory', () => {
     await write('.hidden.pdf', ['One']);
     await write('fine.pdf', ['One']);
     expect((await decks.list()).map((deck) => deck.id)).toEqual(['fine']);
+  });
+
+  it('does not list or open a symlink to a document outside the root', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'hashidate-decks-outside-'));
+    try {
+      await writeFile(join(outside, 'secret.pdf'), pdf(['secret']));
+      await symlink(join(outside, 'secret.pdf'), join(root, 'linked.pdf'));
+
+      expect(await decks.list()).toEqual([]);
+      expect(await decks.file('linked')).toBeNull();
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });
 

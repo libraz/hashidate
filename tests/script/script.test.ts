@@ -1,4 +1,6 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadScript, outline, parseScript, ScriptError, scriptCandidates } from '@/script';
 
@@ -55,6 +57,12 @@ lines:
   it('refuses a reading with cue markup in it', () => {
     expect(() => script('lines:\n  - { text: "x", reading: "[hello]えっくす" }')).toThrow(
       ScriptError,
+    );
+  });
+
+  it('refuses an empty reading on the same path used by play --check', () => {
+    expect(() => script('lines:\n  - { text: "x", reading: "" }')).toThrow(
+      /test\.yaml.*lines\.0\.reading/s,
     );
   });
 
@@ -159,5 +167,124 @@ describe('the shipped demo', () => {
 describe('loadScript', () => {
   it('names what it looked for when there is nothing there', async () => {
     await expect(loadScript('no-such-script')).rejects.toThrow(/no script called no-such-script/);
+  });
+
+  it('resolves a logical NFC name to an NFD filename on disk', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hashidate-script-logical-'));
+    try {
+      const onDisk = join(root, '台本ダ.yaml'.normalize('NFD'));
+      await writeFile(onDisk, 'lines: [{ text: あ }]');
+
+      const loaded = await loadScript('台本ダ'.normalize('NFC'), root);
+
+      expect(loaded.path).toBe(onDisk);
+      expect(loaded.id).toBe('台本ダ'.normalize('NFC'));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('prefers an exact logical spelling when both normalization forms exist', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hashidate-script-exact-'));
+    try {
+      const nfc = join(root, 'é.yaml'.normalize('NFC'));
+      const nfd = join(root, 'é.yaml'.normalize('NFD'));
+      await writeFile(nfc, 'lines: [{ text: nfc }]');
+      await writeFile(nfd, 'lines: [{ text: nfd }]');
+      // APFS may canonicalise the two entries into one directory entry, in
+      // which case the exact-spelling distinction is not observable.
+      if ((await readdir(root)).length < 2) return;
+
+      const loaded = await loadScript('é'.normalize('NFC'), root);
+
+      expect(loaded.path).toBe(nfc);
+      expect(loaded.script.lines[0]?.text).toBe('nfc');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps an explicit path exact instead of applying logical lookup', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hashidate-script-explicit-'));
+    try {
+      const onDisk = join(root, 'é.yaml'.normalize('NFD'));
+      await writeFile(onDisk, 'lines: [{ text: exact }]');
+
+      const loaded = await loadScript(onDisk);
+
+      expect(loaded.path).toBe(onDisk);
+      expect(loaded.script.lines[0]?.text).toBe('exact');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an explicit path through an intermediate symlink', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hashidate-script-explicit-link-'));
+    const outside = await mkdtemp(join(tmpdir(), 'hashidate-script-explicit-outside-'));
+    try {
+      const link = join(root, 'linked');
+      const target = join(outside, 'opening.yaml');
+      await writeFile(target, 'lines: [{ text: outside }]');
+      await writeFile(join(root, 'unused.yaml'), 'lines: [{ text: inside }]');
+      await symlink(outside, link);
+
+      await expect(loadScript(join(link, 'opening.yaml'))).rejects.toThrow(/symbolic links/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves an extension-bearing logical NFD name', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hashidate-script-logical-extension-'));
+    try {
+      const onDisk = join(root, '台本ダ.yaml'.normalize('NFD'));
+      await writeFile(onDisk, 'lines: [{ text: あ }]');
+
+      const loaded = await loadScript('台本ダ.yaml'.normalize('NFC'), root);
+
+      expect(loaded.path).toBe(onDisk);
+      expect(loaded.id).toBe('台本ダ'.normalize('NFC'));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('allows hidden directories in explicit paths', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hashidate-script-hidden-'));
+    try {
+      const directory = join(root, '.scripts');
+      const onDisk = join(directory, 'opening.yaml');
+      await mkdir(directory);
+      await writeFile(onDisk, 'lines: [{ text: hidden }]');
+
+      const loaded = await loadScript(onDisk);
+
+      expect(loaded.path).toBe(onDisk);
+      expect(loaded.script.lines[0]?.text).toBe('hidden');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses ambiguous normalization-equivalent logical names', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hashidate-script-ambiguous-'));
+    try {
+      const first = 'e\u0301.yaml';
+      const second = 'e\u0341.yaml';
+      expect(first).not.toBe(second);
+      expect(first.normalize('NFC')).toBe('é.yaml');
+      expect(second.normalize('NFC')).toBe('é.yaml');
+      await writeFile(join(root, first), 'lines: [{ text: first }]');
+      await writeFile(join(root, second), 'lines: [{ text: second }]');
+      // APFS may canonicalise the two entries into one directory entry, so
+      // there is no ambiguity to observe on that filesystem.
+      if ((await readdir(root)).length < 2) return;
+
+      await expect(loadScript('é'.normalize('NFC'), root)).rejects.toThrow(/ambiguous/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

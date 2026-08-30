@@ -1,5 +1,5 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
-import { basename, extname, resolve, sep } from 'node:path';
+import { basename, extname, resolve } from 'node:path';
+import { readSafeDirectory, readSafePath, resolveSafeFile } from '../files';
 import type { ScriptSummary, ScriptsResponse } from '../protocol';
 import { type LoadedScript, parseScript, ScriptError } from '../script';
 
@@ -78,9 +78,10 @@ export class Scripts {
    * millisecond do not swap places between polls.
    */
   async list(): Promise<ScriptsResponse> {
-    const names = await readdir(this.root).catch(() => [] as string[]);
+    const names = (await readSafeDirectory(this.root)) ?? [];
     const scripts: ScriptSummary[] = [];
     const errors: ScriptsResponse['errors'] = [];
+    const candidates = new Map<string, string[]>();
     for (const name of names) {
       if (!EXTENSIONS.includes(extname(name).toLowerCase())) continue;
       // Composed, for the same reason a document id is: a name with a Japanese
@@ -88,12 +89,17 @@ export class Scripts {
       // everywhere else, and the two are one name except in a comparison.
       const id = basename(name, extname(name)).normalize('NFC');
       if (!isId(id)) continue;
-      const target = resolve(this.root, name);
-      // The listing is the only thing that names a file here, so this cannot be
-      // reached by an id from outside. Checked anyway, on the rule the document
-      // reader follows: a path guard that is only correct because of who calls
-      // it stops being correct the first time somebody else calls it.
-      if (!target.startsWith(this.root + sep)) continue;
+      candidates.set(id, [...(candidates.get(id) ?? []), name]);
+    }
+    for (const [id, matching] of candidates) {
+      if (matching.length > 1) {
+        errors.push({
+          id,
+          error: `ambiguous normalization-equivalent files: ${matching.join(', ')}`,
+        });
+        continue;
+      }
+      const target = resolve(this.root, matching[0]);
       const found = await this.summarise(id, target);
       if ('error' in found) errors.push({ id, error: found.error });
       else scripts.push(found.script);
@@ -114,12 +120,16 @@ export class Scripts {
   async get(id: string): Promise<LoadedScript | null> {
     if (!isId(id)) return null;
     const name = id.normalize('NFC');
-    const target = await this.locate(name);
-    if (target === null) return null;
-    const raw = await this.read(target);
+    const target = await this.locate(id);
+    if (!target.ok) {
+      if (target.code === 'missing') return null;
+      const expected = resolve(this.root, `${name}${EXTENSIONS[0]}`);
+      throw new ScriptError(`${expected}: ${target.error}`);
+    }
+    const raw = await this.read(target.path);
     if (raw === null) return null;
-    if (typeof raw !== 'string') throw new ScriptError(`${target}: ${raw.error}`);
-    return { id: name, path: target, script: parseScript(target, raw) };
+    if ('error' in raw) throw new ScriptError(`${target.path}: ${raw.error}`);
+    return { id: name, path: target.path, script: parseScript(target.path, raw.value) };
   }
 
   /**
@@ -137,32 +147,25 @@ export class Scripts {
    * spellings of one name resolves in the same order it did when the path was
    * built by hand.
    */
-  private async locate(name: string): Promise<string | null> {
-    const names = await readdir(this.root).catch(() => [] as string[]);
-    for (const extension of EXTENSIONS) {
-      for (const entry of names) {
-        if (extname(entry).toLowerCase() !== extension) continue;
-        if (basename(entry, extname(entry)).normalize('NFC') !== name) continue;
-        const target = resolve(this.root, entry);
-        // The same guard `list` keeps, and kept for the same reason: correct
-        // only because of who calls it is correct until somebody else does.
-        if (target.startsWith(this.root + sep)) return target;
-      }
-    }
-    return null;
+  private async locate(name: string) {
+    return resolveSafeFile(this.root, name, {
+      extensions: EXTENSIONS,
+      logical: true,
+      maxBytes: MAX_BYTES,
+      maxIdLength: MAX_ID_LENGTH,
+    });
   }
 
   private async summarise(
     id: string,
     path: string,
   ): Promise<{ script: ScriptSummary } | { error: string }> {
-    const info = await stat(path).catch(() => null);
-    if (!info?.isFile()) return { error: 'not a file' };
     const raw = await this.read(path);
     if (raw === null) return { error: 'could not be read' };
-    if (typeof raw !== 'string') return { error: raw.error };
+    if ('error' in raw) return { error: raw.error };
+    const info = raw.info;
     try {
-      const script = parseScript(path, raw);
+      const script = parseScript(path, raw.value);
       return {
         script: {
           id,
@@ -186,14 +189,17 @@ export class Scripts {
   }
 
   /** The text, `null` for a file that is not there, or why it was refused. */
-  private async read(path: string): Promise<string | { error: string } | null> {
-    let bytes: Buffer;
-    try {
-      bytes = await readFile(path);
-    } catch {
-      return null;
+  private async read(
+    path: string,
+  ): Promise<{ value: string; info: import('node:fs').Stats } | { error: string } | null> {
+    const result = await readSafePath(this.root, path, {
+      extensions: EXTENSIONS,
+      maxBytes: MAX_BYTES,
+    });
+    if (!result.ok) {
+      if (result.code === 'missing') return null;
+      return { error: result.error };
     }
-    if (bytes.byteLength > MAX_BYTES) return { error: `larger than ${MAX_BYTES} bytes` };
-    return bytes.toString('utf8');
+    return { value: result.bytes.toString('utf8'), info: result.info };
   }
 }

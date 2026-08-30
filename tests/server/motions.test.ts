@@ -1,8 +1,21 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Motions } from '@/server/motions';
+
+const readFileCalls = vi.hoisted(() => [] as unknown[][]);
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...original,
+    readFile: (...args: Parameters<typeof original.readFile>) => {
+      readFileCalls.push(args);
+      return original.readFile(...args);
+    },
+  };
+});
 
 /**
  * The motion directory, read as the control server reads it.
@@ -32,9 +45,11 @@ frames:
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'hashidate-motions-'));
   motions = new Motions(root);
+  readFileCalls.length = 0;
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await rm(root, { recursive: true, force: true });
 });
 
@@ -106,5 +121,46 @@ describe('Motions', () => {
   it('reads a name with Japanese in it', async () => {
     await writeFile(join(root, '敬礼.yaml'), GOOD);
     expect((await motions.list()).motions[0].id).toBe('敬礼'.normalize('NFC'));
+  });
+
+  it('reports a file that collides with a built-in gesture as unavailable', async () => {
+    await writeFile(join(root, 'wave.yaml'), GOOD);
+
+    const result = await motions.list();
+
+    expect(result.motions).toEqual([]);
+    expect(result.errors).toEqual([{ id: 'wave', error: 'reserved built-in gesture name' }]);
+  });
+
+  it('rejects an oversized file before reading its body', async () => {
+    const path = join(root, 'too-large.yaml');
+    await writeFile(path, '');
+    await truncate(path, 256 * 1024 + 1);
+
+    const result = await motions.list();
+
+    expect(result).toEqual({
+      motions: [],
+      errors: [{ id: 'too-large', error: 'larger than 262144 bytes' }],
+    });
+    expect(readFileCalls.some(([calledPath]) => calledPath === path)).toBe(false);
+  });
+
+  it('reports but never reads a symlink to a motion outside the root', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'hashidate-motions-outside-'));
+    try {
+      await writeFile(join(outside, 'secret.yaml'), GOOD);
+      await symlink(join(outside, 'secret.yaml'), join(root, 'linked.yaml'));
+
+      const result = await motions.list();
+
+      expect(result.motions).toEqual([]);
+      expect(result.errors).toEqual([{ id: 'linked', error: 'symbolic links are not allowed' }]);
+      expect(readFileCalls.some(([calledPath]) => calledPath === join(root, 'linked.yaml'))).toBe(
+        false,
+      );
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });

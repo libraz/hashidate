@@ -1,6 +1,12 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { basename, dirname, extname, join, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
+import {
+  inspectSafePath,
+  readSafeDirectory,
+  readSafePath,
+  resolveSafeFile,
+  trustedPathSync,
+} from '../files';
 import { same } from '../i18n/locale';
 import type { Deck, DeckTextResponse } from '../protocol';
 
@@ -181,10 +187,11 @@ export class Decks implements DeckSource {
     if (!isId(id)) return null;
     const name = id.normalize('NFC');
     const known = this.paths.get(name);
-    if (known !== undefined) return known;
+    if (known !== undefined) {
+      return trustedPathSync(this.root, known, { extensions: [DECK_EXTENSION] });
+    }
     const target = resolve(this.root, `${name}${DECK_EXTENSION}`);
-    if (!target.startsWith(this.root + sep)) return null;
-    return target;
+    return trustedPathSync(this.root, target, { extensions: [DECK_EXTENSION] });
   }
 
   /**
@@ -199,13 +206,12 @@ export class Decks implements DeckSource {
    */
   async file(id: string): Promise<string | null> {
     if (!isId(id)) return null;
-    const name = id.normalize('NFC');
-    const known = this.paths.get(name);
-    if (known !== undefined && (await stat(known).catch(() => null))?.isFile()) return known;
-    await this.rescan();
-    const refreshed = this.paths.get(name);
-    if (refreshed === undefined) return null;
-    return (await stat(refreshed).catch(() => null))?.isFile() ? refreshed : null;
+    const found = await resolveSafeFile(this.root, id, {
+      extensions: [DECK_EXTENSION],
+      logical: true,
+      maxIdLength: MAX_ID_LENGTH,
+    });
+    return found.ok ? found.path : null;
   }
 
   /**
@@ -222,10 +228,13 @@ export class Decks implements DeckSource {
   async text(id: string, from?: number, to?: number): Promise<DeckTextResponse | null> {
     const target = await this.file(id);
     if (target === null) return null;
-    const info = await stat(target).catch(() => null);
-    if (!info?.isFile()) return null;
+    const info = await inspectSafePath(this.root, relative(this.root, target), {
+      extensions: [DECK_EXTENSION],
+      allowNested: true,
+    });
+    if (!(info.ok && info.info.isFile())) return null;
 
-    const parsed = await this.open(target, key(info), { withText: true });
+    const parsed = await this.open(target, key(info.info), { withText: true });
     if (parsed.pages === 0) return { id, pages: 0, from: FIRST_PAGE, text: [] };
 
     const first = clamp(from ?? FIRST_PAGE, FIRST_PAGE, parsed.pages);
@@ -252,26 +261,38 @@ export class Decks implements DeckSource {
   private async scan(): Promise<Deck[]> {
     // No directory is no documents. See the module docstring: the feature is
     // optional, and a server started without one is not a server in trouble.
-    const names = await readdir(this.root).catch(() => [] as string[]);
+    const names = (await readSafeDirectory(this.root)) ?? [];
     const found: Deck[] = [];
     const live = new Set<string>();
     const paths = new Map<string, string>();
+    const candidates = new Map<string, string[]>();
     for (const name of names) {
       if (extname(name).toLowerCase() !== DECK_EXTENSION) continue;
       // Composed, because this is the form that goes out on the wire and comes
       // back in a URL. The directory hands back whatever the filesystem stored,
       // which on this one is decomposed for anything outside ASCII.
       const id = basename(name, extname(name)).normalize('NFC');
-      if (!isId(id) || paths.has(id)) continue;
+      if (!isId(id)) continue;
+      candidates.set(id, [...(candidates.get(id) ?? []), name]);
+    }
+    for (const [id, matching] of candidates) {
+      // There is no error channel in the deck roster. Refusing the whole
+      // normalized group is safer than making one of two visually identical
+      // documents win by directory order.
+      if (matching.length > 1) continue;
+      const name = matching[0];
       // The entry as the directory spells it, and not as `path` would spell it
       // back out of the id. Composing it again asks for a name the directory
       // may not hold, which macOS answers anyway and Linux does not — and the
       // document then fails to appear in its own roster, which the module
       // docstring above says is the worst way for it to fail.
-      const target = resolve(this.root, name);
-      if (!target.startsWith(this.root + sep)) continue;
-      const info = await stat(target).catch(() => null);
-      if (!info?.isFile()) continue;
+      const resolved = await resolveSafeFile(this.root, name, {
+        extensions: [DECK_EXTENSION],
+        maxIdLength: MAX_ID_LENGTH,
+      });
+      if (!resolved.ok) continue;
+      const target = resolved.path;
+      const info = resolved.info;
       live.add(target);
       paths.set(id, target);
       // A file that will not parse is listed with no pages rather than dropped.
@@ -316,7 +337,9 @@ export class Decks implements DeckSource {
     const parsed: Parsed = { key: cacheKey, pages: 0, text: withText ? [] : null };
     try {
       const pdfjs = await load();
-      const data = new Uint8Array(await readFile(path));
+      const loaded = await readSafePath(this.root, path, { extensions: [DECK_EXTENSION] });
+      if (!loaded.ok) throw new Error(loaded.error);
+      const data = new Uint8Array(loaded.bytes);
       // Nothing is drawn and nothing is installed: this process has no canvas
       // and no document to add a font face to, and a document is a file that
       // arrived from outside. Only the metrics for the base-14 fonts are read,

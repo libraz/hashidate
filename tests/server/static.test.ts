@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -50,10 +50,8 @@ describe('serving a file under a prefix', () => {
   });
 
   it('finds a document the directory spells in the other normalisation form', async () => {
-    // Saved decomposed, which is what the filesystem it was typed on stores, and
-    // asked for composed, which is what the roster hands the browser. macOS
-    // resolves the difference in the kernel and Linux does not, so without the
-    // lookup this is the document that is listed in the panel and 404s on air.
+    // Saved decomposed, which is what the filesystem it was typed on stores,
+    // and asked for composed, which is what the deck roster hands the browser.
     await writeFile(join(root, '資料ダ.pdf'.normalize('NFD')), 'PDF-ish');
     const composed = encodeURIComponent('資料ダ.pdf'.normalize('NFC'));
     const response = await fetch(`${origin}/slides/${composed}`);
@@ -62,7 +60,49 @@ describe('serving a file under a prefix', () => {
     expect(await response.text()).toBe('PDF-ish');
   });
 
+  it('prefers the exact slide filename over a normalization fallback', async () => {
+    const nfc = join(root, 'é.pdf'.normalize('NFC'));
+    const nfd = join(root, 'é.pdf'.normalize('NFD'));
+    await writeFile(nfc, 'NFC');
+    await writeFile(nfd, 'NFD');
+    if ((await readdir(root)).length < 2) return;
+
+    const response = await fetch(`${origin}/slides/${encodeURIComponent('é.pdf')}`);
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('NFC');
+  });
+
+  it('refuses ambiguous normalization-equivalent slide filenames', async () => {
+    const first = 'e\u0301.pdf';
+    const second = 'e\u0341.pdf';
+    expect(first).not.toBe(second);
+    expect(first.normalize('NFC')).toBe('é.pdf');
+    expect(second.normalize('NFC')).toBe('é.pdf');
+    await writeFile(join(root, first), 'first');
+    await writeFile(join(root, second), 'second');
+    if ((await readdir(root)).length < 2) return;
+
+    const response = await fetch(`${origin}/slides/${encodeURIComponent('é.pdf')}`);
+
+    expect(response.status).toBe(404);
+  });
+
   it('is still a 404 for a name no spelling of which is there', async () => {
     expect((await fetch(`${origin}/slides/${encodeURIComponent('無い.pdf')}`)).status).toBe(404);
+  });
+
+  it('does not stream a final or intermediate symlink', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'hashidate-static-outside-'));
+    try {
+      await writeFile(join(outside, 'secret.txt'), 'secret');
+      await symlink(join(outside, 'secret.txt'), join(root, 'linked.txt'));
+      await symlink(outside, join(root, 'linked-directory'));
+
+      expect((await fetch(`${origin}/slides/linked.txt`)).status).toBe(404);
+      expect((await fetch(`${origin}/slides/linked-directory/secret.txt`)).status).toBe(404);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });

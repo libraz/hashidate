@@ -1,7 +1,7 @@
 import { createReadStream } from 'node:fs';
-import { lstat, readdir } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { basename, extname, resolve, sep } from 'node:path';
+import { basename, extname, relative, resolve } from 'node:path';
+import { inspectSafePath, readSafeDirectory, resolveSafeFile, trustedPathSync } from '../files';
 import type { BgmResponse, BgmTrack } from '../protocol';
 
 /**
@@ -28,10 +28,6 @@ function isId(raw: string): boolean {
   if (raw.length === 0 || raw.length > MAX_ID_LENGTH || raw.startsWith('.')) return false;
   if (FORBIDDEN_IN_ID.test(raw)) return false;
   return EXTENSIONS.has(extname(raw).toLowerCase());
-}
-
-function contained(root: string, target: string): boolean {
-  return root === sep ? target.startsWith(sep) : target.startsWith(`${root}${sep}`);
 }
 
 /** What the hub needs without waiting for a directory read. */
@@ -72,25 +68,45 @@ export class BgmLibrary implements BgmSource {
     const normalized = id.normalize('NFC');
     if (!isId(normalized)) return null;
     const found = this.paths.get(normalized);
-    if (found !== undefined) return found;
+    if (found !== undefined) {
+      return trustedPathSync(this.root, found, { extensions: [...EXTENSIONS] });
+    }
     const target = resolve(this.root, normalized);
-    return contained(this.root, target) ? target : null;
+    return trustedPathSync(this.root, target, { extensions: [...EXTENSIONS] });
   }
 
   /** Find a path after refreshing once when this id was not in the last scan. */
   async file(id: string): Promise<string | null> {
     const normalized = id.normalize('NFC');
     if (!isId(normalized)) return null;
-    const known = this.path(normalized);
-    if (known !== null) {
-      const info = await lstat(known).catch(() => null);
-      if (info?.isFile() && !info.isSymbolicLink()) return known;
+    const known = this.paths.get(normalized);
+    if (known !== undefined) {
+      const checked = await inspectSafePath(this.root, relative(this.root, known), {
+        extensions: [...EXTENSIONS],
+        allowNested: true,
+      });
+      if (checked.ok && checked.info.isFile()) return checked.path;
     }
+    // The roster is also the normalization lookup for a complete filename:
+    // BGM ids include their extension, so an NFC/NFD fallback here would make
+    // an explicit spelling mean a different file. A fresh scan preserves the
+    // actual entry spelling and refuses normalization collisions.
     await this.list();
     const refreshed = this.paths.get(normalized);
     if (refreshed === undefined) return null;
-    const info = await lstat(refreshed).catch(() => null);
-    return info?.isFile() && !info.isSymbolicLink() ? refreshed : null;
+    const checked = await inspectSafePath(this.root, relative(this.root, refreshed), {
+      extensions: [...EXTENSIONS],
+      allowNested: true,
+    });
+    return checked.ok && checked.info.isFile() ? checked.path : null;
+  }
+
+  /** Recheck a path immediately before the range metadata and stream are used. */
+  async inspect(target: string) {
+    return inspectSafePath(this.root, relative(this.root, target), {
+      extensions: [...EXTENSIONS],
+      allowNested: true,
+    });
   }
 
   private rescan(): Promise<BgmTrack[]> {
@@ -101,26 +117,32 @@ export class BgmLibrary implements BgmSource {
   }
 
   private async scan(): Promise<BgmTrack[]> {
-    const entries = await readdir(this.root, { withFileTypes: true }).catch(() => []);
+    const entries = (await readSafeDirectory(this.root)) ?? [];
     const found: BgmTrack[] = [];
     const paths = new Map<string, string>();
-    for (const entry of entries) {
-      // Dirent.isFile() excludes symlinks, and lstat below closes the race where
-      // a directory entry is replaced while a scan is in progress.
-      if (!entry.isFile()) continue;
-      const id = basename(entry.name).normalize('NFC');
+    const candidates = new Map<string, string[]>();
+    for (const name of entries) {
+      const id = basename(name).normalize('NFC');
       if (!isId(id)) continue;
-      const target = resolve(this.root, entry.name);
-      if (!contained(this.root, target)) continue;
-      const info = await lstat(target).catch(() => null);
-      if (!info?.isFile() || info.isSymbolicLink()) continue;
-      const extension = extname(entry.name).toLowerCase();
+      candidates.set(id, [...(candidates.get(id) ?? []), name]);
+    }
+    for (const [id, matching] of candidates) {
+      if (matching.length > 1) continue;
+      const name = matching[0];
+      const resolved = await resolveSafeFile(this.root, name, {
+        extensions: [...EXTENSIONS],
+        maxIdLength: MAX_ID_LENGTH,
+      });
+      if (!resolved.ok) continue;
+      const target = resolved.path;
+      const info = resolved.info;
+      const extension = extname(name).toLowerCase();
       const mime = MIME[extension];
-      if (mime === undefined || paths.has(id)) continue;
+      if (mime === undefined) continue;
       paths.set(id, target);
       found.push({
         id,
-        label: entry.name.normalize('NFC'),
+        label: name.normalize('NFC'),
         mime,
         bytes: info.size,
         at: info.mtimeMs / 1000,
@@ -173,8 +195,9 @@ async function serve(
   if (id === '' || id.includes('/')) return plain(res, 404, 'not found');
   const target = await library?.file(id);
   if (target === null || target === undefined) return plain(res, 404, 'not found');
-  const info = await lstat(target).catch(() => null);
-  if (!info?.isFile() || info.isSymbolicLink()) return plain(res, 404, 'not found');
+  const inspected = await library?.inspect(target);
+  if (!(inspected?.ok && inspected.info.isFile())) return plain(res, 404, 'not found');
+  const info = inspected.info;
 
   const range = parseRange(req.headers.range, info.size);
   if (range === 'invalid') {

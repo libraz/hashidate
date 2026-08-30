@@ -1,7 +1,7 @@
 import { createReadStream } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { basename, dirname, extname, join, resolve, sep } from 'node:path';
+import { extname } from 'node:path';
+import { inspectSafePath } from '../files';
 
 /**
  * File serving for the document root, and for the slide directory beside it.
@@ -23,6 +23,7 @@ import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 
 const CONTENT_TYPES: Record<string, string> = {
   '.bin': 'application/octet-stream',
+  '.bcmap': 'application/octet-stream',
   '.css': 'text/css; charset=utf-8',
   '.glb': 'model/gltf-binary',
   '.gltf': 'model/gltf+json',
@@ -40,6 +41,8 @@ const CONTENT_TYPES: Record<string, string> = {
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
   '.txt': 'text/plain; charset=utf-8',
+  '.pfb': 'application/octet-stream',
+  '.ttf': 'font/ttf',
   '.wasm': 'application/wasm',
   '.wav': 'audio/wav',
   '.webp': 'image/webp',
@@ -83,20 +86,16 @@ async function send(
     pathname = pathname.slice(prefix.length);
   }
 
-  // `resolve` normalises the `..` away, so anything that climbs out of the root
-  // lands outside it and is refused rather than followed.
-  let target = resolve(root, `.${pathname}`);
-  if (target !== root && !target.startsWith(root + sep)) return plain(res, 404, 'not found');
-
-  let info = await stat(target).catch(() => null);
-  if (info === null) {
-    const spelled = await otherSpelling(root, target);
-    if (spelled !== null) {
-      target = spelled;
-      info = await stat(target).catch(() => null);
-    }
-  }
-  if (info?.isDirectory()) {
+  const relativePath = pathname.replace(/^\/+/, '');
+  const policy = {
+    allowNested: true,
+    extensions: Object.keys(CONTENT_TYPES),
+    logicalPath: prefix === '/slides',
+    maxIdLength: 255,
+  } as const;
+  let inspected = await inspectSafePath(root, relativePath, policy);
+  if (!inspected.ok) return plain(res, 404, 'not found');
+  if (inspected.info.isDirectory()) {
     // A relative import inside index.html resolves against the directory, so
     // the trailing slash has to be there before the page loads.
     if (!pathname.endsWith('/')) {
@@ -109,10 +108,12 @@ async function send(
     }
     // No directory listing: everything under the root is reached by a path the
     // viewer already knows.
-    target = join(target, 'index.html');
-    info = await stat(target).catch(() => null);
+    const indexPath = relativePath === '' ? 'index.html' : `${relativePath}/index.html`;
+    inspected = await inspectSafePath(root, indexPath, policy);
   }
-  if (!info?.isFile()) return plain(res, 404, 'not found');
+  if (!(inspected.ok && inspected.info.isFile())) return plain(res, 404, 'not found');
+  const target = inspected.path;
+  const info = inspected.info;
 
   res.writeHead(200, {
     'Content-Type': CONTENT_TYPES[extname(target).toLowerCase()] ?? 'application/octet-stream',
@@ -131,37 +132,6 @@ async function send(
   res.on('error', () => file.destroy());
   file.on('error', () => res.end());
   file.pipe(res);
-}
-
-/**
- * The same file under the other normalisation form, or null.
- *
- * A filename with a Japanese character in it is stored decomposed by the
- * filesystem it was typed on and arrives composed in the URL a browser sends.
- * One name, two strings: macOS looks a path up without regard to which form it
- * is in and never notices, and ext4 compares bytes, so the document an operator
- * saved is a 404 on the machine the broadcast actually runs on.
- *
- * Reached only after a miss, so an ordinary request pays nothing for it and the
- * cost lands on a path that was about to be answered with `not found` anyway. A
- * name that both forms leave alone — which is every ASCII name, and so nearly
- * everything under the document root — is refused before the directory is read.
- *
- * The name comes back out of a directory that is already inside the root, so it
- * cannot climb out; checked again regardless, because the module docstring says
- * there is one guard here and this is it.
- */
-async function otherSpelling(root: string, target: string): Promise<string | null> {
-  const name = basename(target);
-  if (name.normalize('NFC') === name && name.normalize('NFD') === name) return null;
-  const directory = dirname(target);
-  const wanted = name.normalize('NFC');
-  for (const entry of await readdir(directory).catch(() => [] as string[])) {
-    if (entry.normalize('NFC') !== wanted) continue;
-    const found = resolve(directory, entry);
-    if (found === root || found.startsWith(root + sep)) return found;
-  }
-  return null;
 }
 
 function plain(res: ServerResponse, status: number, message: string): void {
