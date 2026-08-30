@@ -1,15 +1,16 @@
 /**
- * Cue markup — performance changes written into the line itself.
+ * Cue markup — timed actions written into the line itself.
  *
- * An orchestrator that wants the character to brighten halfway through a
- * sentence has, without this, two bad options: split the line into two turns,
- * which puts a gap and a breath in the middle of a clause, or send a separate
- * `perform` command and hope it lands at the right moment — which it cannot,
- * because only the renderer knows how long the first half takes to say.
+ * An orchestrator that wants the character to brighten, cut the shot or change
+ * the music halfway through a sentence has, without this, two bad options:
+ * split the line into turns, which puts a gap and a breath in the middle of a
+ * clause, or send a separate command and hope it lands at the right moment —
+ * which it cannot, because only the renderer knows how long the first half
+ * takes to say.
  *
  * So the cue is written where it happens:
  *
- *     [hello]こんばんは。[explain]今日はこの話をします。
+ *     [hello]こんばんは。[@camera full]ここから全身です。[@bgm pause]
  *
  * ## Nothing in brackets is ever spoken
  *
@@ -43,8 +44,11 @@
  * `face/lipsync` keeps the CLI and the control server free of the renderer.
  */
 
+import { parseInlineCue } from '../protocol/cues';
 import { textToVisemes } from './face/lipsync';
 import type { Cue } from './types';
+
+export { hasCueMarkup, isWellFormed } from '../protocol/cues';
 
 /** A line with its markup taken out: what is said, and what happens during it. */
 export interface Line {
@@ -58,33 +62,6 @@ const OPEN = '[';
 const CLOSE = ']';
 
 /**
- * What may sit between the brackets: identifier-shaped, like every other id on
- * the wire. Written once and used both ways round, so the scanner and the
- * well-formedness check cannot come to disagree about what a cue looks like.
- */
-const ID = '[A-Za-z][A-Za-z0-9]*';
-const CUE = new RegExp(`\\[${ID}\\]`, 'g');
-const CUE_ID = new RegExp(`^${ID}$`);
-
-/** Whether the string holds anything this module would take out of it. */
-export const hasCueMarkup = (source: string): boolean =>
-  source.includes(OPEN) || source.includes(CLOSE);
-
-/**
- * Whether every bracket in the line belongs to a well-formed cue.
- *
- * Stated as "what is left once the cues are removed has no brackets in it"
- * rather than as a grammar, because that is the property actually wanted: not
- * that the line parses, but that the parser will not have to throw anything
- * away to make it parse.
- *
- * It says nothing about whether the ids name real performances. That table is
- * engine data and the wire keeps ids as plain strings — the `perform` field on
- * the same command does too, and a cue is its inline form.
- */
-export const isWellFormed = (source: string): boolean => !hasCueMarkup(source.replace(CUE, ''));
-
-/**
  * Split a line into what is spoken and what happens while it is.
  *
  * Total by construction — see the note at the top. Malformed markup is removed
@@ -93,7 +70,7 @@ export const isWellFormed = (source: string): boolean => !hasCueMarkup(source.re
  * worse outcome than a line that lost a bracket.
  */
 export function parseLine(source: string): Line {
-  const found: Array<{ perform: string; index: number }> = [];
+  const found: Array<{ cue: Cue; index: number }> = [];
   let text = '';
 
   for (let i = 0; i < source.length; ) {
@@ -118,11 +95,18 @@ export function parseLine(source: string): Line {
       // out is not.
       break;
     }
-    const id = source.slice(i + 1, close);
-    // A bracketed run that is not id-shaped — `[hello world]`, `[笑]` — is
-    // markup that was meant to be a cue and is not one. It goes the same way a
-    // cue does. The alternative is speaking it, which is the whole failure.
-    if (CUE_ID.test(id)) found.push({ perform: id, index: text.length });
+    const markup = source.slice(i + 1, close);
+    const action = parseInlineCue(markup);
+    if (action !== null) {
+      // Keep the old enumerable shape for `[performanceId]` so callers that
+      // consume the original shorthand do not need a migration. Typed forms
+      // carry the protocol's single-source action object instead.
+      if (markup.startsWith('@')) {
+        found.push({ cue: { action, at: 0 }, index: text.length });
+      } else if (action.kind === 'perform') {
+        found.push({ cue: { perform: action.id, at: 0 }, index: text.length });
+      }
+    }
     i = close + 1;
   }
 
@@ -133,9 +117,19 @@ export function parseLine(source: string): Line {
   const whole = textToVisemes(text).duration;
   return {
     text,
-    cues: found.map(({ perform, index }) => ({
-      perform,
-      at: whole > 0 ? textToVisemes(text.slice(0, index)).duration / whole : 0,
-    })),
+    cues: found.map(({ cue, index }, ordinal) => {
+      const resolved: Cue = {
+        ...(cue.perform === undefined ? {} : { perform: cue.perform }),
+        ...(cue.action === undefined ? {} : { action: cue.action }),
+        at: whole > 0 ? textToVisemes(text.slice(0, index)).duration / whole : 0,
+      };
+      // Keep source order available to Session without changing the old
+      // enumerable shape returned to callers of the legacy parser.
+      Object.defineProperty(resolved, 'ordinal', {
+        value: cue.ordinal ?? ordinal,
+        enumerable: false,
+      });
+      return resolved;
+    }),
   };
 }

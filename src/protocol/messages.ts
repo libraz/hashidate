@@ -30,6 +30,7 @@ import {
   slidePlacementSchema,
   turnSchema,
 } from './commands';
+import { inlineCueActionSchema } from './cues';
 
 /**
  * The envelopes the control API moves commands and state around in.
@@ -55,6 +56,7 @@ export const sessionEventTypeSchema = z.enum([
   'queue.dropped',
   'queue.replaced',
   'queue.empty',
+  'cue.fire',
 ]);
 type _EventTypesMatchEngine = Expect<
   Equals<z.infer<typeof sessionEventTypeSchema>, SessionEventType>
@@ -73,6 +75,10 @@ export const sessionEventSchema = z.object({
   turns: z.array(z.string()).optional(),
   queued: z.number().optional(),
   seconds: z.number().optional(),
+  /** Stable `${turn}:cue:${ordinal}` id for an inline BGM cue. */
+  cueId: z.string().optional(),
+  /** The BGM inline cue action requested at that point in the turn. */
+  cue: inlineCueActionSchema.optional(),
   /** Stamped by the server on arrival, not by the engine. */
   seq: z.number().optional(),
   at: z.number().optional(),

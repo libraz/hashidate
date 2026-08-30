@@ -71,6 +71,15 @@ export {
   wearCommandSchema,
 } from './commands';
 export {
+  type BgmCueAction,
+  hasCueMarkup,
+  type InlineCueAction,
+  inlineCueActionSchema,
+  isWellFormed,
+  parseCueAction,
+  parseInlineCue,
+} from './cues';
+export {
   type BgmReport,
   type BgmResponse,
   type BgmState,

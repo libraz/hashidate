@@ -1,5 +1,6 @@
 import type * as THREE from 'three';
 import type { Localized } from '../i18n/locale';
+import type { InlineCueAction } from '../protocol/cues';
 
 /**
  * Shared vocabulary for the runtime.
@@ -795,18 +796,18 @@ export interface TurnRequest {
 }
 
 /**
- * One performance change lifted out of a line, and where in it that happens.
+ * One timed action lifted out of a line, and where in it that happens.
  *
  * The grammar and the guarantee that goes with it are in `cues.ts`; this is
  * only the shape the rest of the engine sees.
  */
 export interface Cue {
-  /**
-   * The performance to start — a plain string, like the `perform` field this is
-   * the inline form of. An id the table does not have is dropped where the
-   * table is known, which is the session.
-   */
-  perform: string;
+  /** The legacy `[performanceId]` shorthand, when this cue used it. */
+  perform?: string;
+  /** A typed cue action. Legacy shorthand is represented by `perform`. */
+  action?: InlineCueAction;
+  /** Source order, kept non-enumerable by `parseLine` for stable event ids. */
+  ordinal?: number;
   /**
    * Where it lands, as a fraction of the line: 0 at the first mora, 1 at the
    * last.
@@ -1109,7 +1110,8 @@ export type SessionEventType =
   | 'turn.interrupted'
   | 'queue.dropped'
   | 'queue.replaced'
-  | 'queue.empty';
+  | 'queue.empty'
+  | 'cue.fire';
 
 export interface SessionEvent {
   type: SessionEventType;
@@ -1117,6 +1119,10 @@ export interface SessionEvent {
   turns?: string[];
   queued?: number;
   seconds?: number;
+  /** Stable `${turn}:cue:${ordinal}` id for a server-routed inline BGM cue. */
+  cueId?: string;
+  /** The BGM action requested by the cue. */
+  cue?: InlineCueAction;
   /** Stamped by the server, not by the engine. */
   seq?: number;
   at?: number;

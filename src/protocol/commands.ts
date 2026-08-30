@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { hasCueMarkup, isWellFormed } from '../engine/cues';
 import { TUNING_RANGES, type TuningPatch } from '../engine/tuning';
 import type {
   Anchor,
@@ -14,6 +13,9 @@ import type {
   TurnRequest,
 } from '../engine/types';
 import { PLACEMENT_LIMITS, SHOT_LIMITS } from '../engine/types';
+import { bgmActionSchema, cameraFrameSchema, hasCueMarkup, isWellFormed } from './cues';
+
+export { bgmActionSchema, cameraFrameSchema } from './cues';
 
 /**
  * The command vocabulary, as it travels on the wire.
@@ -82,7 +84,6 @@ type _SidesMatchEngine = Expect<Equals<z.infer<typeof sideSchema>, Side>>;
 export const fingerNameSchema = z.enum(['thumb', 'index', 'middle', 'ring', 'little']);
 type _FingersMatchEngine = Expect<Equals<z.infer<typeof fingerNameSchema>, FingerName>>;
 
-export const cameraFrameSchema = z.enum(['face', 'bust', 'upper', 'full']);
 type _CameraFramesMatchEngine = Expect<Equals<z.infer<typeof cameraFrameSchema>, CameraFrame>>;
 
 /** Re-exported for the same reason as `TurnRequest` below: the guard above makes
@@ -925,8 +926,6 @@ export const BGM_DEFAULTS = { volume: 0.2, loop: true } as const;
 export const BGM_DEFAULT_VOLUME = BGM_DEFAULTS.volume;
 export const BGM_DEFAULT_LOOP = BGM_DEFAULTS.loop;
 
-/** The action a caller may request from the server-owned music transport. */
-export const bgmActionSchema = z.enum(['play', 'pause', 'stop']);
 export type BgmAction = z.infer<typeof bgmActionSchema>;
 
 /** The transport state that is synchronised to every renderer. */

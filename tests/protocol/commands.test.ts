@@ -594,6 +594,26 @@ describe('cues in a line', () => {
       reading: 'あ',
     });
   });
+
+  it('accepts typed cues without rewriting the source text', () => {
+    const text =
+      '導入[@gesture big wave][@camera bust]です[@slide 2][@bgm play 日本語の曲 name.mp3][@bgm pause]';
+    expect(parseCommand({ cmd: 'say', text })).toEqual({ cmd: 'say', text });
+  });
+
+  it.each([
+    '導入[@unknown value]です',
+    '導入[@perform]です',
+    '導入[@camera]です',
+    '導入[@camera wide]です',
+    '導入[@slide 0]です',
+    '導入[@slide 1.5]です',
+    '導入[@bgm rewind]です',
+    '導入[@bgm stop song.mp3]です',
+    '導入[@bgm play song.wav]です',
+  ])('rejects malformed typed cue markup %j', (text) => {
+    expect(parseCommand({ cmd: 'say', text })).toBeNull();
+  });
 });
 
 describe('tune', () => {

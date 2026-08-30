@@ -21,6 +21,7 @@
  * same command set over whatever channel it prefers.
  */
 
+import type { InlineCueAction } from '../protocol/cues';
 import { parseLine } from './cues';
 import type { Director } from './director';
 import { EMOTION_LABELS, EMOTIONS } from './face';
@@ -30,6 +31,7 @@ import type { Wardrobe } from './scene';
 import type { Tuning, TuningPatch } from './tuning';
 import type {
   Composition,
+  Cue,
   EmotionName,
   EmotionVector,
   FingerName,
@@ -72,6 +74,20 @@ const IDLE_AFTER = 1.6;
  * the queue has to keep moving whatever the voice is doing.
  */
 const VOICE_WAIT = 5;
+
+function cueAction(cue: Cue): InlineCueAction | null {
+  if (cue.action !== undefined) return cue.action;
+  return cue.perform === undefined ? null : { kind: 'perform', id: cue.perform };
+}
+
+function playableCues(cues: Cue[]): Cue[] {
+  return cues.filter((cue) => {
+    const action = cueAction(cue);
+    return (
+      action !== null && (action.kind !== 'perform' || Object.hasOwn(PERFORMANCE_TABLE, action.id))
+    );
+  });
+}
 
 export interface SessionOptions {
   wardrobe?: Wardrobe | null;
@@ -169,7 +185,7 @@ export class Session {
    * The running turn's cues, in order, resolved to seconds and shortened from
    * the front as they fire.
    */
-  private _cues: Array<{ perform: string; t: number }> = [];
+  private _cues: Array<{ cue: Cue; t: number; ordinal: number }> = [];
   /**
    * The performance this turn put up, which is the one it has to take down.
    *
@@ -178,6 +194,8 @@ export class Session {
    * opened with.
    */
   private _performing: string | null = null;
+  /** The last inline expression, which is released with its turn. */
+  private _cuedExpression: string | null = null;
   /** Disambiguates ids minted inside the same millisecond. See `nextId`. */
   private _seq = 0;
   private _events: SessionEvent[] = [];
@@ -284,6 +302,14 @@ export class Session {
     return turn.id;
   }
 
+  /** Keep only actions this renderer can safely apply at the cue's timestamp. */
+  private playableCues(cues: Cue[]): Cue[] {
+    return playableCues(cues).filter((cue) => {
+      const action = cueAction(cue);
+      return action?.kind !== 'expression' || this.d.presetById.has(action.id);
+    });
+  }
+
   /**
    * Turn a request into a queued turn, and start its line being made.
    *
@@ -312,7 +338,7 @@ export class Session {
       // right for a caller who asked for a face and can see they got none,
       // wrong mid-sentence, where it would take the character's expression away
       // in the middle of a word over a typo.
-      cues: line.cues.filter((cue) => Object.hasOwn(PERFORMANCE_TABLE, cue.perform)),
+      cues: this.playableCues(line.cues),
       reading,
       emotion,
       expression,
@@ -353,9 +379,13 @@ export class Session {
     const held = new Map(this.queue.map((turn) => [turn.id, turn]));
     const next = requests.map((request) => {
       const existing = request.id === undefined ? undefined : held.get(request.id);
-      if (existing && existing.text === parseLine(request.text ?? '').text) {
+      const line = parseLine(request.text ?? '');
+      if (existing && existing.text === line.text) {
         if (existing.reading === request.reading) {
           held.delete(existing.id);
+          // Markup-only edits keep the prepared take but replace the timed
+          // actions that will be applied when this turn reaches the air.
+          existing.cues = this.playableCues(line.cues);
           // Everything outside the line itself is applied at `start`, so it can
           // be updated in place without costing the take.
           return Object.assign(existing, {
@@ -882,7 +912,12 @@ export class Session {
     // The cues arrived as fractions of the line and become seconds here,
     // against the length the mouth actually reported — which is the reading's
     // length when one was given, and will be the audio's once there is any.
-    this._cues = turn.cues.map((cue) => ({ perform: cue.perform, t: cue.at * seconds }));
+    this._cuedExpression = null;
+    this._cues = turn.cues.map((cue, ordinal) => ({
+      cue,
+      t: cue.at * seconds,
+      ordinal: cue.ordinal ?? ordinal,
+    }));
     // Anything sitting at the top of the line goes in now rather than a frame
     // later, so a turn that opens on a cue opens on it. A turn with no text
     // gets every cue here: it is over on the next frame and has no clock to
@@ -899,9 +934,38 @@ export class Session {
    */
   private fireCues(t: number): void {
     while (this._cues.length > 0 && this._cues[0].t <= t) {
-      const cue = this._cues.shift() as { perform: string; t: number };
-      this.d.perform(cue.perform);
-      this._performing = cue.perform;
+      const scheduled = this._cues.shift() as { cue: Cue; t: number; ordinal: number };
+      const action = cueAction(scheduled.cue);
+      if (action === null) continue;
+      switch (action.kind) {
+        case 'perform':
+          this.d.perform(action.id);
+          this._performing = action.id;
+          break;
+        case 'expression':
+          this.d.setExpression(action.id);
+          this._cuedExpression = action.id;
+          break;
+        case 'gesture':
+          this.d.gesture(action.id);
+          break;
+        case 'hop':
+          this.d.hop(action.id);
+          break;
+        case 'camera':
+          this.setCamera({ frame: action.frame });
+          break;
+        case 'slide':
+          this.setSlide(action.page);
+          break;
+        case 'bgm':
+          this.emit('cue.fire', {
+            turn: this.turn?.id,
+            cueId: `${this.turn?.id}:cue:${scheduled.ordinal}`,
+            cue: action,
+          });
+          break;
+      }
     }
   }
 
@@ -926,6 +990,11 @@ export class Session {
     this._performing = null;
     if (showing && !turn.hold && this.d.performance === showing) {
       this.d.perform(null);
+    }
+    const expression = this._cuedExpression;
+    this._cuedExpression = null;
+    if (expression && !turn.hold && this.d.expression === expression) {
+      this.d.setExpression(null);
     }
   }
 
@@ -979,10 +1048,11 @@ export class Session {
       })),
       hops: HOP_IDS.map((id) => ({ id, label: HOPS[id].label })),
       cue: {
-        syntax: '[performance]',
+        syntax:
+          '[performanceId] or [@perform id], [@expression id], [@gesture id], [@hop id], [@camera frame], [@slide N], [@bgm play] or [@bgm play track.mp3], [@bgm pause], [@bgm stop]',
         note: {
-          en: "Write it straight into say's text. The performance starts at the point it is written. What is inside the brackets is never spoken — square brackets are reserved and cannot appear in a line. Example: [hello]Good evening. [explain]Here is what we are looking at today.",
-          ja: 'say の text に直接書く。書いた位置でその performance が始まる。[] の中身は読み上げられない — 角括弧は予約されていて台詞には書けない。例: [hello]こんばんは。[explain]今日はこの話をします。',
+          en: "Write a cue straight into say's text. It fires at the point written, and nothing inside square brackets is spoken. The legacy [performanceId] shorthand starts a performance; typed cues can change a performance, expression, gesture, hop, camera frame, slide, or BGM transport. A BGM track is an .mp3 or .flac filename and may contain spaces.",
+          ja: 'say の text にキューを直接書く。書いた位置で実行し、角括弧の中身は読み上げない。従来の [performanceId] は演技を開始し、[@...] 形式では演技、表情、ジェスチャ、ジャンプ、カメラ、スライド、BGM の再生・一時停止・停止を切り替えられる。BGM の曲名は .mp3 / .flac のファイル名で、空白も使える。',
         },
       },
       cameras: ['bust', 'upper', 'face', 'full'],

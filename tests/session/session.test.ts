@@ -1509,6 +1509,76 @@ describe('cues in a line', () => {
     expect(director.performance).toBe('happy');
     expect(session.turn?.text).toBe('');
   });
+
+  it('runs typed visual cues on the same mouth clock as performances', () => {
+    const shots: Shot[] = [];
+    const slides = new FakeSlides();
+    const { session, director, step } = build({
+      camera: (shot) => shots.push(shot),
+      slides,
+    });
+    session.say({
+      text: '[@camera full][@slide 3][@expression F_JITO][@gesture nod][@hop bounce]あ',
+    });
+    step(1);
+
+    expect(shots).toEqual([{ frame: 'full' }]);
+    expect(slides.calls).toEqual([{ call: 'setSlide', page: 3 }]);
+    expect(director.expression).toBe('F_JITO');
+    expect(director.body.gesture?.id).toBe('nod');
+    expect(director.body.jumping).toBe(true);
+  });
+
+  it('fires a typed camera cue at its written mouth-clock position', () => {
+    const shots: Shot[] = [];
+    const { session, director, step } = build({ camera: (shot) => shots.push(shot) });
+    session.say({ text: 'あいうえお[@camera full]かきくけこ' });
+
+    for (let i = 0; i < 400 && shots.length === 0; i++) step(1);
+
+    const half = textToVisemes('あいうえお').duration;
+    expect(shots).toEqual([{ frame: 'full' }]);
+    expect(director.mouth.time).toBeGreaterThanOrEqual(half);
+    expect(director.mouth.time).toBeLessThan(half + 4 * DT);
+  });
+
+  it('reports typed BGM cues once per source cue and retains their source ordinals', () => {
+    const { session, step } = build();
+    session.say({
+      id: 'bgm-line',
+      text: '[@perform typo][@bgm play 日本語の曲 name.mp3][@bgm pause][@bgm stop]',
+    });
+    step(1);
+
+    expect(session.takeEvents().filter((event) => event.type === 'cue.fire')).toEqual([
+      {
+        type: 'cue.fire',
+        turn: 'bgm-line',
+        cueId: 'bgm-line:cue:1',
+        cue: { kind: 'bgm', action: 'play', track: '日本語の曲 name.mp3' },
+      },
+      {
+        type: 'cue.fire',
+        turn: 'bgm-line',
+        cueId: 'bgm-line:cue:2',
+        cue: { kind: 'bgm', action: 'pause' },
+      },
+      {
+        type: 'cue.fire',
+        turn: 'bgm-line',
+        cueId: 'bgm-line:cue:3',
+        cue: { kind: 'bgm', action: 'stop' },
+      },
+    ]);
+  });
+
+  it('drops an unknown typed expression instead of clearing the current face', () => {
+    const { session, director, step } = build();
+    director.setExpression('F_DOYA');
+    session.say({ text: '[@expression DOES_NOT_EXIST]あ' });
+    step(1);
+    expect(director.expression).toBe('F_DOYA');
+  });
 });
 
 describe('a cued turn, over every combination of the fields around it', () => {
@@ -2290,6 +2360,20 @@ describe('Session.replaceQueue', () => {
     // can be rewritten without costing the audio.
     expect(session.queue[0]).toMatchObject({ perform: null, emotion: { joy: 1 }, hold: true });
     expect(session.queue[0].take).toBe(take);
+  });
+
+  it('refreshes typed cues when only cue markup changes, keeping the take', async () => {
+    const { session } = build({ voice: (now) => new FakeVoice(now, { seconds: 1 }) });
+    session.say({ id: 'a', text: 'あ[@bgm play first.mp3]' });
+    await settle();
+    const take = session.queue[0].take;
+
+    session.replaceQueue([{ id: 'a', text: 'あ[@bgm pause]' }]);
+
+    expect(session.queue[0].take).toBe(take);
+    expect(session.queue[0].cues).toEqual([
+      { action: { kind: 'bgm', action: 'pause' }, at: expect.any(Number) },
+    ]);
   });
 
   it('stops the take of a line the new list dropped', async () => {

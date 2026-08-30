@@ -196,6 +196,16 @@ describe('a real event stream against sessionEventSchema', () => {
       expect(result.data).toEqual(event);
     }
   });
+
+  it('accepts a stable inline BGM cue event', () => {
+    const event = {
+      type: 'cue.fire',
+      turn: 'turn-6',
+      cueId: 'turn-6:cue:2',
+      cue: { kind: 'bgm', action: 'play', track: '日本語の曲 name.mp3' },
+    };
+    expect(sessionEventSchema.safeParse(event).data).toEqual(event);
+  });
 });
 
 describe('reportBodySchema', () => {

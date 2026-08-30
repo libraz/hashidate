@@ -84,6 +84,14 @@ describe('the cue grammar', () => {
     expect(isWellFormed('[nosuchthing]は')).toBe(true);
   });
 
+  it('accepts typed visual and BGM cues, including spaced dynamic ids and filenames', () => {
+    expect(
+      isWellFormed(
+        '[@perform happy face]こんばんは[@expression F JITO][@gesture big wave][@hop high bounce][@camera full][@slide 3][@bgm play 日本語の曲 name.mp3][@bgm pause][@bgm stop]',
+      ),
+    ).toBe(true);
+  });
+
   // Including the dangerous near-misses. `[笑]` is what a language model writes
   // when it means a stage direction, and 「かくかっこ わらい かくかっことじ」 is
   // the sentence this whole design exists so that nobody ever hears.
@@ -93,6 +101,20 @@ describe('the cue grammar', () => {
       expect(isWellFormed(source)).toBe(false);
     },
   );
+
+  it.each([
+    '[@unknown value]は',
+    '[@perform]は',
+    '[@camera portrait]は',
+    '[@slide 0]は',
+    '[@slide 1.5]は',
+    '[@bgm next]は',
+    '[@bgm pause track.mp3]は',
+    '[@bgm play .hidden.mp3]は',
+    '[@bgm play song.wav]は',
+  ])('refuses malformed typed cue %j', (source) => {
+    expect(isWellFormed(source)).toBe(false);
+  });
 
   it('spots markup anywhere, which is what the reading field is checked with', () => {
     expect(hasCueMarkup('さんけん')).toBe(false);
@@ -158,6 +180,27 @@ describe('parseLine', () => {
     // Resolving it is the session's job, because the table is the session's to
     // know. Dropping it here would put the same knowledge in two places.
     expect(parseLine('[nosuchthing]あ').cues.map((cue) => cue.perform)).toEqual(['nosuchthing']);
+  });
+
+  it('parses typed actions and keeps source order on a clean-text offset', () => {
+    const line = parseLine(
+      'あ[@gesture big wave][@camera full]い[@bgm play 日本語の曲  name.mp3]う[@slide 3]',
+    );
+    expect(line.text).toBe('あいう');
+    expect(line.cues).toEqual([
+      { action: { kind: 'gesture', id: 'big wave' }, at: expect.any(Number) },
+      { action: { kind: 'camera', frame: 'full' }, at: expect.any(Number) },
+      {
+        action: { kind: 'bgm', action: 'play', track: '日本語の曲  name.mp3' },
+        at: expect.any(Number),
+      },
+      { action: { kind: 'slide', page: 3 }, at: 1 },
+    ]);
+    expect(line.cues.map((cue) => cue.ordinal)).toEqual([0, 1, 2, 3]);
+    expect(line.cues[0].at).toBeCloseTo(
+      textToVisemes('あ').duration / textToVisemes('あいう').duration,
+      12,
+    );
   });
 
   it('drops a bracketed run that is not id-shaped, rather than speaking it', () => {
