@@ -161,6 +161,27 @@ export interface SyntheticRig {
   descriptor: AvatarDescriptor;
 }
 
+/**
+ * Add a secondary-motion chain to an already-built synthetic rig.
+ *
+ * The humanoid fixture has no hair or tail by default because those are avatar
+ * data rather than part of the profile's canonical skeleton. Tests that need
+ * the secondary solver can graft a plausible chain onto an existing anchor,
+ * keeping the same armature-scale and world-space guarantees as buildRig().
+ */
+export interface SyntheticChainOptions {
+  /** Existing bone under which the chain root is attached. */
+  parent: string;
+  /** Name of the chain's first (simulated) bone. */
+  root: string;
+  /** Number of simulated links; one extra leaf bone is created for its tail. */
+  joints?: number;
+  /** Root offset from the parent, in metres. */
+  rootOffset?: [number, number, number];
+  /** Offset between successive bones, in metres. */
+  segmentOffset?: [number, number, number];
+}
+
 const FINGERS = ['Thumb', 'Index', 'Middle', 'Ring', 'Little'];
 
 /**
@@ -290,6 +311,44 @@ export function buildRig(opts: RigOptions = {}): SyntheticRig {
   };
 
   return { root, bones, meshes, descriptor };
+}
+
+/**
+ * Graft a straight chain onto a synthetic humanoid.
+ *
+ * `Spring` simulates every bone that has a child, so creating one extra leaf
+ * makes the requested number of links observable without inventing a terminal
+ * point outside the real bone hierarchy.
+ */
+export function addBoneChain(rig: SyntheticRig, opts: SyntheticChainOptions): string[] {
+  const parent = rig.bones.get(opts.parent);
+  if (!parent) throw new Error(`the rig has no ${opts.parent}`);
+
+  const scale = rig.root.scale.x || 1;
+  const joints = opts.joints ?? 3;
+  if (!Number.isInteger(joints) || joints < 1) {
+    throw new Error('a synthetic chain needs at least one joint');
+  }
+
+  const rootOffset = opts.rootOffset ?? [0, -0.025, 0.03];
+  const segmentOffset = opts.segmentOffset ?? [0, -0.08, 0.02];
+  const names: string[] = [];
+  let attach: THREE.Object3D = parent;
+
+  for (let i = 0; i <= joints; i++) {
+    const name = i === 0 ? opts.root : `${opts.root}_${i}`;
+    const offset = i === 0 ? rootOffset : segmentOffset;
+    const bone = new THREE.Bone();
+    bone.name = name;
+    bone.position.set(offset[0] / scale, offset[1] / scale, offset[2] / scale);
+    attach.add(bone);
+    rig.bones.set(name, bone);
+    names.push(name);
+    attach = bone;
+  }
+
+  rig.root.updateMatrixWorld(true);
+  return names;
 }
 
 /**

@@ -1,5 +1,8 @@
-import type { ChildProcess, SpawnOptions } from 'node:child_process';
+import { type ChildProcess, type SpawnOptions, spawn as spawnProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ServerRoots, Snapshot } from '@/protocol';
 import type { ShellPaths } from '@/shell/config';
@@ -115,6 +118,64 @@ function spawner() {
     return made.child;
   };
   return { calls, children, spawn };
+}
+
+/** A real child recorder: unlike `spawner`, this never replaces child_process. */
+function realSpawner() {
+  const children: ChildProcess[] = [];
+  const spawned: Promise<void>[] = [];
+  const spawn = (command: string, args: readonly string[], options: SpawnOptions): ChildProcess => {
+    const child = spawnProcess(command, [...args], options);
+    children.push(child);
+    spawned.push(
+      new Promise<void>((resolve, reject) => {
+        const onError = (error: Error) => {
+          child.off('spawn', onSpawn);
+          reject(error);
+        };
+        const onSpawn = () => {
+          child.off('error', onError);
+          resolve();
+        };
+        child.once('spawn', onSpawn);
+        child.once('error', onError);
+      }),
+    );
+    return child;
+  };
+  return { children, spawned, spawn };
+}
+
+async function makeTtsFixture(script: string) {
+  const root = await mkdtemp(join(tmpdir(), 'hashidate-tts-process-'));
+  await writeFile(join(root, 'server.py'), script);
+  const endpoint = { kind: 'socket', path: join(root, 'speech.sock') } as const;
+  const paths = { ...PATHS, tts: root, ttsPython: process.execPath };
+  return {
+    root,
+    options: (over: Partial<ConstructorParameters<typeof TtsProcess>[0]> = {}) => ({
+      paths,
+      endpoint,
+      probeTimeoutMs: 20,
+      stopTimeoutMs: 100,
+      ...over,
+    }),
+  };
+}
+
+function waitForExit(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => child.once('exit', () => resolve()));
+}
+
+function expectNoChildWaiters(child: ChildProcess) {
+  expect(child.listenerCount('exit')).toBe(0);
+  expect(child.listenerCount('close')).toBe(0);
+}
+
+function expectChildTerminated(child: ChildProcess) {
+  expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+  expectNoChildWaiters(child);
 }
 
 afterEach(() => {
@@ -415,13 +476,119 @@ describe('the optional speech sidecar', () => {
     expect(tts.available).toBe(false);
   });
 
-  it('does not start one after a quit has already been asked for', async () => {
-    const { calls, spawn } = spawner();
-    const tts = new TtsProcess(options({ spawn }));
+  it('does not spawn after a quit reaches the pre-spawn guard', async () => {
+    const fixture = await makeTtsFixture('setInterval(() => {}, 60_000);');
+    const recorder = realSpawner();
+    const tts = new TtsProcess(fixture.options({ spawn: recorder.spawn }));
 
-    await tts.stop();
-    await tts.start();
+    try {
+      await tts.stop();
+      await tts.start();
+      await Promise.all(recorder.spawned);
 
-    expect(calls).toEqual([]);
+      // process.execPath is executable, and the dead socket makes the probe
+      // fail, so this assertion depends on the `this.stopped` guard before
+      // spawn rather than on the missing private Python environment.
+      expect(recorder.children).toEqual([]);
+      expect(tts.available).toBe(false);
+      expect(tts.ownsChild).toBe(false);
+    } finally {
+      await tts.stop();
+      await rm(fixture.root, { force: true, recursive: true });
+    }
+  });
+
+  it('stops a child when quit wins while the real spawn is pending', async () => {
+    const fixture = await makeTtsFixture('setInterval(() => {}, 60_000);');
+    const recorder = realSpawner();
+    let tts: TtsProcess | null = null;
+    let stopDuringSpawn: Promise<void> | undefined;
+    const spawn = (command: string, args: readonly string[], spawnOptions: SpawnOptions) => {
+      const child = recorder.spawn(command, args, spawnOptions);
+      if (tts === null) throw new Error('TtsProcess was not initialized before spawn');
+      stopDuringSpawn = tts.stop();
+      return child;
+    };
+    const sidecar = new TtsProcess(fixture.options({ spawn }));
+    tts = sidecar;
+
+    try {
+      await sidecar.start();
+      expect(stopDuringSpawn).toBeDefined();
+      if (stopDuringSpawn === undefined) throw new Error('spawn did not race with stop');
+      await stopDuringSpawn;
+      await Promise.all(recorder.spawned);
+
+      const child = recorder.children[0];
+      if (child === undefined) throw new Error('real spawn did not create a child');
+      expect(sidecar.available).toBe(false);
+      expect(sidecar.ownsChild).toBe(false);
+      expect(child.killed).toBe(true);
+      expect(child.signalCode).toBe('SIGTERM');
+      expectChildTerminated(child);
+    } finally {
+      await sidecar.stop();
+      await rm(fixture.root, { force: true, recursive: true });
+    }
+  });
+
+  it('stops a running child and keeps repeated stop idempotent', async () => {
+    const fixture = await makeTtsFixture('setInterval(() => {}, 60_000);');
+    const recorder = realSpawner();
+    const sidecar = new TtsProcess(fixture.options({ spawn: recorder.spawn }));
+
+    try {
+      await sidecar.start();
+      await Promise.all(recorder.spawned);
+
+      const child = recorder.children[0];
+      if (child === undefined) throw new Error('real spawn did not create a child');
+      expect(sidecar.available).toBe(true);
+      expect(sidecar.ownsChild).toBe(true);
+      expect(child.exitCode).toBeNull();
+      expect(child.signalCode).toBeNull();
+
+      await sidecar.stop();
+      await sidecar.stop();
+
+      expect(sidecar.available).toBe(false);
+      expect(sidecar.ownsChild).toBe(false);
+      expect(child.killed).toBe(true);
+      expect(child.signalCode).toBe('SIGTERM');
+      expectChildTerminated(child);
+    } finally {
+      await sidecar.stop();
+      await rm(fixture.root, { force: true, recursive: true });
+    }
+  });
+
+  it('does not signal a child that exited before stop', async () => {
+    const fixture = await makeTtsFixture('process.exit(0);');
+    const recorder = realSpawner();
+    const sidecar = new TtsProcess(fixture.options({ spawn: recorder.spawn }));
+
+    try {
+      await sidecar.start();
+      await Promise.all(recorder.spawned);
+      const child = recorder.children[0];
+      if (child === undefined) throw new Error('real spawn did not create a child');
+      await waitForExit(child);
+
+      expect(sidecar.available).toBe(false);
+      expect(sidecar.ownsChild).toBe(true);
+      expect(child.exitCode).toBe(0);
+      expect(child.signalCode).toBeNull();
+      expect(child.killed).toBe(false);
+
+      await sidecar.stop();
+      await sidecar.stop();
+
+      expect(sidecar.available).toBe(false);
+      expect(sidecar.ownsChild).toBe(false);
+      expectChildTerminated(child);
+    } finally {
+      await sidecar.stop();
+      await rm(fixture.root, { force: true, recursive: true });
+    }
   });
 });
