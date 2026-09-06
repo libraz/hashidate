@@ -60,8 +60,9 @@ export const play: Handler = async (client, args) => {
     replace: values.replace,
     hold: values.hold,
   });
+  let setupError: string | null = null;
   if (result.setup !== undefined) {
-    show(result.setup);
+    setupError = show(result.setup, { exitOnError: false });
     // The two halves have different fates when no renderer is attached: the
     // lines wait on the server's queue and play when one arrives, the setup was
     // a live command and is simply gone. Said out loud, because the difference
@@ -86,6 +87,7 @@ export const play: Handler = async (client, args) => {
   // Said out loud for the same reason the setup failure above is: a held queue
   // and a queue nothing is attached to look identical from a prompt.
   if (values.hold) console.log('held — `yarn ctl resume` starts it');
+  if (setupError !== null) fail(setupError);
 };
 
 /**

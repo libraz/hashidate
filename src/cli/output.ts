@@ -1,4 +1,5 @@
 import { getLocale, type Localized, pick } from '../i18n/locale';
+import { fail } from './client';
 
 /**
  * What this client prints.
@@ -7,8 +8,24 @@ import { getLocale, type Localized, pick } from '../i18n/locale';
  * came back with, and a label that arrived in both languages.
  */
 
-export function show(value: unknown): void {
+export interface ShowOptions {
+  /** Keep printing caller-owned follow-up output before exiting on failure. */
+  exitOnError?: boolean;
+}
+
+export function show(value: unknown, { exitOnError = true }: ShowOptions = {}): string | null {
   console.log(JSON.stringify(value, null, 2));
+  const error = commandError(value);
+  if (error !== null && exitOnError) fail(error);
+  return error;
+}
+
+/** A command response with no delivery is a failed CLI invocation. */
+function commandError(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const response = value as Record<string, unknown>;
+  if (typeof response.error === 'string') return response.error;
+  return response.ok === false ? 'control command was not delivered' : null;
 }
 
 /**

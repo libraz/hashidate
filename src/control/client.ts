@@ -15,6 +15,7 @@ import {
   type MotionsResponse,
   motionsResponseSchema,
   type QueueResponse,
+  type QueueUpdate,
   queueResponseSchema,
   type Snapshot,
   snapshotSchema,
@@ -47,6 +48,12 @@ export const DEFAULT_BASE = 'http://127.0.0.1:8765/api';
 
 /** Long enough to cover a `--wait` on a turn that runs its full course. */
 const DEFAULT_TIMEOUT_MS = 180_000;
+
+/** The server's default command wait, used by `?wait=1` and `?wait=true`. */
+const COMMAND_WAIT_SECONDS = 120;
+
+/** Give a long-polling command time to receive its final response. */
+const TRANSPORT_MARGIN_SECONDS = 30;
 
 /**
  * The control server could not be reached, or answered something this client
@@ -113,10 +120,15 @@ export class ControlClient {
   /**
    * Send one command, or several under `batch` to travel together. The reply is
    * passed through unread — `ok` is about delivery, and what the caller wants to
-   * see is whatever the server said.
+   * see is whatever the server said. In particular, a refused delivery stays a
+   * response so script setup can be reported while its lines still queue.
    */
   command(command: CommandRequest, wait?: string): Promise<unknown> {
-    return this.request(`/command${wait ? `?wait=${wait}` : ''}`, command);
+    const timeout =
+      wait === undefined
+        ? DEFAULT_TIMEOUT_MS
+        : (commandWaitSeconds(wait) + TRANSPORT_MARGIN_SECONDS) * 1000;
+    return this.request(`/command${wait ? `?wait=${wait}` : ''}`, command, timeout);
   }
 
   async state(): Promise<Snapshot> {
@@ -160,7 +172,7 @@ export class ControlClient {
    * reading does not resend the emotion vector, and so cannot clobber one that
    * changed underneath it.
    */
-  async queueUpdate(id: string, patch: TurnRequest & { note?: string }): Promise<QueueOutcome> {
+  async queueUpdate(id: string, patch: Omit<QueueUpdate, 'id'>): Promise<QueueOutcome> {
     return expect(queueOutcomeSchema, await this.request('/queue/update', { ...patch, id }));
   }
 
@@ -261,6 +273,13 @@ export class ControlClient {
     const body = await this.request(`/decks/${encodeURIComponent(id)}/text${suffix}`);
     return expect(deckTextResponseSchema, body);
   }
+}
+
+/** Mirror the command route's `?wait` parsing so the client outlives the wait. */
+function commandWaitSeconds(raw: string): number {
+  if (raw === '1' || raw === 'true') return COMMAND_WAIT_SECONDS;
+  const seconds = Number.parseFloat(raw);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : COMMAND_WAIT_SECONDS;
 }
 
 /** The bit of a fetch failure worth showing: usually ECONNREFUSED. */
