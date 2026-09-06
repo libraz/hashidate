@@ -133,6 +133,133 @@ describe('the pending queue', () => {
   });
 });
 
+describe('on-air ownership and renderer recovery', () => {
+  const start = (id: string, rendererId?: string): void => {
+    hub.report({ events: [event(id, 'turn.start')] }, rendererId);
+  };
+
+  it('recovers an on-air line before a new renderer receives pending work', () => {
+    const [running, pending] = hub.queue.add([{ text: 'running' }, { text: 'pending' }]);
+    const detach = hub.subscribe(() => {}, 'renderer-a');
+    start(running.id, 'renderer-a');
+    detach();
+
+    const seen: StreamMessage[] = [];
+    hub.subscribe((message) => seen.push(message), 'renderer-b');
+
+    expect(hub.queue.airing()).toEqual([]);
+    expect(hub.queue.list().map((entry) => entry.id)).toEqual([pending.id]);
+    expect(hub.queue.history()).toMatchObject([{ id: running.id, interrupted: true }]);
+    expect(hub.snapshot().events.at(-1)).toMatchObject({
+      type: 'turn.end',
+      turn: running.id,
+      interrupted: true,
+    });
+    expect(seen[0]).toEqual({
+      type: 'command',
+      commands: [{ cmd: 'queue', turns: [{ id: pending.id, text: 'pending' }] }],
+    });
+  });
+
+  it('keeps the line on air when the same renderer reconnects within grace', () => {
+    const [running] = hub.queue.add([{ text: 'running' }]);
+    const detach = hub.subscribe(() => {}, 'renderer-a');
+    start(running.id, 'renderer-a');
+    detach();
+
+    vi.advanceTimersByTime(STATE_STALE_SECONDS * 1000 - 1);
+    const reconnect = hub.subscribe(() => {}, 'renderer-a');
+    vi.advanceTimersByTime(STATE_STALE_SECONDS * 1000 + 1);
+
+    expect(hub.queue.airing().map((entry) => entry.id)).toEqual([running.id]);
+    reconnect();
+  });
+
+  it('keeps an on-air line while one of two original renderers remains', () => {
+    const [running] = hub.queue.add([{ text: 'running' }]);
+    const first = hub.subscribe(() => {}, 'renderer-a');
+    const second = hub.subscribe(() => {}, 'renderer-b');
+    start(running.id, 'renderer-a');
+    start(running.id, 'renderer-b');
+    first();
+
+    vi.advanceTimersByTime(STATE_STALE_SECONDS * 1000 + 1);
+    expect(hub.queue.airing().map((entry) => entry.id)).toEqual([running.id]);
+
+    second();
+    vi.advanceTimersByTime(STATE_STALE_SECONDS * 1000 + 1);
+    expect(hub.queue.airing()).toEqual([]);
+  });
+
+  it('learns a slow second owner before the first owner grace expires', () => {
+    const [running] = hub.queue.add([{ text: 'running' }]);
+    const first = hub.subscribe(() => {}, 'renderer-a');
+    const second = hub.subscribe(() => {}, 'renderer-b');
+    start(running.id, 'renderer-a');
+    first();
+    // A new preview must not shorten grace for the still-connected slow owner.
+    hub.subscribe(() => {}, 'renderer-c');
+
+    vi.advanceTimersByTime((STATE_STALE_SECONDS * 1000) / 2);
+    start(running.id, 'renderer-b');
+    vi.advanceTimersByTime((STATE_STALE_SECONDS * 1000) / 2 + 1);
+
+    expect(hub.queue.airing().map((entry) => entry.id)).toEqual([running.id]);
+    second();
+  });
+
+  it('recovers after the named owners remain absent for grace', () => {
+    const [running, pending] = hub.queue.add([{ text: 'running' }, { text: 'pending' }]);
+    const detach = hub.subscribe(() => {}, 'renderer-a');
+    start(running.id, 'renderer-a');
+    detach();
+
+    vi.advanceTimersByTime(STATE_STALE_SECONDS * 1000);
+
+    expect(hub.queue.airing()).toEqual([]);
+    expect(hub.queue.list().map((entry) => entry.id)).toEqual([pending.id]);
+    expect(hub.queue.history()[0]).toMatchObject({ id: running.id, interrupted: true });
+  });
+
+  it('does not recover a line whose start was anonymous', () => {
+    const [running] = hub.queue.add([{ text: 'running' }]);
+    const detach = hub.subscribe(() => {});
+    hub.report({ events: [event(running.id, 'turn.start')] });
+    detach();
+
+    vi.advanceTimersByTime(STATE_STALE_SECONDS * 1000 + 1);
+    hub.subscribe(() => {}, 'renderer-new');
+
+    expect(hub.queue.airing().map((entry) => entry.id)).toEqual([running.id]);
+    expect(hub.queue.history()).toEqual([]);
+  });
+
+  it('carries an interrupted flag from a normal turn.end into history', () => {
+    const [running] = hub.queue.add([{ text: 'running' }]);
+    const detach = hub.subscribe(() => {}, 'renderer-a');
+    start(running.id, 'renderer-a');
+    hub.report(
+      { events: [{ type: 'turn.end', turn: running.id, interrupted: true }] },
+      'renderer-a',
+    );
+    detach();
+
+    expect(hub.queue.history()[0]).toMatchObject({ id: running.id, interrupted: true });
+  });
+
+  it('dispose cancels on-air grace timers', () => {
+    const [running] = hub.queue.add([{ text: 'running' }]);
+    const detach = hub.subscribe(() => {}, 'renderer-a');
+    start(running.id, 'renderer-a');
+    detach();
+
+    hub.dispose();
+    vi.advanceTimersByTime(STATE_STALE_SECONDS * 1000 + 1);
+
+    expect(hub.queue.airing().map((entry) => entry.id)).toEqual([running.id]);
+  });
+});
+
 /**
  * The document half of the snapshot: what is on disk, and what is up.
  *

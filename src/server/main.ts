@@ -230,6 +230,7 @@ function main(): void {
   // only thing here worth interrupting a shutdown for.
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.once(signal, () => {
+      hub.dispose();
       void hub.closeRecording().finally(() => process.exit(0));
     });
   }

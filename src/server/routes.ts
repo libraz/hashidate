@@ -384,7 +384,7 @@ async function post(
     return;
   }
   if (pathname === '/api/command') return command(res, hub, body.value, params);
-  if (pathname === '/api/report') return report(res, hub, body.value);
+  if (pathname === '/api/report') return report(res, hub, body.value, rendererIdentity(params));
   if (pathname === '/api/speech') return handleSpeech(res, body.value);
   if (pathname === '/api/scripts/run')
     return runScript(res, hub, stores.scripts ?? null, body.value);
@@ -698,7 +698,7 @@ function stream(res: ServerResponse, hub: Hub, rendererId?: string): void {
   });
 }
 
-function report(res: ServerResponse, hub: Hub, body: unknown): void {
+function report(res: ServerResponse, hub: Hub, body: unknown, rendererId?: string): void {
   // Validated rather than trusted: the snapshot this feeds is what an
   // orchestrator branches on, and a state that does not match the schema would
   // be served back as if it did.
@@ -707,7 +707,7 @@ function report(res: ServerResponse, hub: Hub, body: unknown): void {
     json(res, { error: 'invalid report', detail: parsed.error.issues }, 400);
     return;
   }
-  json(res, { ok: true, seq: hub.report(parsed.data) });
+  json(res, { ok: true, seq: hub.report(parsed.data, rendererId) });
 }
 
 async function command(

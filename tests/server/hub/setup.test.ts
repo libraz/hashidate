@@ -98,6 +98,48 @@ describe('the setup, replayed on connect', () => {
     ]);
   });
 
+  it('carries the pending queue with an avatar swap for an attached renderer', () => {
+    const [entry] = hub.queue.add([{ text: '待機中' }]);
+    const seen: StreamMessage[] = [];
+    hub.subscribe((message) => seen.push(message), 'renderer-a');
+    seen.length = 0;
+
+    hub.send({ type: 'command', commands: [{ cmd: 'avatar', id: 'other' }] });
+
+    expect(seen).toEqual([
+      {
+        type: 'command',
+        commands: [
+          { cmd: 'avatar', id: 'other' },
+          { cmd: 'queue', turns: [{ id: entry.id, text: '待機中' }] },
+        ],
+      },
+    ]);
+  });
+
+  it('does not replace an explicit queue in an avatar batch', () => {
+    hub.queue.add([{ text: 'server' }]);
+    const seen: StreamMessage[] = [];
+    hub.subscribe((message) => seen.push(message), 'renderer-a');
+    seen.length = 0;
+
+    hub.send({
+      type: 'command',
+      commands: [
+        { cmd: 'avatar', id: 'other' },
+        { cmd: 'queue', turns: [] },
+      ],
+    });
+
+    expect(seen[0]).toEqual({
+      type: 'command',
+      commands: [
+        { cmd: 'avatar', id: 'other' },
+        { cmd: 'queue', turns: [] },
+      ],
+    });
+  });
+
   it('carries the newest value of a setting that was changed twice', () => {
     hub.send({ type: 'command', commands: [{ cmd: 'camera', frame: 'face' }] });
     hub.send({ type: 'command', commands: [{ cmd: 'camera', frame: 'bust' }] });

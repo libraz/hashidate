@@ -132,6 +132,9 @@ interface ViewerClient {
   rendererId?: string;
 }
 
+/** Internal owner marker for a legacy report that carried no renderer id. */
+const ANONYMOUS_OWNER = '';
+
 /** What `waitFor` settles with. */
 export interface WaitResult {
   snapshot: Snapshot;
@@ -177,6 +180,10 @@ export class Hub {
   private readonly clients = new Set<ViewerClient>();
   /** Number of live SSE connections for each renderer identity. */
   private readonly rendererConnections = new Map<string, number>();
+  /** Distinct renderers that have acknowledged each line currently on air. */
+  private readonly onAirOwners = new Map<string, Set<string>>();
+  /** Grace timers for lines whose last known owner disconnected. */
+  private readonly onAirTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly waiters = new Set<Waiter>();
   private readonly events: SessionEvent[] = [];
   /**
@@ -224,7 +231,7 @@ export class Hub {
    * The setup, so a renderer opened at the top of the broadcast is not opened on
    * defaults. See `standing.ts` for what counts as one and what does not.
    */
-  private readonly standing = new Standing();
+  private readonly standing: Standing;
 
   /**
    * The documents on disk, or nothing when the server was started without any.
@@ -254,7 +261,11 @@ export class Hub {
     private readonly recordings: RecordingStore | null = null,
     private readonly bgmLibrary: BgmSource | null = null,
     private readonly bgmCoordinator: BgmCoordinator = new BgmCoordinator(),
-  ) {}
+  ) {
+    this.standing = new Standing(
+      (deckId) => this.decks?.current.find((deck) => deck.id === deckId)?.pages,
+    );
+  }
 
   /**
    * The stop scheduled for the end of the script, if one is counting down.
@@ -308,6 +319,7 @@ export class Hub {
     if (rendererId !== undefined) {
       this.rendererConnections.set(rendererId, (this.rendererConnections.get(rendererId) ?? 0) + 1);
       this.cancelOrphan(rendererId);
+      this.rendererConnected(rendererId);
     }
     const commands = this.standing.commands();
     const bgm = this.bgmCoordinator.currentCommand();
@@ -354,7 +366,114 @@ export class Hub {
       return;
     }
     this.rendererConnections.delete(rendererId);
+    this.rendererDisconnected(rendererId);
     this.armOrphan(rendererId);
+  }
+
+  /** Cancel or recover on-air grace when a renderer attaches. */
+  private rendererConnected(rendererId: string): void {
+    for (const [turnId, owners] of [...this.onAirOwners]) {
+      if (owners.has(ANONYMOUS_OWNER)) continue;
+      if (owners.has(rendererId)) {
+        this.clearOnAirTimer(turnId);
+        continue;
+      }
+      // Another connected page may still be posting its first turn.start.
+      // A newcomer must not shorten that page's report grace and prematurely
+      // file its live line as interrupted.
+      if (!this.hasLiveOwner(owners)) {
+        if ([...this.clients].some((client) => client.rendererId !== rendererId)) {
+          this.armOnAirTimer(turnId);
+        } else {
+          this.recoverOnAir(turnId);
+        }
+      }
+    }
+  }
+
+  /** Arm grace for every on-air line owned by a renderer that just left. */
+  private rendererDisconnected(rendererId: string): void {
+    for (const [turnId, owners] of this.onAirOwners) {
+      if (!owners.has(rendererId) || owners.has(ANONYMOUS_OWNER)) continue;
+      if (!this.hasLiveOwner(owners)) this.armOnAirTimer(turnId);
+    }
+  }
+
+  private hasLiveOwner(owners: Set<string>): boolean {
+    for (const owner of owners) {
+      if (owner !== ANONYMOUS_OWNER && (this.rendererConnections.get(owner) ?? 0) > 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Remember one renderer's ownership of a line, including duplicate starts. */
+  private noteTurnOwner(turnId: string, rendererId?: string): void {
+    const known = this.onAirOwners.get(turnId);
+    const active =
+      known !== undefined ||
+      this.queue.list().some((entry) => entry.id === turnId) ||
+      this.queue.airing().some((entry) => entry.id === turnId);
+    if (!active) return;
+
+    const owners = known ?? new Set<string>();
+    owners.add(rendererId ?? ANONYMOUS_OWNER);
+    this.onAirOwners.set(turnId, owners);
+    if (rendererId !== undefined && (this.rendererConnections.get(rendererId) ?? 0) > 0) {
+      this.clearOnAirTimer(turnId);
+    } else if (rendererId !== undefined) {
+      // A report may race the stream handshake (or come from a caller that
+      // never opened SSE). Treat that owner as already absent until it connects.
+      this.armOnAirTimer(turnId);
+    }
+  }
+
+  /** Start a grace timer after all named owners of a line have disconnected. */
+  private armOnAirTimer(turnId: string): void {
+    if (this.onAirTimers.has(turnId)) return;
+    const owners = this.onAirOwners.get(turnId);
+    if (owners === undefined || owners.has(ANONYMOUS_OWNER) || this.hasLiveOwner(owners)) return;
+    const timer = setTimeout(() => {
+      this.onAirTimers.delete(turnId);
+      const current = this.onAirOwners.get(turnId);
+      if (current === undefined || current.has(ANONYMOUS_OWNER) || this.hasLiveOwner(current)) {
+        return;
+      }
+      this.recoverOnAir(turnId);
+    }, STATE_STALE_SECONDS * 1000);
+    timer.unref?.();
+    this.onAirTimers.set(turnId, timer);
+  }
+
+  private clearOnAirTimer(turnId: string): void {
+    const timer = this.onAirTimers.get(turnId);
+    if (timer !== undefined) clearTimeout(timer);
+    this.onAirTimers.delete(turnId);
+  }
+
+  /** Forget owner state when a turn completes normally or by an interrupt. */
+  private clearTurnOwners(turnId: string): void {
+    this.clearOnAirTimer(turnId);
+    this.onAirOwners.delete(turnId);
+  }
+
+  /** Finish an abandoned line, preserving every pending line behind it. */
+  private recoverOnAir(turnId: string): void {
+    if (!this.queue.airing().some((entry) => entry.id === turnId)) {
+      this.clearTurnOwners(turnId);
+      return;
+    }
+    this.clearTurnOwners(turnId);
+    const at = now();
+    this.seq += 1;
+    this.events.push({ type: 'turn.end', turn: turnId, interrupted: true, seq: this.seq, at });
+    this.queue.complete(turnId, { interrupted: true });
+    if (this.events.length > EVENT_LOG_MAX) {
+      this.events.splice(0, this.events.length - EVENT_LOG_MAX);
+    }
+    this.observeQueue();
+    this.wake();
   }
 
   /**
@@ -489,6 +608,14 @@ export class Hub {
     const commands = message.commands.map((command) =>
       command.cmd === 'bgm' ? this.bgmCoordinator.apply(command) : command,
     );
+    // Swapping an avatar creates a fresh session. Carry the authoritative
+    // pending list in the same frame so that session is not left with an empty
+    // queue until some unrelated edit happens. A caller that already supplied
+    // a queue command owns its exact replacement and must not be overwritten.
+    const avatar = commands.findIndex((command) => command.cmd === 'avatar');
+    if (avatar !== -1 && !commands.some((command) => command.cmd === 'queue')) {
+      commands.splice(avatar + 1, 0, this.queue.command());
+    }
     for (const command of commands) this.standing.record(command);
     this.broadcast({ type: 'command', commands });
     return this.clients.size;
@@ -705,6 +832,21 @@ export class Hub {
     await this.recordings?.close();
   }
 
+  /** Stop Hub-owned timers when the control server is torn down. */
+  dispose(): void {
+    this.clearTimers();
+    this.clearOrphan();
+    for (const timer of this.onAirTimers.values()) clearTimeout(timer);
+    this.onAirTimers.clear();
+    this.onAirOwners.clear();
+    const snapshot = this.snapshot();
+    for (const waiter of this.waiters) {
+      clearTimeout(waiter.timer);
+      waiter.resolve({ snapshot, completed: false });
+    }
+    this.waiters.clear();
+  }
+
   private async finishRecording(session: string): Promise<void> {
     await this.recordings?.close(session);
     this.clearFinishedRecording(session);
@@ -768,7 +910,7 @@ export class Hub {
   // --- upstream (viewer -> server) ------------------------------------------
 
   /** Take one report from a viewer. Returns the newest sequence number. */
-  report(body: ReportBody): number {
+  report(body: ReportBody, rendererId?: string): number {
     // Avatar loading can be reported before a Session exists. Keep connection
     // liveness on its own clock so that a failed/early renderer is visible as
     // connected while its state clock remains unset and its state stays empty.
@@ -794,6 +936,12 @@ export class Hub {
       this.broadcast({ type: 'command', commands: [bgmTransition] });
     }
     for (const event of body.events ?? []) {
+      // Record ownership before echo filtering: the same start is expected from
+      // every connected renderer, and each distinct renderer must be eligible to
+      // keep the line alive if another owner disappears.
+      if (event.type === 'turn.start' && event.turn) {
+        this.noteTurnOwner(event.turn, rendererId);
+      }
       // BGM cues are transport intents, not renderer observations. A muted or
       // unknown renderer is deliberately ignored, and its id is left free for
       // the audible renderer's report. Once accepted, the id is consumed even
@@ -818,7 +966,10 @@ export class Hub {
       // being history. Driven off the event rather than off the reported
       // `queued` count, because the count says how many are left and not which
       // one left — and the panel is looking at rows, not at a number.
-      if (event.type === 'turn.end' && event.turn) this.queue.complete(event.turn);
+      if (event.type === 'turn.end' && event.turn) {
+        this.queue.complete(event.turn, { interrupted: event.interrupted });
+        this.clearTurnOwners(event.turn);
+      }
       // An interrupt drops everything pending in the renderer. Mirroring it here
       // is what keeps the two lists the same: without it the queue would be
       // re-delivered on the next edit and the stream would resume a script the
@@ -826,7 +977,10 @@ export class Hub {
       // dropped — it was said, if only partly, and it is the one most likely to
       // be wanted back.
       if (event.type === 'turn.interrupted') {
-        if (event.turn) this.queue.complete(event.turn, { interrupted: true });
+        if (event.turn) {
+          this.queue.complete(event.turn, { interrupted: true });
+          this.clearTurnOwners(event.turn);
+        }
         if (!this.isExpectedInterrupt(event.turn)) this.queue.clear();
       }
       if (event.type === 'queue.dropped') for (const id of event.turns ?? []) this.queue.remove(id);

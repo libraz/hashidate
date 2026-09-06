@@ -37,6 +37,8 @@ import { rendererId as pageRendererId } from './renderer-id';
  */
 const REPORT_INTERVAL = 700;
 const RETRY_DELAY = 1500;
+/** A stalled report must not block turn events or future heartbeats forever. */
+const REPORT_TIMEOUT = 2_000;
 
 /**
  * How many commands may pile up behind an avatar swap.
@@ -121,7 +123,10 @@ export class ControlClient {
   status: ControlStatus = 'offline';
 
   private pending: SessionEvent[] = [];
-  private chain: Promise<void> = Promise.resolve();
+  /** At most one report runs; more requests collapse into these two flags. */
+  private reporting: Promise<void> | null = null;
+  private reportQueued = false;
+  private reportVocabulary = false;
   private unbind: (() => void) | null = null;
   private source: EventSource | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -137,6 +142,8 @@ export class ControlClient {
   private held: Command[] | null = null;
   /** The avatar the hold is waiting for. Null when nothing is held. */
   private awaiting: string | null = null;
+  /** Pause state captured before the current chain of avatar swaps began. */
+  private swapPause: { paused: boolean; sessions: Set<Session> } | null = null;
 
   constructor(session: Session | null, opts: ControlOptions = {}) {
     this.session = session;
@@ -171,18 +178,39 @@ export class ControlClient {
    * nothing can be held before the first command.
    */
   bind(session: Session | null, avatar: string | null = null): void {
+    const awaiting = this.awaiting;
+    const matching = session !== null && awaiting !== null && awaiting === avatar;
+    const restorePause = matching ? (this.swapPause?.paused ?? false) : null;
     this.unbind?.();
     // A hold belongs to the run of turns, not to the character saying them, so
     // it survives a swap the way the queue itself does. The queue comes back
-    // from the server — it is re-delivered on the next edit or on the next
-    // connect — and without this the instruction not to start on it would not:
+    // from the server alongside the avatar command, and without this the
+    // instruction not to start on it would not:
     // a fresh session begins moving, and a segment held for framing plays
     // itself out to nobody the moment somebody changes avatar.
     //
     // Carried here because this is the only place that can see both sessions.
     // The constructor binds the session it was given, where this is a no-op.
-    if (session !== null && this.session !== null) session.paused = this.session.paused;
+    if (session !== null) {
+      if (awaiting !== null) {
+        if (matching) {
+          session.paused = restorePause ?? false;
+        } else {
+          // A runtime session for an intermediate avatar is not the target of
+          // this hold. Keep it from admitting the authoritative queue while a
+          // chained load is still in flight.
+          session.paused = true;
+          this.swapPause?.sessions.add(session);
+        }
+      } else if (this.session !== null && this.session !== session) {
+        session.paused = this.session.paused;
+      }
+    }
     this.session = session;
+    // A matching bind consumes this swap's saved state. If the held commands
+    // start another avatar, `apply` must capture that new session's current
+    // pause value rather than reusing the first swap's value.
+    if (matching) this.swapPause = null;
     if (session !== null) {
       this.unbind = session.on((ev) => {
         this.pending.push(ev);
@@ -191,7 +219,10 @@ export class ControlClient {
         if (ev.type.startsWith('turn.') || ev.type === 'cue.fire') void this.report();
       });
     }
-    if (this.awaiting === null || this.awaiting === avatar) this.flush();
+    if (session !== null && (awaiting === null || matching)) {
+      this.flush();
+      if (this.awaiting === null) this.swapPause = null;
+    }
     if (this.status === 'online') void this.report(true);
   }
 
@@ -222,6 +253,10 @@ export class ControlClient {
   discardHeld(): void {
     this.held = null;
     this.awaiting = null;
+    if (this.swapPause !== null) {
+      for (const session of this.swapPause.sessions) session.paused = this.swapPause.paused;
+      this.swapPause = null;
+    }
   }
 
   private flush(): void {
@@ -248,6 +283,8 @@ export class ControlClient {
     if (this.retry !== null) clearTimeout(this.retry);
     this.timer = null;
     this.retry = null;
+    this.reportQueued = false;
+    this.reportVocabulary = false;
   }
 
   private setStatus(s: ControlStatus): void {
@@ -280,16 +317,20 @@ export class ControlClient {
     this.source = src;
 
     src.onopen = () => {
+      if (this.source !== src || this.stopped) return;
       this.setStatus('online');
       // The vocabulary is discovered from the avatar, so the server cannot know
       // it until a viewer has loaded one. Push it on every connect — but after
       // the motions, because they are part of what it lists and a vocabulary
       // sent before them would advertise a shorter gesture set than the one
       // that is actually playable.
-      void this.motions().then(() => this.report(true));
+      void this.motions().then(() => {
+        if (this.source === src && !this.stopped) void this.report(true);
+      });
     };
 
     src.onmessage = (e) => {
+      if (this.source !== src || this.stopped) return;
       let msg: unknown;
       try {
         msg = JSON.parse(e.data);
@@ -357,19 +398,36 @@ export class ControlClient {
   }
 
   /**
-   * Reports are serialised through a promise chain.
-   *
-   * Firing them concurrently lets two POSTs arrive at the server out of order,
-   * and an event log in which `turn.end` precedes `turn.start` is far worse
-   * than one that lags by a few milliseconds. Queueing three turns in one batch
-   * reproduced it immediately.
+   * Reports are serialised through one promise, while repeated heartbeats
+   * collapse into one queued request. Firing them concurrently lets two POSTs
+   * arrive at the server out of order; keeping a promise chain for every timer
+   * tick, however, lets one stalled request grow an unbounded queue.
    */
   private report(withVocabulary = false): Promise<void> {
-    this.chain = this.chain.then(
-      () => this.post(withVocabulary),
-      () => {},
+    if (this.stopped) return Promise.resolve();
+    this.reportQueued = true;
+    this.reportVocabulary ||= withVocabulary;
+    if (this.reporting !== null) return this.reporting;
+    const reporting = this.drainReports();
+    this.reporting = reporting;
+    void reporting.then(
+      () => {
+        if (this.reporting === reporting) this.reporting = null;
+      },
+      () => {
+        if (this.reporting === reporting) this.reporting = null;
+      },
     );
-    return this.chain;
+    return reporting;
+  }
+
+  private async drainReports(): Promise<void> {
+    while (this.reportQueued && !this.stopped) {
+      const withVocabulary = this.reportVocabulary;
+      this.reportQueued = false;
+      this.reportVocabulary = false;
+      await this.post(withVocabulary);
+    }
   }
 
   private async post(withVocabulary: boolean): Promise<void> {
@@ -417,17 +475,39 @@ export class ControlClient {
     const bgm = this.renderer?.bgmReport?.();
     if (bgm) body.bgm = bgm;
 
+    const source = this.source;
+    let delivered = false;
     try {
-      await fetch(`${this.base}/report`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      const response = await fetch(
+        `${this.base}/report?renderer=${encodeURIComponent(this.rendererId)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(REPORT_TIMEOUT),
+        },
+      );
+      delivered = response.ok;
     } catch {
+      // A stopped request is allowed to finish, but its events still belong to
+      // the next connection if the server did not accept them.
+    }
+    if (!delivered) {
       // Put the events back: losing a turn.end silently strands a caller that
-      // is blocked waiting for it.
+      // is blocked waiting for it. A non-2xx reply is the same failure as a
+      // rejected fetch, and the order of events is part of the wire contract.
       this.pending = events.concat(this.pending);
-      this.setStatus('offline');
+      // Preserve a vocabulary request for the next heartbeat instead of
+      // downgrading the reconnect to a state-only report.
+      this.reportVocabulary ||= withVocabulary;
+      if (!this.stopped && this.source === source) this.setStatus('offline');
+    } else if (
+      !this.stopped &&
+      source !== null &&
+      this.source === source &&
+      source.readyState === EventSource.OPEN
+    ) {
+      this.setStatus('online');
     }
   }
 
@@ -491,6 +571,11 @@ export class ControlClient {
         return;
       }
       if (this.renderer?.load(c.id)) {
+        this.swapPause ??= { paused: this.session?.paused ?? false, sessions: new Set() };
+        if (this.session !== null) {
+          this.session.paused = true;
+          this.swapPause.sessions.add(this.session);
+        }
         this.held ??= [];
         this.awaiting = c.id;
       }

@@ -96,6 +96,8 @@ let harness: ReturnType<typeof build>;
 
 /** A deterministic EventSource with manual lifecycle signals. */
 class FakeEventSource {
+  static readonly OPEN = 1;
+  readyState = 0;
   static instances: FakeEventSource[] = [];
 
   readonly url: string;
@@ -110,10 +112,12 @@ class FakeEventSource {
   }
 
   close(): void {
+    this.readyState = 2;
     this.closeCalls++;
   }
 
   open(): void {
+    this.readyState = FakeEventSource.OPEN;
     this.onopen?.();
   }
 
@@ -263,6 +267,67 @@ describe('ControlClient.apply', () => {
     }
   });
 
+  it('retries events after a non-2xx report without changing their order', async () => {
+    const bodies: Array<{ events?: SessionEvent[] }> = [];
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as { events?: SessionEvent[] });
+      return { ok: bodies.length > 1, status: bodies.length > 1 ? 200 : 503 } as Response;
+    });
+    try {
+      inject(harness.session, {
+        type: 'cue.fire',
+        turn: 'turn-503',
+        cueId: 'turn-503:cue:0',
+        cue: { kind: 'bgm', action: 'play', track: 'song.mp3' },
+      });
+
+      await vi.waitFor(() => expect(bodies).toHaveLength(1));
+      await (harness.client as unknown as { report(): Promise<void> }).report();
+      expect(bodies).toHaveLength(2);
+      expect(bodies[1].events).toMatchObject([
+        {
+          type: 'cue.fire',
+          turn: 'turn-503',
+          cueId: 'turn-503:cue:0',
+        },
+      ]);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it('times out a stalled report so the next report can recover', async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      attempts++;
+      if (attempts === 1) {
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('timeout')), {
+            once: true,
+          });
+        });
+      }
+      return { ok: true } as Response;
+    });
+    try {
+      inject(harness.session, {
+        type: 'cue.fire',
+        turn: 'turn-timeout',
+        cueId: 'turn-timeout:cue:0',
+        cue: { kind: 'bgm', action: 'play', track: 'song.mp3' },
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      expect(attempts).toBe(1);
+
+      await (harness.client as unknown as { report(): Promise<void> }).report();
+      expect(attempts).toBe(2);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
   it('ignores a verb it has no case for rather than throwing', () => {
     // A newer caller talking to an older renderer should degrade, not crash the
     // stream. The cast is the point: this is a command from the future.
@@ -350,6 +415,18 @@ describe('an avatar swap', () => {
     expect(harness.loads).toEqual(['b']);
   });
 
+  it('pauses the old session while a load is pending', () => {
+    harness.client.apply({ cmd: 'say', id: 'turn-1', text: 'あ' });
+    harness.client.apply({ cmd: 'avatar', id: 'b' });
+
+    // The runtime keeps updating the old session until the new model is ready.
+    // Its line may finish, but a pending line must not become the old avatar's
+    // last word while the swap is in flight.
+    harness.session.update(1);
+    expect(harness.session.turn).toBeNull();
+    expect(harness.session.queue.map((turn) => turn.id)).toEqual(['turn-1']);
+  });
+
   it('does not hold a record behind it, since the load is part of what is being recorded', () => {
     harness.client.apply({ cmd: 'avatar', id: 'b' });
     harness.client.apply({ cmd: 'record', on: true, session: 'r1' });
@@ -365,6 +442,19 @@ describe('an avatar swap', () => {
     const arrived = nextSession();
     harness.client.bind(arrived, 'b');
     expect(arrived.queue.map((turn) => turn.id)).toEqual(['turn-1']);
+  });
+
+  it('restores the old running state before releasing a successful swap', () => {
+    harness.client.apply({ cmd: 'avatar', id: 'b' });
+    harness.client.apply({ cmd: 'say', id: 'turn-1', text: 'あ' });
+
+    const arrived = nextSession();
+    harness.client.bind(arrived, 'b');
+    expect(arrived.paused).toBe(false);
+    expect(arrived.queue.map((turn) => turn.id)).toEqual(['turn-1']);
+
+    arrived.update(1);
+    expect(arrived.turn?.id).toBe('turn-1');
   });
 
   it('applies the held commands in the order they arrived', () => {
@@ -410,6 +500,22 @@ describe('an avatar swap', () => {
     expect(harness.session.queue).toHaveLength(1);
   });
 
+  it('keeps a null session held through a nonmatching bind', () => {
+    const client = new ControlClient(null, { renderer: harness.renderer });
+    client.apply({ cmd: 'avatar', id: 'b' });
+    client.apply({ cmd: 'say', id: 'turn-1', text: 'あ' });
+
+    const intermediate = nextSession();
+    client.bind(intermediate, 'a');
+    expect(intermediate.paused).toBe(true);
+    expect(intermediate.queue).toHaveLength(0);
+
+    const arrived = nextSession();
+    client.bind(arrived, 'b');
+    expect(arrived.paused).toBe(false);
+    expect(arrived.queue.map((turn) => turn.id)).toEqual(['turn-1']);
+  });
+
   it('carries a hold onto the new session, since it belongs to the run of turns', () => {
     // A swap builds a whole new session and a fresh one starts moving. Without
     // this, a segment loaded and held for framing plays itself out the moment
@@ -417,6 +523,8 @@ describe('an avatar swap', () => {
     // be a full run of lines for it to play.
     harness.client.apply({ cmd: 'pause', on: true });
     harness.client.apply({ cmd: 'avatar', id: 'b' });
+    // Runtime tears the old session down before publishing the new avatar.
+    harness.session.dispose();
     const next = nextSession();
     harness.client.bind(next, 'b');
     expect(next.paused).toBe(true);
@@ -437,13 +545,65 @@ describe('an avatar swap', () => {
     expect(harness.loads).toEqual(['b', 'a']);
   });
 
+  it('keeps the first pause state across chained swaps', () => {
+    harness.client.apply({ cmd: 'avatar', id: 'b' });
+    harness.client.apply({ cmd: 'pause', on: true });
+    harness.client.apply({ cmd: 'avatar', id: 'a' });
+
+    const intermediate = nextSession();
+    harness.client.bind(intermediate, 'b');
+    expect(intermediate.paused).toBe(true);
+
+    const arrived = nextSession();
+    harness.client.bind(arrived, 'a');
+    expect(arrived.paused).toBe(true);
+  });
+
+  it('does not turn a redundant queued avatar into another pause boundary', () => {
+    harness.client.apply({ cmd: 'avatar', id: 'b' });
+    harness.client.apply({ cmd: 'avatar', id: 'b' });
+
+    const arrived = nextSession();
+    harness.client.bind(arrived, 'b');
+    expect(harness.loads).toEqual(['b']);
+    expect(arrived.paused).toBe(false);
+    harness.client.apply({ cmd: 'say', id: 'turn-1', text: 'あ' });
+    expect(arrived.queue.map((turn) => turn.id)).toEqual(['turn-1']);
+  });
+
   it('lets go of the held commands when the load produced nothing', () => {
     harness.client.apply({ cmd: 'avatar', id: 'b' });
     harness.client.apply({ cmd: 'say', id: 'lost', text: 'あ' });
+    harness.session.update(1);
     harness.client.discardHeld();
     // The line is gone with the swap that failed, and the channel is live again.
+    expect(harness.session.paused).toBe(false);
+    expect(harness.session.queue.map((turn) => turn.id)).toEqual([]);
     harness.client.apply({ cmd: 'say', id: 'after', text: 'い' });
     expect(harness.session.queue.map((turn) => turn.id)).toEqual(['after']);
+  });
+
+  it('restores an existing pause when a swap fails', () => {
+    harness.client.apply({ cmd: 'pause', on: true });
+    harness.client.apply({ cmd: 'avatar', id: 'b' });
+    harness.client.discardHeld();
+
+    expect(harness.session.paused).toBe(true);
+    harness.client.apply({ cmd: 'say', id: 'held', text: 'あ' });
+    expect(harness.session.queue.map((turn) => turn.id)).toEqual(['held']);
+  });
+
+  it('restores the old pause and pending queue when a swap fails', () => {
+    harness.client.apply({ cmd: 'say', id: 'original', text: 'あ' });
+    harness.client.apply({ cmd: 'avatar', id: 'b' });
+    harness.session.update(1);
+
+    harness.client.discardHeld();
+    expect(harness.session.paused).toBe(false);
+    expect(harness.session.queue.map((turn) => turn.id)).toEqual(['original']);
+
+    harness.session.update(1);
+    expect(harness.session.turn?.id).toBe('original');
   });
 
   it('binds normally when nothing was held', () => {
@@ -490,6 +650,36 @@ describe('the telemetry readout', () => {
 });
 
 describe('the control stream lifecycle', () => {
+  it('recovers report status only while the same stream remains open', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const send = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false } as Response);
+    const client = new ControlClient(null);
+    client.start();
+    const source = FakeEventSource.instances[0];
+    source.open();
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(client.status).toBe('offline'));
+
+    send.mockResolvedValue({ ok: true } as Response);
+    const report = () => (client as unknown as { report(): Promise<void> }).report();
+    await report();
+    expect(client.status).toBe('online');
+
+    let finish!: (response: Response) => void;
+    send.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = report();
+    source.error();
+    finish({ ok: true } as Response);
+    await pending;
+    expect(client.status).toBe('offline');
+    client.stop();
+  });
+
   it('starts before a session exists and reports the avatar load state', async () => {
     vi.stubGlobal('EventSource', FakeEventSource);
     const send = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false } as Response);
@@ -505,6 +695,7 @@ describe('the control stream lifecycle', () => {
     source.open();
 
     await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    expect(send.mock.calls[1][0]).toBe('/control/report?renderer=renderer-test');
     const body = JSON.parse(String(send.mock.calls[1][1]?.body)) as {
       avatar?: { phase?: string; error?: string };
     };
