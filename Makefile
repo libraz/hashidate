@@ -122,15 +122,16 @@ dev:
 # `make dev` exactly as an own one does, so the group is printed with the
 # process before anything is signalled and the surprising case stays visible.
 stop:
-	@self=$$(ps -o pgid= -p $$$$ 2>/dev/null | tr -d ' '); \
-	ports="$(VIEWER_PORT) $(CONTROL_PORT)"; \
+	@ports="$(VIEWER_PORT) $(CONTROL_PORT)"; \
 	sock="$(TTS_SOCK)"; \
+	if [ -L "$$sock" ] || { [ -e "$$sock" ] && [ ! -S "$$sock" ]; }; then \
+		echo "refusing to inspect non-socket speech path: $$sock" >&2; \
+		exit 1; \
+	fi; \
+	self=$$(ps -o pgid= -p $$$$ 2>/dev/null | tr -d ' '); \
 	groups=""; pids=""; \
-	for a in $$ports $$sock; do \
-		case $$a in \
-			''|*[!0-9]*) holders=$$(lsof -nP -t -- "$$a" 2>/dev/null); label="$$a";; \
-			*)           holders=$$(lsof -nP -iTCP:$$a -sTCP:LISTEN -t 2>/dev/null); label=":$$a";; \
-		esac; \
+	for p in $$ports; do \
+		holders=$$(lsof -nP -iTCP:$$p -sTCP:LISTEN -t 2>/dev/null || true); label=":$$p"; \
 		for pid in $$holders; do \
 			pgid=$$(ps -o pgid= -p $$pid 2>/dev/null | tr -d ' '); \
 			echo "  $$label  pid $$pid  group $$pgid  $$(ps -o command= -p $$pid 2>/dev/null | cut -c1-64)"; \
@@ -141,8 +142,20 @@ stop:
 			fi; \
 		done; \
 	done; \
+	if [ -S "$$sock" ]; then \
+		holders=$$(lsof -nP -t -- "$$sock" 2>/dev/null || true); label="$$sock"; \
+		for pid in $$holders; do \
+			pgid=$$(ps -o pgid= -p $$pid 2>/dev/null | tr -d ' '); \
+			echo "  $$label  pid $$pid  group $$pgid  $$(ps -o command= -p $$pid 2>/dev/null | cut -c1-64)"; \
+			if [ -z "$$pgid" ] || [ "$$pgid" = "$$self" ] || [ "$$pgid" = 1 ]; then \
+				pids="$$pids $$pid"; \
+			else \
+				case " $$groups " in *" $$pgid "*) ;; *) groups="$$groups $$pgid";; esac; \
+			fi; \
+		done; \
+	fi; \
 	if [ -z "$$groups$$pids" ]; then \
-		rm -f "$$sock"; \
+		if [ -S "$$sock" ]; then rm -f "$$sock"; fi; \
 		echo "nothing listening on the dev addresses"; exit 0; \
 	fi; \
 	for g in $$groups; do kill -TERM -$$g 2>/dev/null || true; done; \
@@ -155,7 +168,12 @@ stop:
 	for p in $$ports; do \
 		if lsof -nP -iTCP:$$p -sTCP:LISTEN -t >/dev/null 2>&1; then held="$$held :$$p"; fi; \
 	done; \
-	if lsof -nP -t -- "$$sock" >/dev/null 2>&1; then held="$$held $$sock"; else rm -f "$$sock"; fi; \
+	if [ -L "$$sock" ] || { [ -e "$$sock" ] && [ ! -S "$$sock" ]; }; then \
+		held="$$held $$sock (path changed to a non-socket)"; \
+	elif [ -S "$$sock" ]; then \
+		holders=$$(lsof -nP -t -- "$$sock" 2>/dev/null || true); \
+		if [ -n "$$holders" ]; then held="$$held $$sock"; else rm -f "$$sock"; fi; \
+	fi; \
 	if [ -n "$$held" ]; then echo "still held:$$held"; exit 1; fi; \
 	echo "stopped"
 

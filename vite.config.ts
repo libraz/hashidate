@@ -71,6 +71,7 @@ export default defineConfig({
     // avatars used for validation may not be republished, so the viewer must
     // not be reachable from another machine.
     host: '127.0.0.1',
+    cors: false,
     port: 5173,
     proxy: {
       '/api': {
