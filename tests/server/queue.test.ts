@@ -94,6 +94,16 @@ describe('TurnQueue.update', () => {
     });
   });
 
+  it('clears a reading only when the patch says null', () => {
+    const [entry] = queue.add([{ text: 'あ', reading: 'あー' }]);
+
+    queue.update(entry.id, { text: 'い' });
+    expect(queue.list()[0]).toMatchObject({ text: 'い', reading: 'あー' });
+
+    queue.update(entry.id, { reading: null });
+    expect(queue.list()[0]).not.toHaveProperty('reading');
+  });
+
   it('refuses an id that started playing while the form was open', () => {
     const [entry] = queue.add([{ text: 'あ' }]);
     queue.complete(entry.id);

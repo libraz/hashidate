@@ -10,6 +10,7 @@ import type {
   Placement,
   QueueResponse,
   QueueRewind,
+  QueueUpdate,
   RecordResponse,
   RecordStart,
   ScriptRunResponse,
@@ -185,10 +186,8 @@ export interface AddOptions {
 export const queueAdd = (turns: TurnRequest[], opts: AddOptions = {}): Promise<QueueResult> =>
   post<QueueResponse>('/queue', { turns, ...opts });
 
-export const queueUpdate = (
-  id: string,
-  patch: TurnRequest & { source?: string; note?: string },
-): Promise<QueueResult> => post<QueueResponse>('/queue/update', { id, ...patch });
+export const queueUpdate = (id: string, patch: Omit<QueueUpdate, 'id'>): Promise<QueueResult> =>
+  post<QueueResponse>('/queue/update', { id, ...patch });
 
 export const queueRemove = (id: string): Promise<QueueResult> =>
   post<QueueResponse>('/queue/remove', { id });

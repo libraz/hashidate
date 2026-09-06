@@ -88,6 +88,8 @@ export type QueueAdd = z.infer<typeof queueAddSchema>;
  */
 export const queueUpdateSchema = turnSchema.extend({
   id: z.string(),
+  /** `null` explicitly clears the reading; omission leaves it untouched. */
+  reading: turnSchema.shape.reading.nullable(),
   source: z.string().optional(),
   note: z.string().optional(),
 });

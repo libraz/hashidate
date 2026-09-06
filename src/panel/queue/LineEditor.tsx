@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { useT } from '@/i18n';
 import type { TurnRequest, Vocabulary } from '@/protocol';
 import { Chip, ChipRow } from '@/ui/Chip';
+import { isFailure } from '../api';
 import { checkLine } from '../lint';
 import styles from './LineEditor.module.css';
 
@@ -35,9 +36,11 @@ interface Props {
   /** The entry being edited, or a blank turn for a new one. */
   initial: TurnRequest;
   vocabulary: Partial<Vocabulary>;
+  /** Edit requests carry explicit clears for fields that a new turn omits. */
+  editing?: boolean;
   /** Shown on the submit button: 追加 (add) / 保存 (save). */
   submitLabel: string;
-  onSubmit: (turn: TurnRequest) => void;
+  onSubmit: (turn: LineDraft) => unknown;
   onCancel: () => void;
   /**
    * A second way to commit the same draft, for the composer's 割り込み
@@ -49,8 +52,15 @@ interface Props {
    * what it says.
    */
   secondaryLabel?: string;
-  onSecondary?: (turn: TurnRequest) => void;
+  onSecondary?: (turn: LineDraft) => unknown;
 }
+
+/** The panel's editable fields, with null reserved for an explicit edit clear. */
+export type LineDraft = Omit<TurnRequest, 'reading' | 'perform' | 'hold'> & {
+  reading?: string | null;
+  perform?: string | null;
+  hold?: boolean;
+};
 
 export function lineEditorKeyAction({
   key,
@@ -71,6 +81,7 @@ export function lineEditorKeyAction({
 export function LineEditor({
   initial,
   vocabulary,
+  editing = false,
   submitLabel,
   onSubmit,
   onCancel,
@@ -82,6 +93,9 @@ export function LineEditor({
   const [perform, setPerform] = useState(initial.perform ?? '');
   const [hold, setHold] = useState(initial.hold ?? false);
   const [showCues, setShowCues] = useState(false);
+  const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
+  const [error, setError] = useState<string | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
   const textId = useId();
   const readingId = useId();
@@ -97,13 +111,49 @@ export function LineEditor({
     el.setSelectionRange(el.value.length, el.value.length);
   }, []);
 
-  const draft: TurnRequest = {
-    text,
-    ...(reading.trim() ? { reading: reading.trim() } : {}),
-    ...(perform ? { perform } : {}),
-    ...(hold ? { hold } : {}),
+  const draft: LineDraft = editing
+    ? {
+        text,
+        reading: reading.trim() || null,
+        perform: perform.trim() || null,
+        hold,
+      }
+    : {
+        text,
+        ...(reading.trim() ? { reading: reading.trim() } : {}),
+        ...(perform ? { perform } : {}),
+        ...(hold ? { hold } : {}),
+      };
+  // `null` only exists on an edit patch to clear a stored field. The checker
+  // reads it with the same falsy semantics as an omitted field.
+  const check = checkLine(draft as TurnRequest, vocabulary);
+
+  const commit = (handler: (turn: LineDraft) => unknown): void => {
+    if (pending || pendingRef.current || !(text.trim() || perform)) return;
+    pendingRef.current = true;
+    setPending(true);
+    setError(null);
+    let result: unknown;
+    try {
+      result = handler(draft);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      pendingRef.current = false;
+      setPending(false);
+      return;
+    }
+    void Promise.resolve(result)
+      .then((result) => {
+        if (isFailure(result)) setError(result.error);
+      })
+      .catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      })
+      .finally(() => {
+        pendingRef.current = false;
+        setPending(false);
+      });
   };
-  const check = checkLine(draft, vocabulary);
 
   /** Put a cue where the caret is, and leave the caret after it. */
   const insertCue = (id: string): void => {
@@ -116,6 +166,7 @@ export function LineEditor({
     const at = el.selectionStart;
     const next = `${text.slice(0, at)}${token}${text.slice(el.selectionEnd)}`;
     setText(next);
+    setError(null);
     // After React has written the new value, or the caret would be placed in
     // the old string and jump the moment it re-renders.
     requestAnimationFrame(() => {
@@ -128,8 +179,7 @@ export function LineEditor({
     // A turn with nothing in it at all would be a row that does nothing and
     // cannot be told apart from a mis-click. A pose-only turn is fine and is
     // not this.
-    if (!(text.trim() || perform)) return;
-    onSubmit(draft);
+    commit(onSubmit);
   };
 
   return (
@@ -153,7 +203,10 @@ export function LineEditor({
         // show what a line with cue markup in it looks like, and the avatar
         // this drives speaks Japanese.
         placeholder="こんばんは。[explain]今日はこの話をします。"
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          setText(e.target.value);
+          setError(null);
+        }}
         onKeyDown={(e) => {
           const action = lineEditorKeyAction({
             key: e.key,
@@ -168,7 +221,7 @@ export function LineEditor({
             e.preventDefault();
             submit();
           }
-          if (action === 'cancel') onCancel();
+          if (action === 'cancel' && !pending) onCancel();
         }}
       />
 
@@ -181,7 +234,10 @@ export function LineEditor({
           className={styles.reading}
           value={reading}
           placeholder={t('panel.editor.reading.placeholder')}
-          onChange={(e) => setReading(e.target.value)}
+          onChange={(e) => {
+            setReading(e.target.value);
+            setError(null);
+          }}
         />
       </div>
 
@@ -201,7 +257,15 @@ export function LineEditor({
             : ''}
         </span>
         <label className={styles.hold}>
-          <input type="checkbox" checked={hold} onChange={(e) => setHold(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={hold}
+            disabled={pending}
+            onChange={(e) => {
+              setHold(e.target.checked);
+              setError(null);
+            }}
+          />
           {t('panel.editor.hold')}
         </label>
       </div>
@@ -229,7 +293,10 @@ export function LineEditor({
               <Chip
                 label={t('panel.editor.none')}
                 state={perform === '' ? 'on' : 'off'}
-                onClick={() => setPerform('')}
+                onClick={() => {
+                  setPerform('');
+                  setError(null);
+                }}
               />
               {(vocabulary.performances ?? []).map((p) => (
                 <Chip
@@ -237,12 +304,21 @@ export function LineEditor({
                   label={tx(p.label)}
                   tag={p.id}
                   state={perform === p.id ? 'on' : 'off'}
-                  onClick={() => setPerform(perform === p.id ? '' : p.id)}
+                  onClick={() => {
+                    setPerform(perform === p.id ? '' : p.id);
+                    setError(null);
+                  }}
                 />
               ))}
             </ChipRow>
           </div>
         </div>
+      ) : null}
+
+      {error ? (
+        <p className={styles.error} role="alert">
+          {t('panel.queue.editor.error', { error })}
+        </p>
       ) : null}
 
       {check.findings.length ? (
@@ -256,23 +332,24 @@ export function LineEditor({
       ) : null}
 
       <div className={styles.buttons}>
-        <button type="button" className={styles.cancel} onClick={onCancel}>
+        <button type="button" className={styles.cancel} disabled={pending} onClick={onCancel}>
           {t('panel.editor.cancel')}
         </button>
         {secondaryLabel && onSecondary ? (
           <button
             type="button"
             className={styles.secondary}
-            disabled={!(text.trim() || perform)}
-            onClick={() => {
-              if (!(text.trim() || perform)) return;
-              onSecondary(draft);
-            }}
+            disabled={pending || !(text.trim() || perform)}
+            onClick={() => commit(onSecondary)}
           >
             {secondaryLabel}
           </button>
         ) : null}
-        <button type="submit" className={styles.submit} disabled={!(text.trim() || perform)}>
+        <button
+          type="submit"
+          className={styles.submit}
+          disabled={pending || !(text.trim() || perform)}
+        >
           {submitLabel}
         </button>
       </div>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useT } from '@/i18n';
 import type { QueueEntry, Snapshot, TurnRequest } from '@/protocol';
 import {
+  isFailure,
   queueAdd,
   queueClear,
   queueMove,
@@ -14,7 +15,7 @@ import {
 import { checkQueue, type LineCheck } from '../lint';
 import { ScriptPicker } from '../script/ScriptPicker';
 import { History } from './History';
-import { LineEditor } from './LineEditor';
+import { type LineDraft, LineEditor } from './LineEditor';
 import { clock, QueueRow } from './QueueRow';
 import styles from './QueueTab.module.css';
 
@@ -81,11 +82,15 @@ export function QueueTab({ snapshot, refresh }: Props) {
     refresh();
   };
 
+  const clearDrag = (): void => {
+    setDragId(null);
+    setDropAt(null);
+  };
+
   const drop = (): void => {
     const id = dragId;
     const at = dropAt;
-    setDragId(null);
-    setDropAt(null);
+    clearDrag();
     if (id === null || at === null) return;
     const from = entries.findIndex((e) => e.id === id);
     // `to` is the index after the row has been lifted out, which is what the
@@ -96,9 +101,20 @@ export function QueueTab({ snapshot, refresh }: Props) {
     void run(queueMove(id, to));
   };
 
-  const submitNew = (turn: TurnRequest, at: 'push' | 'unshift'): void => {
+  const submitNew = async (turn: LineDraft, at: 'push' | 'unshift'): Promise<unknown> => {
+    const result = await queueAdd([turn as TurnRequest], { at, source: PANEL_SOURCE });
+    if (isFailure(result)) return result;
     setComposing(false);
-    void run(queueAdd([turn], { at, source: PANEL_SOURCE }));
+    refresh();
+    return result;
+  };
+
+  const save = async (id: string, turn: LineDraft): Promise<unknown> => {
+    const result = await queueUpdate(id, turn);
+    if (isFailure(result)) return result;
+    setEditing(null);
+    refresh();
+    return result;
   };
 
   return (
@@ -181,13 +197,10 @@ export function QueueTab({ snapshot, refresh }: Props) {
               dragging={dragId === entry.id}
               onDragStart={() => setDragId(entry.id)}
               onDragOver={setDropAt}
-              onDragEnd={drop}
+              onDragEnd={clearDrag}
               onEdit={() => setEditing(entry.id)}
               onCancelEdit={() => setEditing(null)}
-              onSave={(turn) => {
-                setEditing(null);
-                void run(queueUpdate(entry.id, turn));
-              }}
+              onSave={(turn) => save(entry.id, turn)}
               onRemove={() => void run(queueRemove(entry.id))}
               onPromote={() => void run(queueMove(entry.id, 0))}
             />
@@ -306,7 +319,7 @@ function RowOrEditor({
   onDragEnd: () => void;
   onEdit: () => void;
   onCancelEdit: () => void;
-  onSave: (turn: TurnRequest) => void;
+  onSave: (turn: LineDraft) => unknown;
   onRemove: () => void;
   onPromote: () => void;
 }) {
@@ -317,6 +330,7 @@ function RowOrEditor({
         <LineEditor
           initial={entry}
           vocabulary={snapshot.vocabulary}
+          editing
           submitLabel={t('panel.queue.save')}
           onSubmit={onSave}
           onCancel={onCancelEdit}

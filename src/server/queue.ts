@@ -1,5 +1,5 @@
 import type { TurnRequest } from '../engine/types';
-import type { Command, HistoryEntry, QueueEntry } from '../protocol';
+import type { Command, HistoryEntry, QueueEntry, QueueUpdate } from '../protocol';
 
 /**
  * The queue of turns waiting to be said, and the only copy that counts.
@@ -162,11 +162,14 @@ export class TurnQueue {
    * Returns false for an id the queue does not have, which is the ordinary
    * outcome of editing a row that started playing while the form was open.
    */
-  update(id: string, patch: TurnRequest & { source?: string; note?: string }): boolean {
+  update(id: string, patch: Omit<QueueUpdate, 'id'>): boolean {
     const index = this.entries.findIndex((entry) => entry.id === id);
     if (index === -1) return false;
-    const { id: _ignored, ...fields } = patch;
-    this.entries[index] = { ...this.entries[index], ...fields, id };
+    const { reading, ...fields } = patch;
+    const updated = { ...this.entries[index], ...fields, id };
+    if (reading === null) delete updated.reading;
+    else if (reading !== undefined) updated.reading = reading;
+    this.entries[index] = updated;
     return true;
   }
 

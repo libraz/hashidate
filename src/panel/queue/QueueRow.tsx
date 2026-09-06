@@ -124,7 +124,9 @@ export function QueueRow({
       onDragEnd={onDragEnd}
       onDrop={(e) => {
         e.preventDefault();
-        onDragEnd();
+        // The list owns the single commit. Let the event bubble so its drop
+        // handler can calculate the destination; this row only marks the drop
+        // as accepted, while dragend remains cleanup for cancelled drags.
       }}
     >
       <div className={styles.grip} aria-hidden="true">

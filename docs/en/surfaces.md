@@ -18,6 +18,8 @@ That silence is also what decides which page records. A take is what the room he
 
 Above the tabs is the one address OBS needs, composed rather than typed: size, set, document, where the character stands in the frame, and whether the background is transparent. What comes out is a `/?size=…` URL to paste into a browser source. None of it is application state — OBS owns that setting the moment it is pasted there.
 
+Queue additions and edits keep the draft open if saving fails, with the error shown beside the form. Correct the draft or restore the connection, then save again. Cancelling a drag leaves the queue order unchanged.
+
 ## The renderer, on `/`
 
 The page OBS points at. It opens as the character and nothing else: no console, no HUD, no cursor, and a camera the pointer cannot move. A default that has to be switched off before going to air is a default that eventually goes to air.

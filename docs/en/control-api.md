@@ -64,6 +64,8 @@ An axis left out of `stage` keeps what it had; `null` empties it — dry for a r
 
 Unknown command elements in a mixed `batch` are dropped while known elements are still delivered. If no element is known, the request returns `400` (`no command`). Unknown fields are stripped from ordinary command schemas. `tune` is strict at its command and group boundaries, so a misspelled group or field fails instead of becoming a successful no-op. The orchestrator and the renderer are separate processes with separate release cycles, so a newer caller talking to an older renderer degrades without breaking the stream.
 
+Queue edits preserve omitted fields. To clear an existing reading override, send `{"id":"<turn-id>","reading":null}` to `POST /api/queue/update`; the renderer then derives speech from `text` again. Use `perform: null` to clear the performance and `hold: false` to release it at the end of the turn. These edits preserve the queue position, id and unrelated fields.
+
 ## What comes back
 
 `GET /api/vocabulary` returns what the loaded avatar can be asked for. It is discovered rather than declared — the expression list comes from the model's own shape groups and the wardrobe from its meshes — so it changes when the avatar does. That object is the one to paste into a system prompt, and the cue syntax is stated in it so that a caller is told about it.
@@ -84,6 +86,10 @@ And four the *server* owns rather than any renderer, because they concern files 
 - `airing` — the turns a renderer has started and not yet ended, with their text. `state.turn` says which line is being said and this says what it says: a started line is out of `queue` by then and does not reach the history until it is over. Only lines that went through the queue are here — a `say` posted straight to `/api/command` never enters it.
 - `paused` — whether the queue is held. See [Recording](recording.md).
 - `bgm` — the selected track, transport and position, level, loop, fade settings and resolved BGM-only DSP values. It also folds in playback errors and a dry-effect fallback reported by audible renderers.
+
+The viewer sends the same page identity as `?renderer=<id>` on its SSE connection and reports. This lets the server distinguish a reconnect from the loss of every renderer that started an on-air line.
+
+A `turn.end` event with `interrupted: true` means the active turn ended during avatar replacement or renderer recovery. The server files that line as interrupted in history and retains pending lines. An operator interrupt still uses `turn.interrupted` and clears the pending queue.
 
 ## Next
 

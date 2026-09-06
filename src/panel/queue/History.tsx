@@ -59,44 +59,63 @@ export function History({ refresh }: { refresh: () => void }) {
     },
   ];
 
-  /**
-   * Set on unmount and on close, and checked after every await, so a request in
-   * flight when the section is folded away cannot restart the timer behind it.
-   */
-  const alive = useRef(false);
+  /** A request generation makes close/open cycles cancel every older response. */
+  const generation = useRef(0);
 
-  const poll = useCallback(async () => {
-    const result = await readHistory();
-    if (!alive.current) return;
-    if (isFailure(result)) setError(result.error);
-    else {
-      setError(null);
-      setEntries(result.history);
-    }
-  }, []);
+  const applyHistory = useCallback(
+    (token: number, result: Awaited<ReturnType<typeof readHistory>>): boolean => {
+      if (generation.current !== token) return false;
+      if (isFailure(result)) setError(t('panel.history.error', { error: result.error }));
+      else {
+        setError(null);
+        setEntries(result.history);
+      }
+      return true;
+    },
+    [t],
+  );
+
+  const poll = useCallback(
+    async (token: number): Promise<boolean> => {
+      const result = await readHistory();
+      return applyHistory(token, result);
+    },
+    [applyHistory],
+  );
 
   useEffect(() => {
-    if (!open) return;
-    alive.current = true;
+    if (!open) {
+      generation.current += 1;
+      return;
+    }
+    const token = ++generation.current;
     let timer: ReturnType<typeof setTimeout> | null = null;
     // Chained rather than an interval, for the reason `useRuntime` is: a slow
     // request must not let a second one start behind it.
     const loop = async (): Promise<void> => {
-      await poll();
-      if (!alive.current) return;
+      await poll(token);
+      if (generation.current !== token) return;
       timer = setTimeout(() => void loop(), POLL_INTERVAL);
     };
     void loop();
     return () => {
-      alive.current = false;
+      generation.current += 1;
       if (timer !== null) clearTimeout(timer);
     };
   }, [open, poll]);
 
   const rewind = async (id: string, mode: RewindMode): Promise<void> => {
-    await queueRewind(id, mode, cut === 'cut');
-    // Both lists moved: the entries left the history and joined the queue.
-    await poll();
+    const token = generation.current;
+    const result = await queueRewind(id, mode, cut === 'cut');
+    if (token !== generation.current) return;
+    if (isFailure(result)) {
+      setError(t('panel.history.error', { error: result.error }));
+      return;
+    }
+    // Refresh history once for this rewind; the regular loop remains the only
+    // recurring poll and cannot be multiplied by repeated button presses.
+    await poll(token);
+    if (token !== generation.current) return;
     refresh();
   };
 
