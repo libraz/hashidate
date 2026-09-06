@@ -48,6 +48,19 @@ describe('what a turn leaves behind', () => {
     expect(director.pickedExpression).toBeNull();
   });
 
+  it.each(['finish', 'interrupt'] as const)(
+    'preserves a later expression when the turn ends by %s',
+    (ending) => {
+      const { session, director, step, runUntil } = build();
+      session.say({ id: 'a', text: 'あいうえお', expression: 'F_JITO' });
+      step(2);
+      session.setExpression('F_DOYA');
+      if (ending === 'interrupt') session.interrupt();
+      else runUntil(() => !session.busy);
+      expect(director.pickedExpression).toBe('F_DOYA');
+    },
+  );
+
   it('releases a cued expression by its pick during a crossfade', () => {
     const { session, director, step, runUntil } = build();
     session.setExpression('F_DOYA');

@@ -34,13 +34,18 @@ import {
 import { SlideStage } from '../slides';
 import { FOV, ShotCamera } from './camera';
 import { buildHud, HUD_INTERVAL, type Hud } from './hud';
-import { disposeAvatar, mountAvatar } from './mount';
+import { disposeAvatar, disposeRawAvatar, mountAvatar } from './mount';
 import { sceneryPort, shadingPort } from './ports';
 import type { Listener, LoadedAvatar, RuntimeStatus, StageFrame } from './types';
 
 export { FOV } from './camera';
 export type { Hud } from './hud';
 export type { LoadedAvatar, RuntimeStatus, StageFrame } from './types';
+
+/** Narrow loader seam for lifecycle tests; production uses GLTFLoader itself. */
+export interface AvatarRuntimeOptions {
+  loader?: Pick<GLTFLoader, 'loadAsync'>;
+}
 
 /**
  * The three.js side of the viewer, kept out of React entirely.
@@ -64,7 +69,7 @@ export class AvatarRuntime {
   readonly scene: THREE.Scene;
 
   private readonly host: HTMLElement;
-  private readonly loader = new GLTFLoader();
+  private readonly loader: Pick<GLTFLoader, 'loadAsync'>;
   /** The three lights the viewer ships with, together so a room can hide them. */
   private readonly defaultRig = new THREE.Group();
   private readonly backdrop: BackdropStage;
@@ -177,9 +182,13 @@ export class AvatarRuntime {
 
   /** A swap asked for while another was in flight. Started when that one lands. */
   private queued: AvatarDescriptor | null = null;
+  /** Invalidates every load continuation once teardown starts. */
+  private disposed = false;
+  private loadGeneration = 0;
 
-  constructor(host: HTMLElement) {
+  constructor(host: HTMLElement, { loader = new GLTFLoader() }: AvatarRuntimeOptions = {}) {
     this.host = host;
+    this.loader = loader;
 
     // `alpha` can only be decided when the context is made, and a document
     // behind the character needs the frame to be clearable to nothing. With
@@ -352,6 +361,7 @@ export class AvatarRuntime {
   }
 
   private setStatus(status: RuntimeStatus): void {
+    if (this.disposed) return;
     this.status = status;
     for (const fn of this.statusListeners) fn(status);
   }
@@ -582,6 +592,7 @@ export class AvatarRuntime {
    * director — shows up here rather than in production.
    */
   async load(avatar: AvatarDescriptor): Promise<void> {
+    if (this.disposed) return;
     // Asked for during another load, the request waits rather than being
     // dropped. That case used to be theoretical and is now the ordinary one:
     // the control server hands a viewer the setup the moment its stream
@@ -592,6 +603,7 @@ export class AvatarRuntime {
       return;
     }
     if (avatar.id === this.current?.avatar.id) return;
+    const generation = ++this.loadGeneration;
     this.loading = avatar.id;
     this.setStatus({ phase: 'loading', avatar });
 
@@ -599,6 +611,7 @@ export class AvatarRuntime {
     try {
       gltf = await this.loader.loadAsync(avatar.url);
     } catch (e) {
+      if (!this.isLoadCurrent(generation, avatar.id)) return;
       this.loading = null;
       this.setStatus({
         phase: 'failed',
@@ -609,6 +622,11 @@ export class AvatarRuntime {
         }),
       });
       this.drainQueued();
+      return;
+    }
+
+    if (!this.isLoadCurrent(generation, avatar.id)) {
+      disposeRawAvatar(gltf.scene);
       return;
     }
 
@@ -669,7 +687,12 @@ export class AvatarRuntime {
     return this.queued?.id ?? this.loading ?? this.current?.avatar.id ?? null;
   }
 
+  private isLoadCurrent(generation: number, avatarId: string): boolean {
+    return !this.disposed && this.loadGeneration === generation && this.loading === avatarId;
+  }
+
   private drainQueued(): void {
+    if (this.disposed) return;
     const next = this.queued;
     this.queued = null;
     if (next) void this.load(next);
@@ -679,12 +702,18 @@ export class AvatarRuntime {
   private unmount(): void {
     const cur = this.current;
     if (!cur) return;
+    cur.session.dispose();
     this.scene.remove(cur.root);
     disposeAvatar(cur);
     this.current = null;
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.loadGeneration++;
+    this.loading = null;
+    this.queued = null;
     this.renderer.setAnimationLoop(null);
     this.resizeObserver.disconnect();
     this.timer.dispose();
@@ -697,10 +726,10 @@ export class AvatarRuntime {
     // itself may finish after this synchronous scene teardown, which is why the
     // recorder owns the await rather than this method blocking the page.
     void this.recorder.dispose();
+    this.unmount();
     this.bgm.dispose();
     this.voice.dispose();
     this.audio.dispose();
-    this.unmount();
     this.slides.dispose();
     this.backdrop.dispose();
     this.shotCamera.dispose();
@@ -714,6 +743,7 @@ export class AvatarRuntime {
   // --- frame loop -----------------------------------------------------------
 
   private tick(): void {
+    if (this.disposed) return;
     this.timer.update();
     // Capped at 50 ms whatever the frame took. Below 20 fps the simulation
     // deliberately runs slow rather than integrating a step large enough to

@@ -387,35 +387,44 @@ class FakeMediaRecorder implements FakeMediaRecorderInstance {
   }
 }
 
-function recorderEnvironment() {
+function recorderEnvironment(opts: { openAudio?: () => Promise<MediaStream | null> } = {}) {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const send = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push({ url: String(input), init });
     return { ok: true } as Response;
   });
-  const context = {
-    imageSmoothingQuality: 'low' as ImageSmoothingQuality,
-    fillStyle: '',
-    globalAlpha: 1,
-    fillRect: () => {},
-    clearRect: () => {},
-    drawImage: () => {},
-  } as unknown as CanvasRenderingContext2D;
-  const stream = {
-    addTrack: vi.fn(),
-  } as unknown as MediaStream;
-  const recordingCanvas = {
-    width: 0,
-    height: 0,
-    getContext: () => context,
-    captureStream: () => stream,
-  } as unknown as HTMLCanvasElement;
+  const streams: Array<{
+    stream: MediaStream;
+    videoTracks: Array<{ stop: ReturnType<typeof vi.fn> }>;
+  }> = [];
+  const createCanvas = (): HTMLCanvasElement => {
+    const context = {
+      imageSmoothingQuality: 'low' as ImageSmoothingQuality,
+      fillStyle: '',
+      globalAlpha: 1,
+      fillRect: () => {},
+      clearRect: () => {},
+      drawImage: () => {},
+    } as unknown as CanvasRenderingContext2D;
+    const videoTracks = [{ stop: vi.fn() }];
+    const stream = {
+      addTrack: vi.fn(),
+      getVideoTracks: () => videoTracks,
+    } as unknown as MediaStream;
+    streams.push({ stream, videoTracks });
+    return {
+      width: 0,
+      height: 0,
+      getContext: () => context,
+      captureStream: () => stream,
+    } as unknown as HTMLCanvasElement;
+  };
   const listeners = new Map<string, EventListenerOrEventListenerObject>();
   const removed: string[] = [];
 
   vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
   vi.stubGlobal('document', {
-    createElement: () => recordingCanvas,
+    createElement: createCanvas,
   });
   vi.stubGlobal(
     'addEventListener',
@@ -440,9 +449,9 @@ function recorderEnvironment() {
       frameListeners.add(listener);
       return () => frameListeners.delete(listener);
     },
-    openAudio: async () => null,
+    openAudio: opts.openAudio ?? (async () => null),
   });
-  return { recorder, calls, listeners, removed, frameListeners, send };
+  return { recorder, calls, listeners, removed, frameListeners, send, streams };
 }
 
 afterEach(() => {
@@ -452,6 +461,32 @@ afterEach(() => {
 });
 
 describe('StageRecorder lifecycle', () => {
+  it('cleans up a synchronous encoder start failure and allows retry', async () => {
+    const borrowedStop = vi.fn();
+    const env = recorderEnvironment({
+      openAudio: async () =>
+        ({ getAudioTracks: () => [{ stop: borrowedStop }] }) as unknown as MediaStream,
+    });
+    vi.spyOn(FakeMediaRecorder.prototype, 'start').mockImplementationOnce(() => {
+      throw new Error('encoder cannot start');
+    });
+    await env.recorder.start({ session: 'failed', width: 640, height: 360, fps: 24 });
+    expect(env.recorder.recording).toBe(false);
+    expect(env.recorder.error).toBe('encoder cannot start');
+    expect(env.frameListeners.size).toBe(0);
+    expect(env.streams[0].videoTracks[0].stop).toHaveBeenCalledOnce();
+    expect(borrowedStop).not.toHaveBeenCalled();
+
+    await env.recorder.start({ session: 'retry', width: 640, height: 360, fps: 24 });
+    expect(env.recorder.recording).toBe(true);
+    expect(env.recorder.error).toBeNull();
+    const stopping = env.recorder.stop();
+    FakeMediaRecorder.instances[1].emitStop();
+    await stopping;
+    expect(env.frameListeners.size).toBe(0);
+    expect(borrowedStop).not.toHaveBeenCalled();
+  });
+
   it('waits for onstop, then posts a renderer-bound final marker after data', async () => {
     const env = recorderEnvironment();
     await env.recorder.start({ session: 'take-1', width: 1280, height: 720, fps: 30 });
@@ -512,6 +547,84 @@ describe('StageRecorder lifecycle', () => {
     expect(env.calls[3].url).toContain('final=1');
   });
 
+  it('does not resurrect a start that was stopped while audio was opening', async () => {
+    let resolveAudio!: (audio: MediaStream | null) => void;
+    const env = recorderEnvironment({
+      openAudio: () => new Promise((resolve) => (resolveAudio = resolve)),
+    });
+    const starting = env.recorder.start({ session: 'stale', width: 640, height: 360, fps: 24 });
+    await Promise.resolve();
+    await Promise.resolve();
+    const stopping = env.recorder.stop();
+    resolveAudio(null);
+
+    await Promise.all([starting, stopping]);
+    expect(FakeMediaRecorder.instances).toHaveLength(0);
+    expect(env.streams[0].videoTracks[0].stop).toHaveBeenCalledOnce();
+    expect(env.recorder.recording).toBe(false);
+  });
+
+  it.each([
+    ['the newer audio resolves first', true],
+    ['the older audio resolves first', false],
+  ])('keeps only the latest overlapping start when %s', async (_label, newerFirst) => {
+    const resolvers: Array<(audio: MediaStream | null) => void> = [];
+    const env = recorderEnvironment({
+      openAudio: () => new Promise((resolve) => resolvers.push(resolve)),
+    });
+    const first = env.recorder.start({ session: 'first', width: 640, height: 360, fps: 24 });
+    await vi.waitFor(() => expect(resolvers).toHaveLength(1));
+    const second = env.recorder.start({ session: 'second', width: 1280, height: 720, fps: 30 });
+    await vi.waitFor(() => expect(resolvers).toHaveLength(2));
+    expect(resolvers).toHaveLength(2);
+
+    if (newerFirst) {
+      resolvers[1](null);
+      resolvers[0](null);
+    } else {
+      resolvers[0](null);
+      resolvers[1](null);
+    }
+    await Promise.all([first, second]);
+
+    expect(FakeMediaRecorder.instances).toHaveLength(1);
+    expect(env.streams[0].videoTracks[0].stop).toHaveBeenCalledOnce();
+    const stopping = env.recorder.stop();
+    FakeMediaRecorder.instances[0].emitStop();
+    await stopping;
+  });
+
+  it('waits for a pending final upload before starting the replacement take', async () => {
+    let releaseFinal!: (response: Response) => void;
+    const finalResponse = new Promise<Response>((resolve) => (releaseFinal = resolve));
+    const env = recorderEnvironment();
+    env.send.mockImplementation(async (input, init) => {
+      env.calls.push({ url: String(input), init });
+      if (String(input).includes('session=take-first') && String(input).includes('final=1')) {
+        return finalResponse;
+      }
+      return { ok: true } as Response;
+    });
+    await env.recorder.start({ session: 'take-first', width: 640, height: 360, fps: 24 });
+    const first = FakeMediaRecorder.instances[0];
+    const replacing = env.recorder.start({
+      session: 'take-second',
+      width: 1280,
+      height: 720,
+      fps: 30,
+    });
+    first.emitStop();
+    await Promise.resolve();
+    expect(FakeMediaRecorder.instances).toHaveLength(1);
+
+    releaseFinal({ ok: true } as Response);
+    await replacing;
+    expect(FakeMediaRecorder.instances).toHaveLength(2);
+    const stopping = env.recorder.stop();
+    FakeMediaRecorder.instances[1].emitStop();
+    await stopping;
+  });
+
   it('closes a take on encoder error and still sends the final marker', async () => {
     const env = recorderEnvironment();
     await env.recorder.start({ session: 'take-error', width: 640, height: 360, fps: 24 });
@@ -525,6 +638,26 @@ describe('StageRecorder lifecycle', () => {
     expect(env.calls[0].url).toContain('session=take-error');
     expect(env.calls[0].url).toContain('final=1');
     expect(env.calls[0].init?.keepalive).toBe(true);
+  });
+
+  it('keeps the error data chunk ahead of the deferred final marker', async () => {
+    const env = recorderEnvironment();
+    await env.recorder.start({ session: 'take-error-order', width: 640, height: 360, fps: 24 });
+    const media = FakeMediaRecorder.instances[0];
+
+    media.emitError();
+    // The fallback is a task, so a conforming dataavailable/stop pair can still
+    // publish the last encoded bytes before it runs.
+    await Promise.resolve();
+    expect(env.calls).toHaveLength(0);
+
+    media.emitData(new Blob(['last']));
+    media.emitStop();
+    await env.recorder.stop();
+
+    expect(env.calls).toHaveLength(2);
+    expect(env.calls[0].url).not.toContain('final=1');
+    expect(env.calls[1].url).toContain('final=1');
   });
 
   it('uses pagehide once and removes the listener when disposed', async () => {

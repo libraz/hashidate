@@ -68,6 +68,120 @@ export function mountAvatar(
   return { root, profile, director, wardrobe, materials, problems };
 }
 
+type DisposableResource = { dispose: () => void };
+
+const disposable = (value: unknown): value is DisposableResource =>
+  !!value &&
+  typeof value === 'object' &&
+  typeof (value as DisposableResource).dispose === 'function';
+
+const texture = (value: unknown): value is THREE.Texture =>
+  !!value && typeof value === 'object' && (value as THREE.Texture).isTexture === true;
+
+/**
+ * Release a GLTF that never reached `mountAvatar`.
+ *
+ * GLTFLoader owns the object graph, but it does not own the lifetime of the
+ * GPU resources it put in it. A load can finish after a runtime was disposed,
+ * so this path has to walk the raw graph without relying on a mounted
+ * `MaterialSet`. Every collection is a Set because GLTF routinely shares a
+ * material, texture or skeleton between meshes.
+ */
+export function disposeRawAvatar(root: THREE.Object3D): void {
+  const geometries = new Set<DisposableResource>();
+  const skeletons = new Set<DisposableResource>();
+  const materials = new Set<DisposableResource>();
+  const textures = new Set<DisposableResource>();
+  const images = new Set<object>();
+  const visited = new Set<object>();
+  const visitedImages = new Set<object>();
+
+  const collectImage = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const image of value) collectImage(image);
+      return;
+    }
+    const image = value as object;
+    if (visitedImages.has(image)) return;
+    visitedImages.add(image);
+    // ImageBitmap has `close`; test and host image wrappers sometimes expose
+    // `dispose` instead. Plain HTMLImageElement/canvas instances need no call:
+    // once the texture and graph references are gone they are collectible.
+    if (
+      typeof (image as { close?: unknown }).close === 'function' ||
+      typeof (image as { dispose?: unknown }).dispose === 'function'
+    ) {
+      images.add(image);
+    }
+  };
+
+  const collectTexture = (value: unknown): void => {
+    if (!texture(value)) return;
+    if (disposable(value)) textures.add(value);
+    const source = (value as THREE.Texture & { source?: { data?: unknown } }).source?.data;
+    collectImage(source);
+    collectImage((value as THREE.Texture & { image?: unknown }).image);
+  };
+
+  const collectMaterial = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    if (texture(value)) {
+      collectTexture(value);
+      return;
+    }
+    if (visited.has(value)) return;
+    visited.add(value);
+    if (disposable(value)) materials.add(value);
+    for (const child of Object.values(value)) collectTextures(child);
+  };
+
+  function collectTextures(value: unknown): void {
+    if (!value || typeof value !== 'object') return;
+    if (texture(value)) {
+      collectTexture(value);
+      return;
+    }
+    if (visited.has(value)) return;
+    visited.add(value);
+    for (const child of Object.values(value)) collectTextures(child);
+  }
+
+  root.traverse((object) => {
+    const renderable = object as THREE.Object3D & {
+      geometry?: unknown;
+      material?: unknown;
+    };
+    if (disposable(renderable.geometry)) {
+      geometries.add(renderable.geometry);
+      const morphTexture = (renderable.geometry as { morphTexture?: unknown }).morphTexture;
+      if (disposable(morphTexture)) textures.add(morphTexture);
+    }
+    const rawMaterials = Array.isArray(renderable.material)
+      ? renderable.material
+      : [renderable.material];
+    for (const material of rawMaterials) collectMaterial(material);
+    if (object instanceof THREE.SkinnedMesh && disposable(object.skeleton)) {
+      // Skeleton.dispose() also releases its bone texture, so that resource is
+      // intentionally owned by this Set rather than collected as a texture.
+      skeletons.add(object.skeleton);
+    }
+  });
+
+  for (const geometry of geometries) geometry.dispose();
+  for (const skeleton of skeletons) skeleton.dispose();
+  for (const material of materials) material.dispose();
+  for (const resource of textures) resource.dispose();
+  for (const image of images) {
+    const close = (image as { close?: unknown }).close;
+    if (typeof close === 'function') close.call(image);
+    else {
+      const dispose = (image as { dispose?: unknown }).dispose;
+      if (typeof dispose === 'function') dispose.call(image);
+    }
+  }
+}
+
 /** Release a loaded avatar: every GPU resource it brought. */
 export function disposeAvatar(cur: LoadedAvatar): void {
   // Materials and their textures belong to the material layer, which holds

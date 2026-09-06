@@ -312,6 +312,21 @@ export interface StageRecorderOptions {
   fetch?: typeof globalThis.fetch;
 }
 
+interface ActiveTake {
+  request: RecordRequest;
+  mime: string;
+  recorder: MediaRecorder;
+  ctx: CanvasRenderingContext2D;
+  out: StageSize;
+  videoTracks: MediaStreamTrack[];
+  unsubscribe: (() => void) | null;
+  finalizing: Promise<void>;
+  finalize: () => void;
+  shutdown: Promise<void> | null;
+  fallback: ReturnType<typeof setTimeout> | null;
+  errored: boolean;
+}
+
 /**
  * A take in flight: one canvas, one encoder, one queue of uploads.
  *
@@ -330,16 +345,12 @@ export class StageRecorder {
   private readonly send: typeof globalThis.fetch;
   private readonly rendererId: RendererId;
 
-  /**
-   * The context the take is composed into, which is also the flag for whether
-   * one is running. The canvas itself is not held: the capture stream keeps it
-   * alive, and a second reference would only be a second thing to clear.
-   */
-  private ctx: CanvasRenderingContext2D | null = null;
-  private recorder: MediaRecorder | null = null;
-  private unsubscribe: (() => void) | null = null;
-  private session: string | null = null;
-  private out: StageSize = { width: 0, height: 0 };
+  /** The take still receiving frames, if any. */
+  private take: ActiveTake | null = null;
+  /** Every finalisation detached by a public stop, including while uploads flush. */
+  private readonly pendingShutdowns = new Set<Promise<void>>();
+  /** Public lifecycle calls invalidate every older asynchronous start. */
+  private generation = 0;
   /** The document layer, held between frames. See `SlideComposite`. */
   private readonly slideCache = new SlideComposite();
   /** Uploads are chained so the server appends them in the order they were made. */
@@ -351,9 +362,6 @@ export class StageRecorder {
     void this.dispose();
   };
   private disposed = false;
-  /** Completion of the current encoder's final chunk, if one is being stopped. */
-  private finalizing: Promise<void> | null = null;
-  private finalize: (() => void) | null = null;
 
   constructor(opts: StageRecorderOptions) {
     this.onFrame = opts.onFrame;
@@ -367,7 +375,7 @@ export class StageRecorder {
   }
 
   get recording(): boolean {
-    return this.recorder !== null;
+    return this.take !== null;
   }
 
   /** Why the last take would not start, or null. */
@@ -384,9 +392,10 @@ export class StageRecorder {
    */
   async start(request: RecordRequest): Promise<void> {
     if (this.disposed) return;
-    if (this.session === request.session && this.recorder !== null) return;
-    await this.stop();
-    if (this.disposed) return;
+    if (this.take?.request.session === request.session) return;
+    const generation = ++this.generation;
+    await this.shutdownCurrent();
+    if (!this.current(generation)) return;
     this.failure = null;
 
     const mime = pickMime();
@@ -422,31 +431,32 @@ export class StageRecorder {
     try {
       audio = await this.openAudio();
     } catch (error) {
-      this.failure = error instanceof Error ? error.message : String(error);
+      this.closeVideoTracks(stream);
+      if (this.current(generation)) {
+        this.failure = error instanceof Error ? error.message : String(error);
+      }
       return;
     }
-    if (this.disposed) return;
+    if (!this.current(generation)) {
+      this.closeVideoTracks(stream);
+      return;
+    }
     for (const track of audio?.getAudioTracks() ?? []) stream.addTrack(track);
 
     let recorder: MediaRecorder;
     try {
       recorder = new MediaRecorder(stream, { mimeType: mime });
     } catch (error) {
+      this.closeVideoTracks(stream);
       this.failure = error instanceof Error ? error.message : String(error);
       return;
     }
-
-    this.ctx = ctx;
-    this.out = { width: request.width, height: request.height };
-    this.session = request.session;
-    this.recorder = recorder;
 
     let stopped = false;
     let resolveStopped!: () => void;
     const complete = new Promise<void>((resolve) => {
       resolveStopped = resolve;
     });
-    this.finalizing = complete;
     const finalize = (): void => {
       if (stopped) return;
       stopped = true;
@@ -454,7 +464,21 @@ export class StageRecorder {
       this.post(request.session, mime, new Blob([]), true);
       void this.uploads.then(resolveStopped, resolveStopped);
     };
-    this.finalize = finalize;
+
+    const take: ActiveTake = {
+      request,
+      mime,
+      recorder,
+      ctx,
+      out: { width: request.width, height: request.height },
+      videoTracks: this.videoTracks(stream),
+      unsubscribe: null,
+      finalizing: complete,
+      finalize,
+      shutdown: null,
+      fallback: null,
+      errored: false,
+    };
 
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) this.post(request.session, mime, event.data, false);
@@ -464,60 +488,129 @@ export class StageRecorder {
     // chunk turned out to be last, means guessing which one that was.
     recorder.onstop = finalize;
     recorder.onerror = () => {
-      this.failure = 'the encoder stopped';
-      // MediaRecorder's error event is terminal. Queue the marker here too, so
-      // an embedding fake or browser that omits a later `stop` event cannot leave
-      // `stop()` waiting forever with a live server-side take.
-      finalize();
-      void this.stop();
+      take.errored = true;
+      if (this.take === take) this.failure = 'the encoder stopped';
+      // The terminal sequence is error -> dataavailable -> stop. Give the
+      // conforming data and stop events their turn before the fallback marker;
+      // a fake that omits stop is still closed by the deferred shutdown.
+      setTimeout(() => {
+        if (take.shutdown !== null) return;
+        if (this.take === take) this.detach(take);
+        void this.registerShutdown(take);
+      }, 0);
     };
 
-    this.unsubscribe = this.onFrame((frame) => {
-      if (this.ctx !== null) compose(this.ctx, frame, this.out, this.slideCache);
-    });
-    recorder.start(CHUNK_MS);
+    this.take = take;
+    try {
+      take.unsubscribe = this.onFrame((frame) => {
+        if (this.take === take) compose(take.ctx, frame, take.out, this.slideCache);
+      });
+      recorder.start(CHUNK_MS);
+    } catch (error) {
+      this.failure = error instanceof Error ? error.message : String(error);
+      this.detach(take);
+      await this.registerShutdown(take);
+    }
   }
 
   /** Stop, and let the encoder flush. Safe to call when nothing is running. */
   async stop(): Promise<void> {
-    this.unsubscribe?.();
-    this.unsubscribe = null;
-    const recorder = this.recorder;
-    this.recorder = null;
-    this.session = null;
-    this.ctx = null;
-    this.slideCache.dispose();
-    const finalizing = this.finalizing;
-    const finalize = this.finalize;
-    if (recorder !== null) {
-      if (recorder.state !== 'inactive') {
-        try {
-          recorder.stop();
-        } catch {
-          // An encoder can report an error and become inactive between the
-          // state read and this call. The final marker remains the useful path.
-          finalize?.();
-        }
-      } else {
-        // Some browsers mark the encoder inactive before dispatching `stop`.
-        // Calling the idempotent finalizer makes the completion contract hold in
-        // that case as well as in deterministic test fakes.
-        finalize?.();
-      }
-      if (finalizing !== null) await finalizing;
-    }
-    await this.uploads;
+    ++this.generation;
+    await this.shutdownCurrent();
   }
 
   /** Stop the encoder and remove the page lifecycle listener. */
   async dispose(): Promise<void> {
     if (!this.disposed) {
       this.disposed = true;
+      ++this.generation;
       if (typeof globalThis.removeEventListener === 'function') {
         globalThis.removeEventListener('pagehide', this.onPageHide);
       }
     }
-    await this.stop();
+    await this.shutdownCurrent();
+  }
+
+  private current(generation: number): boolean {
+    return !this.disposed && this.generation === generation;
+  }
+
+  /** Detach the live take before waiting for its encoder and uploads. */
+  private detach(take: ActiveTake): void {
+    if (this.take !== take) return;
+    this.take = null;
+    take.unsubscribe?.();
+    take.unsubscribe = null;
+    this.slideCache.dispose();
+  }
+
+  /** Share one shutdown with overlapping public stop/start calls. */
+  private async shutdownCurrent(): Promise<void> {
+    const take = this.take;
+    if (take !== null) {
+      this.detach(take);
+      this.registerShutdown(take);
+    }
+    while (this.pendingShutdowns.size > 0) {
+      await Promise.all([...this.pendingShutdowns]);
+    }
+    await this.uploads;
+  }
+
+  private registerShutdown(take: ActiveTake): Promise<void> {
+    if (take.shutdown !== null) return take.shutdown;
+    const shutdown = this.finishShutdown(take);
+    take.shutdown = shutdown;
+    this.pendingShutdowns.add(shutdown);
+    void shutdown.then(
+      () => this.pendingShutdowns.delete(shutdown),
+      () => this.pendingShutdowns.delete(shutdown),
+    );
+    return shutdown;
+  }
+
+  private async finishShutdown(take: ActiveTake): Promise<void> {
+    if (take.recorder.state !== 'inactive') {
+      try {
+        take.recorder.stop();
+        // A normal stop must wait for the encoder's own dataavailable/onstop
+        // sequence. Only an errored encoder gets the missing-stop fallback.
+        if (take.errored) this.deferFinalize(take);
+      } catch {
+        // An encoder can report an error and become inactive between the state
+        // read and this call. The final marker remains the useful path.
+        this.deferFinalize(take);
+      }
+    } else {
+      // Some browsers mark the encoder inactive before dispatching `stop`.
+      // Give a pending dataavailable/stop task a chance to arrive first, while
+      // still completing against deterministic fakes that omit the event.
+      this.deferFinalize(take);
+    }
+    try {
+      await take.finalizing;
+    } finally {
+      // The video track belongs to this recorder's capture stream. Audio tracks
+      // came from the shared voice graph and are deliberately never stopped.
+      for (const track of take.videoTracks) track.stop();
+    }
+  }
+
+  /** Let terminal MediaRecorder events run before the fallback final marker. */
+  private deferFinalize(take: ActiveTake): void {
+    if (take.fallback !== null) return;
+    take.fallback = setTimeout(() => {
+      take.fallback = null;
+      take.finalize();
+    }, 0);
+  }
+
+  private videoTracks(stream: MediaStream): MediaStreamTrack[] {
+    return typeof stream.getVideoTracks === 'function' ? stream.getVideoTracks() : [];
+  }
+
+  private closeVideoTracks(stream: MediaStream): void {
+    for (const track of this.videoTracks(stream)) track.stop();
   }
 
   /**

@@ -84,6 +84,8 @@ export class TurnQueue {
   private _cuedExpression: string | null = null;
   /** Disambiguates ids minted inside the same millisecond. See `nextId`. */
   private _seq = 0;
+  /** A disposed queue no longer has a frame loop that can own its work. */
+  private _disposed = false;
 
   constructor(
     private readonly d: Director,
@@ -123,6 +125,7 @@ export class TurnQueue {
    * started on a guess and jerked into place when the audio turns up.
    */
   say(request: TurnRequest = {}): string {
+    if (this._disposed) return request.id ?? this.nextId();
     const turn = this.build(request);
     this.queue.push(turn);
     this.events.emit('turn.queued', { turn: turn.id, queued: this.queue.length });
@@ -205,6 +208,7 @@ export class TurnQueue {
    * is about what comes next; stopping it is what `interrupt` is for.
    */
   replaceQueue(requests: TurnRequest[]): void {
+    if (this._disposed) return;
     const held = new Map(this.queue.map((turn) => [turn.id, turn]));
     const next: Turn[] = [];
     for (const request of requests) {
@@ -299,6 +303,7 @@ export class TurnQueue {
 
   /** Stop mid-sentence and drop everything pending. The stream's kill switch. */
   interrupt(): void {
+    if (this._disposed) return;
     const dropped = this.queue.map((t) => t.id);
     this.queue.length = 0;
     this.d.mouth.stop();
@@ -315,6 +320,7 @@ export class TurnQueue {
 
   /** Drop what is pending but let the current line finish. */
   clear(): void {
+    if (this._disposed) return;
     const dropped = this.queue.map((t) => t.id);
     this.queue.length = 0;
     if (dropped.length) this.events.emit('queue.dropped', { turns: dropped });
@@ -333,7 +339,44 @@ export class TurnQueue {
     return !!this.turn || (this.queue.length > 0 && !this.paused) || this.d.mouth.speaking;
   }
 
+  /**
+   * Tear down the renderer-owned side of a queue.
+   *
+   * The server queue is authoritative and survives an avatar swap, so this is
+   * deliberately different from `interrupt`: pending lines are forgotten by
+   * this session without publishing `queue.dropped`, while the line on air is
+   * reported as a terminal `turn.end` so its renderer binding can close cleanly.
+   * A voice answer that arrives after this method sees neither the active turn
+   * nor the pending list and stops its take in `synthesise`'s ownership check.
+   */
+  dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
+
+    const active = this.turn;
+    for (const pending of this.queue) pending.take?.stop();
+    this.queue.length = 0;
+    this._waiting = null;
+    this._cues.length = 0;
+    this._gap = 0;
+    // A new avatar inherits this pause state when the control client rebinds.
+
+    this.d.auto = false;
+    this.d.mouth.stop();
+    this.d.body.stopGesture();
+    if (!active) {
+      this._performing = null;
+      this._cuedExpression = null;
+      return;
+    }
+
+    this.release(active);
+    this.turn = null;
+    this.events.emit('turn.end', { turn: active.id, interrupted: true });
+  }
+
   update(dt: number): void {
+    if (this._disposed) return;
     const d = this.d;
 
     if (this.turn) {
@@ -494,7 +537,9 @@ export class TurnQueue {
     // The emotion stays — a mood outlives the sentence that carried it. The
     // drawn face does not: held past its line it stops reading as a reaction
     // and starts reading as the character's actual face.
-    if (turn.expression && !turn.hold) this.d.setExpression(null);
+    if (turn.expression && !turn.hold && this.d.pickedExpression === turn.expression) {
+      this.d.setExpression(null);
+    }
     // A performance goes the same way and for the same reason: what it holds —
     // folded arms, lowered lids — is a reaction to the line, not the character's
     // resting state. Only if it is still the one showing, so a turn that was

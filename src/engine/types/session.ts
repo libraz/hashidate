@@ -21,6 +21,8 @@ export type SessionEventType =
 export interface SessionEvent {
   type: SessionEventType;
   turn?: string;
+  /** A lifecycle teardown ended the turn without clearing pending server work. */
+  interrupted?: boolean;
   turns?: string[];
   queued?: number;
   seconds?: number;

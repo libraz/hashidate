@@ -139,6 +139,7 @@ export class Session {
   private readonly _tuning: TuningControl;
 
   private _sinceBusy = 0;
+  private _disposed = false;
 
   constructor(
     director: Director,
@@ -228,6 +229,14 @@ export class Session {
   /** Drop what is pending but let the current line finish. */
   clearQueue(): void {
     this._turns.clear();
+  }
+
+  /** Release renderer-owned turn work while leaving the server queue intact. */
+  dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
+    this._turns.dispose();
+    this._sinceBusy = 0;
   }
 
   /** Whether something is happening that the idle must stay out of the way of. */
@@ -396,6 +405,7 @@ export class Session {
   // --- per-frame ----------------------------------------------------------
 
   update(dt: number): void {
+    if (this._disposed) return;
     this._turns.update(dt);
 
     // The idle is suspended while a turn is in flight and for a moment after,
