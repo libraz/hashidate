@@ -37,7 +37,7 @@ Three of the tools are bounded, because past those limits the caller is doing so
 
 Every tool is one of the endpoints in [The control API](control-api.md), and the adapter holds no judgement of its own. It adds three things:
 
-- **The ids are in the tool schemas.** `perform`, `expression`, `gesture`, `backdrop` and `room` are narrowed to the ids the loaded avatar actually has, rebuilt and announced as a list change when the avatar is swapped. A model reading a schema does not invent an id the way one reading a prompt does.
+- **The ids are in the tool schemas.** `perform`, `expression`, `gesture`, `backdrop` and `room` are narrowed to the ids the loaded avatar actually has, rebuilt and announced as a list change when the avatar or its vocabulary changes, including custom motions reloaded for the same avatar. A model reading a schema does not invent an id the way one reading a prompt does.
 - **A refused call is answered.** The API drops a command it cannot parse, which is correct between two processes on separate release cycles and wrong when the caller is a model, because the model carries on as though the line had been said. The adapter therefore parses first, sends nothing, and returns the complaint with the list the caller should have been picking from.
 - **A run of lines travels in one call**, for the reason in [Send a whole answer at once](control-api.md#send-a-whole-answer-at-once).
 
@@ -59,7 +59,7 @@ The `text` field accepts the legacy `[performanceId]` shorthand and these typed 
 
 ## Background music
 
-`bgm` with `action: "list"` re-scans `show/bgm/` and returns the exact filenames a later `play` accepts. The remaining actions are `play`, `pause`, `resume`, `stop` and `settings`. Level, looping and `fade` can be changed independently; `fade.inSeconds` and `fade.outSeconds` are 0..10 seconds, where 0 is a hard edge. A different-track play crossfades the two tracks; the first or stopped play uses only fade-in, and pause, resume and stop are immediate. The `dsp` object controls tone, compression, stereo width and reverb on BGM alone. See [Background music](bgm.md).
+`bgm` with `action: "list"` re-scans `show/bgm/` and returns the exact filenames a later `play` accepts. The remaining actions are `play`, `pause`, `resume`, `stop` and `settings`. Level, looping and `fade` can be changed independently; `fade.inSeconds` and `fade.outSeconds` are 0..10 seconds, where 0 is a hard edge. A different-track play crossfades the two tracks; the first or stopped play uses only fade-in, and pause and resume are immediate. Stop fades out over `fade.outSeconds`. The `dsp` object controls tone, compression, stereo width and reverb on BGM alone. See [Background music](bgm.md).
 
 `status` includes the server-owned BGM transport and resolved settings, so a caller can tell whether it is playing and whether a renderer had to fall back to dry playback.
 

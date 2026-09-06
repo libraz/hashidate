@@ -17,6 +17,7 @@ import type {
   HistoryResponse,
   QueueEntry,
   QueueResponse,
+  QueueUpdate,
   SessionEvent,
   Snapshot,
   TurnRequest,
@@ -299,7 +300,7 @@ export type QueueOutcome = QueueResponse & { error?: string };
 interface ControlQueue {
   decks(): Promise<DecksResponse>;
   deckText(id: string, opts?: { from?: number; to?: number }): Promise<DeckTextResponse>;
-  queueUpdate(id: string, patch: TurnRequest): Promise<QueueOutcome>;
+  queueUpdate(id: string, patch: Omit<QueueUpdate, 'id'>): Promise<QueueOutcome>;
   queueRemove(id: string): Promise<QueueOutcome>;
   queueMove(id: string, to: number): Promise<QueueOutcome>;
   queueClear(): Promise<QueueOutcome>;
@@ -413,12 +414,22 @@ export function harness(): Harness {
       gate('command');
       return { ok: true, viewers: 2, ids: ['c1'] };
     }),
-    queueUpdate: vi.fn(async (id: string, patch: TurnRequest): Promise<QueueOutcome> => {
-      gate('queueUpdate');
-      if (!queue.some((queued) => queued.id === id)) return missing();
-      queue = queue.map((queued) => (queued.id === id ? { ...queued, ...patch } : queued));
-      return settled();
-    }),
+    queueUpdate: vi.fn(
+      async (id: string, patch: Omit<QueueUpdate, 'id'>): Promise<QueueOutcome> => {
+        gate('queueUpdate');
+        if (!queue.some((queued) => queued.id === id)) return missing();
+        queue = queue.map((queued) => {
+          if (queued.id !== id) return queued;
+          const updated = { ...queued, ...patch };
+          if (patch.reading === null) {
+            const { reading: _cleared, ...withoutReading } = updated;
+            return withoutReading;
+          }
+          return updated;
+        });
+        return settled();
+      },
+    ),
     queueRemove: vi.fn(async (id: string): Promise<QueueOutcome> => {
       gate('queueRemove');
       if (!queue.some((queued) => queued.id === id)) return missing();

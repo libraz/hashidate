@@ -145,6 +145,25 @@ describe('the tool surface', () => {
 
     expect(announcements).toBe(0);
   });
+
+  it('rebuilds when the same avatar reports a changed vocabulary', async () => {
+    h = harness();
+    const client = await connect(h.control);
+    const changed = new Promise<void>((resolve) => {
+      client.setNotificationHandler(ToolListChangedNotificationSchema, () => resolve());
+    });
+    expect(enumOf(propertyNode(await speakSchema(client), 'gesture'))).toEqual(['wave', 'point']);
+
+    h.setVocabulary(
+      vocabulary({
+        gestures: [{ id: 'nod', label: same('うなずく'), group: 'reaction', sustain: false }],
+      }),
+    );
+    await client.callTool({ name: 'status', arguments: {} });
+
+    await within(changed, 'notifications/tools/list_changed');
+    expect(enumOf(propertyNode(await speakSchema(client), 'gesture'))).toEqual(['nod']);
+  });
 });
 
 describe('speak', () => {
@@ -637,6 +656,33 @@ describe('interrupt', () => {
 
     expect(result.isError).toBe(true);
     expect(h.control.command).not.toHaveBeenCalled();
+  });
+
+  it('marks a refused command response as an MCP tool error', async () => {
+    h = harness();
+    h.control.command.mockResolvedValueOnce({
+      ok: false,
+      viewers: 0,
+      ids: ['c1'],
+      error: 'no viewer connected',
+    });
+    const client = await connect(h.control);
+
+    const result = await client.callTool({ name: 'interrupt', arguments: { mode: 'now' } });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('no viewer connected');
+  });
+
+  it('preserves a command validation response as an MCP tool error', async () => {
+    h = harness();
+    h.control.command.mockResolvedValueOnce({ error: 'no command', detail: ['invalid'] });
+    const client = await connect(h.control);
+
+    const result = await client.callTool({ name: 'interrupt', arguments: { mode: 'now' } });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('no command');
   });
 });
 

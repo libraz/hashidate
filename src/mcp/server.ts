@@ -18,6 +18,7 @@ import type {
   DeckTextResponse,
   HistoryResponse,
   QueueResponse,
+  QueueUpdate,
   Snapshot,
   TurnRequest,
   Vocabulary,
@@ -117,7 +118,7 @@ export interface Control {
     opts?: { at?: 'push' | 'unshift'; source?: string; note?: string },
   ): Promise<QueueResponse>;
   command(command: CommandRequest, wait?: string): Promise<unknown>;
-  queueUpdate(id: string, patch: TurnRequest & { note?: string }): Promise<QueueOutcome>;
+  queueUpdate(id: string, patch: Omit<QueueUpdate, 'id'>): Promise<QueueOutcome>;
   queueRemove(id: string): Promise<QueueOutcome>;
   queueMove(id: string, to: number): Promise<QueueOutcome>;
   queueClear(): Promise<QueueOutcome>;
@@ -166,6 +167,7 @@ export function createServer(control: Control): Server {
   // Null until the first successful read, which is not the same as an empty
   // vocabulary: an empty one is a real answer from a server with no renderer.
   let vocabulary: Partial<Vocabulary> | null = null;
+  let vocabularyFingerprint: string | null = null;
   let tools: Tools = buildTools({});
   // Whether a tool list has gone out. Nothing needs correcting until one has.
   let advertised = false;
@@ -192,9 +194,10 @@ export function createServer(control: Control): Server {
     } catch {
       return;
     }
-    const previous = vocabulary;
     vocabulary = next;
-    if (previous !== null && previous.avatar?.id === next.avatar?.id) return;
+    const nextFingerprint = fingerprint(next);
+    if (vocabularyFingerprint === nextFingerprint) return;
+    vocabularyFingerprint = nextFingerprint;
     tools = buildTools(next);
     // A list that has already gone out has to be corrected, and the first
     // *successful* read is a correction whenever the read before it failed.
@@ -411,7 +414,11 @@ export function createServer(control: Control): Server {
     const command: Command = parsed.data.mode === 'now' ? { cmd: 'interrupt' } : { cmd: 'clear' };
     try {
       const response = await control.command(command);
-      return report({ ok: ok(response), viewers: viewers(response) });
+      return report({
+        ...commandResponse(response),
+        ok: ok(response),
+        viewers: viewers(response),
+      });
     } catch (error) {
       return unreachable(error);
     }
@@ -446,6 +453,7 @@ export function createServer(control: Control): Server {
     try {
       const response = await control.command({ batch });
       return report({
+        ...commandResponse(response),
         ok: ok(response),
         viewers: viewers(response),
         // What actually went, in the order it went in: the caller wrote fields
@@ -604,7 +612,32 @@ function stageCommands(input: StageInput): Command[] {
 // --- answers -----------------------------------------------------------------
 
 function report(value: unknown): CallToolResult {
-  return { content: [{ type: 'text', text: JSON.stringify(value) }] };
+  return {
+    ...(commandFailed(value) ? { isError: true } : {}),
+    content: [{ type: 'text', text: JSON.stringify(value) }],
+  };
+}
+
+/** Command delivery failures are useful content to an MCP caller, not success. */
+function commandFailed(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const response = value as Record<string, unknown>;
+  return response.ok === false || typeof response.error === 'string';
+}
+
+/** Stable comparison for JSON vocabulary so key order does not cause churn. */
+function fingerprint(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (Array.isArray(value)) return `[${value.map((item) => fingerprint(item)).join(',')}]`;
+  if (typeof value === 'object') {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${fingerprint(object[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
 }
 
 /** A resource body. Text is the only form this adapter serves, and it is JSON. */

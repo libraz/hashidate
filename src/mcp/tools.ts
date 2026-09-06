@@ -11,6 +11,7 @@ import {
   overlayCommandSchema,
   placeStageSchema,
   pointCommandSchema,
+  queueUpdateSchema,
   stageSchema,
   turnSchema,
   type Vocabulary,
@@ -368,7 +369,12 @@ export type StageInput = z.infer<typeof stageInput>;
 /** One line as an edit writes it: everything optional, including the words. */
 const reviseLine = turnSchema.omit({ id: true }).extend({
   text: turnSchema.shape.text.describe(TEXT_NOTE),
-  reading: turnSchema.shape.reading.describe(READING_NOTE),
+  // A null reading explicitly removes one already stored on the queue. An
+  // omitted reading keeps it, which is why this is an update-only shape rather
+  // than a change to the shared TurnRequest schema.
+  reading: queueUpdateSchema.shape.reading.describe(
+    `${READING_NOTE} Send null to remove an existing reading; omit to keep it.`,
+  ),
   side: turnSchema.shape.side.describe(SIDE_NOTE),
 });
 

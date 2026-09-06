@@ -547,6 +547,20 @@ describe('revise', () => {
     expect(h.queue().map((queued) => queued.text)).toEqual(['あ', 'いいなおす。', 'あ']);
   });
 
+  it('clears a stored reading when the update names null', async () => {
+    h = seeded();
+    h.seed([entry({ id: 'q1', reading: 'ふりがな' })]);
+    const client = await connect(h.control);
+
+    await client.callTool({
+      name: 'revise',
+      arguments: { action: 'update', id: 'q1', line: { reading: null } },
+    });
+
+    expect(h.control.queueUpdate).toHaveBeenCalledWith('q1', { reading: null });
+    expect(h.queue()[0]).not.toHaveProperty('reading');
+  });
+
   it('refuses an edit that would put broken markup on a queued line', async () => {
     h = seeded();
     const client = await connect(h.control);
