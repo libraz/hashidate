@@ -12,6 +12,7 @@ import type {
 } from '@/protocol';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { Field } from '@/ui/Field';
+import { PresetPicker } from '@/ui/PresetPicker';
 import { Section } from '@/ui/Section';
 import { Segmented } from '@/ui/Segmented';
 import { Slider } from '@/ui/Slider';
@@ -120,7 +121,13 @@ export function PerformTab({ snapshot, refresh }: Props) {
 
   const emotion: EmotionVector = state.emotion ?? {};
   const moods = pickable(vocabulary.emotions ?? []);
-  const performances = byGroup(vocabulary.performances ?? [], PERFORMANCE_GROUPS, tx);
+  const performanceGroups = Object.entries(PERFORMANCE_GROUPS)
+    .map(([key, label]) => ({
+      key,
+      label,
+      items: (vocabulary.performances ?? []).filter((item) => item.group === key),
+    }))
+    .filter((group) => group.items.length > 0);
   const gestures = byGroup(vocabulary.gestures ?? [], GESTURE_GROUPS, tx);
   const pointing = vocabulary.pointing;
   const strain = state.strain?.[aim.side] ?? 0;
@@ -147,23 +154,18 @@ export function PerformTab({ snapshot, refresh }: Props) {
         meta={state.performance ?? ''}
         note={[t('panel.perform.presets.note1'), t('panel.perform.presets.note2')]}
       >
-        {performances.map((group) => (
-          <Field key={group.key} label={group.label}>
-            <ChipRow>
-              {group.items.map((item) => (
-                <Chip
-                  key={item.id}
-                  label={item.sustain ? `${tx(item.label)} *` : tx(item.label)}
-                  title={`${item.id}  ${[item.gesture, item.hop].filter(Boolean).join(' + ') || t('panel.perform.faceOnly')}`}
-                  state={state.performance === item.id ? 'on' : 'off'}
-                  onClick={() =>
-                    run(state.performance === item.id ? resetFace() : perform(item.id))
-                  }
-                />
-              ))}
-            </ChipRow>
-          </Field>
-        ))}
+        <PresetPicker
+          groups={performanceGroups}
+          activeId={state.performance}
+          renderItem={(item) => (
+            <Chip
+              label={item.sustain ? `${tx(item.label)} *` : tx(item.label)}
+              title={`${item.id}  ${[item.gesture, item.hop].filter(Boolean).join(' + ') || t('panel.perform.faceOnly')}`}
+              state={state.performance === item.id ? 'on' : 'off'}
+              onClick={() => run(state.performance === item.id ? resetFace() : perform(item.id))}
+            />
+          )}
+        />
         <ChipRow>
           <Chip
             label={t('panel.perform.release')}

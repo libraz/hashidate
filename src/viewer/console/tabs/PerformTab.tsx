@@ -18,6 +18,7 @@ import type {
 import { type MessageKey, useT } from '@/i18n';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { Field } from '@/ui/Field';
+import { PresetPicker } from '@/ui/PresetPicker';
 import { Section } from '@/ui/Section';
 import { Segmented } from '@/ui/Segmented';
 import { Slider } from '@/ui/Slider';
@@ -38,6 +39,12 @@ const SIDES = [
   { value: 'R', message: 'console.perform.side.right' },
   { value: 'L', message: 'console.perform.side.left' },
 ] as const satisfies ReadonlyArray<{ value: Side; message: MessageKey }>;
+
+const PERFORMANCE_PRESET_GROUPS = PERFORMANCES_BY_GROUP.map((group) => ({
+  key: group.key,
+  label: PERFORMANCE_GROUPS[group.key] ?? group.label,
+  items: group.ids.map((id) => ({ id, ...PERFORMANCE_TABLE[id] })),
+}));
 
 interface Props {
   loaded: LoadedAvatar;
@@ -108,28 +115,24 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
           t('console.perform.presets.note.auto'),
         ]}
       >
-        {PERFORMANCES_BY_GROUP.map((g) => (
-          <Field key={g.key} label={tx(PERFORMANCE_GROUPS[g.key] ?? g.label)}>
-            <ChipRow>
-              {g.ids.map((id) => {
-                const def = PERFORMANCE_TABLE[id];
-                const held = holdsUntilReleased(def);
-                return (
-                  <Chip
-                    key={id}
-                    label={held ? `${tx(def.label)} *` : tx(def.label)}
-                    title={`${id}  ${
-                      [def.gesture, def.hop].filter(Boolean).join(' + ') ||
-                      t('console.perform.faceOnly')
-                    }`}
-                    state={state?.performance === id ? 'on' : 'off'}
-                    onClick={() => (state?.performance === id ? rest() : session.perform(id))}
-                  />
-                );
-              })}
-            </ChipRow>
-          </Field>
-        ))}
+        <PresetPicker
+          groups={PERFORMANCE_PRESET_GROUPS}
+          activeId={state?.performance}
+          renderItem={(item) => {
+            const held = holdsUntilReleased(item);
+            return (
+              <Chip
+                label={held ? `${tx(item.label)} *` : tx(item.label)}
+                title={`${item.id}  ${
+                  [item.gesture, item.hop].filter(Boolean).join(' + ') ||
+                  t('console.perform.faceOnly')
+                }`}
+                state={state?.performance === item.id ? 'on' : 'off'}
+                onClick={() => (state?.performance === item.id ? rest() : session.perform(item.id))}
+              />
+            );
+          }}
+        />
         <ChipRow>
           <Chip label={t('console.release')} variant="action" onClick={rest} />
         </ChipRow>
