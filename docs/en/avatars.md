@@ -1,6 +1,6 @@
 # Avatars
 
-The engine holds no avatar data. Everything that is a property of one particular model lives in a descriptor under `src/avatars`, and the runtime reads it through a profile. Adding an avatar is adding a file.
+The engine holds no avatar data. Everything that is a property of one particular model lives in a descriptor under `src/avatars`, and the runtime reads it through a profile. Add a descriptor file and register it in `src/avatars/index.ts`.
 
 **A fresh clone has no avatar in it.** The descriptors here point at `public/models/<id>.glb`, which is git-ignored, so the first step with a checkout is to supply a model. See [Building your own](#building-your-own).
 
@@ -52,7 +52,7 @@ Nothing under `public/models/` is covered by this repository's licence. A checko
 
 ## Building your own
 
-The engine is a runtime, not an editor. Rigging, weighting and garment authoring happen in Blender, and `tools/blender` is the interface between the two. A model that comes out of that pipeline needs a descriptor in `src/avatars` and nothing else.
+The engine is a runtime, not an editor. Rigging, weighting and garment authoring happen in Blender, and `tools/blender` is the interface between the two. A model that comes out of that pipeline needs a descriptor in `src/avatars`. Import it in `src/avatars/index.ts` and add it to the `AVATARS` array so the runtime can select it.
 
 Tests build a synthetic avatar in code rather than loading a GLB, because a suite that needs a purchased 16 MB model can only run on a machine that has bought it. Extend `tests/helpers/scene.ts` rather than adding a fixture.
 

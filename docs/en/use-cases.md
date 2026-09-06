@@ -101,5 +101,5 @@ yarn ctl watch
 ## Non-goals
 
 - A complete AI companion. There is no memory, no persona and no conversation here.
-- A cloud service. Everything binds to `127.0.0.1` and there is no flag to change that.
+- A cloud service. The viewer and control API bind to `127.0.0.1` and there is no flag to change that.
 - A rigging or authoring tool. That is Blender's job; `tools/blender` is the interface.

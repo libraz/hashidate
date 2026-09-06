@@ -2,14 +2,14 @@
 
 ![hashidate architecture](../images/architecture.svg)
 
-Three processes and a page. A caller posts commands to the control server; the server streams them to the renderer over SSE and the renderer reports back. OBS points at the renderer's page. Everything binds to `127.0.0.1`.
+Three processes and a page. A caller posts commands to the control server; the server streams them to the renderer over SSE and the renderer reports back. OBS points at the renderer's page. The viewer and control API bind to `127.0.0.1`.
 
 ## Repository layout
 
 | Path | What it holds |
 |---|---|
 | `src/engine` | The runtime. Profile, rig, anatomy, motion, face, secondary motion, director, session. Depends on three.js and on nothing in a browser. |
-| `src/avatars` | One descriptor per model. Adding an avatar is adding a file. |
+| `src/avatars` | One descriptor per model, registered in `src/avatars/index.ts`. |
 | `src/protocol` | The wire format, as zod schemas. The viewer, the server and the CLI all import it, so the command vocabulary cannot drift between them. |
 | `src/viewer` | The renderer: a three.js stage, with a development console beside it. This is the page OBS points at. |
 | `src/panel` | The broadcast panel, on `/panel/`. Everything it does goes through the control API, so what it can do is what an orchestrator can do. |
