@@ -25,14 +25,36 @@ const GESTURE_TABLE: Record<GestureId, GestureDef> = GESTURES;
 const GESTURE_IDS = Object.keys(GESTURE_TABLE) as GestureId[];
 const EMOTION_NAMES = Object.keys(EMOTIONS) as EmotionName[];
 
+const NEW_PERFORMANCES = {
+  affection: ['blowKiss', 'heartHands', 'heartOffer', 'selfHug', 'heartFlutter'],
+  playful: ['peekaboo', 'bunnyEars', 'fingerWag', 'pawBounce', 'shoulderShimmy'],
+  idol: ['doubleWave', 'idolPoint', 'spotlight', 'cuteSalute', 'stageBow'],
+  cheer: ['fistPump', 'doublePump', 'rahRah', 'encourage', 'bravo'],
+  dance: ['sideSway', 'shoulderBounce', 'handRoll', 'discoPoint', 'tinyDance'],
+  photo: ['flowerPose', 'cheekPeace', 'cheekPoints', 'faceFrame', 'modelTilt'],
+} as const;
+
 const each = <T>(rows: T[]) => it.each(rows);
 
 describe('the performance table', () => {
   it('files every entry under its own id and a group that exists', () => {
-    expect(PERFORMANCE_IDS.length).toBeGreaterThan(20);
+    expect(PERFORMANCE_IDS.length).toBe(71);
     expect(new Set(PERFORMANCE_IDS).size).toBe(PERFORMANCE_IDS.length);
     for (const id of PERFORMANCE_IDS) {
       expect(Object.keys(PERFORMANCE_GROUPS)).toContain(PERFORMANCE_TABLE[id].group);
+    }
+  });
+
+  it('pairs every new gesture with one finite performance in its group', () => {
+    for (const [group, ids] of Object.entries(NEW_PERFORMANCES)) {
+      const entry = PERFORMANCES_BY_GROUP.find((candidate) => candidate.key === group);
+      expect(entry?.ids).toEqual(ids);
+      for (const id of ids) {
+        const def = performanceDef(id);
+        expect(def?.group).toBe(group);
+        expect(def?.gesture).toBe(id);
+        expect(def && holdsUntilReleased(def)).toBe(false);
+      }
     }
   });
 

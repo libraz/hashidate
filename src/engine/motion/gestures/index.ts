@@ -1,10 +1,16 @@
 import type { Localized } from '../../../i18n/locale';
 import type { GestureDef, GestureGroup } from '../../types';
+import { AFFECTION } from './affection';
+import { CHEER } from './cheer';
 import { CUTE } from './cute';
+import { DANCE } from './dance';
 import { EMOTE } from './emote';
 import { EXPLAIN } from './explain';
 import { GREETING } from './greeting';
 import { GESTURE_GROUPS } from './groups';
+import { IDOL } from './idol';
+import { PHOTO } from './photo';
+import { PLAYFUL } from './playful';
 import { POSE } from './pose';
 import { REACTION } from './reaction';
 
@@ -38,7 +44,7 @@ import { REACTION } from './reaction';
  * The table is filed by group, one file each, in the order the groups are
  * declared — which is the order the ids come out in and therefore the order a
  * control surface draws them. `base`, `hands` and `builders` hold the parts the
- * six share: the rest pose, the named hand shapes, and the four helpers every
+ * twelve share: the rest pose, the named hand shapes, and the four helpers every
  * `build` returns through.
  */
 
@@ -60,6 +66,12 @@ export const GESTURES = {
   ...EMOTE,
   ...CUTE,
   ...POSE,
+  ...AFFECTION,
+  ...PLAYFUL,
+  ...IDOL,
+  ...CHEER,
+  ...DANCE,
+  ...PHOTO,
 } satisfies Record<string, GestureDef>;
 
 /** Whether a name belongs to the built-in table and cannot be shadowed. */

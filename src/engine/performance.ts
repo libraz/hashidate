@@ -46,6 +46,12 @@ export const PERFORMANCE_GROUPS: Record<PerformanceGroup, Localized> = {
   emote: { en: 'Feeling', ja: '感情' },
   cute: { en: 'Mannerism', ja: '仕草' },
   pose: { en: 'Pose', ja: 'ポーズ' },
+  affection: { en: 'Affection', ja: '愛情' },
+  playful: { en: 'Playful', ja: 'おちゃめ' },
+  idol: { en: 'Idol', ja: 'アイドル' },
+  cheer: { en: 'Encouragement', ja: '応援' },
+  dance: { en: 'Dance', ja: 'ダンス' },
+  photo: { en: 'Photo pose', ja: '撮影ポーズ' },
 };
 
 export interface PerformanceDef {
@@ -352,6 +358,198 @@ export const PERFORMANCES = {
     group: 'pose',
     emotion: { thinking: 0.5, neutral: 0.4 },
     gesture: 'listen',
+  },
+
+  // --- affection ----------------------------------------------------------
+  blowKiss: {
+    label: { en: 'Blow a kiss', ja: '投げキッス' },
+    group: 'affection',
+    emotion: { joy: 0.65, shy: 0.3 },
+    gesture: 'blowKiss',
+  },
+  heartHands: {
+    label: { en: 'Hand heart', ja: '両手ハート' },
+    group: 'affection',
+    emotion: { joy: 0.8, shy: 0.2 },
+    gesture: 'heartHands',
+  },
+  heartOffer: {
+    label: { en: 'A heart for you', ja: 'ハートをどうぞ' },
+    group: 'affection',
+    emotion: { joy: 0.65, shy: 0.3 },
+    gesture: 'heartOffer',
+  },
+  selfHug: {
+    label: { en: 'Cozy hug', ja: 'ぎゅっとする' },
+    group: 'affection',
+    emotion: { relaxed: 0.6, joy: 0.25, shy: 0.15 },
+    gesture: 'selfHug',
+  },
+  heartFlutter: {
+    label: { en: 'Heart flutter', ja: 'きゅんきゅん' },
+    group: 'affection',
+    emotion: { joy: 0.65, shy: 0.3 },
+    gesture: 'heartFlutter',
+  },
+
+  // --- playful ------------------------------------------------------------
+  peekaboo: {
+    label: { en: 'Peekaboo', ja: 'いないいないばあ' },
+    group: 'playful',
+    emotion: { joy: 0.7, surprise: 0.25 },
+    gesture: 'peekaboo',
+  },
+  bunnyEars: {
+    label: { en: 'Bunny ears', ja: 'うさみみ' },
+    group: 'playful',
+    emotion: { joy: 0.65, shy: 0.25 },
+    gesture: 'bunnyEars',
+  },
+  fingerWag: {
+    label: { en: 'No, no', ja: 'めっ' },
+    group: 'playful',
+    emotion: { joy: 0.35, anger: 0.25 },
+    gesture: 'fingerWag',
+  },
+  pawBounce: {
+    label: { en: 'Bouncy paws', ja: 'ぱたぱたおてて' },
+    group: 'playful',
+    emotion: { joy: 0.65, shy: 0.2 },
+    gesture: 'pawBounce',
+  },
+  shoulderShimmy: {
+    label: { en: 'Little wiggle', ja: 'くねくね' },
+    group: 'playful',
+    emotion: { joy: 0.55, relaxed: 0.3 },
+    gesture: 'shoulderShimmy',
+  },
+
+  // --- idol ---------------------------------------------------------------
+  doubleWave: {
+    label: { en: 'Wave with both hands', ja: '両手でばいばい' },
+    group: 'idol',
+    emotion: { joy: 0.8 },
+    gesture: 'doubleWave',
+  },
+  idolPoint: {
+    label: { en: 'Idol point', ja: 'アイドルポーズ' },
+    group: 'idol',
+    emotion: { joy: 0.85, shy: 0.2 },
+    gesture: 'idolPoint',
+  },
+  spotlight: {
+    label: { en: 'Ta-da', ja: 'じゃーん' },
+    group: 'idol',
+    emotion: { joy: 0.9, surprise: 0.2 },
+    gesture: 'spotlight',
+  },
+  cuteSalute: {
+    label: { en: 'Cute salute', ja: 'かわいく敬礼' },
+    group: 'idol',
+    emotion: { joy: 0.7, shy: 0.3 },
+    gesture: 'cuteSalute',
+  },
+  stageBow: {
+    label: { en: 'Stage bow', ja: 'ステージのお辞儀' },
+    group: 'idol',
+    emotion: { joy: 0.65, shy: 0.25 },
+    gesture: 'stageBow',
+  },
+
+  // --- cheer --------------------------------------------------------------
+  fistPump: {
+    label: { en: 'Yes!', ja: 'よしっ' },
+    group: 'cheer',
+    emotion: { joy: 0.85 },
+    gesture: 'fistPump',
+  },
+  doublePump: {
+    label: { en: 'We did it!', ja: 'やったー' },
+    group: 'cheer',
+    emotion: { joy: 0.95 },
+    gesture: 'doublePump',
+  },
+  rahRah: {
+    label: { en: 'Go, go!', ja: 'フレーフレー' },
+    group: 'cheer',
+    emotion: { joy: 0.85, surprise: 0.15 },
+    gesture: 'rahRah',
+  },
+  encourage: {
+    label: { en: 'You can do it', ja: 'がんばって' },
+    group: 'cheer',
+    emotion: { joy: 0.6, relaxed: 0.25 },
+    gesture: 'encourage',
+  },
+  bravo: {
+    label: { en: 'Bravo!', ja: 'ブラボー' },
+    group: 'cheer',
+    emotion: { joy: 0.85, surprise: 0.2 },
+    gesture: 'bravo',
+  },
+
+  // --- dance --------------------------------------------------------------
+  sideSway: {
+    label: { en: 'Sway', ja: 'ゆらゆら' },
+    group: 'dance',
+    emotion: { joy: 0.65, relaxed: 0.25 },
+    gesture: 'sideSway',
+  },
+  shoulderBounce: {
+    label: { en: 'Bop', ja: 'るんるん' },
+    group: 'dance',
+    emotion: { joy: 0.7 },
+    gesture: 'shoulderBounce',
+  },
+  handRoll: {
+    label: { en: 'Rolling hands', ja: 'くるくる' },
+    group: 'dance',
+    emotion: { joy: 0.65 },
+    gesture: 'handRoll',
+  },
+  discoPoint: {
+    label: { en: 'Disco point', ja: 'ディスコポーズ' },
+    group: 'dance',
+    emotion: { joy: 0.8 },
+    gesture: 'discoPoint',
+  },
+  tinyDance: {
+    label: { en: 'Little dance', ja: 'ちょこっとダンス' },
+    group: 'dance',
+    emotion: { joy: 0.75, relaxed: 0.2 },
+    gesture: 'tinyDance',
+  },
+
+  // --- photo --------------------------------------------------------------
+  flowerPose: {
+    label: { en: 'Flower pose', ja: 'おはなポーズ' },
+    group: 'photo',
+    emotion: { joy: 0.75, shy: 0.2 },
+    gesture: 'flowerPose',
+  },
+  cheekPeace: {
+    label: { en: 'Cheek peace', ja: 'ほっぺピース' },
+    group: 'photo',
+    emotion: { joy: 0.8, shy: 0.3 },
+    gesture: 'cheekPeace',
+  },
+  cheekPoints: {
+    label: { en: 'Cheek points', ja: 'ほっぺつんつん' },
+    group: 'photo',
+    emotion: { joy: 0.75, shy: 0.25 },
+    gesture: 'cheekPoints',
+  },
+  faceFrame: {
+    label: { en: 'Face frame', ja: 'おかおフレーム' },
+    group: 'photo',
+    emotion: { joy: 0.75, shy: 0.2 },
+    gesture: 'faceFrame',
+  },
+  modelTilt: {
+    label: { en: 'Model pose', ja: 'モデルポーズ' },
+    group: 'photo',
+    emotion: { neutral: 0.35, joy: 0.55, shy: 0.2 },
+    gesture: 'modelTilt',
   },
 } satisfies Record<string, PerformanceDef>;
 

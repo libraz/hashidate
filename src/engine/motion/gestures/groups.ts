@@ -14,4 +14,10 @@ export const GESTURE_GROUPS: Record<GestureGroup, Localized> = {
   emote: { en: 'Feeling', ja: '感情' },
   cute: { en: 'Mannerism', ja: '仕草' },
   pose: { en: 'Pose', ja: 'ポーズ' },
+  affection: { en: 'Affection', ja: '愛情' },
+  playful: { en: 'Playful', ja: 'おちゃめ' },
+  idol: { en: 'Idol', ja: 'アイドル' },
+  cheer: { en: 'Encouragement', ja: '応援' },
+  dance: { en: 'Dance', ja: 'ダンス' },
+  photo: { en: 'Photo pose', ja: '撮影ポーズ' },
 };

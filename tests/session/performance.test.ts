@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { performanceDef } from '@/engine/performance';
 import { build, DT, IDLE_AFTER } from './harness';
 
 /**
@@ -139,5 +140,61 @@ describe('a turn that names a performance', () => {
     } finally {
       random.mockRestore();
     }
+  });
+});
+
+describe('short cute performances', () => {
+  it.each([
+    'blowKiss',
+    'heartHands',
+    'heartOffer',
+    'selfHug',
+    'heartFlutter',
+    'peekaboo',
+    'bunnyEars',
+    'fingerWag',
+    'pawBounce',
+    'shoulderShimmy',
+    'doubleWave',
+    'idolPoint',
+    'spotlight',
+    'cuteSalute',
+    'stageBow',
+    'fistPump',
+    'doublePump',
+    'rahRah',
+    'encourage',
+    'bravo',
+    'sideSway',
+    'shoulderBounce',
+    'handRoll',
+    'discoPoint',
+    'tinyDance',
+    'flowerPose',
+    'cheekPeace',
+    'cheekPoints',
+    'faceFrame',
+    'modelTilt',
+  ])('%s replaces a held performance and finishes with its mood intact', (id) => {
+    const { session, director, step, runUntil } = build();
+    session.lookAt(0.8);
+    session.perform('doze');
+    step(4);
+    expect(director.body.lookAt).toBe(0);
+
+    session.perform(id, 'L');
+    step(2);
+    expect(session.state().performance).toBe(id);
+    expect(director.body.gesture?.id).toBe(id);
+    expect(director.body.lookAt).toBe(0.8);
+
+    // Photo poses are finite too: a caller can use one on a short line without
+    // leaving the hands up or the sleepy performance's eyelids closed.
+    runUntil(() => director.body.gesture === null, 15);
+    expect(director.target).toEqual(performanceDef(id)?.emotion);
+    // A scheduled blink may coincide with the final frame; the eyes must open
+    // again within a blink cycle, rather than retain doze's droop.
+    runUntil(() => director.blink < 0.9, 1);
+    expect(session.state().hopping).toBe(false);
   });
 });

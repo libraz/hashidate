@@ -8,9 +8,30 @@ The layers underneath are kept separate because they behave differently: an emot
 
 ## Groups
 
-Mood (a face and nothing else, which is most of what watching a character looks like), Reaction, Greeting, Explaining, Feeling, Mannerism, and Pose, which is held until something else is asked for.
+The general groups are Mood, Reaction, Greeting, Explaining, Feeling, Mannerism, and Pose. Pose holds its gestures until released. The following groups offer short motions for affectionate reactions, playful exchanges, and camera moments:
 
-Every gesture the engine has appears in at least one performance, and a test asserts it: a movement with no face attached is one the autopilot would eventually play deadpan.
+| Group | Performance ids |
+| --- | --- |
+| Affection | `blowKiss`, `heartHands`, `heartOffer`, `selfHug`, `heartFlutter` |
+| Playful | `peekaboo`, `bunnyEars`, `fingerWag`, `pawBounce`, `shoulderShimmy` |
+| Idol | `doubleWave`, `idolPoint`, `spotlight`, `cuteSalute`, `stageBow` |
+| Encouragement | `fistPump`, `doublePump`, `rahRah`, `encourage`, `bravo` |
+| Dance | `sideSway`, `shoulderBounce`, `handRoll`, `discoPoint`, `tinyDance` |
+| Photo pose | `flowerPose`, `cheekPeace`, `cheekPoints`, `faceFrame`, `modelTilt` |
+
+These motions finish on their own, including Photo pose. Their mood persists until another emotion or performance replaces it. Each id names both a performance with a face and a gesture that plays only the movement.
+
+```sh
+yarn ctl perform blowKiss
+yarn ctl perform doubleWave
+yarn ctl say "Thank you for coming!" --perform flowerPose
+```
+
+In the control panel and development console, select a group to show its presets. Search by English or Japanese name, or by id, across all groups. Clearing the search returns to the selected group. The release button remains available when the active preset is in another group.
+
+You can also use the ids in a turn's `perform` field and inline cues such as `[heartHands]`.
+
+Every engine gesture has at least one matching performance, so callers can request any movement together with a mood. Tests check that coverage.
 
 ## A performance is a state
 
@@ -22,7 +43,7 @@ Its mood is the exception and persists, for the same reason a turn's emotion doe
 
 For what the table has no name for, `emotion`, `expression`, `overlay`, `gesture` and `hop` are all still commands of their own. See [Commands](commands.md).
 
-The idle autopilot draws from the same table, so what the character does on its own and what it can be asked to do are one vocabulary. `idle on` lets the character keep performing between turns without the caller sending anything.
+The idle autopilot draws from a selected pool in the same table. The six groups above play when selected explicitly; they do not change the idle pool. `idle on` lets the character keep performing between turns without the caller sending anything.
 
 ## What runs continuously
 

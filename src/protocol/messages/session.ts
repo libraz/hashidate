@@ -52,6 +52,8 @@ type _EventTypesMatchEngine = Expect<
 export const sessionEventSchema = z.object({
   type: sessionEventTypeSchema,
   turn: z.string().optional(),
+  /** A terminal turn.end caused by renderer teardown rather than completion. */
+  interrupted: z.boolean().optional(),
   turns: z.array(z.string()).optional(),
   queued: z.number().optional(),
   seconds: z.number().optional(),
@@ -98,6 +100,12 @@ export const gestureGroupSchema = z.enum([
   'emote',
   'cute',
   'pose',
+  'affection',
+  'playful',
+  'idol',
+  'cheer',
+  'dance',
+  'photo',
 ]);
 type _GestureGroupsMatchEngine = Expect<Equals<z.infer<typeof gestureGroupSchema>, GestureGroup>>;
 
@@ -109,6 +117,12 @@ const performanceGroupSchema = z.enum([
   'emote',
   'cute',
   'pose',
+  'affection',
+  'playful',
+  'idol',
+  'cheer',
+  'dance',
+  'photo',
 ]);
 type _PerformanceGroupsMatchEngine = Expect<
   Equals<z.infer<typeof performanceGroupSchema>, PerformanceGroup>

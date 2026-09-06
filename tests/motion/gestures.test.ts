@@ -52,6 +52,15 @@ const LEFT: GestureVariation = { rate: 1, scale: 1, side: -1 };
 /** Enough of a playthrough to catch a term that only misbehaves once moving. */
 const TIMES = [0, 0.017, 0.25, 0.9, 2.5, 6];
 
+const NEW_GESTURES = {
+  affection: ['blowKiss', 'heartHands', 'heartOffer', 'selfHug', 'heartFlutter'],
+  playful: ['peekaboo', 'bunnyEars', 'fingerWag', 'pawBounce', 'shoulderShimmy'],
+  idol: ['doubleWave', 'idolPoint', 'spotlight', 'cuteSalute', 'stageBow'],
+  cheer: ['fistPump', 'doublePump', 'rahRah', 'encourage', 'bravo'],
+  dance: ['sideSway', 'shoulderBounce', 'handRoll', 'discoPoint', 'tinyDance'],
+  photo: ['flowerPose', 'cheekPeace', 'cheekPoints', 'faceFrame', 'modelTilt'],
+} as const;
+
 const posesOf = (id: GestureId, v: GestureVariation = RIGHT): Pose[] =>
   TIMES.map((t) => TABLE[id].build(t, v));
 
@@ -70,11 +79,22 @@ const FINGER_IDS = IDS.filter(
 );
 
 describe('gesture table', () => {
-  it('holds exactly 34 gestures, each under its own id', () => {
+  it('holds exactly 64 gestures, each under its own id', () => {
     // Pinned so a dropped or duplicated entry is a failure rather than a
     // silently shorter menu.
-    expect(IDS.length).toBe(34);
+    expect(IDS.length).toBe(64);
     expect(new Set(IDS).size).toBe(IDS.length);
+  });
+
+  it('adds five finite gestures to each new group', () => {
+    for (const [group, ids] of Object.entries(NEW_GESTURES)) {
+      const entry = GESTURES_BY_GROUP.find((candidate) => candidate.key === group);
+      expect(entry?.ids).toEqual(ids);
+      for (const id of ids) {
+        expect(TABLE[id].group).toBe(group);
+        expect(TABLE[id].sustain).toBeUndefined();
+      }
+    }
   });
 
   each(IDS)('%s names a group that exists', (id) => {
@@ -123,10 +143,10 @@ describe('GESTURES_BY_GROUP', () => {
 describe('poses the table builds', () => {
   it('splits the table between authored directions, reaches and spine-only', () => {
     // Every gesture is one of the three, and nothing is both.
-    expect(ARM_IDS.length).toBe(20);
-    expect(REACH_IDS.length).toBe(11);
+    expect(ARM_IDS.length).toBe(37);
+    expect(REACH_IDS.length).toBe(22);
     expect(ARM_IDS.filter((id) => REACH_IDS.includes(id))).toEqual([]);
-    expect(ARM_IDS.length + REACH_IDS.length + 3).toBe(IDS.length);
+    expect(ARM_IDS.length + REACH_IDS.length + 5).toBe(IDS.length);
     expect(FINGER_IDS.length).toBe(ARM_IDS.length + REACH_IDS.length);
   });
 
@@ -262,8 +282,31 @@ describe('which hand acts', () => {
     'handsClasp',
     'bothPeace',
     'doze',
+    'heartHands',
+    'heartOffer',
+    'selfHug',
+    'heartFlutter',
+    'peekaboo',
+    'bunnyEars',
+    'pawBounce',
+    'doubleWave',
+    'idolPoint',
+    'spotlight',
+    'stageBow',
+    'doublePump',
+    'rahRah',
+    'encourage',
+    'bravo',
+    'sideSway',
+    'handRoll',
+    'discoPoint',
+    'tinyDance',
+    'flowerPose',
+    'cheekPoints',
+    'faceFrame',
+    'modelTilt',
   ];
-  const SPINE_ONLY: GestureId[] = ['nod', 'tilt', 'lean'];
+  const SPINE_ONLY: GestureId[] = ['nod', 'tilt', 'lean', 'shoulderShimmy', 'shoulderBounce'];
   /** Authored on a fixed hand rather than through the side helper. */
   const FIXED_RIGHT: GestureId[] = ['wave'];
   const MIRRORED = IDS.filter((id) => ![...TWO_HANDED, ...SPINE_ONLY, ...FIXED_RIGHT].includes(id));
@@ -272,7 +315,7 @@ describe('which hand acts', () => {
     expect(TWO_HANDED.length + SPINE_ONLY.length + FIXED_RIGHT.length + MIRRORED.length).toBe(
       IDS.length,
     );
-    expect(MIRRORED.length).toBe(14);
+    expect(MIRRORED.length).toBe(19);
   });
 
   each(TWO_HANDED)('%s poses both arms whichever side is asked for', (id) => {

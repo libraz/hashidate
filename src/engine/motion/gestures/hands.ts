@@ -122,6 +122,22 @@ export const HEART_HAND: Record<FingerName, number> = {
   ring: 0.97,
   little: 0.98,
 };
+/**
+ * An open hand for the two-handed heart silhouette.
+ *
+ * `HEART_HAND` is intentionally the compact finger-heart shape used by the
+ * one-handed pose. A pair of those closes into a clasp when the palms meet.
+ * Curved index fingers form the upper arcs and extended thumbs the lower
+ * point; the other fingers fold out of the opening. The hands aim inward
+ * across the chest: an upright hand puts the thumbs above the heart.
+ */
+export const FULL_HEART_HAND: Record<FingerName, number> = {
+  thumb: 0.08,
+  index: 0.22,
+  middle: 0.92,
+  ring: 0.95,
+  little: 0.98,
+};
 export const CLASP_HAND: Record<FingerName, number> = {
   thumb: 0.5,
   index: 0.6,

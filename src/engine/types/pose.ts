@@ -117,7 +117,19 @@ export interface GestureVariation {
   side: number;
 }
 
-export type GestureGroup = 'reaction' | 'greeting' | 'explain' | 'emote' | 'cute' | 'pose';
+export type GestureGroup =
+  | 'reaction'
+  | 'greeting'
+  | 'explain'
+  | 'emote'
+  | 'cute'
+  | 'pose'
+  | 'affection'
+  | 'playful'
+  | 'idol'
+  | 'cheer'
+  | 'dance'
+  | 'photo';
 
 /**
  * How the performance table is filed. It mirrors the gesture groups, plus
@@ -131,7 +143,13 @@ export type PerformanceGroup =
   | 'explain'
   | 'emote'
   | 'cute'
-  | 'pose';
+  | 'pose'
+  | 'affection'
+  | 'playful'
+  | 'idol'
+  | 'cheer'
+  | 'dance'
+  | 'photo';
 
 export interface GestureDef {
   label: Localized;
