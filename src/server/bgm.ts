@@ -226,6 +226,7 @@ async function serve(
     return;
   }
   const file = createReadStream(target, { start, end });
+  res.once('close', () => file.destroy());
   res.on('error', () => file.destroy());
   file.on('error', () => res.end());
   file.pipe(res);

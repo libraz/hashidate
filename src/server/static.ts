@@ -129,6 +129,7 @@ async function send(
   // The browser navigated away or was reloaded mid-transfer. Routine during
   // development, and one stack trace per reload hides anything that actually
   // went wrong.
+  res.once('close', () => file.destroy());
   res.on('error', () => file.destroy());
   file.on('error', () => res.end());
   file.pipe(res);
