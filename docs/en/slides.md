@@ -28,6 +28,8 @@ While a document is up it takes the place of the set: both go behind the charact
 
 The character moves out of the way with `place`, which shrinks the picture rather than the shot. See [The stage](stage.md#where-the-character-stands-in-the-frame).
 
+In the panel’s Slides tab, Left and Right Arrow turn pages when focus is outside an input or a control that handles those keys. When the Fit selector has focus, its arrows change the fit without turning the page.
+
 ## Page turns on a line
 
 A page turn can ride on a line, which is what makes a document follow a script rather than an operator:

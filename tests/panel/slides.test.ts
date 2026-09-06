@@ -1,7 +1,31 @@
-import { afterEach, describe, expect, it } from 'vitest';
+// @vitest-environment happy-dom
+
+import { act, createElement } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PLACEMENT_LIMITS } from '@/engine/types';
 import { resetLocale, setLocale } from '@/i18n';
-import { ago, avatarPlacement, clampPage, fitAspect, settled } from '@/panel/slides/SlidesTab';
+import { EMPTY } from '@/panel/hooks';
+import {
+  ago,
+  avatarPlacement,
+  clampPage,
+  fitAspect,
+  SlidesTab,
+  settled,
+} from '@/panel/slides/SlidesTab';
+
+const api = vi.hoisted(() => ({
+  slide: vi.fn(),
+  deck: vi.fn(),
+  place: vi.fn(),
+  readDecks: vi.fn(),
+}));
+
+vi.mock('@/panel/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/panel/api')>();
+  return { ...actual, ...api };
+});
 
 /**
  * The five things the document tab works out for itself.
@@ -17,6 +41,8 @@ afterEach(() => {
   // The locale is module state, so a case that switches it would otherwise leak
   // the switch into the next one.
   resetLocale();
+  setLocale('en');
+  vi.clearAllMocks();
 });
 
 describe('fitAspect', () => {
@@ -152,5 +178,53 @@ describe('ago', () => {
   it('does not go backwards on a file stamped in the future', () => {
     // Clocks differ between whatever exported the file and this process.
     expect(ago(now + 60, now)).toBe('just now');
+  });
+});
+
+describe('SlidesTab keyboard binding', () => {
+  let root: Root | null = null;
+  let host: HTMLDivElement | null = null;
+
+  afterEach(() => {
+    if (root !== null) {
+      act(() => root?.unmount());
+      root = null;
+    }
+    host?.remove();
+    host = null;
+  });
+
+  it('does not turn the page when a segmented control consumed the arrow', async () => {
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root?.render(
+        createElement(SlidesTab, {
+          snapshot: {
+            ...EMPTY,
+            slides: { deck: 'slides', page: 2, pages: 4, ready: true, error: null },
+          },
+          refresh: () => {},
+        }),
+      );
+    });
+
+    const fit = host.querySelector('[role="radiogroup"][aria-label="How the document is fitted"]');
+    const segment = fit?.querySelector('button');
+    if (!segment) throw new Error('fit control missing');
+    await act(async () => {
+      segment.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+      );
+    });
+    expect(api.slide).not.toHaveBeenCalled();
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+      );
+    });
+    expect(api.slide).toHaveBeenCalledWith({ by: 1 });
   });
 });

@@ -268,6 +268,7 @@ export function SlidesTab({ snapshot, refresh }: Props) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      if (event.defaultPrevented) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (isTyping(event.target)) return;
       event.preventDefault();

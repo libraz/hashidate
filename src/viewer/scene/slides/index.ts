@@ -209,8 +209,24 @@ export class SlideStage implements Slides {
 
   /** Move or resize the layer. Redrawing at the new size is debounced. */
   setPlacement(placement: SlidePlacement): void {
+    const fitChanged = placement.fit !== undefined && placement.fit !== this.placement.fit;
     this.placement = resolvePlacement(this.placement, placement);
     this.layout();
+    // `fit` changes the pixels in the showing canvas without changing the
+    // layer's rectangle. Reuse the page already decoded instead of asking the
+    // deck to rasterise it again; a resize still follows the debounced path in
+    // `layout` and will repaint once its new pixel size is ready.
+    if (fitChanged && this.shown !== 0) {
+      const bitmap = this.cache.get(this.shown);
+      const pixels = this.pixels();
+      if (
+        bitmap !== undefined &&
+        pixels.width === this.drawn.width &&
+        pixels.height === this.drawn.height
+      ) {
+        this.paint(bitmap);
+      }
+    }
   }
 
   /** The stage changed size. Fed by the runtime's one resize path. */
@@ -498,6 +514,8 @@ export class SlideStage implements Slides {
   private invalidate(): number {
     this.cancelPrefetch?.();
     this.cancelPrefetch = null;
+    if (this.resizeTimer !== null) clearTimeout(this.resizeTimer);
+    this.resizeTimer = null;
     for (const bitmap of this.cache.values()) bitmap.close();
     this.cache.clear();
     this.inflight.clear();

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SlideStage } from '@/viewer/scene/slides';
 import type { DeckSource } from '@/viewer/scene/slides/deck';
 
@@ -125,6 +125,60 @@ describe('putting a document up', () => {
     expect(stage.report()).toMatchObject({ deck: 'second', page: 2, pages: 7 });
     // The page the old document was on is not a page of the new one.
     expect(second.state.rendered).toEqual([2]);
+  });
+
+  it('repaints a cached nonsquare page when fit changes without rasterising it again', async () => {
+    const drawImage = vi.fn();
+    const context = {
+      fillStyle: '',
+      fillRect: vi.fn(),
+      drawImage,
+    } as unknown as CanvasRenderingContext2D;
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context);
+    try {
+      const { stage, deck } = overDeck(1);
+      stage.setPlacement({ width: 0.5, height: 1 });
+      stage.setDeck('intro');
+      await settled();
+      const before = stage.layers()?.revision;
+
+      expect(drawImage).toHaveBeenLastCalledWith(expect.anything(), 0, 270, 960, 540);
+      stage.setPlacement({ fit: 'cover' });
+
+      expect(deck.state.rendered).toEqual([1]);
+      expect(stage.layers()?.revision).toBe((before ?? 0) + 1);
+      expect(drawImage).toHaveBeenLastCalledWith(expect.anything(), -480, 0, 1920, 1080);
+    } finally {
+      getContext.mockRestore();
+    }
+  });
+
+  it('cancels an old resize timer before a slow replacement deck arrives', async () => {
+    const first = fakeDeck(2);
+    const second = fakeDeck(3);
+    let release!: (source: DeckSource) => void;
+    const arriving = new Promise<DeckSource>((resolve) => {
+      release = resolve;
+    });
+    const { stage } = build(async (url) => {
+      if (url.includes('first')) return first.source;
+      return arriving;
+    });
+    stage.setDeck('first');
+    await settled();
+
+    vi.useFakeTimers();
+    try {
+      stage.setPlacement({ width: 0.5 });
+      stage.setDeck('second');
+      await vi.advanceTimersByTimeAsync(300);
+      release(second.source);
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      expect(stage.report()).toMatchObject({ deck: 'second', pages: 3, page: 1, ready: true });
+      expect(second.state.rendered).toEqual([1]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
