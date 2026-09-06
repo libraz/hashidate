@@ -71,6 +71,34 @@ describe('compileMotion', () => {
     expect(built.build(0.5, PLAIN).arms?.R?.hand?.length()).toBeCloseTo(1);
   });
 
+  it('normalises each direction endpoint before blending', () => {
+    const built = compileMotion(
+      motion({
+        frames: [
+          { at: 0, arms: { R: { hand: [10, 0, 0] } } },
+          { at: 1, arms: { R: { hand: [0, 1, 0] } } },
+        ],
+      }),
+    );
+    const hand = built.build(0.5, PLAIN).arms?.R?.hand;
+    expect(hand?.x).toBeCloseTo(Math.SQRT1_2);
+    expect(hand?.y).toBeCloseTo(Math.SQRT1_2);
+  });
+
+  it('keeps an exact opposed blend as a deterministic direction', () => {
+    const built = compileMotion(
+      motion({
+        frames: [
+          { at: 0, arms: { R: { hand: [3, 0, 0] } } },
+          { at: 1, arms: { R: { hand: [-3, 0, 0] } } },
+        ],
+      }),
+    );
+    const hand = built.build(0.5, PLAIN).arms?.R?.hand;
+    expect(hand?.length()).toBeCloseTo(1);
+    expect(hand?.x).toBeCloseTo(1);
+  });
+
   it('settles on the last frame rather than running past it', () => {
     const built = compileMotion(motion());
     expect(built.build(9, PLAIN).arms?.R?.upperArm?.y).toBeCloseTo(1);
@@ -111,6 +139,53 @@ describe('compileMotion', () => {
     );
     expect(built.build(0.5, PLAIN).arms?.R?.hand?.y).toBeCloseTo(1);
     expect(built.build(0.5, PLAIN).spine?.chest?.[0]).toBeCloseTo(0.1);
+  });
+
+  it('clamps a channel before its first authored sample', () => {
+    const built = compileMotion(
+      motion({
+        frames: [
+          { at: 0.5, fingers: { R: { index: 0.35 } } },
+          { at: 1, fingers: { R: { index: 0.75 } } },
+        ],
+      }),
+    );
+    expect(built.build(0, PLAIN).fingers?.R?.index).toBeCloseTo(0.35);
+  });
+
+  it('interpolates sparse channels independently and carries them forward', () => {
+    const built = compileMotion(
+      motion({
+        frames: [
+          {
+            at: 0,
+            arms: { R: { hand: [10, 0, 0], palm: [0, 1, 0] } },
+            fingers: { R: { index: 0 } },
+            spine: { head: [0.2, 0, 0] },
+          },
+          { at: 1, arms: { R: { twist: 1 } }, fingers: { R: { thumb: 0.8 } } },
+          {
+            at: 2,
+            arms: { R: { hand: [0, 1, 0], palm: [0, 0, 1], twist: 2 } },
+            fingers: { R: { index: 1 } },
+          },
+        ],
+      }),
+    );
+    const middle = built.build(1, PLAIN);
+    expect(middle.arms?.R?.hand?.x).toBeCloseTo(Math.SQRT1_2);
+    expect(middle.arms?.R?.hand?.y).toBeCloseTo(Math.SQRT1_2);
+    expect(middle.arms?.R?.palm?.y).toBeCloseTo(Math.SQRT1_2);
+    expect(middle.arms?.R?.palm?.z).toBeCloseTo(Math.SQRT1_2);
+    expect(middle.arms?.R?.twist).toBeCloseTo(1);
+    expect(middle.fingers?.R?.index).toBeCloseTo(0.5);
+    expect(middle.fingers?.R?.thumb).toBeCloseTo(0.8);
+    expect(middle.fingers?.L).toBeUndefined();
+    expect(middle.spine?.head?.[0]).toBeCloseTo(0.2);
+    expect(middle.spine?.chest).toBeUndefined();
+
+    expect(built.build(1.5, PLAIN).arms?.R?.twist).toBeCloseTo(1.5);
+    expect(built.build(1.5, PLAIN).spine?.head?.[0]).toBeCloseTo(0.2);
   });
 
   it('carries the label, the group and the timings through', () => {

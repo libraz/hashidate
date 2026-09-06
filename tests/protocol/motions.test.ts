@@ -30,6 +30,21 @@ const body = (over: Record<string, unknown> = {}) => ({
 });
 
 describe('motionBodySchema', () => {
+  it.each(['shoulder', 'upperArm', 'lowerArm', 'hand', 'palm'])(
+    'rejects a zero %s direction while allowing zero spine offsets',
+    (slot) => {
+      expect(
+        motionBodySchema.safeParse(
+          body({ frames: [{ at: 0, arms: { R: { [slot]: [0, 0, 0] } } }] }),
+        ).success,
+      ).toBe(false);
+      expect(
+        motionBodySchema.safeParse(body({ frames: [{ at: 0, spine: { head: [0, 0, 0] } }] }))
+          .success,
+      ).toBe(true);
+    },
+  );
+
   it('accepts a motion with one keyframe', () => {
     expect(motionBodySchema.safeParse(body()).success).toBe(true);
   });
@@ -75,7 +90,7 @@ describe('motionBodySchema', () => {
   });
 
   it('refuses a group the gesture table does not have', () => {
-    expect(motionBodySchema.safeParse(body({ group: 'dance' })).success).toBe(false);
+    expect(motionBodySchema.safeParse(body({ group: 'teleport' })).success).toBe(false);
   });
 
   it('wants both languages on the label', () => {
@@ -127,7 +142,7 @@ describe('parseMotion', () => {
   });
 
   it('says which field was wrong rather than throwing', () => {
-    const parsed = parseMotion('myWave', body({ group: 'dance' }));
+    const parsed = parseMotion('myWave', body({ group: 'teleport' }));
     expect('error' in parsed && parsed.error).toMatch(/group/);
   });
 

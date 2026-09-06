@@ -57,7 +57,7 @@ frames:
 | Field | What it is |
 |---|---|
 | `label` | Both languages, like everything user-visible in the engine. |
-| `group` | One of `reaction`, `greeting`, `explain`, `emote`, `cute`, `pose`. |
+| `group` | One of `reaction`, `greeting`, `explain`, `emote`, `cute`, `pose`, `affection`, `playful`, `idol`, `cheer`, `dance`, `photo`. |
 | `lead` | Seconds of entrance. A floor — the real lead scales with how far the arms have to travel. |
 | `hold` | Seconds held at full weight before the exit begins. |
 | `sustain` | Hold the pose until something else is asked for, instead of running out. |
@@ -66,7 +66,7 @@ frames:
 
 ### Directions, not positions
 
-`arms` names the four links shoulder to hand as directions in **character space**: x outward from the midline, y up, z forward. They are normalised on the way in, so their length does not matter and only their bearing does. `palm` is which way the palm faces, and it is worth stating, because aiming the hand only says where the fingers point and the roll about that axis is otherwise incidental.
+`arms` names the four links shoulder to hand as directions in **character space**: x outward from the midline, y up, z forward. Each direction must have at least one nonzero component. Directions are normalised before interpolation, so their length does not matter and only their bearing does. `palm` is which way the palm faces, and it is worth stating, because aiming the hand only says where the fingers point and the roll about that axis is otherwise incidental.
 
 `fingers` is curl per finger, 0 straight and 1 fully closed. `spine` is additive offsets in radians per slot: `hips`, `spine`, `chest`, `neck`, `head`.
 
@@ -74,7 +74,7 @@ Sides are written out. The built-in table authors one pose and mirrors it onto w
 
 ### Omitted fields are unstated, not zero
 
-Every field is optional, and one that a keyframe leaves out is not "back to rest": it is unstated, and whichever neighbouring keyframe does state it is used unchanged. That is what lets a motion move the arms over four keyframes while stating the spine once. Fading toward a value nobody wrote down produces movement nobody authored.
+Each arm direction, palm direction, twist, finger curl and spine slot has its own keyframes. Values interpolate between the nearest keyframes that specify that channel; omitted fields do not reset it. Before the first and after the last specified value, that value is held. A channel specified once stays constant throughout the motion, so the arms can move over four keyframes while the spine is specified once.
 
 ### What the format does not support
 

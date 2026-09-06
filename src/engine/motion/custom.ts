@@ -104,6 +104,31 @@ const FINGER_NAMES: FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'
 const SPINE_SLOTS: SpineSlot[] = ['hips', 'spine', 'chest', 'neck', 'head'];
 const SIDES: Side[] = ['L', 'R'];
 
+/** One authored value and the time at which it applies. */
+interface Sample<T> {
+  at: number;
+  value: T;
+}
+
+type DirectionTrack = Sample<THREE.Vector3>[];
+type ScalarTrack = Sample<number>[];
+type TupleTrack = Sample<Vec3Tuple>[];
+type DirectionSlot = ArmSlot | 'palm';
+
+interface ArmTracks {
+  directions: Partial<Record<DirectionSlot, DirectionTrack>>;
+  twist?: ScalarTrack;
+  stated: boolean;
+}
+
+interface MotionTracks {
+  arms: Record<Side, ArmTracks>;
+  fingers: Record<Side, Partial<Record<FingerName, ScalarTrack>>>;
+  fingersStated: Record<Side, boolean>;
+  spine: Partial<Record<SpineSlot, TupleTrack>>;
+  spineStated: boolean;
+}
+
 /** Authored as a tuple, consumed as a normalised direction. */
 const dir = (v: Vec3Tuple): THREE.Vector3 => new THREE.Vector3(v[0], v[1], v[2]).normalize();
 
@@ -112,14 +137,18 @@ const mix = (a: number, b: number, u: number): number => a + (b - a) * u;
 /**
  * Between two directions, staying a direction.
  *
- * Normalising a component-wise blend rather than slerping: the two are visibly
- * the same below a right angle, which is as far apart as two keyframes of one
- * limb ever are, and this cannot produce a zero-length result for the pair that
- * are exactly opposed — it produces one of them, which is wrong but is still a
- * direction.
+ * Normalise each endpoint before blending rather than slerping: the two are
+ * visibly the same below a right angle, which is as far apart as two keyframes
+ * of one limb ever are. At the exact midpoint of an opposed pair the component
+ * blend cancels; keep the first endpoint there, which is wrong but is still a
+ * deterministic direction rather than a zero vector.
  */
-const mixDir = (a: Vec3Tuple, b: Vec3Tuple, u: number): THREE.Vector3 =>
-  dir([mix(a[0], b[0], u), mix(a[1], b[1], u), mix(a[2], b[2], u)]);
+const mixDir = (a: THREE.Vector3, b: THREE.Vector3, u: number): THREE.Vector3 => {
+  const from = a.clone().normalize();
+  const to = b.clone().normalize();
+  const blended = from.clone().lerp(to, u);
+  return blended.lengthSq() > 0 ? blended.normalize() : from.lengthSq() > 0 ? from : to;
+};
 
 const mixTuple = (a: Vec3Tuple, b: Vec3Tuple, u: number): Vec3Tuple => [
   mix(a[0], b[0], u),
@@ -127,72 +156,133 @@ const mixTuple = (a: Vec3Tuple, b: Vec3Tuple, u: number): Vec3Tuple => [
   mix(a[2], b[2], u),
 ];
 
+function addSample<K extends string, T>(
+  tracks: Partial<Record<K, Sample<T>[]>>,
+  key: K,
+  sample: Sample<T>,
+): void {
+  const track = tracks[key];
+  if (track) track.push(sample);
+  else tracks[key] = [sample];
+}
+
 /** How long the keyframes run, which is where the last one sits. */
 const span = (frames: MotionFrame[]): number => frames[frames.length - 1].at;
 
 /**
- * The two frames `t` falls between, and how far between them it is.
+ * Sample one channel's independent track.
  *
- * Linear rather than a search: a motion is a handful of keyframes and this runs
- * once a frame, so the loop is cheaper than the arithmetic to avoid it.
+ * A motion is a handful of keyframes and this runs once per channel per frame,
+ * so the loop is cheaper than the arithmetic to avoid it. Values outside the
+ * channel's own authored range clamp to its first or last sample.
  */
-function bracket(frames: MotionFrame[], t: number): [MotionFrame, MotionFrame, number] {
-  for (let i = 1; i < frames.length; i += 1) {
-    if (t > frames[i].at) continue;
-    const a = frames[i - 1];
-    const b = frames[i];
+function sampleTrack<T>(
+  track: Sample<T>[] | undefined,
+  t: number,
+  interpolate: (a: T, b: T, u: number) => T,
+  copy: (value: T) => T = (value) => value,
+): T | undefined {
+  if (!track) return undefined;
+  const first = track[0];
+  if (t <= first.at) return copy(first.value);
+  for (let i = 1; i < track.length; i += 1) {
+    const b = track[i];
+    if (t > b.at) continue;
+    const a = track[i - 1];
     const width = b.at - a.at;
-    return [a, b, width > 0 ? (t - a.at) / width : 1];
+    return width > 0 ? interpolate(a.value, b.value, (t - a.at) / width) : copy(b.value);
   }
-  const last = frames[frames.length - 1];
-  return [last, last, 1];
+  return copy(track[track.length - 1].value);
 }
 
 /**
- * Build one arm, or nothing if neither frame states it.
+ * Compile every authored channel independently of the other channels.
  *
- * A slot only one of the two frames states is taken from that one rather than
- * being faded in from a rest pose that was never written down. Fading toward an
- * unstated value is the interpretation that produces motion nobody authored.
+ * An operator can state a spine once while moving an arm over several frames,
+ * or leave one finger out of an otherwise complete hand. Each channel therefore
+ * gets its own samples rather than inheriting the global frame bracket.
  */
-function armAt(
-  a: MotionArm | undefined,
-  b: MotionArm | undefined,
-  u: number,
-): ArmDirections | null {
-  if (!(a || b)) return null;
-  const out: ArmDirections = {};
-  for (const slot of ARM_SLOTS) {
-    const from = a?.[slot];
-    const to = b?.[slot];
-    if (from && to) out[slot] = mixDir(from, to, u);
-    else if (from || to) out[slot] = dir((from ?? to) as Vec3Tuple);
+function compileTracks(frames: MotionFrame[]): MotionTracks {
+  const arms: Record<Side, ArmTracks> = {
+    L: { directions: {}, stated: false },
+    R: { directions: {}, stated: false },
+  };
+  const fingers: Record<Side, Partial<Record<FingerName, ScalarTrack>>> = {
+    L: {},
+    R: {},
+  };
+  const fingersStated: Record<Side, boolean> = { L: false, R: false };
+  const spine: Partial<Record<SpineSlot, TupleTrack>> = {};
+  let spineStated = false;
+
+  for (const frame of frames) {
+    for (const side of SIDES) {
+      const arm = frame.arms?.[side];
+      if (arm !== undefined) {
+        arms[side].stated = true;
+        for (const slot of ARM_SLOTS) {
+          const value = arm[slot];
+          if (value === undefined) continue;
+          addSample(arms[side].directions, slot, { at: frame.at, value: dir(value) });
+        }
+        if (arm.palm !== undefined) {
+          addSample(arms[side].directions, 'palm', { at: frame.at, value: dir(arm.palm) });
+        }
+        if (arm.twist !== undefined) {
+          if (arms[side].twist) arms[side].twist.push({ at: frame.at, value: arm.twist });
+          else arms[side].twist = [{ at: frame.at, value: arm.twist }];
+        }
+      }
+
+      const hand = frame.fingers?.[side];
+      if (hand !== undefined) {
+        fingersStated[side] = true;
+        for (const name of FINGER_NAMES) {
+          const value = hand[name];
+          if (value === undefined) continue;
+          addSample(fingers[side], name, { at: frame.at, value });
+        }
+      }
+    }
+
+    if (frame.spine !== undefined) {
+      spineStated = true;
+      for (const slot of SPINE_SLOTS) {
+        const value = frame.spine[slot];
+        if (value === undefined) continue;
+        addSample(spine, slot, { at: frame.at, value });
+      }
+    }
   }
-  const palmFrom = a?.palm;
-  const palmTo = b?.palm;
-  if (palmFrom && palmTo) out.palm = mixDir(palmFrom, palmTo, u);
-  else if (palmFrom || palmTo) out.palm = dir((palmFrom ?? palmTo) as Vec3Tuple);
-  const twistFrom = a?.twist;
-  const twistTo = b?.twist;
-  if (twistFrom !== undefined && twistTo !== undefined) out.twist = mix(twistFrom, twistTo, u);
-  else if (twistFrom !== undefined || twistTo !== undefined)
-    out.twist = (twistFrom ?? twistTo) as number;
-  return out;
+
+  return { arms, fingers, fingersStated, spine, spineStated };
 }
 
 function fingersAt(
-  a: FingerSpec | undefined,
-  b: FingerSpec | undefined,
-  u: number,
+  tracks: Partial<Record<FingerName, ScalarTrack>>,
+  stated: boolean,
+  t: number,
 ): FingerSpec | null {
-  if (!(a || b)) return null;
+  if (!stated) return null;
   const out: FingerSpec = {};
   for (const name of FINGER_NAMES) {
-    const from = a?.[name];
-    const to = b?.[name];
-    if (from !== undefined && to !== undefined) out[name] = mix(from, to, u);
-    else if (from !== undefined || to !== undefined) out[name] = (from ?? to) as number;
+    const value = sampleTrack(tracks[name], t, mix);
+    if (value !== undefined) out[name] = value;
   }
+  return out;
+}
+
+function armAt(tracks: ArmTracks, t: number): ArmDirections | null {
+  if (!tracks.stated) return null;
+  const out: ArmDirections = {};
+  for (const slot of ARM_SLOTS) {
+    const value = sampleTrack(tracks.directions[slot], t, mixDir, (item) => item.clone());
+    if (value !== undefined) out[slot] = value;
+  }
+  const palm = sampleTrack(tracks.directions.palm, t, mixDir, (item) => item.clone());
+  if (palm !== undefined) out.palm = palm;
+  const twist = sampleTrack(tracks.twist, t, mix);
+  if (twist !== undefined) out.twist = twist;
   return out;
 }
 
@@ -205,17 +295,15 @@ function fingersAt(
  * done smaller. Spine offsets are angles and scale correctly.
  */
 function spineAt(
-  a: SpineOffsets | undefined,
-  b: SpineOffsets | undefined,
-  u: number,
+  tracks: Partial<Record<SpineSlot, TupleTrack>>,
+  stated: boolean,
+  t: number,
   scale: number,
 ): SpineOffsets | null {
-  if (!(a || b)) return null;
+  if (!stated) return null;
   const out: SpineOffsets = {};
   for (const slot of SPINE_SLOTS) {
-    const from = a?.[slot];
-    const to = b?.[slot];
-    const value = from && to ? mixTuple(from, to, u) : ((from ?? to) as Vec3Tuple | undefined);
+    const value = sampleTrack(tracks[slot], t, mixTuple);
     if (value) out[slot] = [value[0] * scale, value[1] * scale, value[2] * scale];
   }
   return out;
@@ -232,6 +320,7 @@ function spineAt(
 export function compileMotion(motion: MotionDef): GestureDef {
   const frames = motion.frames;
   const duration = span(frames);
+  const tracks = compileTracks(frames);
   return {
     label: motion.label,
     group: motion.group,
@@ -242,16 +331,15 @@ export function compileMotion(motion: MotionDef): GestureDef {
       const scaled = t * v.rate;
       const at =
         motion.loop && duration > 0 ? scaled % duration : Math.min(Math.max(scaled, 0), duration);
-      const [a, b, u] = bracket(frames, at);
       const arms: NonNullable<Pose['arms']> = {};
       const fingers: NonNullable<Pose['fingers']> = {};
       for (const side of SIDES) {
-        const arm = armAt(a.arms?.[side], b.arms?.[side], u);
+        const arm = armAt(tracks.arms[side], at);
         if (arm) arms[side] = arm;
-        const curl = fingersAt(a.fingers?.[side], b.fingers?.[side], u);
+        const curl = fingersAt(tracks.fingers[side], tracks.fingersStated[side], at);
         if (curl) fingers[side] = curl;
       }
-      const spine = spineAt(a.spine, b.spine, u, v.scale);
+      const spine = spineAt(tracks.spine, tracks.spineStated, at, v.scale);
       // Each half is left off entirely when the motion states none of it. An
       // empty `arms: {}` is not the same as no arms downstream: the compose
       // step reads the key rather than its contents.

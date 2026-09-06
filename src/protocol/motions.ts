@@ -22,6 +22,9 @@ import { gestureGroupSchema } from './messages/session';
 
 /** Character space: x outward from the midline, y up, z forward. */
 const vec3 = z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]);
+const direction = vec3.refine((value) => value.some((component) => component !== 0), {
+  message: 'a direction must have a nonzero component',
+});
 
 type _GestureGroupsMatchEngine = Expect<Equals<z.infer<typeof gestureGroupSchema>, GestureGroup>>;
 
@@ -29,11 +32,11 @@ const spineSlotSchema = z.enum(['hips', 'spine', 'chest', 'neck', 'head']);
 type _SpineSlotsMatchEngine = Expect<Equals<z.infer<typeof spineSlotSchema>, SpineSlot>>;
 
 export const motionArmSchema = z.object({
-  shoulder: vec3.optional(),
-  upperArm: vec3.optional(),
-  lowerArm: vec3.optional(),
-  hand: vec3.optional(),
-  palm: vec3.optional(),
+  shoulder: direction.optional(),
+  upperArm: direction.optional(),
+  lowerArm: direction.optional(),
+  hand: direction.optional(),
+  palm: direction.optional(),
   /** Radians, like every other angle in the engine and unlike `point` on the wire. */
   twist: z.number().finite().optional(),
 });
