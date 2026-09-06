@@ -7,6 +7,9 @@ initialising the model.
 """
 
 import ast
+import argparse
+import contextlib
+import io
 import os
 import socket
 import stat
@@ -19,7 +22,7 @@ from pathlib import Path
 def load_boundary_functions() -> types.SimpleNamespace:
     source_path = Path(__file__).with_name("server.py")
     tree = ast.parse(source_path.read_text())
-    wanted = {"_socket_parent", "clear_stale", "env_port", "listen"}
+    wanted = {"_socket_parent", "clear_stale", "listen", "endpoint", "argument_parser"}
     functions = [
         node
         for node in tree.body
@@ -27,12 +30,16 @@ def load_boundary_functions() -> types.SimpleNamespace:
         and node.name in wanted
     ]
     namespace = {
+        "__doc__": "",
+        "argparse": argparse,
         "Path": Path,
         "errno": __import__("errno"),
         "os": os,
         "socket": socket,
         "stat": stat,
         "SystemExit": SystemExit,
+        "SOCKET_DIR": Path("/default/.run"),
+        "SOCKET_NAME": "speech.sock",
         "SOCKET_PATH_MAX": 100,
     }
     module = ast.Module(body=functions, type_ignores=[])
@@ -44,35 +51,36 @@ BOUNDARY = load_boundary_functions()
 
 
 class ServerBoundaryTests(unittest.TestCase):
-    def test_env_port_requires_ascii_decimal_digits_for_the_whole_value(self):
-        cases = {
-            "1": 1,
-            "00001": 1,
-            "8770": 8770,
-            "65535": 65535,
-            "0": None,
-            "65536": None,
-            "8770x": None,
-            "1e3": None,
-            " 8770": None,
-            "8770 ": None,
-            "+8770": None,
-            "-8770": None,
-            "": None,
-            "0" * 5000 + "1": 1,
-            "1" * 5001: None,
-        }
-        previous = os.environ.get("HASHIDATE_TTS_PORT")
+    def test_bundled_parser_rejects_tcp_port(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                BOUNDARY.argument_parser().parse_args(["--port", "8770"])
+
+    def test_port_environment_values_cannot_select_tcp(self):
+        previous_socket = os.environ.get("HASHIDATE_TTS_SOCKET")
+        previous_port = os.environ.get("HASHIDATE_TTS_PORT")
+        previous_generic_port = os.environ.get("PORT")
         try:
-            for raw, expected in cases.items():
-                with self.subTest(raw=raw):
-                    os.environ["HASHIDATE_TTS_PORT"] = raw
-                    self.assertEqual(BOUNDARY.env_port(), expected)
+            os.environ.pop("HASHIDATE_TTS_SOCKET", None)
+            os.environ["HASHIDATE_TTS_PORT"] = "8770"
+            os.environ["PORT"] = "8771"
+            self.assertEqual(
+                BOUNDARY.endpoint(argparse.Namespace(uds=None)),
+                Path("/default/.run/speech.sock"),
+            )
         finally:
-            if previous is None:
+            if previous_socket is None:
+                os.environ.pop("HASHIDATE_TTS_SOCKET", None)
+            else:
+                os.environ["HASHIDATE_TTS_SOCKET"] = previous_socket
+            if previous_port is None:
                 os.environ.pop("HASHIDATE_TTS_PORT", None)
             else:
-                os.environ["HASHIDATE_TTS_PORT"] = previous
+                os.environ["HASHIDATE_TTS_PORT"] = previous_port
+            if previous_generic_port is None:
+                os.environ.pop("PORT", None)
+            else:
+                os.environ["PORT"] = previous_generic_port
 
     def test_clear_stale_only_removes_an_actual_stale_socket(self):
         with tempfile.TemporaryDirectory(prefix="hashidate-tts-") as root:

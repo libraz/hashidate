@@ -11,7 +11,7 @@ A clone of this repository is the runtime and nothing else. Read this section be
 | Node 22 and Yarn 4 | Pinned in `mise.toml`. `mise install` installs both. |
 | **An avatar** | Required, and **not included.** The descriptors in `src/avatars` point at `public/models/<id>.glb`, which is git-ignored. With no GLB there, the renderer comes up with nothing to draw. |
 
-The two avatars this project was built against are purchased VRChat models and cannot be redistributed here, so supply your own: put a rigged humanoid model through `make glb` and add one descriptor file to `src/avatars`. That is the whole of adding an avatar — see [Avatars](avatars.md).
+The two avatars this project was built against are purchased VRChat models and cannot be redistributed here, so supply your own: put a rigged humanoid model through `make glb` and add a descriptor file to `src/avatars`, then import it and add it to the `AVATARS` array in `src/avatars/index.ts`. See [Avatars](avatars.md).
 
 ### To produce audio
 
@@ -104,9 +104,9 @@ Five environment variables, read by whichever process needs them:
 |---|---|---|
 | `HASHIDATE_CONTROL_PORT` | the native shell, `make dev`, `make stop` | The control port, where `--port` is not available |
 | `HASHIDATE_VOICE_DIR` | `make voice`, the sidecar | Moves the reference clips and their encoded latents, including out of the repository |
-| `HASHIDATE_TTS_SOCKET` | the control server, the sidecar | Where the voice answers. Both resolve it independently; neither is told by the other |
-| `HASHIDATE_TTS_PORT` | the control server, the sidecar | Points the proxy at `127.0.0.1` on a port instead of a socket, for a stand-in written as an ordinary HTTP service. See [Speech](speech.md#using-a-different-voice) |
-| `HASHIDATE_LOCALE` | everything | Pins `en` or `ja` for a run, between the built-in default and what the environment says |
+| `HASHIDATE_TTS_SOCKET` | the control server, the native shell, the sidecar | Where the voice answers. Each resolves it independently |
+| `HASHIDATE_TTS_PORT` | the control server, the native shell | Points the proxy at `127.0.0.1` on a port instead of a socket, for a stand-in written as an ordinary HTTP service. See [Speech](speech.md#using-a-different-voice) |
+| `HASHIDATE_LOCALE` | Node processes, including the CLI and control server | Selects `en` or `ja`. Browser pages use their saved language selection or browser language instead |
 
 Everything else about a broadcast is either standing state on the server — the avatar, the costume, the shot, the set, the acoustic, the tuning — or a property of one browser source, on that source's URL. See [The renderer's URL](surfaces.md#the-renderers-url) and [The standing state](surfaces.md#the-standing-state).
 
@@ -124,7 +124,7 @@ The renderer is on `/`, and it opens as the character and nothing else — no co
 http://127.0.0.1:8765/?size=1920x1080&backdrop=night
 ```
 
-Add `?transparent=1` to drop the background and let OBS composite the character over a game capture instead. See [The stage](stage.md).
+For a transparent background over a game capture, use `http://127.0.0.1:8765/?size=1920x1080&transparent=1`. Leave out `backdrop`, which takes precedence over transparency. See [The stage](stage.md).
 
 The panel composes that address above the tabs: pick the size, the set, the document and where the character stands, then copy the result.
 

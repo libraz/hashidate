@@ -24,7 +24,7 @@ It is a convenience rather than a fourth surface. Everything inside it is the sa
 Three processes, in this order.
 
 1. **The control server**, on `127.0.0.1:8765`, started with this checkout's `dist/` and `show/` directories on its command line.
-2. **The speech sidecar**, only when `tools/tts/.venv/bin/python` exists and nothing is already answering on the socket. It is started and never waited on, because loading the model takes the better part of a minute and the viewer and the control API work without a voice.
+2. **The speech sidecar**, only when `tools/tts/.venv/bin/python` exists and nothing is already answering on the socket. It is started and never waited on, because loading the model takes the better part of a minute and the viewer and the control API work without a voice. A TCP replacement selected by `HASHIDATE_TTS_PORT` must be started separately.
 3. **The two windows**, on `/panel/` and `/monitor/`.
 
 A control server **already running on this checkout is used rather than replaced**, so a `yarn dev` left up in a terminal is not taken down, and it is not stopped on quit either: the shell only stops a child it started itself.

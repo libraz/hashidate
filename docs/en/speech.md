@@ -12,6 +12,8 @@ make tts           # or run the voice on its own
 
 The clips are the one part that cannot be automated: they are recordings of whoever the voice is supposed to be, and no other recordings substitute. A minute or two of clean single-speaker speech is enough, because the model conditions on a reference rather than training on a corpus. `make tts-vet` reports on a set without building anything, and `HASHIDATE_VOICE_DIR` moves the whole directory, including out of the repository.
 
+After adding or removing reference clips, run `make tts-refs` to replace the encoded set, then restart the sidecar. A failed rebuild leaves the previous complete set available; removed clips stop contributing after a successful rebuild and restart.
+
 The sidecar runs Irodori-TTS — the `Aratako/Irodori-TTS-v4.1-Small` checkpoint over the `Aratako/Semantic-DACVAE-Japanese-32dim` codec, installed from upstream at a pinned commit so that a voice comes out the same on a later run. Both are fetched from Hugging Face the first time the sidecar starts. None of that is configurable: what gets swapped is the sidecar rather than the model inside it — see [Using a different voice](#using-a-different-voice).
 
 The sidecar answers on a UNIX socket at `tools/tts/.run/speech.sock`, in a directory it creates with mode `0700`, and opens no port at all. Its only caller is the control server on this machine — see [Using a different voice](#using-a-different-voice) — so the voice is reachable by this user and nobody else, which is a stricter form of the rule the rest of the runtime follows by binding loopback.
@@ -77,7 +79,7 @@ The contract is two routes:
 
 Anything that answers those can stand in. The `/speak` contract requires `text` only; `reading` is not part of it and is not sent. `HASHIDATE_TTS_SOCKET` moves the target, which is how to run a second sidecar beside the first while comparing voices, and `HASHIDATE_TTS_PORT` points the proxy at `127.0.0.1` on that port instead, which a stand-in written as an ordinary HTTP service will need. Nothing above the proxy depends on which of the two answered.
 
-Both variables are read by the control server and by `tools/tts/server.py`, in that order of precedence and without either being told by the other: neither has a way to ask, so the socket has to be somewhere both can resolve alone.
+`HASHIDATE_TTS_SOCKET` is read by both the control server and `tools/tts/server.py`. The control server uses `HASHIDATE_TTS_PORT` only when no socket override is set. The bundled sidecar always uses a private UNIX socket and accepts no `--port` option. Start a TCP replacement service separately; the native shell does not start the bundled sidecar for a TCP endpoint.
 
 What the renderer does with the answer is the same either way: it measures the buffer, stretches the viseme track onto the real length, and drives the mouth off the measurement. A synthesiser that returns a plain WAV gets all of that.
 
@@ -85,7 +87,7 @@ What the renderer does with the answer is the same either way: it measures the b
 
 The engine holds no audio code. It states what a spoken line is, and the viewer, which has the `AudioContext`, provides one. The sidecar is a PyTorch codebase on its own Python 3.11 environment, reached over HTTP and never imported.
 
-The viewer reaches it through `POST /api/speech` rather than directly: the sidecar sends no CORS header, so a page served from this origin cannot reach that one. The two ways to make a direct call work would be to add a CORS header to the voice or to move it off loopback, and both are licensing decisions. Proxying is neither.
+The viewer calls `POST /api/speech` on its own origin. The control server forwards the request over the private UNIX socket, which browsers cannot open directly. Neither the viewer nor the bundled sidecar sends a CORS header.
 
 ## Next
 

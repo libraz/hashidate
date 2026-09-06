@@ -58,12 +58,21 @@ export type ControlProbe =
 
 /** Whether two servers were started on the same renderer and show roots. */
 function sameRoots(found: ServerRoots | undefined, expected: ServerRoots): boolean {
+  const keys: readonly (keyof ServerRoots)[] = [
+    'document',
+    'slides',
+    'scripts',
+    'motions',
+    'recordings',
+    'bgm',
+  ];
   return (
     found !== undefined &&
-    found.document === expected.document &&
-    found.slides === expected.slides &&
-    found.motions === expected.motions &&
-    found.bgm === expected.bgm
+    keys.every((key) => {
+      const foundHasKey = Object.hasOwn(found, key);
+      const expectedHasKey = Object.hasOwn(expected, key);
+      return foundHasKey === expectedHasKey && (!foundHasKey || found[key] === expected[key]);
+    })
   );
 }
 
@@ -329,10 +338,18 @@ export class ControlProcess {
         windowsHide: true,
       });
     } catch (error) {
-      if (await controlAPIReady(this.port, { fetch: this.fetch, timeoutMs: this.probeTimeoutMs })) {
+      const raced = await probeControlAPI(this.port, {
+        fetch: this.fetch,
+        timeoutMs: this.probeTimeoutMs,
+        roots: this.roots,
+      });
+      if (raced.kind === 'ours') {
         this.owned = false;
         this.child = null;
         return;
+      }
+      if (raced.kind === 'foreign' && this.roots !== null) {
+        throw new Error(foreignServerMessage(this.port, raced.roots, this.roots));
       }
       throw new Error(`could not start control server: ${reason(error)}`);
     } finally {
@@ -451,6 +468,10 @@ export class TtsProcess {
 
   /** Start only when the checkout has the private Python environment. */
   async start(): Promise<void> {
+    // A port endpoint is an external synthesiser supplied by the operator.
+    // The bundled cloned voice is UNIX-only and must never be started with a
+    // TCP listener just because the proxy points at one.
+    if (this.endpoint.kind === 'port') return;
     if (!(await executable(this.paths.ttsPython))) return;
     if (await ttsAPIReady(this.endpoint, this.probeTimeoutMs)) return;
     // Model loading takes the better part of a minute, so this one is started

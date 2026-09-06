@@ -16,10 +16,6 @@ here; the socket sits in a directory this user owns, mode 0700, so nobody else
 can reach the path at all. Putting the voice back on a port and adding a CORS
 header to it is a licensing decision before it is a code change.
 
-`--port` is kept for the other direction: a different synthesiser standing in
-for this one may well be an HTTP service, so the control server can be pointed
-at a port. Nothing about this one has to be.
-
 The model is loaded once and stays resident: loading costs about sixteen
 seconds, and a process that pays that per line is not a voice, it is a batch
 job. Generation is not streamed — this architecture produces a whole utterance
@@ -27,7 +23,7 @@ at once — so the time to the first sample is the time to the last one. At the
 default step count that is roughly half a second for a normal line, which is
 why the caller is expected to send one line at a time rather than a paragraph.
 
-usage: .venv/bin/python server.py [--uds .run/speech.sock] [--port 8770]
+usage: .venv/bin/python server.py [--uds .run/speech.sock]
 """
 
 import argparse
@@ -59,9 +55,6 @@ from config import (
 )
 import watermark
 from repair import clean_take, close_tail, trim
-
-BIND = "127.0.0.1"  # only reached with --port; do not change. See the docstring.
-DEFAULT_PORT = 8770
 
 # Where the socket goes, matching `SOCKET_DIR`/`SOCKET_NAME` in
 # src/speech/sidecar.ts. Neither side is told by the other: the control server
@@ -230,39 +223,21 @@ def speak(req: SpeakRequest) -> Response:
     )
 
 
-def env_port() -> int | None:
-    """A port from the environment, or None for anything that is not one."""
-    raw = os.environ.get("HASHIDATE_TTS_PORT", "")
-    if not raw or any(char not in "0123456789" for char in raw):
-        return None
-    significant = raw.lstrip("0") or "0"
-    if len(significant) > 5:
-        return None
-    try:
-        port = int(significant)
-    except ValueError:
-        return None
-    return port if 1 <= port <= 65535 else None
-
-
-def endpoint(args: argparse.Namespace) -> Path | int:
+def endpoint(args: argparse.Namespace) -> Path:
     """
-    Where to bind: a socket path, or a port when one was asked for.
+    Where to bind the private socket.
 
-    The same order as `speechEndpoint` in src/speech/sidecar.ts, and it has to
-    stay the same order. Nothing tells this process where the control server is
-    looking, so agreement rests entirely on both of them reading the two
-    variables the same way.
+    The same order as `speechEndpoint` in src/speech/sidecar.ts for the bundled
+    sidecar. The control server may still point at an external HTTP synthesiser,
+    but this process never opens a TCP listener, even when a port variable is
+    present in its environment.
     """
-    if args.port is not None:
-        return args.port
     if args.uds is not None:
         return args.uds.expanduser().resolve()
     override = os.environ.get("HASHIDATE_TTS_SOCKET", "")
     if override:
         return Path(override).expanduser().resolve()
-    port = env_port()
-    return port if port is not None else SOCKET_DIR / SOCKET_NAME
+    return SOCKET_DIR / SOCKET_NAME
 
 
 def clear_stale(path: Path) -> None:
@@ -396,20 +371,14 @@ def listen(path: Path) -> socket.socket:
     return sock
 
 
-def main() -> None:
+def argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--uds", type=Path, default=None, help="socket path to bind")
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=None,
-        help=f"bind {BIND} on this port instead of a socket (default {DEFAULT_PORT})",
-    )
-    where = endpoint(parser.parse_args())
+    return parser
 
-    if isinstance(where, int):
-        uvicorn.run(app, host=BIND, port=where, log_level="warning")
-        return
+
+def main() -> None:
+    where = endpoint(argument_parser().parse_args())
 
     sock = listen(where)
     print(f"speech listening at {where}", flush=True)

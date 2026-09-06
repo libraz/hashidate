@@ -227,7 +227,16 @@ describe('what is on the control port', () => {
   });
 
   it('is foreign when one of the compared directories differs', async () => {
-    const fetcher = answering(snapshot({ ...OURS, slides: '/elsewhere/show/slides' }));
+    const changed: (keyof ServerRoots)[] = ['slides', 'scripts', 'motions', 'recordings', 'bgm'];
+    for (const key of changed) {
+      const fetcher = answering(snapshot({ ...OURS, [key]: `/elsewhere/show/${key}` }));
+      expect((await probeControlAPI(8765, { fetch: fetcher, roots: OURS })).kind).toBe('foreign');
+    }
+  });
+
+  it('treats a missing optional root as foreign when this checkout has it', async () => {
+    const { bgm: _bgm, ...withoutBgm } = OURS;
+    const fetcher = answering(snapshot(withoutBgm));
     expect((await probeControlAPI(8765, { fetch: fetcher, roots: OURS })).kind).toBe('foreign');
   });
 });
@@ -332,6 +341,20 @@ describe('starting the control server', () => {
     expect(control.ownsChild).toBe(true);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.command).toBe('/usr/bin/node');
+  });
+
+  it('rejects a foreign server that appears when synchronous spawn throws', async () => {
+    const fetcher = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('port was free during the first probe'))
+      .mockResolvedValueOnce({ ok: true, json: async () => snapshot(THEIRS) } as Response);
+    const spawn = () => {
+      throw new Error('synthetic spawn failure');
+    };
+    const control = new ControlProcess(options({ spawn, fetch: fetcher as typeof fetch }));
+
+    await expect(control.start()).rejects.toThrow(/elsewhere\/hashidate\/dist/);
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it('runs the server itself rather than under a launcher that outlives it', async () => {
@@ -475,6 +498,40 @@ describe('the optional speech sidecar', () => {
 
     expect(calls).toEqual([]);
     expect(tts.available).toBe(false);
+  });
+
+  it('never starts the bundled sidecar for an external TCP endpoint', async () => {
+    const { calls, spawn } = spawner();
+    const tts = new TtsProcess(
+      options({
+        endpoint: { kind: 'port', port: 8770 },
+        spawn,
+      }),
+    );
+
+    await tts.start();
+
+    expect(calls).toEqual([]);
+    expect(tts.available).toBe(false);
+  });
+
+  it('starts the bundled sidecar only with its UNIX socket endpoint', async () => {
+    const fixture = await makeTtsFixture('setInterval(() => {}, 60_000);');
+    const { calls, spawn } = spawner();
+    const endpoint = fixture.options().endpoint;
+    if (endpoint.kind !== 'socket') throw new Error('fixture endpoint must be a socket');
+    const tts = new TtsProcess(fixture.options({ spawn }));
+
+    try {
+      await tts.start();
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.args).toEqual(['server.py', '--uds', endpoint.path]);
+      expect(calls[0]?.options.env?.HASHIDATE_TTS_SOCKET).toBe(endpoint.path);
+    } finally {
+      await tts.stop();
+      await rm(fixture.root, { force: true, recursive: true });
+    }
   });
 
   it('does not spawn after a quit reaches the pre-spawn guard', async () => {
