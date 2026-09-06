@@ -36,23 +36,20 @@ import type { Command } from '../protocol';
  * persists because it does not end with the sentence, and a standing state that
  * disagreed with the protocol about a lifetime would be a second opinion.
  *
- * ## A relative page turn is resolved here, not looked up
+ * ## A relative page turn is resolved here
  *
  * `slide { by: 1 }` says "the page after the one that is showing", which is a
- * decision whose meaning depends on an observation — and observations are
- * exactly what this file refuses to keep. Reading the page out of the renderer's
- * report to resolve it would import the whole problem the section above rejects:
- * a second renderer on a different page would turn the first one's.
+ * decision whose meaning depends on an observation. The optional page-count
+ * resolver supplies only the document's fixed upper bound; it never reads a
+ * renderer's current page, so a second renderer on a different page cannot turn
+ * the first one's.
  *
- * So it is resolved from the commands alone. A counter starts at the page a
- * `deck` opened on and moves by every `slide` that passed through, and what is
- * stored is always the absolute `{ cmd: 'slide', page: n }`. The counter never
- * sees the document, so it does not know where the end is — but it does not need
- * to: the renderer clamps a page past the end and a renderer joining late clamps
- * the same replayed number against the same document, so the two land on the
- * same page. Clamping is the only non-linearity between a run of turns and the
- * page they arrive at, and it is applied by both ends rather than by one. The
- * floor at 1 is here for the same reason, on the same argument.
+ * So it is resolved from the commands alone whenever the deck has not been
+ * parsed yet. A counter starts at the page a `deck` opened on and moves by every
+ * `slide` that passed through, and what is stored is always the absolute
+ * `{ cmd: 'slide', page: n }`. When the server knows the deck's page count, it
+ * clamps before and after a relative turn; until then the renderer still clamps
+ * the replayed number against its document. The floor at 1 is always applied.
  *
  * The tempting simplification is to store the last `slide` command as sent and
  * let the renderer add up the relative ones. It does not work: a renderer that
@@ -119,6 +116,9 @@ const ORDER = [
 /** The page a document opens on, and the floor a page counter is clamped at. */
 const FIRST_PAGE = 1;
 
+/** Resolves the current page count for a deck, when the server knows it. */
+export type PageCountResolver = (deckId: string) => number | undefined;
+
 /** Whether `value` is an object literal, for the merge below. Arrays are not. */
 function isPlain(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -146,6 +146,8 @@ function fold<T extends object>(base: T | undefined, next: T | undefined): T | u
 }
 
 export class Standing {
+  constructor(private readonly pageCount?: PageCountResolver) {}
+
   /** One per verb, already folded. `wear` is not here; see below. */
   private readonly last = new Map<Persistent['cmd'], Persistent>();
   /**
@@ -163,10 +165,12 @@ export class Standing {
    * Which page of the document is up, counted rather than observed.
    *
    * See the module docstring: this is what makes a relative turn replayable, and
-   * it is fed only by the commands that went out. It is meaningless with no
-   * `deck` set and is not consulted then.
+   * it is fed by the commands that went out. A page-count resolver can add the
+   * current deck's upper bound without making that lookup part of the state.
    */
   private page = FIRST_PAGE;
+  /** The document the page counter currently belongs to, or none. */
+  private deckId: string | null = null;
 
   /**
    * Fold one command in. Answers whether it was one of the standing kind, which
@@ -218,16 +222,22 @@ export class Standing {
       // a page of this one — and the stored `slide` goes with it rather than
       // being replayed against a document it was never about.
       case 'deck':
-        this.page = command.page ?? FIRST_PAGE;
+        this.deckId = command.id ?? null;
+        this.page = this.clampPage(command.page ?? FIRST_PAGE);
         this.last.delete('slide');
         this.last.set('deck', command);
         return true;
       // Normalised to an absolute page here and never stored as a relative one.
       // See the module docstring — this is the whole reason the counter exists.
-      case 'slide':
-        this.page = Math.max(FIRST_PAGE, command.page ?? this.page + (command.by ?? 1));
+      case 'slide': {
+        // A document may have become known, or may have been replaced on disk,
+        // since the previous command. Clamp the old value before applying a
+        // relative turn so a stale page count cannot skip past the new end.
+        const base = command.page === undefined ? this.clampPage(this.page) : this.page;
+        this.page = this.clampPage(command.page ?? base + (command.by ?? 1));
         this.last.set('slide', { cmd: 'slide', page: this.page });
         return true;
+      }
       // A different body: the slot names and the garments both belonged to the
       // avatar that is being replaced, so the outfit does not carry over. The
       // tuning does — it is scales and multipliers rather than model data.
@@ -294,6 +304,16 @@ export class Standing {
     if (!command.slot) return;
     this.wardrobe = this.wardrobe.filter((worn) => worn.slot !== command.slot);
     this.wardrobe.push(command);
+  }
+
+  /** Clamp to the first page and, when known, to the current deck's last page. */
+  private clampPage(value: number): number {
+    const lower = Number.isFinite(value) ? Math.max(FIRST_PAGE, Math.trunc(value)) : FIRST_PAGE;
+    if (this.deckId === null || this.pageCount === undefined) return lower;
+    const count = this.pageCount(this.deckId);
+    if (typeof count !== 'number' || !Number.isFinite(count) || count <= 0) return lower;
+    const upper = Math.max(FIRST_PAGE, Math.trunc(count));
+    return Math.min(lower, upper);
   }
 }
 

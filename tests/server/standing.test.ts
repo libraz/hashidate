@@ -350,4 +350,33 @@ describe('turning pages', () => {
     standing.record({ cmd: 'avatar', id: 'other' });
     expect(verbs()).toEqual(['avatar', 'place', 'deck']);
   });
+
+  it('clamps a relative turn against a page count that becomes known', () => {
+    let pages: number | undefined;
+    standing = new Standing((id) => (id === 'intro' ? pages : undefined));
+    standing.record({ cmd: 'deck', id: 'intro', page: 99 });
+    // Before the document is parsed, only the first-page floor is available.
+    expect(slide()).toBeUndefined();
+
+    pages = 4;
+    standing.record({ cmd: 'slide', by: 1 });
+    expect(slide()).toEqual({ cmd: 'slide', page: 4 });
+    standing.record({ cmd: 'slide', by: -1 });
+    expect(slide()).toEqual({ cmd: 'slide', page: 3 });
+  });
+
+  it('clamps both an absolute page and a deck opening page when known', () => {
+    standing = new Standing((id) => (id === 'intro' ? 4 : undefined));
+    standing.record({ cmd: 'deck', id: 'intro', page: 99 });
+    expect(slide()).toBeUndefined();
+    standing.record({ cmd: 'slide', page: 99 });
+    expect(slide()).toEqual({ cmd: 'slide', page: 4 });
+  });
+
+  it('uses only the lower bound for an unknown or empty page count', () => {
+    standing = new Standing(() => 0);
+    standing.record({ cmd: 'deck', id: 'intro', page: 4 });
+    standing.record({ cmd: 'slide', by: -9 });
+    expect(slide()).toEqual({ cmd: 'slide', page: 1 });
+  });
 });
