@@ -1,5 +1,5 @@
 /**
- * The narrated tour: the avatar explaining what is driving it.
+ * The narrated tour: Yoka explaining what is driving her.
  *
  * `src/viewer/demo.ts` is the other kind of demo and answers a different
  * question. It walks the vocabulary — every camera, every performance, every
@@ -49,6 +49,8 @@
  * usage: yarn tsx tools/demo/tour.ts [--base http://127.0.0.1:8765]
  */
 
+import { parseArgs } from 'node:util';
+
 const DEFAULT_BASE = 'http://127.0.0.1:8765';
 
 /** One command, loosely typed: the schemas live in `src/protocol` and validate server-side. */
@@ -92,7 +94,11 @@ const TOUR: Beat[] = [
   // --- who and what ---------------------------------------------------------
   {
     stage: { camera: 'bust', backdrop: 'dusk', room: 'room' },
-    before: [{ cmd: 'idle', on: true }],
+    // The narration and drawn expressions below belong to Yoka.
+    before: [
+      { cmd: 'avatar', id: 'yoka' },
+      { cmd: 'idle', on: true },
+    ],
     say: say(
       '[hello]こんばんは。旅枕ヨカです。[explain]きょうは、わたし自身を動かしている仕組みを、ひととおり説明します。',
     ),
@@ -303,9 +309,8 @@ const wire = (beat: Beat): Command[] =>
   beat.say === undefined ? [] : [beat.stage ? { ...beat.say, stage: beat.stage } : beat.say];
 
 async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
-  const flag = argv.indexOf('--base');
-  const base = flag >= 0 ? argv[flag + 1] : DEFAULT_BASE;
+  const { values } = parseArgs({ options: { base: { type: 'string' } } });
+  const base = (values.base ?? DEFAULT_BASE).replace(/\/+$/, '');
 
   const groups = runs(TOUR);
   console.log(`sending ${TOUR.length} beats to ${base} in ${groups.length} requests`);
