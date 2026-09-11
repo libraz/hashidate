@@ -32,9 +32,19 @@ export interface DrawnShapeSpec {
   label?: (id: string) => string;
 }
 
+/** How a finished drawing shares the face with automatic blink and speech. */
+export interface PresetCompositionSpec {
+  /** Preserve the authored eye drawing while retaining the existing blink state machine. */
+  blink?: 'preserve';
+  /** Authored inverse mouth travel, replacing canonical mouthClose while speech is busy. */
+  speechNeutralizer?: string;
+}
+
 /** Finished whole-face drawings, plus which canonical emotion reaches each. */
 export interface PresetSpec extends DrawnShapeSpec {
   emotion?: Partial<Record<EmotionName, string>>;
+  /** Per-preset composition; omitted entries retain measured blink and mouth compensation. */
+  composition?: Record<string, PresetCompositionSpec>;
   /**
    * The group holding the author's parking shapes — the `*Hide` family that
    * moves a part out of view rather than deforming it.
@@ -61,11 +71,21 @@ export interface PresetSpec extends DrawnShapeSpec {
   idleExclude?: string[];
 }
 
+/** Metalness and roughness to use for one preserved imported PBR material. */
+export interface PbrScalarOverride {
+  metalness: number;
+  roughness: number;
+}
+
 export interface MaterialRules {
   /** Genuinely flat pieces — hair cards, coats — that need both faces drawn. */
   doubleSided?: RegExp;
   /** Coplanar overlays on the face: lashes, brows, drawn effects. */
   faceDecal?: RegExp;
+  /** Imported materials to keep in toon mode, such as authored PBR metals. */
+  preserveImported?: RegExp;
+  /** Exact imported material names whose preserved PBR scalars should be replaced. */
+  preservedPbrOverrides?: Record<string, PbrScalarOverride>;
 }
 
 export interface WardrobeItem {

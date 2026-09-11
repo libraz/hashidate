@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { original01AllOutfitsRootHinge } from '@/avatars/original01';
 import { buildIdleFaces, buildOverlays, buildPresets } from '@/engine/face';
 import { buildProfile } from '@/engine/profile';
 import type { AvatarDescriptor, PresetSpec, Profile } from '@/engine/types';
@@ -111,6 +112,48 @@ describe('buildPresets', () => {
     profile.groups.get(FACE_GROUP)?.push('F_GHOST');
     expect(profile.groups.get(FACE_GROUP)).toContain('F_GHOST');
     expect(buildPresets(profile, descriptor).map((p) => p.id)).toEqual(FACE_IDS);
+  });
+});
+
+describe('buildPresets / authored composition', () => {
+  it('adds only declared, resolved fields and leaves ordinary preset objects unchanged', () => {
+    const { profile, descriptor } = setup({ presets: { group: FACE_GROUP } });
+    const before = buildPresets(profile, descriptor);
+    const configured: AvatarDescriptor = {
+      ...descriptor,
+      presets: {
+        group: FACE_GROUP,
+        exclude: ['F_NIKO'],
+        composition: {
+          F_SUYASUYA: { blink: 'preserve', speechNeutralizer: 'F_NIKO' },
+          F_DOYA: { speechNeutralizer: 'AbsentCorrective' },
+        },
+      },
+    };
+    const missingBefore = [...profile.missing];
+    const after = buildPresets(profile, configured);
+    expect(after[0]).toEqual({ ...before[0], blink: 'preserve', speechNeutralizer: 'F_NIKO' });
+    expect(after[1]).toEqual(before[1]);
+    expect(after[2]).toEqual(before[2]);
+    expect(Object.keys(after[1])).toEqual(Object.keys(before[1]));
+    expect(profile.missing).toEqual(missingBefore);
+    expect(buildIdleFaces(after, configured)).not.toContain('F_NIKO');
+    expect(profile.morphTargets.has('F_NIKO')).toBe(true);
+  });
+
+  it('declares the V02 symbols on the unregistered root-hinge profile', () => {
+    const corrective = 'V02_SpeechNeutralizer_SymbolO';
+    expect(original01AllOutfitsRootHinge.presets?.composition).toEqual({
+      // biome-ignore lint/style/useNamingConvention: Authored morph target name.
+      V02_14_DotEyes: { blink: 'preserve', speechNeutralizer: corrective },
+      // biome-ignore lint/style/useNamingConvention: Authored morph target name.
+      V02_16_Shock: { blink: 'preserve', speechNeutralizer: corrective },
+      // biome-ignore lint/style/useNamingConvention: Authored morph target name.
+      V02_11_Spiral: { speechNeutralizer: corrective },
+      // biome-ignore lint/style/useNamingConvention: Authored morph target name.
+      V02_09_ChevronSmile: { speechNeutralizer: corrective },
+    });
+    expect(original01AllOutfitsRootHinge.presets?.exclude).toContain(corrective);
   });
 });
 

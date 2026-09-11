@@ -802,12 +802,14 @@ export class Director {
     if (preset) {
       this.set(preset.id, pw);
       // Authored faces may carry an open mouth of their own. During speech,
-      // project that travel back through the canonical close shape first, then
-      // leave the viseme layer on top. At rest the authored drawing is untouched.
+      // reverse that travel with the authored inverse or measured canonical
+      // close first, then leave the viseme layer on top. At rest the drawing is untouched.
       // `busy` supplies both edges. In particular, an interrupt drops
       // `speaking` immediately but lets this correction decay with the visemes,
       // instead of popping the authored open mouth back in one frame.
-      if (preset.mouthClose > 0) {
+      if (preset.speechNeutralizer) {
+        this.set(preset.speechNeutralizer, pw * mouth.busy);
+      } else if (preset.mouthClose > 0) {
         this.set('mouthClose', pw * preset.mouthClose * mouth.busy);
       }
     }
@@ -868,14 +870,16 @@ export class Director {
     // morphs that sum on the vertex, so the blink only has to supply the travel
     // the preset has not already used: a face drawn shut gets nothing, one drawn
     // at a squint gets the remainder, and a wink blinks on the open side alone.
-    // All of it falls out of the measured closure, with no per-preset flags.
+    // A drawing may instead preserve its authored eyes. That changes the morph
+    // writes, not the blink state machine or its existing surprise suppression.
     this.#blink.update(dt, {
       speaking: this.mouth.speaking,
       // Surprise holds the eyes open; blinking through it looks wrong.
       suppressed: (emotion.surprise ?? 0) > 0.4,
     });
     const blink = this.#blink.weight;
-    if (blink > 0.001) {
+    const preserveBlink = preset?.blink === 'preserve' && pw > 0.02;
+    if (blink > 0.001 && !preserveBlink) {
       const lid = preset ? preset.lid : null;
       const room = (v: number): number => (lid ? Math.max(0, 1 - v * pw) : 1);
       if (p.blink.L) {

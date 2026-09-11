@@ -49,6 +49,10 @@ export interface ExpressionPreset {
   swap: number;
   /** How much of the authored mouth opening the canonical close shape reverses, 0..1. */
   mouthClose: number;
+  /** Preserve this drawing's eyes rather than layering canonical blink travel over them. */
+  blink?: 'preserve';
+  /** Resolved inverse mouth travel, in place of the measured canonical close. */
+  speechNeutralizer?: string;
 }
 
 /** Deltas accumulated against another shape's, before the ratio is taken. */
@@ -211,16 +215,25 @@ export function buildPresets(profile: Profile, avatar?: AvatarDescriptor): Expre
   const spec = avatar?.presets;
   const label = spec?.label ?? ((id: string) => id);
   const hideIds = (spec?.hideGroup ? profile.groups?.get(spec.hideGroup) : null) ?? [];
-  return idsInGroup(profile, spec).map((id) => ({
-    id,
-    // `same`, because what comes back is the avatar author's own name for a
-    // drawing. There is nothing to translate: a shape key is whatever was typed
-    // into Blender, and it reads identically in either language.
-    label: same(label(id)),
-    lid: lidClosure(profile, id),
-    swap: artSwap(profile, id, hideIds),
-    mouthClose: mouthClosure(profile, id),
-  }));
+  return idsInGroup(profile, spec).map((id) => {
+    const preset: ExpressionPreset = {
+      id,
+      // `same`, because what comes back is the avatar author's own name for a
+      // drawing. There is nothing to translate: a shape key is whatever was typed
+      // into Blender, and it reads identically in either language.
+      label: same(label(id)),
+      lid: lidClosure(profile, id),
+      swap: artSwap(profile, id, hideIds),
+      mouthClose: mouthClosure(profile, id),
+    };
+    const composition = spec?.composition?.[id];
+    if (composition?.blink === 'preserve') preset.blink = 'preserve';
+    const neutralizer = composition?.speechNeutralizer;
+    if (neutralizer !== undefined && profile.morphTargets.has(neutralizer)) {
+      preset.speechNeutralizer = neutralizer;
+    }
+    return preset;
+  });
 }
 
 /**

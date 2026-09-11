@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Director } from '@/engine/director';
+import { Blink } from '@/engine/face/blink';
 import { buildProfile } from '@/engine/profile';
 import type { PresetSpec } from '@/engine/types';
 import { buildRig } from '../helpers/scene';
@@ -205,6 +206,179 @@ describe('Director / authored mouth opening while speaking', () => {
     for (let i = 0; i < 2; i++) director.update(DT);
     const close = face.morphTargetDictionary?.mouthClose;
     expect(close).toBeUndefined();
+  });
+});
+
+describe('Director / declared preset composition', () => {
+  function composed(presets: Partial<PresetSpec> = {}) {
+    const rig = buildRig({
+      groups: [
+        [HIDE_GROUP, ['H_IRIS']],
+        [FACE_GROUP, ['DotEyes', 'Shock', 'OpenMouth', 'InverseMouth']],
+      ],
+      deltas: {
+        H_IRIS: 4e-3,
+        DotEyes: 4e-3,
+        Shock: 4e-3,
+        OpenMouth: -2e-3,
+        InverseMouth: 2e-3,
+        mouthClose: 4e-3,
+        blink: 1e-2,
+        eyeBlinkLeft: 1e-2,
+        eyeBlinkRight: 1e-2,
+      },
+    });
+    const profile = buildProfile(rig.root, {
+      ...rig.descriptor,
+      presets: {
+        group: FACE_GROUP,
+        hideGroup: HIDE_GROUP,
+        exclude: ['InverseMouth'],
+        ...presets,
+      },
+    });
+    const director = new Director(profile);
+    const weight = (id: string | null): number => {
+      const target = id ? profile.morphTargets.get(id)?.[0] : undefined;
+      return target?.mesh.morphTargetInfluences?.[target.index] ?? 0;
+    };
+    const step = (frames = 1): void => {
+      for (let i = 0; i < frames; i++) director.update(DT);
+    };
+    const blinkWeight = (): number => weight(profile.blink.L ?? profile.blink.both);
+    return { director, profile, weight, blinkWeight, step };
+  }
+
+  it.each(['DotEyes', 'Shock'])(
+    'preserves %s during a blink and restores the current phase on exit',
+    (id) => {
+      const { director, weight, blinkWeight, step } = composed({
+        composition: { [id]: { blink: 'preserve' } },
+      });
+      step(60);
+      director.triggerBlink();
+      step();
+      expect(blinkWeight()).toBeGreaterThan(0);
+
+      director.setExpression(id);
+      step();
+      expect(weight(id)).toBe(1);
+      expect(director.blink).toBeGreaterThan(0);
+      expect(blinkWeight()).toBe(0);
+
+      director.resetExpression();
+      step();
+      expect(weight(id)).toBe(0);
+      expect(director.blink).toBeGreaterThan(0);
+      expect(blinkWeight()).toBeCloseTo(director.blink, 10);
+      step(20);
+      expect(blinkWeight()).toBe(0);
+    },
+  );
+
+  it('keeps natural blink updates exactly once per frame while preserving the drawing', () => {
+    const { director, blinkWeight, step } = composed({
+      composition: { DotEyes: { blink: 'preserve' } },
+    });
+    director.setExpression('DotEyes');
+    const updates = vi.spyOn(Blink.prototype, 'update');
+    try {
+      let observed = false;
+      for (let i = 0; i < 240; i++) {
+        step();
+        observed ||= director.blink > 0;
+        expect(blinkWeight()).toBe(0);
+      }
+      expect(observed).toBe(true);
+      expect(updates).toHaveBeenCalledTimes(240);
+      expect(updates).toHaveBeenLastCalledWith(DT, { speaking: false, suppressed: false });
+    } finally {
+      updates.mockRestore();
+    }
+  });
+
+  it('starts preserving only after the existing preset ownership threshold', () => {
+    const { director, weight, blinkWeight, step } = composed({
+      composition: { OpenMouth: { blink: 'preserve' } },
+    });
+    step(60);
+    director.triggerBlink();
+    step();
+    director.setExpression('OpenMouth');
+    director.update(0.001);
+    expect(weight('OpenMouth')).toBeGreaterThan(0);
+    expect(weight('OpenMouth')).toBeLessThan(0.02);
+    expect(blinkWeight()).toBeGreaterThan(0);
+    step();
+    expect(weight('OpenMouth')).toBeGreaterThan(0.02);
+    expect(director.blink).toBeGreaterThan(0);
+    expect(blinkWeight()).toBe(0);
+  });
+
+  it('retains the measured closure without opt-in and keeps existing surprise suppression', () => {
+    const { director, blinkWeight, step } = composed();
+    director.setExpression('DotEyes');
+    step(60);
+    director.triggerBlink();
+    step();
+    const lid = director.presetById.get('DotEyes')?.lid.L ?? 0;
+    expect(lid).toBeCloseTo(0.4, 6);
+    expect(blinkWeight()).toBeCloseTo(director.blink * (1 - lid), 10);
+    expect(blinkWeight()).toBeGreaterThan(0);
+
+    const preserved = composed({ composition: { Shock: { blink: 'preserve' } } });
+    preserved.director.setExpression('Shock');
+    preserved.director.setEmotion({ surprise: 1 });
+    preserved.step(120);
+    preserved.director.triggerBlink();
+    preserved.step();
+    expect(preserved.director.blink).toBe(0);
+  });
+
+  it('replaces generic close at the same busy ramp and clears the inverse after interruption and exit', () => {
+    const { director, weight, step } = composed({
+      composition: { OpenMouth: { speechNeutralizer: 'InverseMouth' } },
+    });
+    director.setExpression('OpenMouth');
+    step(120);
+    expect(weight('InverseMouth')).toBe(0);
+    expect(weight('mouthClose')).toBe(0);
+    director.speak('あいうえお');
+    step(2);
+    expect(weight('InverseMouth')).toBeCloseTo(weight('OpenMouth') * director.mouth.busy, 10);
+    expect(weight('InverseMouth')).toBeGreaterThan(0);
+    expect(weight('mouthClose')).toBe(0);
+    expect(weight('vrc.v_aa')).toBeGreaterThan(0);
+    director.mouth.stop();
+    step();
+    expect(weight('InverseMouth')).toBeGreaterThan(0);
+    expect(weight('InverseMouth')).toBeCloseTo(weight('OpenMouth') * director.mouth.busy, 10);
+    step(120);
+    expect(weight('InverseMouth')).toBeLessThan(0.001);
+
+    director.speak('あいうえお');
+    step(2);
+    expect(weight('InverseMouth')).toBeGreaterThan(0);
+    director.resetExpression();
+    step(120);
+    expect(weight('OpenMouth')).toBe(0);
+    expect(weight('InverseMouth')).toBe(0);
+  });
+
+  it('reports a missing inverse and uses the unchanged measured close fallback', () => {
+    const { director, profile, weight, step } = composed({
+      composition: { OpenMouth: { speechNeutralizer: 'AbsentInverse' } },
+    });
+    expect(profile.missing).toContain(
+      'preset-composition:OpenMouth:speechNeutralizer:AbsentInverse',
+    );
+    expect(director.presetById.get('OpenMouth')).not.toHaveProperty('speechNeutralizer');
+    director.setExpression('OpenMouth');
+    step(120);
+    director.speak('あいうえお');
+    step(2);
+    expect(weight('mouthClose')).toBeCloseTo(weight('OpenMouth') * 0.5 * director.mouth.busy, 6);
+    expect(weight('mouthClose')).toBeGreaterThan(0);
   });
 });
 

@@ -41,6 +41,8 @@ export type {
   ColliderSpec,
   DrawnShapeSpec,
   MaterialRules,
+  PbrScalarOverride,
+  PresetCompositionSpec,
   PresetSpec,
   ShapeOverrides,
   SwayGroupSpec,

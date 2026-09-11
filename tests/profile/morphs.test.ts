@@ -19,6 +19,47 @@ const authored = (mesh: THREE.Mesh): string[] =>
     .sort((a, b) => a[1] - b[1])
     .map(([name]) => name);
 
+describe('preset composition diagnostics', () => {
+  it('reports an absent corrective explicitly without mutating the descriptor', () => {
+    const rig = buildRig({ groups: [['Drawings', ['Drawn']]] });
+    const presets = {
+      group: 'Drawings',
+      composition: { Drawn: { speechNeutralizer: 'MissingInverse' } },
+    };
+    const profile = buildProfile(rig.root, { ...rig.descriptor, presets });
+    expect(profile.missing).toContain('preset-composition:Drawn:speechNeutralizer:MissingInverse');
+    expect(presets.composition.Drawn.speechNeutralizer).toBe('MissingInverse');
+  });
+
+  it('accepts a corrective excluded from expressions but still bound as a morph', () => {
+    const rig = buildRig({ groups: [['Drawings', ['Drawn', 'Inverse']]] });
+    const profile = buildProfile(rig.root, {
+      ...rig.descriptor,
+      presets: {
+        group: 'Drawings',
+        exclude: ['Inverse'],
+        composition: { Drawn: { speechNeutralizer: 'Inverse' } },
+      },
+    });
+    expect(profile.missing.filter((x) => x.startsWith('preset-composition:'))).toEqual([]);
+    expect(profile.morphTargets.has('Inverse')).toBe(true);
+  });
+
+  it('reports composition attached to an unknown or excluded preset', () => {
+    const rig = buildRig({ groups: [['Drawings', ['Drawn', 'Inverse']]] });
+    const profile = buildProfile(rig.root, {
+      ...rig.descriptor,
+      presets: {
+        group: 'Drawings',
+        exclude: ['Inverse'],
+        composition: { Missing: { blink: 'preserve' }, Inverse: { blink: 'preserve' } },
+      },
+    });
+    expect(profile.missing).toContain('preset-composition:Missing:preset');
+    expect(profile.missing).toContain('preset-composition:Inverse:preset');
+  });
+});
+
 describe('routeMorphs', () => {
   it('routes a name that lives on two meshes to both (mesh, index) pairs', () => {
     const rig = buildRig({

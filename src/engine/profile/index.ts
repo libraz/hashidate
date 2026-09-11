@@ -103,6 +103,20 @@ export function buildProfile(
   const restDir = buildRestDirections(bones, fingerBones);
 
   const groups = readGroups(root, avatar.separator ?? DEFAULT_SEPARATOR);
+  const presets = avatar.presets;
+  if (presets?.composition) {
+    const ids = new Set(groups.get(presets.group) ?? []);
+    const excluded = new Set(presets.exclude ?? []);
+    for (const [id, composition] of Object.entries(presets.composition)) {
+      if (!ids.has(id) || excluded.has(id) || !morphTargets.has(id)) {
+        missing.push(`preset-composition:${id}:preset`);
+      }
+      const neutralizer = composition.speechNeutralizer;
+      if (neutralizer !== undefined && !morphTargets.has(neutralizer)) {
+        missing.push(`preset-composition:${id}:speechNeutralizer:${neutralizer}`);
+      }
+    }
+  }
   const face = buildFaceFrame(root, bones);
   if (!face) missing.push('face:no frame (need head + both eyes)');
   const body = buildBodyFrame(root, bones);

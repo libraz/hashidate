@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { AvatarDescriptor, MaterialRules } from '../types';
+import type { AvatarDescriptor, MaterialRules, PbrScalarOverride } from '../types';
 
 /**
  * Material fixup for a VRChat-authored avatar rendered outside Unity.
@@ -54,7 +54,9 @@ import type { AvatarDescriptor, MaterialRules } from '../types';
 const MATCH_NONE = /(?!)/;
 
 /** The descriptor's rules with the fallbacks filled in. */
-type ResolvedRules = Required<MaterialRules>;
+type ResolvedRules = Omit<Required<MaterialRules>, 'preservedPbrOverrides'> & {
+  preservedPbrOverrides: Record<string, PbrScalarOverride>;
+};
 
 /**
  * The slots the toon variant copies. `THREE.Material` itself declares neither,
@@ -67,7 +69,7 @@ type SourceMaterial = THREE.Material & {
 
 /** The restore handle `setupMaterials` returns. */
 export interface MaterialSet {
-  /** Swap every mesh to the toon variants, or back to the imported originals. */
+  /** Apply the descriptor-defined toon presentation, or restore imported originals. */
   apply(useToon: boolean): void;
   /** Every material name the avatar brought, for the readout. */
   names: string[];
@@ -119,27 +121,65 @@ function applyAlphaRules(
 const isTexture = (v: unknown): v is THREE.Texture =>
   !!v && (v as THREE.Texture).isTexture === true;
 
+/** Reject malformed descriptor data before touching the imported object graph. */
+function validatePbrOverrides(overrides: Record<string, PbrScalarOverride> | undefined): void {
+  if (!overrides) return;
+  for (const name of Object.getOwnPropertyNames(overrides)) {
+    const override = overrides[name];
+    for (const field of ['metalness', 'roughness'] as const) {
+      const value = override?.[field];
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+        throw new RangeError(
+          `Invalid preserved PBR override for material "${name}" field "${field}": expected a finite number in [0, 1], got ${String(value)}`,
+        );
+      }
+    }
+  }
+}
+
+/** Clone supported preserved PBR materials once per original material identity. */
+function overriddenPbr(
+  src: THREE.Material,
+  override: PbrScalarOverride,
+  clones: Map<THREE.Material, THREE.Material>,
+): THREE.Material {
+  if (!(src instanceof THREE.MeshStandardMaterial)) return src;
+  const cached = clones.get(src);
+  if (cached) return cached;
+
+  const clone = src.clone();
+  clone.metalness = override.metalness;
+  clone.roughness = override.roughness;
+  clone.needsUpdate = true;
+  clones.set(src, clone);
+  return clone;
+}
+
 /**
- * Convert every mesh to toon materials and return a restore handle.
- * Keeps the originals so the UI can toggle back to the imported look.
+ * Build the descriptor-defined toon presentation and return a restore handle.
+ * Preserved imported slots remain original materials in toon mode.
  */
 export function setupMaterials(root: THREE.Object3D, avatar?: AvatarDescriptor): MaterialSet {
+  const preservedPbrOverrides = avatar?.materials?.preservedPbrOverrides;
+  validatePbrOverrides(preservedPbrOverrides);
+
   const rules: ResolvedRules = {
     doubleSided: avatar?.materials?.doubleSided ?? MATCH_NONE,
     faceDecal: avatar?.materials?.faceDecal ?? MATCH_NONE,
+    preserveImported: avatar?.materials?.preserveImported ?? MATCH_NONE,
+    preservedPbrOverrides: preservedPbrOverrides ?? {},
   };
   const original = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
   const toon = new Map<THREE.Mesh, THREE.Material[]>();
+  const preservedClones = new Map<THREE.Material, THREE.Material>();
 
+  // First collect the exact imported references and retain the existing mesh
+  // flags. These source materials are fixed before any variants are cloned.
   root.traverse((o) => {
     if (!(o instanceof THREE.Mesh)) return;
     o.frustumCulled = false;
     const src: SourceMaterial[] = Array.isArray(o.material) ? o.material : [o.material];
     original.set(o, o.material);
-    toon.set(
-      o,
-      src.map((m) => toToon(m, rules)),
-    );
 
     // Decals composite over the opaque head, so they draw after it.
     if (src.some((m) => rules.faceDecal.test(m.name || ''))) o.renderOrder = 1;
@@ -153,6 +193,21 @@ export function setupMaterials(root: THREE.Object3D, avatar?: AvatarDescriptor):
       applyAlphaRules(m, name, m.transparent || m.alphaTest > 0, rules);
       m.needsUpdate = true;
     }
+  }
+
+  // Build variants only after source fixups so preserved PBR clones inherit
+  // the same cull and alpha behavior as the imported material.
+  for (const [mesh, orig] of original) {
+    const src: SourceMaterial[] = Array.isArray(orig) ? orig : [orig];
+    toon.set(
+      mesh,
+      src.map((m) => {
+        const name = m.name || '';
+        if (!rules.preserveImported.test(name)) return toToon(m, rules);
+        if (!Object.hasOwn(rules.preservedPbrOverrides, name)) return m;
+        return overriddenPbr(m, rules.preservedPbrOverrides[name], preservedClones);
+      }),
+    );
   }
 
   const apply = (useToon: boolean): void => {
@@ -184,11 +239,16 @@ export function setupMaterials(root: THREE.Object3D, avatar?: AvatarDescriptor):
    */
   const dispose = (): void => {
     const seen = new Set<THREE.Material>();
+    const seenTextures = new Set<THREE.Texture>();
     const release = (m: THREE.Material | null | undefined): void => {
       if (!m || seen.has(m)) return;
       seen.add(m);
       const props: unknown[] = Object.values(m);
-      for (const v of props) if (isTexture(v)) v.dispose();
+      for (const v of props) {
+        if (!isTexture(v) || seenTextures.has(v)) continue;
+        seenTextures.add(v);
+        v.dispose();
+      }
       m.dispose();
     };
     for (const mats of toon.values()) for (const m of mats) release(m);
@@ -197,6 +257,7 @@ export function setupMaterials(root: THREE.Object3D, avatar?: AvatarDescriptor):
     }
     toon.clear();
     original.clear();
+    preservedClones.clear();
   };
 
   return { apply, names, dispose };
