@@ -82,6 +82,8 @@ export interface MaterialRules {
   doubleSided?: RegExp;
   /** Coplanar overlays on the face: lashes, brows, drawn effects. */
   faceDecal?: RegExp;
+  /** Exact imported materials that retain blend transparency at fractional opacity. */
+  blendTransparent?: RegExp;
   /** Imported materials to keep in toon mode, such as authored PBR metals. */
   preserveImported?: RegExp;
   /** Exact imported material names whose preserved PBR scalars should be replaced. */

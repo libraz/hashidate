@@ -362,6 +362,89 @@ describe('avatar material conversion', () => {
     materials.dispose();
   });
 
+  it('blends fractional V054 cloth while preserving alpha-one legacy handling', () => {
+    const alpha = 0.58;
+    const map = new THREE.Texture();
+    const sleeve = new THREE.MeshStandardMaterial({
+      map,
+      opacity: alpha,
+      side: THREE.DoubleSide,
+      transparent: true,
+    });
+    sleeve.name = 'V054_Main_Cloth';
+    const legacyAlpha = 0.9999998;
+    const legacySleeve = new THREE.MeshStandardMaterial({
+      opacity: legacyAlpha,
+      transparent: true,
+    });
+    legacySleeve.name = 'V054_Main_Cloth';
+    const unrelated = new THREE.MeshStandardMaterial({ opacity: 0.5, transparent: true });
+    unrelated.name = 'Unrelated_Transparent';
+    const left = mesh(sleeve);
+    const right = mesh(sleeve);
+    const legacyObject = mesh(legacySleeve);
+    const unrelatedObject = mesh(unrelated);
+    const root = new THREE.Group();
+    root.add(left, right, legacyObject, unrelatedObject);
+
+    const materials = setupMaterials(root, avatar({ blendTransparent: /^V054_Main_Cloth$/ }));
+
+    for (const object of [left, right]) {
+      expect(object.material).toBe(sleeve);
+      expect(sleeve.opacity).toBe(alpha);
+      expect(sleeve.transparent).toBe(true);
+      expect(sleeve.alphaTest).toBe(0);
+      expect(sleeve.depthWrite).toBe(false);
+      expect(sleeve.side).toBe(THREE.FrontSide);
+      expect(object.renderOrder).toBe(0);
+    }
+    expect(legacySleeve.opacity).toBe(legacyAlpha);
+    expect(legacySleeve.transparent).toBe(false);
+    expect(legacySleeve.alphaTest).toBe(0.25);
+    expect(legacySleeve.depthWrite).toBe(true);
+    expect(unrelated.transparent).toBe(false);
+    expect(unrelated.alphaTest).toBe(0.25);
+    expect(unrelated.depthWrite).toBe(true);
+
+    materials.apply(true);
+    const leftToon = left.material as THREE.MeshToonMaterial;
+    const rightToon = right.material as THREE.MeshToonMaterial;
+    expect(leftToon).toBeInstanceOf(THREE.MeshToonMaterial);
+    expect(rightToon).toBeInstanceOf(THREE.MeshToonMaterial);
+    for (const toon of [leftToon, rightToon]) {
+      expect(toon.opacity).toBe(alpha);
+      expect(toon.transparent).toBe(true);
+      expect(toon.alphaTest).toBe(0);
+      expect(toon.depthWrite).toBe(false);
+      expect(toon.side).toBe(THREE.FrontSide);
+    }
+    const legacyToon = legacyObject.material as THREE.MeshToonMaterial;
+    expect(legacyToon.opacity).toBe(legacyAlpha);
+    expect(legacyToon.transparent).toBe(false);
+    expect(legacyToon.alphaTest).toBe(0.25);
+    expect(legacyToon.depthWrite).toBe(true);
+    expect((unrelatedObject.material as THREE.MeshToonMaterial).transparent).toBe(false);
+    expect((unrelatedObject.material as THREE.MeshToonMaterial).alphaTest).toBe(0.25);
+    expect((unrelatedObject.material as THREE.MeshToonMaterial).depthWrite).toBe(true);
+
+    materials.apply(false);
+    expect(left.material).toBe(sleeve);
+    expect(right.material).toBe(sleeve);
+    expect(legacyObject.material).toBe(legacySleeve);
+    expect(unrelatedObject.material).toBe(unrelated);
+
+    const sleeveDispose = vi.spyOn(sleeve, 'dispose');
+    const mapDispose = vi.spyOn(map, 'dispose');
+    const leftToonDispose = vi.spyOn(leftToon, 'dispose');
+    const rightToonDispose = vi.spyOn(rightToon, 'dispose');
+    materials.dispose();
+
+    expect(sleeveDispose).toHaveBeenCalledOnce();
+    expect(mapDispose).toHaveBeenCalledOnce();
+    expect(leftToonDispose).toHaveBeenCalledOnce();
+    expect(rightToonDispose).toHaveBeenCalledOnce();
+  });
+
   it('disposes a shared preserved original and its map once', () => {
     const map = new THREE.Texture();
     const shared = new THREE.MeshStandardMaterial({ map, metalness: 1, roughness: 0.2 });

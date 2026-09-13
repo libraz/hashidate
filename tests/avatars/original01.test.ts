@@ -18,6 +18,11 @@ describe('original01 root-hinge integration descriptor', () => {
     expect(original01AllOutfits.presets).toEqual(original01.presets);
     expect(original01.materials?.preservedPbrOverrides).toBeUndefined();
     expect(original01AllOutfits.materials?.preservedPbrOverrides).toBeUndefined();
+    for (const descriptor of [original01, original01AllOutfits, original01AllOutfitsRootHinge]) {
+      expect(descriptor.materials?.blendTransparent).toEqual(/^V054_Main_Cloth$/);
+      expect(descriptor.materials?.blendTransparent?.test('V054_Main_Cloth')).toBe(true);
+      expect(descriptor.materials?.blendTransparent?.test('V054_Main_ClothTrim')).toBe(false);
+    }
     expect(original01AllOutfits.sway?.groups).toHaveLength(13);
     expect(mainDress(original01AllOutfits).meshes).toEqual([
       'V02_Main_Bodice_R034',

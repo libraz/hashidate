@@ -53,6 +53,13 @@ import type { AvatarDescriptor, MaterialRules, PbrScalarOverride } from '../type
  */
 const MATCH_NONE = /(?!)/;
 
+/**
+ * Alpha-one values within this window are Blender float32 roundoff of legacy
+ * opaque sleeve materials. Keep this boundary equal to the exporter’s
+ * `SLEEVE_ALPHA_TOLERANCE` so only materially fractional sleeves blend.
+ */
+const SLEEVE_ALPHA_TOLERANCE = 1e-6;
+
 /** The descriptor's rules with the fallbacks filled in. */
 type ResolvedRules = Omit<Required<MaterialRules>, 'preservedPbrOverrides'> & {
   preservedPbrOverrides: Record<string, PbrScalarOverride>;
@@ -82,6 +89,7 @@ function toToon(src: SourceMaterial, rules: ResolvedRules): THREE.MeshToonMateri
   const m = new THREE.MeshToonMaterial({
     map: src.map,
     color: src.color,
+    ...(rules.blendTransparent.test(name) ? { opacity: src.opacity } : {}),
     side: rules.doubleSided.test(name) ? THREE.DoubleSide : THREE.FrontSide,
   });
   m.name = name;
@@ -102,6 +110,12 @@ function applyAlphaRules(
     m.transparent = true;
     m.alphaTest = 0.35;
     m.depthWrite = true;
+  } else if (rules.blendTransparent.test(name) && m.opacity < 1 - SLEEVE_ALPHA_TOLERANCE) {
+    // Fractional sleeve fabric retains authored blending. Alpha-one legacy
+    // material imports continue through the generic cutout path below.
+    m.transparent = true;
+    m.alphaTest = 0;
+    m.depthWrite = false;
   } else if (wasTransparent) {
     // Cutout, not blend. 0.25 keeps soft-edged pieces such as the sleep mask
     // intact; higher values eat their semi-transparent fabric.
@@ -166,6 +180,7 @@ export function setupMaterials(root: THREE.Object3D, avatar?: AvatarDescriptor):
   const rules: ResolvedRules = {
     doubleSided: avatar?.materials?.doubleSided ?? MATCH_NONE,
     faceDecal: avatar?.materials?.faceDecal ?? MATCH_NONE,
+    blendTransparent: avatar?.materials?.blendTransparent ?? MATCH_NONE,
     preserveImported: avatar?.materials?.preserveImported ?? MATCH_NONE,
     preservedPbrOverrides: preservedPbrOverrides ?? {},
   };

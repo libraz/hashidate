@@ -28,6 +28,7 @@ const original01: AvatarDescriptor = {
     doubleSided:
       /doubleS|Wig_alpha|lantern|Ribbon|Skirt|^R024_(?:Ivory|Fog|Ash)$|^V02_Stocking_(?:Fog|Lace)$|^V02_FaceFX_CoolDrop$/i,
     faceDecal: /Face_alpha|_eyeline|_eyelash|highlight|^V02_FaceFX_CoolDrop$/i,
+    blendTransparent: /^V054_Main_Cloth$/,
     preserveImported: /^V02_20260909_(?:PolishedPlatinum|StarPinkGold)$/,
   },
   shapes: {
