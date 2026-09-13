@@ -610,3 +610,74 @@ export const original01AllOutfitsRootHinge: AvatarDescriptor = {
     ],
   },
 };
+
+const tieredMainSkirtMeshes = [
+  'V052_Main_Skirt_Upper',
+  'V052_Main_Skirt_Mid',
+  'V052_Main_Skirt_Lower',
+  'V052_Main_Skirt_Upper_Frill_v009',
+  'V052_Main_Skirt_Mid_Frill_v009',
+  'V052_Main_Skirt_Lower_Frill_v009',
+  'V052_Main_Skirt_Lining',
+  'V053_Main_NeckLace_Upper',
+  'V053_Main_NeckLace_Lower',
+];
+
+const mainCuffMeshes = [
+  'V097_Main_SleeveCuffBow_L',
+  'V097_Main_SleeveCuffBow_R',
+  'V097_Main_SleeveCuffLace_L',
+  'V097_Main_SleeveCuffLace_R',
+  'V125_Main_SleeveCuffBinding_L_Dist',
+  'V125_Main_SleeveCuffBinding_L_Prox',
+  'V125_Main_SleeveCuffBinding_R_Dist',
+  'V125_Main_SleeveCuffBinding_R_Prox',
+];
+
+/**
+ * Build the V128 descriptor for a GLB exported with `--main-cuffs --tiered-skirt`
+ * from `all-outfits-stockings-boots-waist-tail`, the all-outfits root-hinge /
+ * tail-compatible profile. The caller supplies the actual exported GLB URL;
+ * this factory never invents or reuses one.
+ */
+export function createOriginal01AllOutfitsRootHingeMainCuffs(url: string): AvatarDescriptor {
+  if (typeof url !== 'string' || url.trim().length === 0) {
+    throw new Error('Main-cuffs descriptor requires a nonempty GLB URL');
+  }
+  const baseWardrobe = original01AllOutfitsRootHinge.wardrobe;
+  if (!baseWardrobe) throw new Error('Main-cuffs profile requires wardrobe data');
+  const baseSlot = baseWardrobe.slots.outfit;
+  if (!baseSlot) throw new Error('Main-cuffs profile requires the outfit slot');
+  const baseItem = baseSlot.items.find((item) => item.id === 'v02-main-dress');
+  if (!baseItem) throw new Error('Main-cuffs profile requires the main dress item');
+
+  const skirtStart = baseItem.meshes.indexOf('V02_Main_Skirt_Inner');
+  const skirtEnd = baseItem.meshes.indexOf('V02_Main_Skirt_Outer');
+  if (skirtStart < 0 || skirtEnd !== skirtStart + 1) {
+    throw new Error('Main-cuffs profile requires adjacent legacy skirt owners');
+  }
+  const mainMeshes = [
+    ...baseItem.meshes.slice(0, skirtStart),
+    ...tieredMainSkirtMeshes,
+    ...baseItem.meshes.slice(skirtEnd + 1),
+    ...mainCuffMeshes,
+  ];
+  const wardrobe = {
+    ...baseWardrobe,
+    slots: {
+      ...baseWardrobe.slots,
+      outfit: {
+        ...baseSlot,
+        items: baseSlot.items.map((item) =>
+          item.id === baseItem.id ? { ...item, meshes: mainMeshes } : item,
+        ),
+      },
+    },
+  };
+  return {
+    ...original01AllOutfitsRootHinge,
+    id: 'original-01-v02-all-outfits-root-hinge-main-cuffs-v128',
+    url,
+    wardrobe,
+  };
+}

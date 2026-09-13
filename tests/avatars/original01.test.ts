@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import original01, {
+  createOriginal01AllOutfitsRootHingeMainCuffs,
   original01AllOutfits,
   original01AllOutfitsRootHinge,
 } from '@/avatars/original01';
@@ -177,5 +178,70 @@ describe('original01 root-hinge integration descriptor', () => {
     expect(rootWardrobe.slots.outfit.items.slice(1)).toEqual(
       baseWardrobe.slots.outfit.items.slice(1),
     );
+  });
+
+  it('builds the V128 main-cuffs roster from an explicit exported URL', () => {
+    const url = '/models/v128-main-cuffs.glb';
+    const descriptor = createOriginal01AllOutfitsRootHingeMainCuffs(url);
+    const base = mainDress(original01AllOutfitsRootHinge);
+    const main = mainDress(descriptor);
+    const cuffs = [
+      'V097_Main_SleeveCuffBow_L',
+      'V097_Main_SleeveCuffBow_R',
+      'V097_Main_SleeveCuffLace_L',
+      'V097_Main_SleeveCuffLace_R',
+      'V125_Main_SleeveCuffBinding_L_Dist',
+      'V125_Main_SleeveCuffBinding_L_Prox',
+      'V125_Main_SleeveCuffBinding_R_Dist',
+      'V125_Main_SleeveCuffBinding_R_Prox',
+    ];
+
+    expect(descriptor.id).toBe('original-01-v02-all-outfits-root-hinge-main-cuffs-v128');
+    expect(descriptor.url).toBe(url);
+    expect(main.meshes).toEqual([
+      'V02_Main_Bodice_R034',
+      'V052_Main_Skirt_Upper',
+      'V052_Main_Skirt_Mid',
+      'V052_Main_Skirt_Lower',
+      'V052_Main_Skirt_Upper_Frill_v009',
+      'V052_Main_Skirt_Mid_Frill_v009',
+      'V052_Main_Skirt_Lower_Frill_v009',
+      'V052_Main_Skirt_Lining',
+      'V053_Main_NeckLace_Upper',
+      'V053_Main_NeckLace_Lower',
+      'V02_Main_Sleeve_L',
+      'V02_Main_Sleeve_R',
+      'V02_Main_Undershort',
+      'V02_Main_Waist_Belt',
+      'V02WaistPreview_Back_Loop_L',
+      'V02WaistPreview_Back_Loop_R',
+      'V02WaistPreview_Back_Knot',
+      'V02WaistPreview_Front_Loop_L',
+      'V02WaistPreview_Front_Loop_R',
+      'V02WaistPreview_Front_Tail_0',
+      'V02WaistPreview_Front_Tail_1',
+      'V02WaistPreview_Front_Knot',
+      'V02WaistPreview_Front_Moon',
+      'V02WaistPreview_Back_Tail_L',
+      'V02WaistPreview_Back_Tail_R',
+      ...cuffs,
+    ]);
+    expect(new Set(main.meshes).size).toBe(main.meshes.length);
+    expect(main.meshes.filter((mesh) => cuffs.includes(mesh))).toEqual(cuffs);
+    expect(base.meshes).not.toContain(cuffs[0]);
+    expect(main.meshes).not.toContain('V02_Main_Skirt_Inner');
+    expect(main.meshes).not.toContain('V02_Main_Skirt_Outer');
+    const alternateItems = descriptor.wardrobe?.slots.outfit.items.slice(1) ?? [];
+    expect(alternateItems).toEqual(
+      original01AllOutfitsRootHinge.wardrobe?.slots.outfit.items.slice(1),
+    );
+    expect(alternateItems.every((item) => !item.meshes.some((mesh) => cuffs.includes(mesh)))).toBe(
+      true,
+    );
+    expect(descriptor.sway).toBe(original01AllOutfitsRootHinge.sway);
+    expect(descriptor.presets).toBe(original01AllOutfitsRootHinge.presets);
+    expect(descriptor.materials).toBe(original01AllOutfitsRootHinge.materials);
+    expect(() => createOriginal01AllOutfitsRootHingeMainCuffs('')).toThrow('nonempty GLB URL');
+    expect(() => createOriginal01AllOutfitsRootHingeMainCuffs('   ')).toThrow('nonempty GLB URL');
   });
 });
