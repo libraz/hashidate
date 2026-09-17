@@ -16,7 +16,7 @@ requires-python = ">=3.11"
 # is hold torch to the 2.10 series the voice was tuned against, while the plain
 # PyPI wheel supplies the MPS backend that actually runs it.
 dependencies = [
-    "irodori-tts[cpu] @ git+https://github.com/Aratako/Irodori-TTS.git@8224dafb46d0aba89209a8f905f1cb7e3299d9c1",
+    "irodori-tts[cpu] @ git+https://github.com/Aratako/Irodori-TTS.git@89f9d8fbd4d51ea019867ee1197725ede1df13c5",
     # Noise removal, on the references and on every take. Chosen over a SciPy or
     # torch filter because the model stack is already 3 GB and this is a 4 MB
     # wheel with no runtime dependency beyond NumPy — and because the same
