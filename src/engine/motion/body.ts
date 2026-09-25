@@ -187,12 +187,24 @@ const mkVecs = (): Record<ArmSlot, THREE.Vector3> => ({
   hand: new THREE.Vector3(),
 });
 
-const mkState = (): Record<ArmSlot, DirFollower> => ({
-  shoulder: new DirFollower(BASE_POSE.shoulder),
-  upperArm: new DirFollower(BASE_POSE.upperArm),
-  lowerArm: new DirFollower(BASE_POSE.lowerArm),
-  hand: new DirFollower(BASE_POSE.hand),
+const mkState = (rest: Record<ArmSlot, THREE.Vector3>): Record<ArmSlot, DirFollower> => ({
+  shoulder: new DirFollower(rest.shoulder),
+  upperArm: new DirFollower(rest.upperArm),
+  lowerArm: new DirFollower(rest.lowerArm),
+  hand: new DirFollower(rest.hand),
 });
+
+/** The standing pose with any per-avatar resting directions applied. */
+const restPose = (
+  override: Partial<Record<ArmSlot, Vec3Tuple>> | undefined,
+): Record<ArmSlot, THREE.Vector3> => {
+  const pose = {} as Record<ArmSlot, THREE.Vector3>;
+  for (const slot of ARM_SLOTS) {
+    const dir = override?.[slot];
+    pose[slot] = dir ? new THREE.Vector3(...dir).normalize() : BASE_POSE[slot].clone();
+  }
+  return pose;
+};
 
 const mkFingerState = (): Record<FingerName, ScalarFollower> => ({
   thumb: new ScalarFollower(BASE_FINGERS.thumb),
@@ -287,6 +299,8 @@ export class Body {
   private _palmWorldOut: Record<Side, Vec3Tuple>;
   private _palmW: Record<Side, ScalarFollower>;
 
+  /** Where each arm link rests; the standing pose unless the avatar overrides it. */
+  private readonly _rest: Record<ArmSlot, THREE.Vector3>;
   /** The character-space to world boundary. See `frame.ts`. */
   private readonly axes: CharacterFrame;
   /** Where a reach is going, in world space. See `anchors.ts`. */
@@ -304,6 +318,7 @@ export class Body {
   constructor(rig: Rig, profile: Profile) {
     this.rig = rig;
     this.p = profile;
+    this._rest = restPose(profile.avatar.armRest);
     this.axes = new CharacterFrame(rig, profile);
     this.anchors = new ReachAnchors(profile, rig, this.axes);
     this._arm = new ArmResolver(profile, rig, this.axes, this.anchors);
@@ -374,7 +389,7 @@ export class Body {
     this._armDirs = { L: mkDirs(), R: mkDirs() };
     this._armWorld = { L: mkDirs(), R: mkDirs() };
     this._armVec = { L: mkVecs(), R: mkVecs() }; // composed target for this frame
-    this._armState = { L: mkState(), R: mkState() }; // what the arm is actually doing
+    this._armState = { L: mkState(this._rest), R: mkState(this._rest) }; // what the arm is actually doing
     this._fingerSpec = { L: { ...BASE_FINGERS }, R: { ...BASE_FINGERS } };
     this._fingerState = {
       L: mkFingerState(),
@@ -417,7 +432,7 @@ export class Body {
     cw: number,
     rate = ARM_FOLLOW,
   ): Vec3Tuple {
-    const v = this._armVec[side][slot].copy(BASE_POSE[slot]);
+    const v = this._armVec[side][slot].copy(this._rest[slot]);
     // Outgoing first, then incoming: the incoming gesture takes over as its
     // blend rises, and the two never both sit at full weight.
     if (pDir) v.lerp(pDir, pw).normalize();

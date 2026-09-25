@@ -1,6 +1,6 @@
 import type { Localized } from '../../i18n/locale';
 import type { JointTable } from './anatomy';
-import type { EmotionName, ShapeWeights, Vec3Tuple, VisemeName } from './primitives';
+import type { ArmSlot, EmotionName, ShapeWeights, Vec3Tuple, VisemeName } from './primitives';
 import type { GazeLimits } from './profile';
 import type { TurnRequest } from './turn';
 
@@ -202,4 +202,10 @@ export interface AvatarDescriptor {
   script?: TurnRequest[];
   /** For an avatar that is deliberately not human. */
   anatomy?: JointTable;
+  /**
+   * Resting arm directions in character space, for an avatar whose garment
+   * needs the arms held clear of the body, such as a full skirt. Slots left out
+   * keep the engine's standing pose; gestures still blend from these.
+   */
+  armRest?: Partial<Record<ArmSlot, Vec3Tuple>>;
 }
