@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import original01, {
   createOriginal01AllOutfitsRootHingeMainCuffs,
+  createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector,
   original01AllOutfits,
   original01AllOutfitsRootHinge,
 } from '@/avatars/original01';
@@ -243,5 +244,37 @@ describe('original01 root-hinge integration descriptor', () => {
     expect(descriptor.materials).toBe(original01AllOutfitsRootHinge.materials);
     expect(() => createOriginal01AllOutfitsRootHingeMainCuffs('')).toThrow('nonempty GLB URL');
     expect(() => createOriginal01AllOutfitsRootHingeMainCuffs('   ')).toThrow('nonempty GLB URL');
+  });
+
+  it('appends exactly one rear-bow connector to Main while preserving shared descriptor objects', () => {
+    const url = '/models/v208-rear-bow-v004.glb';
+    const base = createOriginal01AllOutfitsRootHingeMainCuffs(url);
+    const descriptor = createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector(url);
+    const baseMain = mainDress(base);
+    const main = mainDress(descriptor);
+    const connector = 'V02WaistPreview_Back_Connector';
+
+    expect(descriptor.id).toBe('original-01-v02-all-outfits-root-hinge-main-cuffs-rear-bow-v208');
+    expect(descriptor.url).toBe(url);
+    expect(main.meshes.filter((mesh) => mesh === connector)).toEqual([connector]);
+    expect(main.meshes).toEqual([...baseMain.meshes, connector]);
+    expect(new Set(main.meshes).size).toBe(main.meshes.length);
+    expect(baseMain.meshes).not.toContain(connector);
+    expect(descriptor.wardrobe?.slots.outfit?.items.slice(1)).toEqual(
+      base.wardrobe?.slots.outfit?.items.slice(1),
+    );
+    for (const item of descriptor.wardrobe?.slots.outfit?.items.slice(1) ?? []) {
+      expect(item.meshes).not.toContain(connector);
+    }
+
+    expect(descriptor.sway).toBe(base.sway);
+    expect(descriptor.presets).toBe(base.presets);
+    expect(descriptor.materials).toBe(base.materials);
+    expect(() => createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector('')).toThrow(
+      'nonempty GLB URL',
+    );
+    expect(() => createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector('   ')).toThrow(
+      'nonempty GLB URL',
+    );
   });
 });

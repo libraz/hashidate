@@ -102,6 +102,15 @@ const original01: AvatarDescriptor = {
     },
   },
 
+  // The tiered Main skirt stands away from the hips; the hands rest on it
+  // rather than inside it. Set so the idle fingertips sit 0.23-0.26 m from the
+  // body axis at fingertip height, level with the skirt's outer surface.
+  armRest: {
+    upperArm: [0.5, -0.85, 0.14],
+    lowerArm: [0.34, -0.92, 0.22],
+    hand: [0.26, -0.94, 0.2],
+  },
+
   sway: {
     // Measured in V04 bone-local metres. Tail drive remains deliberately absent
     // while this first passive-contact fit is reviewed.
@@ -678,6 +687,49 @@ export function createOriginal01AllOutfitsRootHingeMainCuffs(url: string): Avata
     ...original01AllOutfitsRootHinge,
     id: 'original-01-v02-all-outfits-root-hinge-main-cuffs-v128',
     url,
+    wardrobe,
+  };
+}
+
+/**
+ * Build the V208 descriptor for the rear-bow connector addition.
+ *
+ * The connector belongs to the main dress only.  Keeping this as a second
+ * factory means the V128 main-cuffs descriptor, its registry consumers, and
+ * all shared motion/material/preset objects remain unchanged.
+ */
+export function createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector(
+  url: string,
+): AvatarDescriptor {
+  const base = createOriginal01AllOutfitsRootHingeMainCuffs(url);
+  const baseWardrobe = base.wardrobe;
+  if (!baseWardrobe) throw new Error('Rear-bow connector profile requires wardrobe data');
+  const baseSlot = baseWardrobe.slots.outfit;
+  if (!baseSlot) throw new Error('Rear-bow connector profile requires the outfit slot');
+  const baseItem = baseSlot.items.find((item) => item.id === 'v02-main-dress');
+  if (!baseItem) throw new Error('Rear-bow connector profile requires the main dress item');
+
+  const connector = 'V02WaistPreview_Back_Connector';
+  if (baseItem.meshes.includes(connector)) {
+    throw new Error('Rear-bow connector is already present in the main dress');
+  }
+  const mainMeshes = [...baseItem.meshes, connector];
+  const wardrobe = {
+    ...baseWardrobe,
+    slots: {
+      ...baseWardrobe.slots,
+      outfit: {
+        ...baseSlot,
+        items: baseSlot.items.map((item) =>
+          item.id === baseItem.id ? { ...item, meshes: mainMeshes } : item,
+        ),
+      },
+    },
+  };
+
+  return {
+    ...base,
+    id: 'original-01-v02-all-outfits-root-hinge-main-cuffs-rear-bow-v208',
     wardrobe,
   };
 }
