@@ -701,19 +701,47 @@ export function createOriginal01AllOutfitsRootHingeMainCuffs(url: string): Avata
 export function createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector(
   url: string,
 ): AvatarDescriptor {
-  const base = createOriginal01AllOutfitsRootHingeMainCuffs(url);
-  const baseWardrobe = base.wardrobe;
-  if (!baseWardrobe) throw new Error('Rear-bow connector profile requires wardrobe data');
-  const baseSlot = baseWardrobe.slots.outfit;
-  if (!baseSlot) throw new Error('Rear-bow connector profile requires the outfit slot');
-  const baseItem = baseSlot.items.find((item) => item.id === 'v02-main-dress');
-  if (!baseItem) throw new Error('Rear-bow connector profile requires the main dress item');
+  return withMainDressMesh(
+    createOriginal01AllOutfitsRootHingeMainCuffs(url),
+    'V02WaistPreview_Back_Connector',
+    'original-01-v02-all-outfits-root-hinge-main-cuffs-rear-bow-v208',
+    'Rear-bow connector',
+  );
+}
 
-  const connector = 'V02WaistPreview_Back_Connector';
-  if (baseItem.meshes.includes(connector)) {
-    throw new Error('Rear-bow connector is already present in the main dress');
+/**
+ * Build the V477 descriptor for a GLB exported with `--mid-upper-frill`: the
+ * V208 main dress plus the extra ruffle tier on the skirt's Mid band.
+ */
+export function createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidFrill(
+  url: string,
+): AvatarDescriptor {
+  return withMainDressMesh(
+    createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector(url),
+    'V477_Main_Skirt_Mid_Frill_Upper',
+    'original-01-v02-all-outfits-root-hinge-main-cuffs-rear-bow-mid-frill-v477',
+    'Mid-band frill',
+  );
+}
+
+/** Add one Main-only mesh to the main dress item of `base`. */
+function withMainDressMesh(
+  base: AvatarDescriptor,
+  mesh: string,
+  id: string,
+  label: string,
+): AvatarDescriptor {
+  const baseWardrobe = base.wardrobe;
+  if (!baseWardrobe) throw new Error(`${label} profile requires wardrobe data`);
+  const baseSlot = baseWardrobe.slots.outfit;
+  if (!baseSlot) throw new Error(`${label} profile requires the outfit slot`);
+  const baseItem = baseSlot.items.find((item) => item.id === 'v02-main-dress');
+  if (!baseItem) throw new Error(`${label} profile requires the main dress item`);
+
+  if (baseItem.meshes.includes(mesh)) {
+    throw new Error(`${label} is already present in the main dress`);
   }
-  const mainMeshes = [...baseItem.meshes, connector];
+  const mainMeshes = [...baseItem.meshes, mesh];
   const wardrobe = {
     ...baseWardrobe,
     slots: {
@@ -727,9 +755,5 @@ export function createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector(
     },
   };
 
-  return {
-    ...base,
-    id: 'original-01-v02-all-outfits-root-hinge-main-cuffs-rear-bow-v208',
-    wardrobe,
-  };
+  return { ...base, id, wardrobe };
 }

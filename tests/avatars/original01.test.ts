@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import original01, {
   createOriginal01AllOutfitsRootHingeMainCuffs,
   createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector,
+  createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidFrill,
   original01AllOutfits,
   original01AllOutfitsRootHinge,
 } from '@/avatars/original01';
@@ -274,6 +275,27 @@ describe('original01 root-hinge integration descriptor', () => {
       'nonempty GLB URL',
     );
     expect(() => createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector('   ')).toThrow(
+      'nonempty GLB URL',
+    );
+  });
+
+  it('appends exactly one Mid-band frill to the V208 main dress', () => {
+    const url = '/models/v477-mid-frill.glb';
+    const base = createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector(url);
+    const descriptor = createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidFrill(url);
+    const frill = 'V477_Main_Skirt_Mid_Frill_Upper';
+
+    expect(descriptor.id).toBe(
+      'original-01-v02-all-outfits-root-hinge-main-cuffs-rear-bow-mid-frill-v477',
+    );
+    expect(descriptor.url).toBe(url);
+    expect(mainDress(descriptor).meshes).toEqual([...mainDress(base).meshes, frill]);
+    for (const item of descriptor.wardrobe?.slots.outfit?.items.slice(1) ?? []) {
+      expect(item.meshes).not.toContain(frill);
+    }
+    expect(descriptor.sway).toBe(base.sway);
+    expect(descriptor.armRest).toBe(base.armRest);
+    expect(() => createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidFrill('')).toThrow(
       'nonempty GLB URL',
     );
   });
