@@ -46,8 +46,18 @@ describe('original01 root-hinge integration descriptor', () => {
     expect(original01AllOutfitsRootHinge.presets?.hideGroup).toBe('V02_Hide');
     expect(original01AllOutfitsRootHinge.presets?.exclude).toEqual([
       'V02_SpeechNeutralizer_SymbolO',
+      'V02_SpeechNeutralizer_Joy',
+      'V02_SpeechNeutralizer_StarHeart',
     ]);
     expect(original01AllOutfitsRootHinge.presets?.composition).toEqual({
+      // biome-ignore lint/style/useNamingConvention: Authored morph target name.
+      V02_02_Joy: { speechNeutralizer: 'V02_SpeechNeutralizer_Joy' },
+      // biome-ignore lint/style/useNamingConvention: Authored morph target name.
+      V02_03_ClosedEyeSmile: { speechNeutralizer: 'V02_SpeechNeutralizer_Joy' },
+      // biome-ignore lint/style/useNamingConvention: Authored morph target name.
+      V02_12_StarEyes: { speechNeutralizer: 'V02_SpeechNeutralizer_StarHeart' },
+      // biome-ignore lint/style/useNamingConvention: Authored morph target name.
+      V02_13_HeartEyes: { speechNeutralizer: 'V02_SpeechNeutralizer_StarHeart' },
       // biome-ignore lint/style/useNamingConvention: Authored morph target name.
       V02_14_DotEyes: {
         blink: 'preserve',

@@ -443,9 +443,24 @@ if (!rootHingeBasePresets) throw new Error('Root-hinge profile requires preset d
 
 const rootHingePresets: PresetSpec = {
   ...rootHingeBasePresets,
-  exclude: [...(rootHingeBasePresets.exclude ?? []), 'V02_SpeechNeutralizer_SymbolO'],
+  exclude: [
+    ...(rootHingeBasePresets.exclude ?? []),
+    'V02_SpeechNeutralizer_SymbolO',
+    'V02_SpeechNeutralizer_Joy',
+    'V02_SpeechNeutralizer_StarHeart',
+  ],
   composition: {
     ...(rootHingeBasePresets.composition ?? {}),
+    // The open-mouth faces leave their lower lip behind under the canonical close; each GLB
+    // that carries the exact inverse returns the mouth to rest while speaking instead.
+    // biome-ignore lint/style/useNamingConvention: Authored morph target name.
+    V02_02_Joy: { speechNeutralizer: 'V02_SpeechNeutralizer_Joy' },
+    // biome-ignore lint/style/useNamingConvention: Authored morph target name.
+    V02_03_ClosedEyeSmile: { speechNeutralizer: 'V02_SpeechNeutralizer_Joy' },
+    // biome-ignore lint/style/useNamingConvention: Authored morph target name.
+    V02_12_StarEyes: { speechNeutralizer: 'V02_SpeechNeutralizer_StarHeart' },
+    // biome-ignore lint/style/useNamingConvention: Authored morph target name.
+    V02_13_HeartEyes: { speechNeutralizer: 'V02_SpeechNeutralizer_StarHeart' },
     // biome-ignore lint/style/useNamingConvention: Authored morph target name.
     V02_14_DotEyes: {
       blink: 'preserve' as const,
