@@ -75,6 +75,12 @@ export interface PresetSpec extends DrawnShapeSpec {
 export interface PbrScalarOverride {
   metalness: number;
   roughness: number;
+  /**
+   * Strength of the runtime's own studio reflection on this material
+   * (`envMapIntensity`), whatever the room. Omitted, the material sees only the
+   * scene environment, which is empty without a backdrop.
+   */
+  reflection?: number;
 }
 
 export interface MaterialRules {

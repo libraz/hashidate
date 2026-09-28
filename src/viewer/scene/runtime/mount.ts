@@ -31,6 +31,7 @@ export function mountAvatar(
   root: THREE.Object3D,
   avatar: AvatarDescriptor,
   toon: boolean,
+  environment: THREE.Texture | null,
 ): Mounted {
   // Casts, but does not receive. The shadow the avatar throws on the wall
   // behind it is what puts it in the room rather than in front of a picture of
@@ -42,7 +43,7 @@ export function mountAvatar(
     if (o instanceof THREE.Mesh) o.castShadow = true;
   });
 
-  const materials = setupMaterials(root, avatar);
+  const materials = setupMaterials(root, avatar, environment);
   materials.apply(toon);
 
   const profile = buildProfile(root, avatar);

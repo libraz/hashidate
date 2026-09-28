@@ -4,6 +4,7 @@ import { BackdropStage } from '@/viewer/scene/backdrop';
 import { fbm, mulberry32 } from '@/viewer/scene/backdrop/noise';
 import { ROOM, WINDOW } from '@/viewer/scene/backdrop/parts';
 import { PATTERNS } from '@/viewer/scene/backdrop/patterns';
+import { StudioEnvironment } from '@/viewer/scene/environment';
 import { parseBackdrop, readStageMode } from '@/viewer/stage-mode';
 
 /**
@@ -142,7 +143,7 @@ function mountable() {
   } as unknown as THREE.WebGLRenderer;
   const lights = new THREE.Group();
   scene.add(lights);
-  const backdrop = new BackdropStage(scene, renderer, [lights]);
+  const backdrop = new BackdropStage(scene, renderer, [lights], new StudioEnvironment(renderer));
   return { scene, renderer, lights, backdrop };
 }
 

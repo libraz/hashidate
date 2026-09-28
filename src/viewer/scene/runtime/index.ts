@@ -21,6 +21,7 @@ import { rendererId } from '../../renderer-id';
 import { stageMode } from '../../stage-mode';
 import { BrowserVoice } from '../../voice';
 import { BackdropStage } from '../backdrop';
+import { StudioEnvironment } from '../environment';
 import { buildFramings } from '../framing';
 import {
   FULL_FRAME,
@@ -73,6 +74,7 @@ export class AvatarRuntime {
   /** The three lights the viewer ships with, together so a room can hide them. */
   private readonly defaultRig = new THREE.Group();
   private readonly backdrop: BackdropStage;
+  private readonly environment: StudioEnvironment;
   /** The document layer, which sits behind everything the renderer draws. */
   private readonly slides: SlideStage;
   /** Where the camera stands, and how a drag on it is published. */
@@ -227,7 +229,13 @@ export class AvatarRuntime {
     this.defaultRig.add(rim);
     this.scene.add(this.defaultRig);
 
-    this.backdrop = new BackdropStage(this.scene, this.renderer, [this.defaultRig]);
+    this.environment = new StudioEnvironment(this.renderer);
+    this.backdrop = new BackdropStage(
+      this.scene,
+      this.renderer,
+      [this.defaultRig],
+      this.environment,
+    );
     // Read here rather than passed in, because the room is not something any
     // caller of this class decides — it is on the URL the source was opened
     // with, and the same reader that answers "is this a stage" answers it.
@@ -636,7 +644,7 @@ export class AvatarRuntime {
     const root = gltf.scene;
     this.scene.add(root);
 
-    const mounted = mountAvatar(root, avatar, this.toon);
+    const mounted = mountAvatar(root, avatar, this.toon, this.environment.texture);
     const { profile, director, wardrobe, materials, problems } = mounted;
 
     this.shotCamera.rebuild(buildFramings(root, profile, FOV));
@@ -732,6 +740,7 @@ export class AvatarRuntime {
     this.audio.dispose();
     this.slides.dispose();
     this.backdrop.dispose();
+    this.environment.dispose();
     this.shotCamera.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();

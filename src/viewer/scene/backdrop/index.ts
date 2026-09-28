@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { LabelledId } from '@/engine/types';
 import type { Localized } from '@/i18n/locale';
+import type { StudioEnvironment } from '../environment';
 import { SceneryAssets } from './assets';
 import type { BuiltBackdrop, Pattern } from './patterns';
 import { PATTERNS } from './patterns';
@@ -84,7 +84,7 @@ export class BackdropStage {
    */
   private suspended = false;
   /**
-   * Built once and shared by every pattern.
+   * Shared by every pattern, and owned by the runtime.
    *
    * This is not the room's lighting — the patterns provide that. It is the
    * faint everything-else that a `MeshStandardMaterial` needs before its
@@ -95,14 +95,21 @@ export class BackdropStage {
    *
    * `MeshToonMaterial` ignores environment maps entirely, so the avatar is
    * untouched by this — which is the reason it can be left on the scene rather
-   * than assigned per material.
+   * than assigned per material. A preserved avatar metal given its own
+   * reflection holds the same map at its own intensity and ignores this one.
    */
-  private environment: THREE.Texture | null = null;
+  private readonly environment: StudioEnvironment;
 
-  constructor(scene: THREE.Scene, renderer: THREE.WebGLRenderer, defaultLights: THREE.Object3D[]) {
+  constructor(
+    scene: THREE.Scene,
+    renderer: THREE.WebGLRenderer,
+    defaultLights: THREE.Object3D[],
+    environment: StudioEnvironment,
+  ) {
     this.scene = scene;
     this.renderer = renderer;
     this.defaultLights = defaultLights;
+    this.environment = environment;
     this.baseline = {
       toneMapping: renderer.toneMapping,
       exposure: renderer.toneMappingExposure,
@@ -206,7 +213,7 @@ export class BackdropStage {
     this.scene.add(built.root);
     this.scenery.attach(this.scene);
     this.scene.fog = built.fog;
-    this.scene.environment = this.ensureEnvironment();
+    this.scene.environment = this.environment.texture;
     this.scene.environmentIntensity = built.environmentIntensity;
     // The room encloses the camera at every framing the viewer offers, so the
     // clear colour is never seen. It is set to the fog colour anyway, because
@@ -248,21 +255,6 @@ export class BackdropStage {
   dispose(): void {
     this.clear();
     this.scenery.dispose();
-    this.environment?.dispose();
-    this.environment = null;
-  }
-
-  private ensureEnvironment(): THREE.Texture | null {
-    if (this.environment) return this.environment;
-    // `document` is the guard rather than a try/catch: this is reached only
-    // from a browser, but the module is imported by tests that never mount.
-    if (typeof document === 'undefined') return null;
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    const room = new RoomEnvironment();
-    this.environment = pmrem.fromScene(room, 0.04).texture;
-    room.dispose();
-    pmrem.dispose();
-    return this.environment;
   }
 }
 

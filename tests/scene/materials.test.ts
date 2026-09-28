@@ -247,6 +247,61 @@ describe('avatar material conversion', () => {
     expect(source.roughness).toBe(0.35);
   });
 
+  it('gives a reflecting override the shared environment and never disposes it', () => {
+    const environment = new THREE.Texture();
+    const metal = new THREE.MeshStandardMaterial({ metalness: 1, roughness: 0.2 });
+    metal.name = 'Metal';
+    const matte = new THREE.MeshStandardMaterial({ metalness: 1, roughness: 0.2 });
+    matte.name = 'Matte';
+    const reflecting = mesh(metal);
+    const plain = mesh(matte);
+    const root = new THREE.Group();
+    root.add(reflecting, plain);
+
+    const materials = setupMaterials(
+      root,
+      avatar({
+        preserveImported: /^(?:Metal|Matte)$/,
+        preservedPbrOverrides: {
+          Metal: { metalness: 0.8, roughness: 0.3, reflection: 0.6 },
+          Matte: { metalness: 0.8, roughness: 0.3 },
+        },
+      }),
+      environment,
+    );
+    materials.apply(true);
+    const clone = reflecting.material as THREE.MeshStandardMaterial;
+    const plainClone = plain.material as THREE.MeshStandardMaterial;
+
+    expect(clone.envMap).toBe(environment);
+    expect(clone.envMapIntensity).toBe(0.6);
+    expect(metal.envMap).toBeNull();
+    expect(plainClone.envMap).toBeNull();
+
+    const environmentDispose = vi.spyOn(environment, 'dispose');
+    materials.dispose();
+    expect(environmentDispose).not.toHaveBeenCalled();
+  });
+
+  it('rejects a negative or non-finite reflection', () => {
+    const source = new THREE.MeshStandardMaterial();
+    source.name = 'Metal';
+    const root = new THREE.Group();
+    root.add(mesh(source));
+
+    expect(() =>
+      setupMaterials(
+        root,
+        avatar({
+          preserveImported: /^Metal$/,
+          preservedPbrOverrides: { Metal: { metalness: 0.2, roughness: 0.3, reflection: -1 } },
+        }),
+      ),
+    ).toThrowError(
+      'Invalid preserved PBR override for material "Metal" field "reflection": expected a finite number >= 0, got -1',
+    );
+  });
+
   it('shares identity-cached clones and disposes shared materials and textures once', () => {
     const map = new THREE.Texture();
     const shared = new THREE.MeshStandardMaterial({ map, metalness: 0.8, roughness: 0.35 });

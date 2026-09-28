@@ -148,6 +148,12 @@ function validatePbrOverrides(overrides: Record<string, PbrScalarOverride> | und
         );
       }
     }
+    const reflection = override?.reflection;
+    if (reflection !== undefined && (!Number.isFinite(reflection) || reflection < 0)) {
+      throw new RangeError(
+        `Invalid preserved PBR override for material "${name}" field "reflection": expected a finite number >= 0, got ${String(reflection)}`,
+      );
+    }
   }
 }
 
@@ -156,6 +162,7 @@ function overriddenPbr(
   src: THREE.Material,
   override: PbrScalarOverride,
   clones: Map<THREE.Material, THREE.Material>,
+  environment: THREE.Texture | null,
 ): THREE.Material {
   if (!(src instanceof THREE.MeshStandardMaterial)) return src;
   const cached = clones.get(src);
@@ -164,6 +171,10 @@ function overriddenPbr(
   const clone = src.clone();
   clone.metalness = override.metalness;
   clone.roughness = override.roughness;
+  if (override.reflection !== undefined && environment) {
+    clone.envMap = environment;
+    clone.envMapIntensity = override.reflection;
+  }
   clone.needsUpdate = true;
   clones.set(src, clone);
   return clone;
@@ -172,8 +183,13 @@ function overriddenPbr(
 /**
  * Build the descriptor-defined toon presentation and return a restore handle.
  * Preserved imported slots remain original materials in toon mode.
+ * `environment` is the runtime's shared reflection map; the handle never disposes it.
  */
-export function setupMaterials(root: THREE.Object3D, avatar?: AvatarDescriptor): MaterialSet {
+export function setupMaterials(
+  root: THREE.Object3D,
+  avatar?: AvatarDescriptor,
+  environment: THREE.Texture | null = null,
+): MaterialSet {
   const preservedPbrOverrides = avatar?.materials?.preservedPbrOverrides;
   validatePbrOverrides(preservedPbrOverrides);
 
@@ -220,7 +236,7 @@ export function setupMaterials(root: THREE.Object3D, avatar?: AvatarDescriptor):
         const name = m.name || '';
         if (!rules.preserveImported.test(name)) return toToon(m, rules);
         if (!Object.hasOwn(rules.preservedPbrOverrides, name)) return m;
-        return overriddenPbr(m, rules.preservedPbrOverrides[name], preservedClones);
+        return overriddenPbr(m, rules.preservedPbrOverrides[name], preservedClones, environment);
       }),
     );
   }
@@ -260,7 +276,7 @@ export function setupMaterials(root: THREE.Object3D, avatar?: AvatarDescriptor):
       seen.add(m);
       const props: unknown[] = Object.values(m);
       for (const v of props) {
-        if (!isTexture(v) || seenTextures.has(v)) continue;
+        if (!isTexture(v) || v === environment || seenTextures.has(v)) continue;
         seenTextures.add(v);
         v.dispose();
       }
