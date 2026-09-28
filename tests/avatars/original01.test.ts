@@ -75,9 +75,9 @@ describe('original01 root-hinge integration descriptor', () => {
     });
     expect(original01AllOutfitsRootHinge.materials?.preservedPbrOverrides).toEqual({
       // biome-ignore lint/style/useNamingConvention: Imported material name.
-      V02_20260909_PolishedPlatinum: { metalness: 0.65, roughness: 0.28 },
+      V02_20260909_PolishedPlatinum: { metalness: 0.8, roughness: 0.3, reflection: 0.7 },
       // biome-ignore lint/style/useNamingConvention: Imported material name.
-      V02_20260909_StarPinkGold: { metalness: 0.55, roughness: 0.3 },
+      V02_20260909_StarPinkGold: { metalness: 0.8, roughness: 0.3, reflection: 0.7 },
     });
 
     const baseGroups = original01AllOutfits.sway?.groups;

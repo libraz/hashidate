@@ -486,11 +486,12 @@ export const original01AllOutfitsRootHinge: AvatarDescriptor = {
   presets: rootHingePresets,
   materials: {
     ...original01AllOutfits.materials,
+    // Own studio reflection: without it the default scene reflects nothing and the metal draws dark.
     preservedPbrOverrides: {
       // biome-ignore lint/style/useNamingConvention: Imported material name.
-      V02_20260909_PolishedPlatinum: { metalness: 0.65, roughness: 0.28 },
+      V02_20260909_PolishedPlatinum: { metalness: 0.8, roughness: 0.3, reflection: 0.7 },
       // biome-ignore lint/style/useNamingConvention: Imported material name.
-      V02_20260909_StarPinkGold: { metalness: 0.55, roughness: 0.3 },
+      V02_20260909_StarPinkGold: { metalness: 0.8, roughness: 0.3, reflection: 0.7 },
     },
   },
   wardrobe: rootHingeWardrobe,
