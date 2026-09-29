@@ -42,7 +42,7 @@ import type { AvatarDescriptor, ColliderSpec, Profile } from '../types';
  *
  * ## Why a fixed timestep
  *
- * The drag term is a fraction of velocity retained *per step*, not per second,
+ * The drag term is a fraction of velocity lost *per step*, not per second,
  * so running it on the frame delta makes an avatar swing further on a slow
  * machine than on a fast one — and the difference is not subtle, it is the
  * difference between hair that settles and hair that oscillates. Stepping at a
