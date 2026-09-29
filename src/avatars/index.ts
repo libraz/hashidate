@@ -20,9 +20,10 @@
 
 import type { AvatarDescriptor } from '../engine/types';
 import manuka from './manuka';
+import neru from './neru';
 import yoka from './yoka';
 
-export const AVATARS: AvatarDescriptor[] = [yoka, manuka];
+export const AVATARS: AvatarDescriptor[] = [yoka, manuka, neru];
 
 const byId = new Map(AVATARS.map((a) => [a.id, a]));
 

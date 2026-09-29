@@ -30,6 +30,8 @@ yarn ctl wear --preset casual
 
 The two validation avatars are purchased VRChat models. Their source packages, the extracted meshes and textures, and the GLB the viewer loads are all git-ignored: they are 1.5 GB together, and they cannot be redistributed here.
 
+The third avatar, Yonagi Neru (`neru`), is exported by a separate production workspace rather than by this pipeline and placed at `public/models/neru.glb`. It is git-ignored and not redistributable either.
+
 The pipeline turns a purchased package into a GLB:
 
 ```sh

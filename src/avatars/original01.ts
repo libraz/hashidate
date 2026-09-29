@@ -1,10 +1,10 @@
 /**
  * V02 wardrobe and secondary-motion descriptor profiles.
  *
- * This remains deliberately unregistered while its motion behaviour is under
- * review.  The face, material and preset mappings are the same mappings used
- * by the V02 eye-surface runtime probe; the wardrobe and secondary-motion
- * declarations are new here.
+ * These are production profiles of one model; the registered character built
+ * from the latest of them is `neru.ts`.  The face, material and preset
+ * mappings are the same mappings used by the V02 eye-surface runtime probe;
+ * the wardrobe and secondary-motion declarations are new here.
  */
 
 import type { AvatarDescriptor, PresetSpec } from '../engine/types';

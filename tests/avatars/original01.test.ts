@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { AVATARS, getAvatar } from '@/avatars';
 import original01, {
   createOriginal01AllOutfitsRootHingeMainCuffs,
   createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector,
@@ -308,5 +309,19 @@ describe('original01 root-hinge integration descriptor', () => {
     expect(() => createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidFrill('')).toThrow(
       'nonempty GLB URL',
     );
+  });
+});
+
+describe('neru registration', () => {
+  it('registers the latest main-dress profile under the character name', () => {
+    const neru = getAvatar('neru');
+    const profile =
+      createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidFrill('/models/neru.glb');
+    expect(neru).not.toBeNull();
+    expect(neru?.label).toEqual({ en: 'Yonagi Neru', ja: '夜凪ねる' });
+    expect(neru?.url).toBe('/models/neru.glb');
+    expect(neru?.wardrobe).toEqual(profile.wardrobe);
+    expect(neru?.sway).toEqual(profile.sway);
+    expect(AVATARS[0]?.id).toBe('yoka');
   });
 });
