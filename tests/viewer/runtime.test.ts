@@ -64,6 +64,7 @@ function bareRuntime(loader: { loadAsync: (url: string) => Promise<unknown> }): 
     audio: { dispose: vi.fn() },
     slides: { dispose: vi.fn() },
     backdrop: { dispose: vi.fn() },
+    environment: { dispose: vi.fn() },
     shotCamera: { dispose: vi.fn() },
   });
   return runtime;
