@@ -246,7 +246,9 @@ const original01: AvatarDescriptor = {
         label: { en: 'Back hair', ja: '後ろ髪' },
         stiffness: 1.15,
         drag: 0.945,
-        gravity: 0.14,
+        // At 0.14 the long back hair lifted by a 16 cm leap stayed near horizontal
+        // for about 0.3 s after landing; 0.4 brings it down in 0.2 s.
+        gravity: 0.4,
         radius: 0.028,
         roots: [
           'Hair_back_A_L_001',
