@@ -150,6 +150,37 @@ describe('gesture entrance', () => {
     expect(releaseStep).toBeLessThan(peak * 0.5);
     expect(baseline.angleTo(previous)).toBeLessThan(1e-4);
   });
+
+  it('eases a held pose out from its release, however long it was held', () => {
+    const chain = h.profile.fingerBones['index.R'];
+    if (!chain?.[0]) throw new Error('synthetic rig has no index.R proximal bone');
+    const orientation = () => chain[0].quaternion.clone();
+
+    h.rig.reset();
+    h.body.update(DT);
+    const baseline = orientation();
+    h.body.playDef(spreadGesture(0.55), 'spread');
+    // Five seconds: well past the pose's lead, hold and exit together.
+    for (let i = 0; i < 300; i++) {
+      h.rig.reset();
+      h.body.update(DT);
+    }
+    const peak = baseline.angleTo(orientation());
+    expect(peak).toBeGreaterThan(0.02);
+
+    h.body.stopGesture();
+    let previous = orientation();
+    let maxStep = 0;
+    for (let i = 0; i < 300; i++) {
+      h.rig.reset();
+      h.body.update(DT);
+      const current = orientation();
+      maxStep = Math.max(maxStep, previous.angleTo(current));
+      previous = current;
+    }
+    expect(maxStep).toBeLessThan(peak * 0.1);
+    expect(baseline.angleTo(previous)).toBeLessThan(1e-4);
+  });
 });
 
 /**

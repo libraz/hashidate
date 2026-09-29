@@ -141,6 +141,8 @@ export interface ActiveGesture {
   speed: number;
   /** Seconds of entrance, this playback's own — see `LEAD_PER_RAD`. */
   lead: number;
+  /** Playback time the exit starts at: the end of the hold, or a held pose's release. */
+  exitAt: number;
 }
 
 /** The frame's breath and drift terms, shared by every arm slot's compose step. */
@@ -570,6 +572,9 @@ export class Body {
       // from the slide, the one it used on the line before.
       side: side === undefined ? (Math.random() < 0.5 ? -1 : 1) : sideMirror(side),
     };
+    // Capped: past about a second an entrance stops reading as deliberate and
+    // starts reading as slow, however far the arm has to go.
+    const lead = Math.min(0.95, Math.max(def.lead, this.travel(def, v) * LEAD_PER_RAD));
     this.gesture = {
       def,
       id,
@@ -577,9 +582,8 @@ export class Body {
       time: 0,
       released: false,
       speed: 0.93 + Math.random() * 0.14,
-      // Capped: past about a second an entrance stops reading as deliberate and
-      // starts reading as slow, however far the arm has to go.
-      lead: Math.min(0.95, Math.max(def.lead, this.travel(def, v) * LEAD_PER_RAD)),
+      lead,
+      exitAt: lead + def.hold,
     };
     this.blend = 0;
     this._env.entrance = 0;
@@ -612,10 +616,12 @@ export class Body {
 
   /** Release the current gesture, including a sustained pose. */
   stopGesture(): void {
-    if (!this.gesture) return;
-    this.gesture.released = true;
-    const { def, lead } = this.gesture;
-    this.gesture.time = Math.max(this.gesture.time, lead + def.hold);
+    const g = this.gesture;
+    if (!g) return;
+    // A pose held past its hold leaves from the moment it is let go, not from where the hold ran out.
+    if (g.def.sustain && !g.released) g.exitAt = Math.max(g.time, g.exitAt);
+    g.released = true;
+    g.time = Math.max(g.time, g.exitAt);
   }
 
   /**
@@ -702,7 +708,8 @@ export class Body {
       // is the same number the branch used to produce, and a reach can ask
       // which of the two a weight below 1 came from. See `Envelope`.
       const xIn = lead > 0 ? Math.min(1, t / lead) : 1;
-      const xOut = held || t < lead + def.hold ? 1 : Math.max(0, 1 - (t - lead - def.hold) / out);
+      const { exitAt } = this.gesture;
+      const xOut = held || t < exitAt ? 1 : Math.max(0, 1 - (t - exitAt) / out);
       this._env.entrance = minJerk(xIn);
       this._env.exit = minJerk(xOut);
 
