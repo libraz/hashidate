@@ -50,6 +50,7 @@ from config import (
     DEVICE,
     LATENTS,
     MAX_SECONDS,
+    MODEL,
     REF_NORMALIZE_DB,
     runtime_key,
 )
@@ -150,7 +151,7 @@ async def lifespan(_: FastAPI):
     watermark.self_test(
         _runtime, warmup.audio.squeeze().cpu().numpy(), int(warmup.sample_rate)
     )
-    print(f"speech ready on {DEVICE}: {len(_latents)} reference latents", flush=True)
+    print(f"speech ready on {DEVICE}: {MODEL} model, {len(_latents)} reference latents", flush=True)
     yield
 
 
@@ -162,6 +163,7 @@ def health() -> dict:
     return {
         "ready": _runtime is not None,
         "device": DEVICE,
+        "model": MODEL,
         "refs": len(_latents),
         "steps": DEFAULT_STEPS,
         "max_seconds": MAX_SECONDS,

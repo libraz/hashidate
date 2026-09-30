@@ -48,7 +48,31 @@ VOICE = _voice_dir()
 CLIPS = VOICE / "clips"
 LATENTS = VOICE / "latents"
 
-CHECKPOINT = "Aratako/Irodori-TTS-v4.1-Small"
+# The checkpoints this sidecar is known to run, by the name HASHIDATE_TTS_MODEL
+# takes. A closed table rather than a repo id: the pinned upstream commit runs
+# these two, and `DEFAULT_STEPS` was tuned on small and has only been timed on
+# large. Both sit over the same codec, so one set of reference latents serves
+# either.
+#
+# On an M5 Max at 16 steps, small synthesises a line in about half its length
+# and large in about its full length. Upstream reports large as closer to the
+# reference speaker and slightly weaker on kanji readings.
+CHECKPOINTS = {
+    "small": "Aratako/Irodori-TTS-v4.1-Small",
+    "large": "Aratako/Irodori-TTS-v4-Large",
+}
+DEFAULT_MODEL = "small"
+
+
+def _model() -> str:
+    name = os.environ.get("HASHIDATE_TTS_MODEL") or DEFAULT_MODEL
+    if name not in CHECKPOINTS:
+        raise SystemExit(f"HASHIDATE_TTS_MODEL must be one of {', '.join(CHECKPOINTS)}, not {name!r}")
+    return name
+
+
+MODEL = _model()
+CHECKPOINT = CHECKPOINTS[MODEL]
 CODEC_REPO = "Aratako/Semantic-DACVAE-Japanese-32dim"
 
 # Apple Silicon runs this at fp32 — the backend has no bf16 — and is fast enough
