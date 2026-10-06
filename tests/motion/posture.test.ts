@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
+import { DROOP_RATE } from '@/engine/face/blink';
 import { Body } from '@/engine/motion/body';
+import { ScalarFollower } from '@/engine/motion/follow';
 import { breathCurve, INHALE } from '@/engine/motion/idle';
 import { IdlePosture, type PostureInput } from '@/engine/motion/posture';
 import { minJerk } from '@/engine/motion/timing';
@@ -10,6 +12,12 @@ import { buildRig } from '../helpers/scene';
 
 const DT_CASES = [1 / 60, 1 / 30, 0.05];
 const BREATH_DEPTH = 0.8;
+/** The step speech used to put into depth in one frame. */
+const DEPTH_STEP = 0.3 * BREATH_DEPTH;
+/** Largest per-frame depth change allowed across a speaking edge. */
+const DEPTH_FRAME_BOUND = 0.15 * DEPTH_STEP;
+/** Long enough for the depth follower to land within 1e-9 of its target. */
+const SETTLE_SECONDS = 8;
 
 function postureHarness(breathDepth = BREATH_DEPTH) {
   const scene = buildRig({ armatureScale: 0.01 });
@@ -120,7 +128,7 @@ describe('IdlePosture speech breath bridge', () => {
   });
 
   it.each(DT_CASES)(
-    'rebases short and repeated speech, then returns to the exact legacy target at dt=%s',
+    'rebases short and repeated speech with bounded depth change, then settles on the legacy targets at dt=%s',
     (dt) => {
       const h = postureHarness();
       let phase = 0;
@@ -136,6 +144,7 @@ describe('IdlePosture speech breath bridge', () => {
       expect(firstOnset.d).toBeCloseTo(beforeOnset.d, 12);
       phase = 0.04;
 
+      let lastD = firstOnset.d;
       for (let i = 0; i < 3; i++) {
         const t = h.input.t + dt;
         phase = phaseStep(phase, t, dt, h.input.breathPeriod, true);
@@ -144,6 +153,8 @@ describe('IdlePosture speech breath bridge', () => {
         expect(Number.isFinite(frame.d)).toBe(true);
         expect(frame.br).toBeGreaterThanOrEqual(-1);
         expect(frame.br).toBeLessThanOrEqual(1);
+        expect(Math.abs(frame.d - lastD)).toBeLessThan(DEPTH_FRAME_BOUND);
+        lastD = frame.d;
       }
 
       const beforeFall = h.step(0, true);
@@ -156,12 +167,14 @@ describe('IdlePosture speech breath bridge', () => {
       const afterFall = h.step(dt, false);
       expect(Number.isFinite(afterFall.br)).toBe(true);
       expect(Number.isFinite(afterFall.d)).toBe(true);
+      expect(Math.abs(afterFall.d - firstFall.d)).toBeLessThan(DEPTH_FRAME_BOUND);
 
       const beforeRepeatedOnset = h.step(0, false);
       const repeatedOnset = h.step(0, true);
       expect(repeatedOnset.br).toBeCloseTo(beforeRepeatedOnset.br, 12);
       expect(repeatedOnset.d).toBeCloseTo(beforeRepeatedOnset.d, 12);
       phase = 0.04;
+      lastD = repeatedOnset.d;
 
       let reachedPeak = false;
       for (let i = 0; i < 300; i++) {
@@ -171,10 +184,11 @@ describe('IdlePosture speech breath bridge', () => {
         expect(Number.isFinite(frame.br)).toBe(true);
         expect(frame.br).toBeGreaterThanOrEqual(-1);
         expect(frame.br).toBeLessThanOrEqual(1);
+        expect(Math.abs(frame.d - lastD)).toBeLessThan(DEPTH_FRAME_BOUND);
+        lastD = frame.d;
         if (phase >= INHALE) {
           const exact = expectedTerms(phase, BREATH_DEPTH, true);
           expect(frame.br).toBe(exact.br);
-          expect(frame.d).toBe(exact.d);
           expect(frame.breath).toBe(exact.breath);
           reachedPeak = true;
           break;
@@ -182,14 +196,34 @@ describe('IdlePosture speech breath bridge', () => {
       }
       expect(reachedPeak).toBe(true);
 
-      // Once the bridge has ended, an ordinary fall remains the old direct target.
+      // Held speech settles on the shallower legacy depth.
+      for (let elapsed = 0; elapsed < SETTLE_SECONDS; elapsed += dt) {
+        const t = h.input.t + dt;
+        phase = phaseStep(phase, t, dt, h.input.breathPeriod, true);
+        lastD = h.step(dt, true).d;
+      }
+      expect(lastD).toBeCloseTo(expectedTerms(phase, BREATH_DEPTH, true).d, 9);
+
+      // Once the bridge has ended, an ordinary fall keeps the direct breath curve
+      // and moves depth back toward the idle target a bounded amount per frame.
       const t = h.input.t + dt;
       phase = phaseStep(phase, t, dt, h.input.breathPeriod, false);
       const afterOrdinaryFall = h.step(dt, false);
       const exactIdle = expectedTerms(phase, BREATH_DEPTH, false);
       expect(afterOrdinaryFall.br).toBe(exactIdle.br);
-      expect(afterOrdinaryFall.d).toBe(exactIdle.d);
       expect(afterOrdinaryFall.breath).toBe(exactIdle.breath);
+      expect(Math.abs(afterOrdinaryFall.d - lastD)).toBeLessThan(DEPTH_FRAME_BOUND);
+      lastD = afterOrdinaryFall.d;
+
+      for (let elapsed = 0; elapsed < SETTLE_SECONDS; elapsed += dt) {
+        const tIdle = h.input.t + dt;
+        phase = phaseStep(phase, tIdle, dt, h.input.breathPeriod, false);
+        const frame = h.step(dt, false);
+        expect(Math.abs(frame.d - lastD)).toBeLessThan(DEPTH_FRAME_BOUND);
+        lastD = frame.d;
+      }
+      const settledIdle = expectedTerms(phase, BREATH_DEPTH, false);
+      expect(lastD).toBeCloseTo(settledIdle.d, 9);
     },
   );
 
@@ -225,9 +259,10 @@ describe('IdlePosture speech breath bridge', () => {
     const period = h.input.breathPeriod * 1.5 * (1 + 0.11 * Math.sin(t * 0.077 + 1.4));
     const phase = 0.04 + dt / period;
     const target = expectedTerms(phase, BREATH_DEPTH, true);
+    const followedD = new ScalarFollower(from.d).step(target.d, dt, DROOP_RATE);
     const w = minJerk((phase - 0.04) / (INHALE - 0.04));
     const expectedBr = from.br + (target.br - from.br) * w;
-    const expectedD = from.d + (target.d - from.d) * w;
+    const expectedD = from.d + (followedD - from.d) * w;
     const actual = h.step(dt, true);
 
     expect(actual.br).toBeCloseTo(expectedBr, 12);

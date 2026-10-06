@@ -13,7 +13,7 @@ import { ScalarFollower } from '../motion/follow';
  * How fast the lid floor follows `droop`, in the follower's first-order terms:
  * the director's default emotion rate, so heavy lids arrive with the face.
  */
-const DROOP_RATE = 3.5;
+export const DROOP_RATE = 3.5;
 
 /**
  * Blink shape. Closing takes about a third of the blink and opening the rest;

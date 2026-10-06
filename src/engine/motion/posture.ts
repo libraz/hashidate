@@ -1,6 +1,8 @@
 import type * as THREE from 'three';
+import { DROOP_RATE } from '../face/blink';
 import type { Rig } from '../rig';
 import type { Profile } from '../types';
+import { ScalarFollower } from './follow';
 import { breathCurve, INHALE, settle } from './idle';
 import { minJerk } from './timing';
 
@@ -46,6 +48,12 @@ export interface BreathTerms {
   d: number;
 }
 
+/**
+ * How fast breath depth follows the shallower speaking target: the lid droop's
+ * rate, so a change of state settles at the pace of the face rather than in a frame.
+ */
+const DEPTH_FOLLOW = DROOP_RATE;
+
 interface BreathBridge {
   fromBr: number;
   fromD: number;
@@ -60,6 +68,7 @@ export class IdlePosture {
   private _appliedBr = -1;
   private _appliedD = 0;
   private _hasAppliedBreath = false;
+  private readonly _depth = new ScalarFollower(0);
   /** Returned from `apply` and refilled each frame; read it before the next call. */
   private readonly _terms: BreathTerms = { br: 0, d: 0 };
 
@@ -97,7 +106,10 @@ export class IdlePosture {
 
     const breath = breathCurve(this._breathPhase);
     const targetBr = (breath - 0.5) * 2; // -1 .. 1
-    const targetD = s.breathDepth * (s.speaking ? 0.7 : 1);
+    const depthTarget = s.breathDepth * (s.speaking ? 0.7 : 1);
+    if (!this._hasAppliedBreath) this._depth.reset(depthTarget);
+    // Followed, not assigned: a line ending would otherwise deepen the chest 30% in one frame.
+    const targetD = this._depth.step(depthTarget, dt, DEPTH_FOLLOW);
     let br = targetBr;
     let d = targetD;
     const bridge = this._breathBridge;
