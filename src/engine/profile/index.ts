@@ -155,6 +155,7 @@ export function buildProfile(
     face,
     body,
     limb,
+    anatomy: avatar.anatomy,
     missing,
     gaze: { ...DEFAULT_GAZE_LIMITS, ...(avatar.gaze ?? {}) },
   };
