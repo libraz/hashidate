@@ -349,8 +349,8 @@ export interface SpringGroup {
   colliders: Collider[];
   /** Optional root placement driven by a skinned point on earlier groups. */
   anchor: SkinPointAnchor | null;
-  /** Internal edge state so toggling an attached group only seeds its own chain. */
-  anchorEnabled: boolean;
+  /** Internal edge state, so toggling a group restores or reseeds only its own chain. */
+  wasEnabled: boolean;
 }
 
 /**
@@ -546,7 +546,7 @@ export class Spring {
         gravityDir: new THREE.Vector3().fromArray(def.gravityDir).normalize(),
         radius: def.radius,
         anchor,
-        anchorEnabled: true,
+        wasEnabled: true,
         colliders: (g.colliders ?? []).flatMap((id) => {
           const c = colliders.get(id);
           if (!c) this.missing.push(`collider group:${id}`);
@@ -833,9 +833,22 @@ export class Spring {
     this.root.updateMatrixWorld(true);
     for (const input of this.#inputs) input.snap();
     for (const g of this.groups) {
-      g.anchor?.place();
-      for (const j of g.joints) j.seed();
-      if (g.anchor) g.anchorEnabled = g.enabled;
+      if (g.enabled) {
+        g.anchor?.place();
+        for (const j of g.joints) j.seed();
+      } else {
+        for (const j of g.joints) {
+          j.restQuat(j.bone.quaternion);
+          j.bone.updateMatrix();
+        }
+      }
+      g.wasEnabled = g.enabled;
+    }
+    // A disabled anchor is placed once more after enabled producers have been
+    // reseeded. Its first placement above may have read their pre-reset pose.
+    this.#rehang();
+    for (const g of this.groups) {
+      if (g.anchor && !g.enabled) g.anchor.place();
     }
   }
 
@@ -843,15 +856,32 @@ export class Spring {
     for (const g of this.groups) g.anchor?.place();
   }
 
-  #syncAnchorToggles(): void {
+  #syncGroupToggles(): void {
+    // Restore every disabled group on every frame, rather than only on the
+    // edge. A driven rest pose can change while a group is off, and its local
+    // rotations must follow that drive before an attachment reads its bones.
+    let rehang = false;
     for (const g of this.groups) {
-      if (!g.anchor || g.anchorEnabled === g.enabled) continue;
-      g.anchorEnabled = g.enabled;
+      if (!g.enabled) {
+        for (const joint of g.joints) {
+          joint.restQuat(joint.bone.quaternion);
+          joint.bone.updateMatrix();
+        }
+        if (!g.anchor) rehang = true;
+      }
+    }
+    if (rehang) this.#rehang();
+
+    for (const g of this.groups) {
+      if (g.wasEnabled === g.enabled) {
+        if (!g.enabled && g.anchor) g.anchor.place();
+        continue;
+      }
+      g.wasEnabled = g.enabled;
       if (g.enabled) {
-        g.anchor.place();
+        g.anchor?.place();
         for (const joint of g.joints) joint.seed();
-      } else {
-        for (const joint of g.joints) joint.restQuat(joint.bone.quaternion);
+      } else if (g.anchor) {
         g.anchor.place();
       }
     }
@@ -910,7 +940,7 @@ export class Spring {
     // anticipates the head instead of following it.
     this.root.updateMatrixWorld(true);
     for (const input of this.#inputs) input.capture();
-    this.#syncAnchorToggles();
+    this.#syncGroupToggles();
 
     if (this._pending) {
       this.#seed();
@@ -970,7 +1000,16 @@ export class Spring {
       // Place after prior cloth/producer groups in this same fixed step, even
       // when this accessory group itself is switched off.
       g.anchor?.place(inputs);
-      if (!g.enabled) continue;
+      if (!g.enabled) {
+        // An ordinary disabled group can still be a producer for an attached
+        // group later in this pass. Keep its world matrices on its current
+        // parent after an earlier group has solved it.
+        if (!g.anchor) {
+          for (const j of g.joints)
+            j.bone.matrixWorld.multiplyMatrices(j.parent.matrixWorld, j.bone.matrix);
+        }
+        continue;
+      }
       for (const c of g.colliders) c.place();
 
       const stiffness = g.stiffness * this.stiffnessScale * dt;
@@ -982,9 +1021,10 @@ export class Spring {
       for (const j of g.joints) {
         const bone = j.bone;
         const parent = j.parent;
-        if (g.anchor && bone !== g.anchor.root) {
-          // A preceding attached link may have turned during this same pass;
-          // refresh only this new subtree node from its solved parent.
+        if (!g.anchor || bone !== g.anchor.root) {
+          // Every joint may have a solved parent from the preceding link. Read
+          // this bone's origin from that fresh parent before integrating it;
+          // only an attached root keeps the placement written by its anchor.
           bone.updateMatrix();
           bone.matrixWorld.multiplyMatrices(parent.matrixWorld, bone.matrix);
         }
@@ -1038,8 +1078,8 @@ export class Spring {
         // refresh it until render. Propagating one link by hand is cheaper than
         // an `updateMatrixWorld` per joint, which would walk the whole subtree
         // once per joint and turn a linear pass into a quadratic one.
-        // Only the parent rotation is fresh for that joint: outside an anchored
-        // group its own origin is read from its matrixWorld as of the last step.
+        // The next joint reads this fresh world matrix, including the solved
+        // origin and orientation of this link.
         bone.updateMatrix();
         bone.matrixWorld.multiplyMatrices(parent.matrixWorld, bone.matrix);
       }

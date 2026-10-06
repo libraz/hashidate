@@ -6,6 +6,11 @@ import type { AvatarDescriptor, ColliderSpec, SwayGroupSpec } from '@/engine/typ
 import { must } from '../helpers/must';
 import { addBoneChain, buildRig, type SyntheticRig } from '../helpers/scene';
 import { skinnedPoint } from '../helpers/skinned-point';
+import {
+  makeTrajectoryFixture,
+  runTrajectory,
+  trajectoryState,
+} from '../helpers/spring-trajectory';
 import trajectoryRecord from './spring-trajectory.json';
 
 const STEP = 1 / 60;
@@ -278,6 +283,35 @@ function makeSimpleAnchor(stiffness: number) {
   return { rig, spring };
 }
 
+function expectRenderedJointGeometry(spring: Spring): void {
+  const joints = spring.groups.flatMap((group) => group.joints);
+  const byBone = new Map<THREE.Object3D, (typeof joints)[number]>(
+    joints.map((joint) => [joint.bone, joint]),
+  );
+  const world = new THREE.Matrix4();
+  const worldQ = new THREE.Quaternion();
+  for (const joint of joints) {
+    const base = new THREE.Vector3().setFromMatrixPosition(joint.bone.matrixWorld);
+    const renderedTail = joint.axis
+      .clone()
+      .multiplyScalar(joint.length)
+      .applyQuaternion(worldQ.setFromRotationMatrix(world.extractRotation(joint.bone.matrixWorld)))
+      .add(base);
+    expect(joint.cur.distanceTo(renderedTail)).toBeLessThan(1e-6);
+    expect(joint.cur.distanceTo(base)).toBeCloseTo(joint.length, 9);
+
+    const parent = byBone.get(joint.parent);
+    const parentChildren = joint.parent.children.filter((child) => child instanceof THREE.Bone);
+    if (parent && parentChildren.length === 1) {
+      const head = new THREE.Vector3().setFromMatrixPosition(joint.bone.matrixWorld);
+      expect(
+        head.distanceTo(parent.cur),
+        `${joint.bone.name} head vs ${parent.bone.name} tail`,
+      ).toBeLessThan(1e-6);
+    }
+  }
+}
+
 describe('Spring', () => {
   it('keeps a resting chain stable and finite, including a calibrated collider', () => {
     const { spring } = makeSpring(
@@ -448,67 +482,91 @@ describe('Spring', () => {
     }
     expectFinite(spring);
   });
+
+  it.each([1, 0.01])(
+    'keeps ordinary multi-joint links coherent after a moved parent at armature scale %s',
+    (armatureScale) => {
+      const rig = buildRig({ armatureScale });
+      addBoneChain(rig, { parent: 'Head', root: 'Hair', joints: 3 });
+      // Hair_1 branches into a second run, so the invariant covers both the
+      // straight chain and the branch propagation path.
+      addBoneChain(rig, { parent: 'Hair_1', root: 'HairBranch', joints: 2 });
+      const descriptor: AvatarDescriptor = {
+        ...rig.descriptor,
+        sway: { groups: [{ id: 'hair', roots: ['Hair'] }], colliders: {} },
+      };
+      const spring = new Spring(buildProfile(rig.root, descriptor), descriptor);
+      spring.update(0);
+      must(rig.bones.get('Head'), 'Head').rotation.set(0.37, -0.62, 0.21);
+      rig.root.updateMatrixWorld(true);
+
+      spring.update(STEP);
+
+      expectRenderedJointGeometry(spring);
+      expectFinite(spring);
+    },
+  );
+
+  it('restores and reseeds an ordinary group when it is toggled during motion', () => {
+    const { rig, spring } = makeSpring(
+      [{ id: 'hair', stiffness: 1.2, drag: 0.45, roots: ['Hair'] }],
+      [{ parent: 'Head', root: 'Hair', joints: 3 }],
+    );
+    const group = must(spring.groups[0], 'groups[0]');
+    const head = must(rig.bones.get('Head'), 'Head');
+    spring.update(0);
+    head.rotation.y = 0.8;
+    rig.root.updateMatrixWorld(true);
+    for (let i = 0; i < 24; i++) spring.update(STEP);
+
+    group.enabled = false;
+    head.rotation.x = -0.45;
+    head.rotation.z = 0.28;
+    rig.root.updateMatrixWorld(true);
+    spring.update(0);
+    for (const joint of group.joints) {
+      expect(joint.bone.quaternion.angleTo(joint.rest)).toBeLessThan(1e-8);
+    }
+
+    head.rotation.y = -0.31;
+    rig.root.updateMatrixWorld(true);
+    group.enabled = true;
+    spring.update(0);
+    for (const joint of group.joints) {
+      expect(joint.bone.quaternion.angleTo(joint.rest)).toBeLessThan(1e-8);
+      expect(joint.cur.distanceTo(joint.prev)).toBeLessThan(1e-12);
+    }
+  });
+
+  it('keeps a driven rest pose current while its ordinary group is disabled', () => {
+    const { spring } = makeSpring(
+      [{ id: 'tail', stiffness: 0.9, drag: 0.45, roots: ['Tail'] }],
+      [{ parent: 'Hips', root: 'Tail', joints: 3 }],
+    );
+    const group = must(spring.groups[0], 'groups[0]');
+    const root = must(group.joints[0], 'root joint');
+    expect(spring.enableDrive('tail')).toEqual([root]);
+    spring.update(0);
+
+    group.enabled = false;
+    const firstDrive = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.4);
+    root.drive.copy(firstDrive);
+    spring.update(0);
+    expect(root.bone.quaternion.angleTo(root.restQuat(new THREE.Quaternion()))).toBeLessThan(1e-8);
+
+    const secondDrive = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.55);
+    root.drive.copy(secondDrive);
+    spring.update(0);
+    expect(root.bone.quaternion.angleTo(root.restQuat(new THREE.Quaternion()))).toBeLessThan(1e-8);
+  });
 });
 
 describe('Spring step inputs', () => {
-  /** Producers, an unattached chain and an attached one on one rig. */
-  function makeTrajectoryFixture() {
-    const rig = buildRig({ armatureScale: 0.01 });
-    addBoneChain(rig, { parent: 'Hips', root: 'ProducerA', joints: 3 });
-    addBoneChain(rig, { parent: 'Head', root: 'Hair', joints: 3 });
-    addBoneChain(rig, { parent: 'Hips', root: 'CharmRoot', joints: 3 });
-    const descriptor: AvatarDescriptor = {
-      ...rig.descriptor,
-      sway: {
-        groups: [
-          { id: 'producerA', roots: ['ProducerA'], stiffness: 0.9, drag: 0.32, gravity: 0.11 },
-          { id: 'hair', roots: ['Hair'], stiffness: 1.2, drag: 0.5 },
-          {
-            id: 'charm',
-            roots: ['CharmRoot'],
-            anchor: {
-              influences: [
-                { bone: 'ProducerA_1', weight: 0.6, position: [0, -2, 0] },
-                { bone: 'ProducerA_2', weight: 0.4, position: [1, -3, 0.5] },
-              ],
-            },
-            stiffness: 0,
-            drag: 0.45,
-            gravity: 0.16,
-          },
-        ],
-        colliders: {},
-      },
-    };
-    return { rig, spring: new Spring(buildProfile(rig.root, descriptor), descriptor) };
-  }
-
-  function state(spring: Spring): number[][] {
-    return spring.groups.flatMap((group) =>
-      group.joints.map((joint) => [...joint.cur.toArray(), ...joint.bone.quaternion.toArray()]),
-    );
-  }
-
-  it('is the single-step solver unchanged at one step per frame', () => {
-    // Recorded from the solver before steps read an interpolated body.
-    const { rig, spring } = makeTrajectoryFixture();
-    spring.update(0);
-    for (let frame = 1; frame <= 90; frame++) {
-      const t = frame / 60;
-      must(rig.bones.get('Hips'), 'Hips').rotation.set(
-        Math.sin(t * 2.1) * 0.3,
-        Math.cos(t * 1.3) * 0.25,
-        0,
-      );
-      must(rig.bones.get('Head'), 'Head').rotation.set(
-        0,
-        Math.sin(t * 3.7) * 0.5,
-        Math.sin(t * 2.9) * 0.2,
-      );
-      spring.update(STEP);
-    }
+  it('matches the recorded trajectory at one step per frame', () => {
+    // Regenerate with `yarn tsx tools/record-spring-trajectory.ts` only after a
+    // deliberate solver change; do not hand-edit the floats.
     // Close to 12 places rather than equal: x64 and arm64 libm round the last bit differently.
-    const actual = state(spring);
+    const actual = runTrajectory();
     expect(actual.map((joint) => joint.length)).toEqual(
       trajectoryRecord.sixtyHz.map((joint) => joint.length),
     );
@@ -538,8 +596,8 @@ describe('Spring step inputs', () => {
       pose(double.rig, 2 * frame * STEP);
       double.spring.update(2 * STEP);
     }
-    const a = state(double.spring);
-    const b = state(single.spring);
+    const a = trajectoryState(double.spring);
+    const b = trajectoryState(single.spring);
     for (let i = 0; i < a.length; i++) {
       for (let k = 0; k < 7; k++)
         expect(must(must(a[i], 'a[i]')[k], 'a[i][k]')).toBeCloseTo(
@@ -607,7 +665,7 @@ describe('Spring step inputs', () => {
       moved.spring.update(2 * STEP);
       fresh.spring.update(2 * STEP);
     }
-    expect(state(moved.spring)).toEqual(state(fresh.spring));
+    expect(trajectoryState(moved.spring)).toEqual(trajectoryState(fresh.spring));
   });
 
   it('restarts an attached group switched back on mid-motion without a fling', () => {
@@ -759,6 +817,28 @@ describe('Spring weighted root attachments', () => {
         group.joints.every((joint) => joint.cur.equals(joint.prev)),
       ),
     ).toBe(true);
+  });
+
+  it('replaces a disabled attachment target after a producer reset', () => {
+    const fixture = makeAnchorFixture();
+    const attached = must(
+      fixture.spring.groups.find((group) => group.id === 'charm'),
+      'charm group',
+    );
+    fixture.spring.update(0);
+    for (let frame = 1; frame <= 20; frame++) {
+      poseAnchorFixture(fixture, frame);
+      fixture.spring.update(STEP);
+    }
+
+    attached.enabled = false;
+    poseAnchorFixture(fixture, 33);
+    fixture.spring.update(STEP);
+    fixture.spring.reset();
+    poseAnchorFixture(fixture, 51);
+    fixture.spring.update(0);
+
+    expect(anchorMiss(fixture)).toBeLessThan(1e-8);
   });
 
   it('places a disabled accessory after its producers in every fixed substep', () => {
