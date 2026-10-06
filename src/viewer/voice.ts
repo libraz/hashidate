@@ -159,8 +159,13 @@ class BufferTake implements Take {
   private source: AudioBufferSourceNode | null = null;
   private startedAt: number | null = null;
   private stoppedAt: number | null = null;
-  /** The furthest the clock has read, and the wall time it last moved. */
+  /** The furthest raw audio clock has read, and the wall time it last moved. */
   private reached = 0;
+  /** The elapsed value exposed to callers; it must never move backwards. */
+  private reported = 0;
+  /** Once wall time takes over, it remains the clock for this take. */
+  private wallStartedAt: number | null = null;
+  private wallOrigin = 0;
   private movedAt = 0;
 
   constructor(
@@ -215,15 +220,23 @@ class BufferTake implements Take {
     // line open until something interrupted it.
     const audio = this.ctx.currentTime - this.startedAt;
     const wall = wallSeconds();
-    if (audio > this.reached) {
+    if (this.wallStartedAt === null && audio > this.reached) {
       this.reached = audio;
       this.movedAt = wall;
-      return audio;
     }
     // Stalled: carry on from where it stopped on the wall clock. See
-    // `CLOCK_STALL_SECONDS`.
+    // `CLOCK_STALL_SECONDS`. Keep the raw audio position separate from the
+    // value returned here: when the device clock resumes it may still be
+    // behind a wall-clock fallback that has already advanced the line.
     const still = wall - this.movedAt;
-    return still > CLOCK_STALL_SECONDS ? this.reached + still : this.reached;
+    if (this.wallStartedAt === null && still > CLOCK_STALL_SECONDS) {
+      this.wallStartedAt = wall;
+      this.wallOrigin = this.reached + still;
+    }
+    const elapsed =
+      this.wallStartedAt === null ? this.reached : this.wallOrigin + (wall - this.wallStartedAt);
+    this.reported = Math.max(this.reported, elapsed);
+    return this.reported;
   }
 
   get amplitude(): number {
@@ -274,6 +287,11 @@ export class BrowserVoice implements Voice {
   private readonly muted: boolean;
   private readonly providedOutput: BrowserAudioOutput | null;
   private ownOutput: BrowserAudioOutput | null = null;
+  private offUnlock: (() => void) | null = null;
+  private readonly availableListeners = new Set<() => void>();
+  private devicePending = false;
+  private deviceRefused = false;
+  private unlockWhilePending = false;
   private ctx: AudioContext | null = null;
   private chainNodes: Chain | null = null;
   private silentUntil = 0;
@@ -322,6 +340,7 @@ export class BrowserVoice implements Voice {
     this.base = base;
     this.muted = muted;
     this.providedOutput = output ?? null;
+    if (output) this.bindOutput(output);
     // Resolve the default chain in the background, so the first line of a
     // session is processed rather than being the one that pays for the load.
     void this.applyChain(this.chainEpoch);
@@ -335,6 +354,12 @@ export class BrowserVoice implements Voice {
    * handful a document is allowed, spent on a renderer that no longer exists.
    */
   dispose(): void {
+    this.offUnlock?.();
+    this.offUnlock = null;
+    this.availableListeners.clear();
+    this.devicePending = false;
+    this.deviceRefused = false;
+    this.unlockWhilePending = false;
     this.ctx = null;
     const nodes = this.chainNodes;
     this.chainNodes = null;
@@ -369,9 +394,39 @@ export class BrowserVoice implements Voice {
   }
 
   private outputForAudio(): BrowserAudioOutput {
-    if (this.providedOutput !== null) return this.providedOutput;
+    if (this.providedOutput !== null) {
+      this.bindOutput(this.providedOutput);
+      return this.providedOutput;
+    }
     if (this.ownOutput === null) this.ownOutput = new BrowserAudioOutput({ muted: this.muted });
+    this.bindOutput(this.ownOutput);
     return this.ownOutput;
+  }
+
+  /** Notify the session when a refused device can be attempted again. */
+  onAvailable(listener: () => void): () => void {
+    this.availableListeners.add(listener);
+    return () => this.availableListeners.delete(listener);
+  }
+
+  private bindOutput(output: BrowserAudioOutput): void {
+    if (this.offUnlock !== null) return;
+    this.offUnlock = output.onUnlock(() => {
+      if (this.devicePending) {
+        // The output may unlock between startContext's timeout and its caller
+        // observing the refusal. Remember it so the refusal still produces a
+        // recovery event after that await settles.
+        this.unlockWhilePending = true;
+        return;
+      }
+      if (!this.deviceRefused) return;
+      this.deviceRefused = false;
+      this.notifyAvailable();
+    });
+  }
+
+  private notifyAvailable(): void {
+    for (const listener of this.availableListeners) listener();
   }
 
   /**
@@ -582,7 +637,8 @@ export class BrowserVoice implements Voice {
    * which is why the same one is kept and asked again rather than rebuilt: a
    * context that was refused starts on a later `resume()` once the page has been
    * interacted with. What must not happen is waiting on the first one — see
-   * `RESUME_WAIT_MS`.
+   * `RESUME_WAIT_MS`. A muted renderer plays nothing, so it takes the context
+   * even suspended and keeps time on the wall-clock fallback.
    */
   private async device(): Promise<AudioContext | null> {
     const output = this.outputForAudio();
@@ -592,8 +648,25 @@ export class BrowserVoice implements Voice {
       // is what makes `setRoom` order-independent against the first line.
       if (this.room !== null) void this.applyRoom(this.roomEpoch);
     }
+    if (output.isMuted) return this.ctx.state === 'closed' ? null : this.ctx;
+    this.devicePending = true;
+    this.unlockWhilePending = false;
+    const refusedBefore = this.deviceRefused;
     const started = await output.ensureRunning();
-    return started ? this.ctx : null;
+    this.devicePending = false;
+    if (started) {
+      this.unlockWhilePending = false;
+      this.deviceRefused = false;
+      if (refusedBefore) this.notifyAvailable();
+      return this.ctx;
+    }
+    this.deviceRefused = true;
+    if (this.unlockWhilePending) {
+      this.unlockWhilePending = false;
+      this.deviceRefused = false;
+      this.notifyAvailable();
+    }
+    return null;
   }
 
   /**

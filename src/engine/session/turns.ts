@@ -77,7 +77,8 @@ export class TurnQueue {
   /**
    * Queued turns the voice answered with no take, which are asked again once
    * it hands one back — a sidecar that came back mid-run is a voice for the
-   * lines still to come. Each is asked again once.
+   * lines still to come. Each is asked again once for that; an audio device
+   * becoming available asks again regardless.
    */
   private readonly _silenced = new Set<Turn>();
   /** Per-turn abort for a synthesis still in flight; released on removal. */
@@ -102,13 +103,24 @@ export class TurnQueue {
   private _seq = 0;
   /** A disposed queue no longer has a frame loop that can own its work. */
   private _disposed = false;
+  /** The voice's recovery subscription, if it provides one. */
+  private _offAvailable: (() => void) | null = null;
+  /** Availability events so far; a prepare compares its snapshot to catch one it missed. */
+  private _availability = 0;
 
   constructor(
     private readonly d: Director,
     private readonly voice: Voice | null,
     private readonly stage: Stage,
     private readonly events: SessionEvents,
-  ) {}
+  ) {
+    this._offAvailable =
+      voice?.onAvailable?.(() => {
+        if (this._disposed) return;
+        this._availability += 1;
+        this.retrySilenced(voice, false);
+      }) ?? null;
+  }
 
   /**
    * Queue one turn.
@@ -288,6 +300,7 @@ export class TurnQueue {
    */
   private synthesise(turn: Turn, voice: Voice): void {
     const controller = new AbortController();
+    const availability = this._availability;
     this._pending.set(turn, controller);
     voice
       .prepare(turn.text, turn.reading, controller.signal)
@@ -303,8 +316,13 @@ export class TurnQueue {
           turn.take = null;
         } else if (this.queue.includes(turn)) {
           turn.take = take;
-          if (take === null) this._silenced.add(turn);
-          else this.retrySilenced(voice);
+          if (take === null) {
+            this._silenced.add(turn);
+            // A browser unlock can happen while a refused prepare is still
+            // settling. The availability callback sees no silenced turn in
+            // that window, so replay it after recording this one.
+            if (this._availability !== availability) this.retrySilenced(voice, false);
+          } else this.retrySilenced(voice);
         } else {
           // The turn was removed while synthesis was in flight. Do not let a
           // late answer resurrect audio for a line the queue no longer owns.
@@ -313,12 +331,15 @@ export class TurnQueue {
       });
   }
 
-  /** Ask again, once, for every queued line the voice had no take for. */
-  private retrySilenced(voice: Voice): void {
+  /** Ask again for every queued line the voice had no take for. */
+  private retrySilenced(voice: Voice, consumeRecoveryBudget = true): void {
     for (const turn of this._silenced) {
       this._silenced.delete(turn);
-      if (this._retried.has(turn) || !this.queue.includes(turn)) continue;
-      this._retried.add(turn);
+      if (!this.queue.includes(turn)) continue;
+      if (consumeRecoveryBudget) {
+        if (this._retried.has(turn)) continue;
+        this._retried.add(turn);
+      }
       delete turn.take;
       this.synthesise(turn, voice);
     }
@@ -406,6 +427,8 @@ export class TurnQueue {
   dispose(): void {
     if (this._disposed) return;
     this._disposed = true;
+    this._offAvailable?.();
+    this._offAvailable = null;
 
     const active = this.turn;
     this.discard(this.queue);
@@ -481,6 +504,13 @@ export class TurnQueue {
       }
       if (this._gap <= 0 && (head.take !== undefined || waited > limit)) {
         this._waiting = null;
+        if (head.take === undefined) {
+          // The silent fallback is also the cancellation point. A serial
+          // voice must be released here or a noncooperative first request can
+          // hold every line behind it forever.
+          this._pending.get(head)?.abort();
+          this._pending.delete(head);
+        }
         const next = this.queue.shift() as Turn;
         this._silenced.delete(next);
         this.start(next);

@@ -120,6 +120,14 @@ export interface Shading {
  */
 export interface Voice {
   /**
+   * Tell the queue that a previously refused audio device can be tried again.
+   *
+   * Optional because a voice without a browser device has no availability
+   * event to expose. The listener is for recovery of lines that were already
+   * queued silently; it is not a notification for ordinary synthesis errors.
+   */
+  onAvailable?(listener: () => void): () => void;
+  /**
    * Synthesise a line, or answer null when there is nothing to synthesise it
    * with — no sidecar running, a request that failed, audio the browser will
    * not let us start yet. Null is a normal answer and means "play it silently",

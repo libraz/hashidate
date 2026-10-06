@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { textToVisemes } from '@/engine/face';
+import type { Take } from '@/engine/types';
 import { same } from '@/i18n/locale';
-import { type FakeTake, FakeVoice } from './fakes';
+import { FakeTake, FakeVoice } from './fakes';
 import { build, DT, settle, VOICE_WAIT } from './harness';
 
 /**
@@ -11,6 +12,76 @@ import { build, DT, settle, VOICE_WAIT } from './harness';
 
 /** How long a line may wait for its voice: the base, plus its own length. */
 const wait = (text: string): number => VOICE_WAIT + textToVisemes(text).duration;
+
+class RecoveringVoice extends FakeVoice {
+  private listener: (() => void) | null = null;
+  private ready = false;
+
+  onAvailable(listener: () => void): () => void {
+    this.listener = listener;
+    return () => {
+      if (this.listener === listener) this.listener = null;
+    };
+  }
+
+  recover(): void {
+    this.ready = true;
+    this.listener?.();
+  }
+
+  override prepare(text: string, reading?: string, signal?: AbortSignal): Promise<Take | null> {
+    if (!this.ready) {
+      this.asked.push(text);
+      this.signals.push(signal);
+      return Promise.resolve(null);
+    }
+    return super.prepare(text, reading, signal);
+  }
+}
+
+class SynchronouslyRecoveringVoice extends RecoveringVoice {
+  private first = true;
+
+  override prepare(text: string, reading?: string, signal?: AbortSignal): Promise<Take | null> {
+    if (this.first) {
+      this.first = false;
+      this.asked.push(text);
+      this.signals.push(signal);
+      this.recover();
+      return Promise.resolve(null);
+    }
+    return super.prepare(text, reading, signal);
+  }
+}
+
+class AbortAwareSerialVoice extends FakeVoice {
+  private chain: Promise<unknown> = Promise.resolve();
+  private first = true;
+
+  constructor(private readonly nowForTest: () => number) {
+    super(nowForTest);
+  }
+
+  override prepare(text: string, _reading?: string, signal?: AbortSignal): Promise<Take | null> {
+    const run = (): Promise<Take | null> => {
+      this.asked.push(text);
+      this.signals.push(signal);
+      if (this.first) {
+        this.first = false;
+        if (signal?.aborted) return Promise.resolve(null);
+        return new Promise((resolve) => {
+          signal?.addEventListener('abort', () => resolve(null), { once: true });
+        });
+      }
+      const take = new FakeTake(1, this.nowForTest);
+      this.takes.push(take);
+      return Promise.resolve(take);
+    };
+    const next = this.chain.then(run, run);
+    this.chain = next.catch(() => null);
+    return next;
+  }
+}
 
 describe('a turn with a voice', () => {
   it('waits for a long line as long as it takes to say, and plays it with its take', async () => {
@@ -89,6 +160,71 @@ describe('a turn with a voice', () => {
     await settle();
     expect(session.queue.every((turn) => turn.take)).toBe(true);
     expect((voice as unknown as FakeVoice).asked).toEqual(['あ', 'い', 'う', 'あ', 'い']);
+  });
+
+  it('retries queued silent lines when the voice announces availability', async () => {
+    let voice!: RecoveringVoice;
+    const { session } = build({
+      voice: (now) => {
+        voice = new RecoveringVoice(now);
+        return voice;
+      },
+    });
+    session.paused = true;
+    session.say({ id: 'a', text: 'あ' });
+    session.say({ id: 'b', text: 'い' });
+    await settle();
+    expect(session.queue.map((turn) => turn.take)).toEqual([null, null]);
+
+    voice.recover();
+    await settle();
+    await settle();
+    expect(session.queue.every((turn) => turn.take)).toBe(true);
+    expect(voice.asked).toEqual(['あ', 'い', 'あ', 'い']);
+  });
+
+  it('does not lose availability announced before a refused prepare settles', async () => {
+    let voice!: SynchronouslyRecoveringVoice;
+    const { session } = build({
+      voice: (now) => {
+        voice = new SynchronouslyRecoveringVoice(now);
+        return voice;
+      },
+    });
+    session.paused = true;
+    session.say({ id: 'race', text: 'あ' });
+    await settle();
+    await settle();
+
+    expect(voice.asked).toEqual(['あ', 'あ']);
+    expect(session.queue[0].take).toBeDefined();
+    expect(session.queue[0].take).not.toBeNull();
+  });
+
+  it('aborts a timed-out head so a serial voice can synthesize the next line', async () => {
+    let voice!: AbortAwareSerialVoice;
+    const { session, step, runUntil } = build({
+      voice: (now) => {
+        voice = new AbortAwareSerialVoice(now);
+        return voice;
+      },
+    });
+    session.say({ id: 'first', text: 'あ' });
+    session.say({ id: 'second', text: 'い' });
+
+    await settle();
+    expect(voice.asked).toEqual(['あ']);
+    expect(voice.signals[0]?.aborted).toBe(false);
+    step(Math.ceil((wait('あ') + 0.2) / DT));
+    expect(session.turn?.id).toBe('first');
+    expect(voice.signals[0]?.aborted).toBe(true);
+    await settle();
+    await settle();
+    expect(voice.asked).toEqual(['あ', 'い']);
+
+    runUntil(() => session.turn?.id === 'second');
+    expect(voice.takes).toHaveLength(1);
+    expect(voice.takes[0].playedAt).not.toBeNull();
   });
 
   it('holds the turn back until the line has been synthesised', async () => {

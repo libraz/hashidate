@@ -4,6 +4,7 @@ import { BrowserAudioOutput } from '@/viewer/audio-output';
 import { buildImpulse } from '@/viewer/rooms';
 import { BrowserVoice, buildEnvelope, envelopeAt, startContext } from '@/viewer/voice';
 import { loadBase, measure, mergeDsp, processTake } from '@/viewer/voice-chain';
+import { build as buildSession, settle } from '../session/harness';
 
 // The browser graph below is real (in-memory Web Audio nodes), while the
 // optional WASM preset resolver is kept out of these deterministic tests. The
@@ -89,7 +90,9 @@ function audioBuffer(samples: Float32Array, sampleRate = 1_000): AudioBuffer {
   } as unknown as AudioBuffer;
 }
 
-function webAudioEnvironment(options: { blocked?: boolean; decodeError?: boolean } = {}) {
+function webAudioEnvironment(
+  options: { blocked?: boolean; decodeError?: boolean; muted?: boolean } = {},
+) {
   vi.mocked(loadBase).mockReset().mockResolvedValue({});
   const destination = audioNode('destination');
   const capture = audioNode('capture') as FakeAudioNode & { stream: MediaStream };
@@ -153,14 +156,14 @@ function webAudioEnvironment(options: { blocked?: boolean; decodeError?: boolean
   };
   const output = new BrowserAudioOutput({
     context: context as unknown as AudioContext,
-    muted: false,
+    muted: options.muted ?? false,
     resumeWaitMs: 5,
   });
   const voice = new BrowserVoice({ base: '/api', output });
   // Do not let the optional processor load race these graph tests. Bypass is
   // also the expected behavior when libsonare is not available on a checkout.
   voice.setChain({ preset: null });
-  const send = vi.fn(async () => ({
+  const send = vi.fn(async (_url: string, _request: RequestInit) => ({
     ok: true,
     status: 200,
     arrayBuffer: async () => new ArrayBuffer(1),
@@ -349,6 +352,123 @@ describe('BrowserVoice with an in-memory Web Audio graph', () => {
     blocked.output.dispose();
   });
 
+  it('recovers a paused session queue through BrowserVoice output unlock', async () => {
+    const fake = webAudioEnvironment({ blocked: true });
+    const { session, step } = buildSession({ voice: () => fake.voice });
+    const startedSeconds: number[] = [];
+    session.on((event) => {
+      if (event.type === 'turn.start' && event.seconds !== undefined) {
+        startedSeconds.push(event.seconds);
+      }
+    });
+    session.paused = true;
+    session.say({ id: 'first', text: 'あ' });
+    session.say({ id: 'second', text: 'い' });
+
+    await vi.waitFor(() => expect(session.queue.map((turn) => turn.take)).toEqual([null, null]));
+    expect(fake.send).not.toHaveBeenCalled();
+
+    fake.context.state = 'running';
+    await fake.output.ensureRunning();
+    await settle();
+    await vi.waitFor(() => expect(fake.send).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(fake.decodeCalls()).toBe(2));
+    await vi.waitFor(() =>
+      expect(session.queue.every((turn) => turn.take !== null && turn.take !== undefined)).toBe(
+        true,
+      ),
+    );
+
+    session.paused = false;
+    step(1);
+    expect(session.turn?.id).toBe('first');
+    expect(fake.sources).toHaveLength(1);
+    expect(fake.sources[0].startCalls).toBe(1);
+    expect(startedSeconds[0]).toBe(fake.decoded.duration);
+
+    session.dispose();
+    fake.voice.dispose();
+    fake.output.dispose();
+  });
+
+  it('does not recreate removed queue work after session disposal and unlock', async () => {
+    const fake = webAudioEnvironment({ blocked: true });
+    const { session } = buildSession({ voice: () => fake.voice });
+    session.paused = true;
+    session.say({ id: 'removed', text: 'あ' });
+    await vi.waitFor(() => expect(session.queue[0]?.take).toBeNull());
+
+    session.dispose();
+    fake.context.state = 'running';
+    await fake.output.ensureRunning();
+    await settle();
+
+    expect(session.queue).toHaveLength(0);
+    expect(fake.send).not.toHaveBeenCalled();
+    fake.voice.dispose();
+    fake.output.dispose();
+  });
+
+  it('keeps the sidecar retry budget after an unlock retry gets a 503', async () => {
+    const fake = webAudioEnvironment({ blocked: true });
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const { session } = buildSession({ voice: () => fake.voice });
+    session.paused = true;
+    session.say({ id: 'a', text: 'あ' });
+    session.say({ id: 'b', text: 'い' });
+
+    await vi.waitFor(() => expect(session.queue.map((turn) => turn.take)).toEqual([null, null]));
+    fake.send.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      arrayBuffer: async () => new ArrayBuffer(0),
+    });
+    fake.send.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      arrayBuffer: async () => new ArrayBuffer(0),
+    });
+    fake.context.state = 'running';
+    await fake.output.ensureRunning();
+    await vi.waitFor(() => expect(fake.send).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(session.queue.map((turn) => turn.take)).toEqual([null, null]));
+
+    now.mockReturnValue(21_001);
+    session.say({ id: 'c', text: 'う' });
+    await vi.waitFor(() => expect(fake.send).toHaveBeenCalledTimes(5));
+    expect(
+      fake.send.mock.calls.map(([, request]) => JSON.parse(String(request.body)).text),
+    ).toEqual(['あ', 'い', 'う', 'あ', 'い']);
+    await vi.waitFor(() =>
+      expect(session.queue.every((turn) => turn.take !== null && turn.take !== undefined)).toBe(
+        true,
+      ),
+    );
+    expect(fake.decodeCalls()).toBe(3);
+
+    session.dispose();
+    fake.voice.dispose();
+    fake.output.dispose();
+  });
+
+  it('still prepares muted preview audio while the shared context is suspended', async () => {
+    const fake = webAudioEnvironment({ blocked: true, muted: true });
+    let wall = 1_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => wall);
+    const take = await fake.voice.prepare('preview');
+
+    expect(take?.seconds).toBe(fake.decoded.duration);
+    expect(fake.send).toHaveBeenCalledTimes(1);
+    expect(fake.output.master.gain.value).toBe(0);
+    take?.play();
+    expect(fake.sources[0].startCalls).toBe(1);
+    wall += 300;
+    expect(take?.elapsed).toBeGreaterThan(0.25);
+
+    fake.voice.dispose();
+    fake.output.dispose();
+  });
+
   it('backs off a missing sidecar after 503 and retries after the fixed interval', async () => {
     const fake = webAudioEnvironment();
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
@@ -368,6 +488,46 @@ describe('BrowserVoice with an in-memory Web Audio graph', () => {
 
     fake.voice.dispose();
     fake.output.dispose();
+  });
+
+  it('announces availability only after its own audio device refusal', async () => {
+    const normal = webAudioEnvironment();
+    const normalListener = vi.fn();
+    expect(normal.voice.onAvailable).toEqual(expect.any(Function));
+    normal.voice.onAvailable?.(normalListener);
+    await normal.output.ensureRunning();
+    expect(normalListener).not.toHaveBeenCalled();
+
+    normal.send.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      arrayBuffer: async () => new ArrayBuffer(0),
+    });
+    expect(await normal.voice.prepare('missing')).toBeNull();
+    expect(normalListener).not.toHaveBeenCalled();
+    normal.voice.dispose();
+    normal.output.dispose();
+
+    const refused = webAudioEnvironment({ blocked: true });
+    const refusedListener = vi.fn();
+    refused.voice.onAvailable?.(refusedListener);
+    expect(await refused.voice.prepare('not yet')).toBeNull();
+    expect(refusedListener).not.toHaveBeenCalled();
+    refused.context.state = 'running';
+    await refused.output.ensureRunning();
+    expect(refusedListener).toHaveBeenCalledTimes(1);
+    refused.voice.dispose();
+    refused.output.dispose();
+
+    const concurrent = webAudioEnvironment({ blocked: true });
+    const concurrentListener = vi.fn();
+    concurrent.voice.onAvailable?.(concurrentListener);
+    expect(await concurrent.voice.prepare('not yet')).toBeNull();
+    concurrent.context.state = 'running';
+    await concurrent.voice.captureStream();
+    expect(concurrentListener).toHaveBeenCalledTimes(1);
+    concurrent.voice.dispose();
+    concurrent.output.dispose();
   });
 
   it('clears the blocked warning the moment the output unlocks, without another line', async () => {
@@ -463,6 +623,32 @@ describe('BrowserVoice with an in-memory Web Audio graph', () => {
     expect(take?.elapsed).toBeCloseTo(0.1);
     wall += 2_000;
     expect(take?.elapsed).toBeGreaterThan(take?.seconds ?? Number.POSITIVE_INFINITY);
+
+    fake.voice.dispose();
+    fake.output.dispose();
+  });
+
+  it('does not rewind when the audio clock resumes after wall-clock fallback', async () => {
+    const fake = webAudioEnvironment();
+    let wall = 1_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => wall);
+    const take = await fake.voice.prepare('hello');
+    take?.play();
+    fake.context.currentTime = 10.1;
+    wall += 100;
+    expect(take?.elapsed).toBeCloseTo(0.1);
+
+    wall += 300;
+    const fallback = take?.elapsed ?? 0;
+    expect(fallback).toBeGreaterThan(0.3);
+
+    fake.context.currentTime = 10.2;
+    wall += 10;
+    const resumed = take?.elapsed ?? 0;
+    expect(resumed).toBeGreaterThanOrEqual(fallback);
+    wall += 100;
+    fake.context.currentTime = 10.3;
+    expect(take?.elapsed).toBeCloseTo(resumed + 0.1, 3);
 
     fake.voice.dispose();
     fake.output.dispose();
