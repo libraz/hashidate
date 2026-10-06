@@ -392,6 +392,15 @@ export class ControlProcess {
         timeoutMs: this.probeTimeoutMs,
         roots: this.roots,
       });
+      // The wait timing out with the child still running and the API now
+      // answering means the child itself got there late: it stays ours.
+      const stillOurs =
+        adopted &&
+        !this.stopped &&
+        !this.exited &&
+        child.exitCode === null &&
+        child.signalCode === null;
+      if (stillOurs) return;
       this.owned = false;
       await terminateChild(child, this.stopTimeoutMs);
       this.child = null;

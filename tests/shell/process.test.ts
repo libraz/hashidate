@@ -460,6 +460,27 @@ describe('starting the control server', () => {
     expect(control.ownsChild).toBe(false);
   });
 
+  it('keeps its own child when it answers just after the wait gave up', async () => {
+    const { children, spawn } = spawner();
+    // Probes in order: before the spawn, the one wait allowed (a zero timeout
+    // gives up after it), and the check made once the wait has thrown.
+    let probes = 0;
+    const fetcher = vi.fn(async () => {
+      probes += 1;
+      if (probes < 3) throw new Error('not yet');
+      return { ok: true, json: async () => snapshot(OURS) } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const control = new ControlProcess(options({ spawn, fetch: fetcher, readyTimeoutMs: 0 }));
+
+    await control.start();
+
+    expect(probes).toBe(3);
+    expect(children[0]?.signals).toEqual([]);
+    expect(control.ownsChild).toBe(true);
+    await control.stop();
+    expect(children[0]?.signals).toEqual(['SIGTERM']);
+  });
+
   it('takes down a child it had already started when the quit arrives mid-wait', async () => {
     const { children, calls, spawn } = spawner();
     const control = new ControlProcess(options({ spawn, fetch: closed, readyTimeoutMs: 5_000 }));
