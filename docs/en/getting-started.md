@@ -11,7 +11,7 @@ A clone of this repository is the runtime and nothing else. Read this section be
 | Node 22 and Yarn 4 | Pinned in `mise.toml`. `mise install` installs both. |
 | **An avatar** | Required, and **not included.** The descriptors in `src/avatars` point at `public/models/<id>.glb`, which is git-ignored. With no GLB there, the renderer comes up with nothing to draw. |
 
-The two avatars this project was built against are purchased VRChat models and cannot be redistributed here, so supply your own: put a rigged humanoid model through `make glb` and add a descriptor file to `src/avatars`, then import it and add it to the `AVATARS` array in `src/avatars/index.ts`. See [Avatars](avatars.md).
+The two avatars this project was built against are purchased VRChat models and cannot be redistributed here, so supply your own: convert a rigged humanoid model with `blender -b -P tools/blender/export_glb.py -- [--profile NAME] <in.fbx> <out.glb> [texdir]` and add a descriptor file to `src/avatars`, then import it and add it to the `AVATARS` array in `src/avatars/index.ts`. The `make glb` targets build only the two purchased models, and a model whose shape keys follow neither profile in `PROFILES` (in that script) needs its own entry there first. See [Avatars](avatars.md).
 
 ### To produce audio
 
@@ -124,7 +124,9 @@ The renderer is on `/`, and it opens as the character and nothing else — no co
 http://127.0.0.1:8765/?size=1920x1080&backdrop=night
 ```
 
-For a transparent background over a game capture, use `http://127.0.0.1:8765/?size=1920x1080&transparent=1`. Leave out `backdrop`, which takes precedence over transparency. See [The stage](stage.md).
+That `:8765` address is served from `dist/`, so it exists under `yarn start` after `yarn build` and under `yarn shell`, not under `make dev` or `yarn dev`. There the same renderer is on `http://127.0.0.1:5173/`, with the same query.
+
+For a transparent background over a game capture, use `http://127.0.0.1:8765/?size=1920x1080&transparent=1` (same run modes as above). Leave out `backdrop`, which takes precedence over transparency. See [The stage](stage.md).
 
 The panel composes that address above the tabs: pick the size, the set, the document and where the character stands, then copy the result.
 

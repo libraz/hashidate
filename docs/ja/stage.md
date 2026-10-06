@@ -14,6 +14,8 @@
 http://127.0.0.1:8765/?size=1920x1080&backdrop=night
 ```
 
+動かし方は[OBS から使う](getting-started.md#obs-から使う)と同じです。`:8765` は `yarn build` と `yarn start`（または `yarn shell`）が要り、`make dev` では `:5173` を使います。
+
 知らない名前はエラーではなく素の背景になります。URL はエラーの報告先がないフィールドに打ち込まれるものだからです。配信の途中で変えるためのコマンドでもあります。
 
 ```sh
@@ -30,6 +32,8 @@ yarn ctl backdrop        # 素の背景
 ```
 http://127.0.0.1:8765/?transparent=1&place=bottom-right:0.32x0.6
 ```
+
+動かし方は[OBS から使う](getting-started.md#obs-から使う)と同じです。`:8765` は `yarn build` と `yarn start`（または `yarn shell`）が要り、`make dev` では `:5173` を使います。
 
 下にゲームキャプチャかウィンドウキャプチャ、上にこの URL のブラウザソースを置くと、キャラクターがその上に乗ります。`place` の挙動はスライドの前に立たせるときと同じで、ショットは動かさず、その絵を小さくするだけです。空いた側はフレームの外へ出して切り落とします。
 

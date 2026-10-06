@@ -50,7 +50,7 @@ A clone of this repository is the runtime and nothing else. Two of its requireme
 | Requirement | Notes |
 |---|---|
 | Node 22 and Yarn 4 | Pinned in `mise.toml`. `mise install` installs both. |
-| **An avatar** | Required, and **not included.** The descriptors in `src/avatars` point at `public/models/<id>.glb`, which is git-ignored, so a fresh clone has nothing to draw. The two models this runtime was built against are purchased and cannot be redistributed here. Supply your own model, put it through `make glb`, add a descriptor file, and register it in `src/avatars/index.ts`. |
+| **An avatar** | Required, and **not included.** The descriptors in `src/avatars` point at `public/models/<id>.glb`, which is git-ignored, so a fresh clone has nothing to draw. The two models this runtime was built against are purchased and cannot be redistributed here. Supply your own model, convert it with `blender -b -P tools/blender/export_glb.py -- [--profile NAME] <in.fbx> <out.glb> [texdir]` (`make glb` builds only the two purchased models, and a model whose shape keys follow neither profile in `PROFILES` needs its own entry there), add a descriptor file, and register it in `src/avatars/index.ts`. |
 | **A voice** | Not required to run, but needed for anything broadcast. Requires `uv` and Python 3.11, and pulls in several GB of PyTorch. The recordings the voice is cloned from are of a real person and are **not included** either. |
 | Blender, OBS | Only to convert a model, and only to put the result on a stream. |
 

@@ -33,6 +33,8 @@ The character is drawn on top of a game capture with a transparent background, a
 http://127.0.0.1:8765/?transparent=1&place=bottom-right:0.32x0.6
 ```
 
+Served by `yarn start` after `yarn build`, or by `yarn shell`; under `make dev` use `:5173`. See [Using it with OBS](getting-started.md#using-it-with-obs).
+
 Game or window capture below, that URL as a browser source above. The shot is untouched and only the picture of it gets smaller, so every gesture still plays as it was authored. See [The stage](stage.md#over-a-game).
 
 ## 3. A talk given from slides

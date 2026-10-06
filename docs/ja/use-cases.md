@@ -33,6 +33,8 @@ yarn ctl say "こんばんは。今日は雑談です。" --perform hello --wait
 http://127.0.0.1:8765/?transparent=1&place=bottom-right:0.32x0.6
 ```
 
+配信するのは `yarn build` のあとの `yarn start` か `yarn shell` です。`make dev` では `:5173` を使います。[OBS から使う](getting-started.md#obs-から使う)を参照してください。
+
 下にゲームキャプチャかウィンドウキャプチャ、上にこの URL のブラウザソースを置きます。ショットは動かず、その絵が小さくなるだけなので、ジェスチャは作ったとおりに再生されます。[ステージ](stage.md#ゲーム画面の上に重ねる)を参照してください。
 
 ## 3. スライドを使った説明

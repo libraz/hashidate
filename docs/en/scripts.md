@@ -99,7 +99,7 @@ A script is run against a live stream, so validating at the moment each line is 
 $ yarn ctl play demo --check
 hashidate はこういうものです  —  /…/show/scripts/demo.yaml
 setup   reset, idle, look
-lines   22
+lines   25
   1  [hello]こんばんは。今日は、わたしが動いている仕組みそのものの話をします。
       stage camera=bust backdrop=dusk room=room
   …

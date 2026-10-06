@@ -14,6 +14,8 @@ Set it on the URL, which is what a browser source in OBS is given:
 http://127.0.0.1:8765/?size=1920x1080&backdrop=night
 ```
 
+Same run modes as [Using it with OBS](getting-started.md#using-it-with-obs): `:8765` needs `yarn build` and `yarn start` (or `yarn shell`), and under `make dev` the address is `:5173`.
+
 An unknown name renders the flat background rather than failing, because the URL is typed into a field with nowhere to report an error to. It is also a command, for changing the set mid-stream:
 
 ```sh
@@ -30,6 +32,8 @@ With no set, the character stands against a flat colour. That is a fallback rath
 ```
 http://127.0.0.1:8765/?transparent=1&place=bottom-right:0.32x0.6
 ```
+
+Same run modes as [Using it with OBS](getting-started.md#using-it-with-obs): `:8765` needs `yarn build` and `yarn start` (or `yarn shell`), and under `make dev` the address is `:5173`.
 
 A game or window capture below, that URL as a browser source above, and the character lands on it. `place` behaves as it does behind a document — the shot is untouched and the picture of it is smaller — and the empty side hangs off the frame and is clipped there.
 
