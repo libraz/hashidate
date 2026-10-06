@@ -22,7 +22,9 @@ import { PresetPicker } from '@/ui/PresetPicker';
 import { Section } from '@/ui/Section';
 import { Segmented } from '@/ui/Segmented';
 import { Slider } from '@/ui/Slider';
+import type { ControlStatus } from '../../control-client';
 import type { LoadedAvatar } from '../../scene/runtime';
+import { stopSpeech } from '../../stop';
 
 /** Every emotion but neutral — neutral is what "解除" (release) means, not a thing to pick. */
 const MOODS = (Object.keys(EMOTIONS) as EmotionName[]).filter((n) => n !== 'neutral');
@@ -49,10 +51,11 @@ const PERFORMANCE_PRESET_GROUPS = PERFORMANCES_BY_GROUP.map((group) => ({
 interface Props {
   loaded: LoadedAvatar;
   state: SessionState | null;
+  control: ControlStatus;
   onCamera: (frame: CameraFrame) => void;
 }
 
-export function PerformTab({ loaded, state, onCamera }: Props) {
+export function PerformTab({ loaded, state, control, onCamera }: Props) {
   const { t, tx } = useT();
   const { director, session, avatar, profile } = loaded;
   const [mixing, setMixing] = useState(false);
@@ -365,12 +368,18 @@ export function PerformTab({ loaded, state, onCamera }: Props) {
             variant="primary"
             disabled={!avatar.script?.length}
             onClick={() => {
+              // Local on purpose: the steps below are said on this page alone, and
+              // a server interrupt arriving afterwards would cut them.
               session.interrupt();
               onCamera('bust');
               for (const step of avatar.script ?? []) session.say(step);
             }}
           />
-          <Chip label={t('console.stop')} variant="action" onClick={() => session.interrupt()} />
+          <Chip
+            label={t('console.stop')}
+            variant="action"
+            onClick={() => void stopSpeech(session, control)}
+          />
         </ChipRow>
       </Section>
     </>

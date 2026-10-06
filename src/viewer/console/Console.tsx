@@ -13,6 +13,7 @@ import { backdropList, backdropNote } from '../scene/backdrop';
 import { CAMERA_FRAMES, CAMERA_LABELS } from '../scene/framing';
 import type { AvatarRuntime, RuntimeStatus } from '../scene/runtime';
 import { rememberBackdrop, rememberTransparent } from '../stage-mode';
+import { stopSpeech } from '../stop';
 import styles from './Console.module.css';
 import { DemoBar } from './DemoBar';
 import { DressTab } from './tabs/DressTab';
@@ -277,7 +278,7 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
               <p className={styles.problems}>{loaded.problems.join('\n')}</p>
             ) : null}
             {tab === 'perform' ? (
-              <PerformTab loaded={loaded} state={state} onCamera={goto} />
+              <PerformTab loaded={loaded} state={state} control={control} onCamera={goto} />
             ) : null}
             {tab === 'dress' ? <DressTab loaded={loaded} /> : null}
             {tab === 'tune' ? <TuneTab loaded={loaded} runtime={runtime} /> : null}
@@ -328,7 +329,7 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
             <Chip
               label={t('console.speech.stop')}
               variant="action"
-              onClick={() => session?.interrupt()}
+              onClick={() => session && void stopSpeech(session, control)}
             />
             <Chip
               label={t('console.speech.say')}
