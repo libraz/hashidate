@@ -257,8 +257,24 @@ export class SkinPointAnchor {
     }
   }
 
-  #walk(path: MatrixPath, out: THREE.Matrix4): THREE.Matrix4 {
+  #walk(
+    path: MatrixPath,
+    out: THREE.Matrix4,
+    inputs: ReadonlyMap<THREE.Object3D, THREE.Matrix4> | undefined,
+  ): THREE.Matrix4 {
     out.identity();
+    // Compose from the deepest node given a world matrix, guarding the whole path.
+    let start = 0;
+    if (inputs) {
+      for (let i = path.nodes.length - 1; i >= 0; i--) {
+        const world = inputs.get(path.nodes[i]);
+        if (world) {
+          out.copy(world);
+          start = i + 1;
+          break;
+        }
+      }
+    }
     for (let i = 0; i < path.nodes.length; i++) {
       const node = path.nodes[i];
       const expected = path.transforms[i];
@@ -277,7 +293,7 @@ export class SkinPointAnchor {
       );
       readLocalMatrix(node, this.#local);
       assertTransformStable(node, this.#local, expected);
-      out.multiply(this.#local);
+      if (i >= start) out.multiply(this.#local);
     }
     return out;
   }
@@ -299,7 +315,11 @@ export class SkinPointAnchor {
     }
   }
 
-  place(): void {
+  /**
+   * @param inputs  world matrices standing in for nodes no chain moves, so a
+   *                step between two frames composes from the body between them
+   */
+  place(inputs?: ReadonlyMap<THREE.Object3D, THREE.Matrix4>): void {
     requireAnchor(
       this.root.parent === this.#parentPath.nodes.at(-1),
       `anchor root was reparented at ${this.root.name}`,
@@ -311,12 +331,12 @@ export class SkinPointAnchor {
     this.targetWorld.set(0, 0, 0);
     for (const influence of this.influences) {
       if (influence.weight === 0) continue;
-      this.#walk(influence.path, this.#world);
+      this.#walk(influence.path, this.#world, inputs);
       this.#point.copy(influence.position).applyMatrix4(this.#world);
       this.targetWorld.addScaledVector(this.#point, influence.weight);
     }
 
-    this.#walk(this.#parentPath, this.#parentWorld);
+    this.#walk(this.#parentPath, this.#parentWorld, inputs);
     const determinant = this.#parentWorld.determinant();
     requireAnchor(
       Number.isFinite(determinant) && Math.abs(determinant) > 1e-18,

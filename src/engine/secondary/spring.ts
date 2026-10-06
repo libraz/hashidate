@@ -57,6 +57,13 @@ import { SkinPointAnchor, type SkinPointAnchorDiagnostics } from './skin-point-a
  * avatar rather than of the frame rate. The accumulator is capped, because a tab
  * returning from the background must not try to catch up on a minute of
  * simulation in one frame.
+ *
+ * A step's state stands for its own moment, so it reads the body at that moment:
+ * interpolated between the previous frame and this one. Fed the frame's pose
+ * instead, steps sample the body at uneven times — 1, 1, 1, 1, 2 per frame at
+ * 50 Hz. A step landing on the frame's end reads the frame as posed, so one step
+ * per frame at 60 Hz is unchanged. Frames above 60 Hz that alternate between
+ * one step and none are not evened out.
  */
 
 /** Simulation step, seconds. */
@@ -95,6 +102,9 @@ const _q = new THREE.Quaternion();
 const _pq = new THREE.Quaternion();
 const _aim = new THREE.Quaternion();
 const _m = new THREE.Matrix4();
+const _ip = new THREE.Vector3();
+const _iq = new THREE.Quaternion();
+const _is = new THREE.Vector3();
 
 const boneChildren = (bone: THREE.Object3D): THREE.Bone[] =>
   bone.children.filter((c): c is THREE.Bone => c instanceof THREE.Bone);
@@ -187,6 +197,58 @@ export class Joint {
       .applyQuaternion(worldQuat(this.bone, _q))
       .add(_p.setFromMatrixPosition(this.bone.matrixWorld));
     this.prev.copy(this.cur);
+  }
+}
+
+/**
+ * A node no chain moves whose world transform a step reads — what a chain
+ * hangs from, a collider's bone, an attachment's body side — held for this
+ * frame and the last so a step between them can read the body between them.
+ */
+class Input {
+  readonly node: THREE.Object3D;
+  /** This frame's world matrix, exactly as the frame posed it. */
+  readonly world = new THREE.Matrix4();
+  /** The world matrix a step between the two frames reads. */
+  readonly between = new THREE.Matrix4();
+  readonly #pos = new THREE.Vector3();
+  readonly #quat = new THREE.Quaternion();
+  readonly #scale = new THREE.Vector3();
+  readonly #prevPos = new THREE.Vector3();
+  readonly #prevQuat = new THREE.Quaternion();
+  readonly #prevScale = new THREE.Vector3();
+
+  constructor(node: THREE.Object3D) {
+    this.node = node;
+  }
+
+  /** Take this frame's transform, keeping the last one as the start of the interval. */
+  capture(): void {
+    this.snap();
+    this.world.copy(this.node.matrixWorld);
+    this.world.decompose(this.#pos, this.#quat, this.#scale);
+  }
+
+  /** Drop the last frame, so nothing is interpolated across a discontinuity. */
+  snap(): void {
+    this.#prevPos.copy(this.#pos);
+    this.#prevQuat.copy(this.#quat);
+    this.#prevScale.copy(this.#scale);
+  }
+
+  /** Pose the node `s` of the way from the last frame to this one. */
+  at(s: number): void {
+    this.between.compose(
+      _ip.lerpVectors(this.#prevPos, this.#pos, s),
+      _iq.slerpQuaternions(this.#prevQuat, this.#quat, s),
+      _is.lerpVectors(this.#prevScale, this.#scale, s),
+    );
+    this.node.matrixWorld.copy(this.between);
+  }
+
+  /** Put this frame's transform back. */
+  end(): void {
+    this.node.matrixWorld.copy(this.world);
   }
 }
 
@@ -331,6 +393,12 @@ export class Spring {
   _acc: number;
   _pending: boolean;
   _live: boolean;
+
+  readonly #inputs: Input[] = [];
+  /** Each input's `between` matrix by node, for attachments composing from it. */
+  readonly #inputWorld = new Map<THREE.Object3D, THREE.Matrix4>();
+  /** Unattached joints, shallowest first, for re-hanging chains on an interpolated body. */
+  readonly #rebase: Joint[] = [];
 
   /**
    * @param profile  the avatar profile; only `root` is used, since sway chains
@@ -488,6 +556,7 @@ export class Spring {
     }
 
     this.#validateAnchors();
+    this.#collectInputs();
     this.#calibrate();
     this.reset();
   }
@@ -556,6 +625,43 @@ export class Spring {
         if (removed.has(this.groups[index]!)) this.groups.splice(index, 1);
       }
     }
+  }
+
+  #collectInputs(): void {
+    const simulated = new Set<THREE.Object3D>();
+    for (const g of this.groups) for (const j of g.joints) simulated.add(j.bone);
+    // The deepest node at or above `node` with no simulated node at or above it.
+    const outside = (node: THREE.Object3D | null): THREE.Object3D | null => {
+      let found: THREE.Object3D | null = null;
+      for (let n = node; n; n = n.parent) {
+        if (simulated.has(n)) found = null;
+        else if (!found) found = n;
+      }
+      return found;
+    };
+    const add = (node: THREE.Object3D | null): void => {
+      if (!node || this.#inputWorld.has(node)) return;
+      const input = new Input(node);
+      this.#inputs.push(input);
+      this.#inputWorld.set(node, input.between);
+    };
+    const depth = new Map<Joint, number>();
+    for (const g of this.groups) {
+      for (const j of g.joints) {
+        if (outside(j.parent) === j.parent) add(j.parent);
+        if (g.anchor) continue;
+        let d = 0;
+        for (let n: THREE.Object3D | null = j.parent; n; n = n.parent) d++;
+        depth.set(j, d);
+        this.#rebase.push(j);
+      }
+      for (const c of g.colliders) if (outside(c.bone) === c.bone) add(c.bone);
+      if (g.anchor) {
+        add(outside(g.anchor.root.parent));
+        for (const influence of g.anchor.influences) add(outside(influence.bone));
+      }
+    }
+    this.#rebase.sort((a, b) => (depth.get(a) ?? 0) - (depth.get(b) ?? 0));
   }
 
   /** Current weighted target and root residual for attachment diagnostics. */
@@ -724,6 +830,7 @@ export class Spring {
 
   #seed(): void {
     this.root.updateMatrixWorld(true);
+    for (const input of this.#inputs) input.snap();
     for (const g of this.groups) {
       g.anchor?.place();
       for (const j of g.joints) j.seed();
@@ -801,6 +908,7 @@ export class Spring {
     // read below would otherwise be one frame stale, which reads as hair that
     // anticipates the head instead of following it.
     this.root.updateMatrixWorld(true);
+    for (const input of this.#inputs) input.capture();
     this.#syncAnchorToggles();
 
     if (this._pending) {
@@ -810,21 +918,57 @@ export class Spring {
       return;
     }
 
+    const start = this._acc;
     this._acc = Math.min(this._acc + dt, STEP * MAX_STEPS);
+    const span = this._acc - start;
     let steps = 0;
+    let between = false;
     while (this._acc >= STEP) {
-      this.#step(STEP);
       this._acc -= STEP;
       steps++;
+      // What is left of the frame after this step says where in it the step
+      // falls; a remainder that is only rounding is the frame's end.
+      if (this._acc > span * 1e-9) {
+        const s = 1 - this._acc / span;
+        for (const input of this.#inputs) input.at(s);
+        this.#step(STEP, this.#inputWorld, true);
+        between = true;
+      } else {
+        if (between) for (const input of this.#inputs) input.end();
+        this.#step(STEP, undefined, between);
+        between = false;
+      }
     }
-    if (steps === 0) this.#placeAnchors();
+    if (between) {
+      // Hand the frame's own body back, and hang what is drawn on it.
+      for (const input of this.#inputs) input.end();
+      this.#rehang();
+      this.#placeAnchors();
+    } else if (steps === 0) this.#placeAnchors();
   }
 
-  #step(dt: number): void {
+  /** Recompute unattached joints' world matrices from their parents, as a world update would. */
+  #rehang(): void {
+    for (const j of this.#rebase) {
+      j.bone.matrixWorld.multiplyMatrices(j.parent.matrixWorld, j.bone.matrix);
+    }
+  }
+
+  /**
+   * @param inputs  interpolated body transforms, for a step before the frame's last
+   * @param rebase  re-hang unattached chains on the body this step reads, as the
+   *                frame's own world update does before its first step
+   */
+  #step(
+    dt: number,
+    inputs: ReadonlyMap<THREE.Object3D, THREE.Matrix4> | undefined,
+    rebase: boolean,
+  ): void {
+    if (rebase) this.#rehang();
     for (const g of this.groups) {
       // Place after prior cloth/producer groups in this same fixed step, even
       // when this accessory group itself is switched off.
-      g.anchor?.place();
+      g.anchor?.place(inputs);
       if (!g.enabled) continue;
       for (const c of g.colliders) c.place();
 

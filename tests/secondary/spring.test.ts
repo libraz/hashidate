@@ -5,6 +5,7 @@ import { Spring } from '@/engine/secondary';
 import type { AvatarDescriptor, ColliderSpec, SwayGroupSpec } from '@/engine/types';
 import { addBoneChain, buildRig, type SyntheticRig } from '../helpers/scene';
 import { skinnedPoint } from '../helpers/skinned-point';
+import trajectoryRecord from './spring-trajectory.json';
 
 const STEP = 1 / 60;
 
@@ -446,6 +447,171 @@ describe('Spring', () => {
       expect(joint.cur.distanceTo(base)).toBeCloseTo(joint.length, 9);
     }
     expectFinite(spring);
+  });
+});
+
+describe('Spring step inputs', () => {
+  /** Producers, an unattached chain and an attached one on one rig. */
+  function makeTrajectoryFixture() {
+    const rig = buildRig({ armatureScale: 0.01 });
+    addBoneChain(rig, { parent: 'Hips', root: 'ProducerA', joints: 3 });
+    addBoneChain(rig, { parent: 'Head', root: 'Hair', joints: 3 });
+    addBoneChain(rig, { parent: 'Hips', root: 'CharmRoot', joints: 3 });
+    const descriptor: AvatarDescriptor = {
+      ...rig.descriptor,
+      sway: {
+        groups: [
+          { id: 'producerA', roots: ['ProducerA'], stiffness: 0.9, drag: 0.32, gravity: 0.11 },
+          { id: 'hair', roots: ['Hair'], stiffness: 1.2, drag: 0.5 },
+          {
+            id: 'charm',
+            roots: ['CharmRoot'],
+            anchor: {
+              influences: [
+                { bone: 'ProducerA_1', weight: 0.6, position: [0, -2, 0] },
+                { bone: 'ProducerA_2', weight: 0.4, position: [1, -3, 0.5] },
+              ],
+            },
+            stiffness: 0,
+            drag: 0.45,
+            gravity: 0.16,
+          },
+        ],
+        colliders: {},
+      },
+    };
+    return { rig, spring: new Spring(buildProfile(rig.root, descriptor), descriptor) };
+  }
+
+  function state(spring: Spring): number[][] {
+    return spring.groups.flatMap((group) =>
+      group.joints.map((joint) => [...joint.cur.toArray(), ...joint.bone.quaternion.toArray()]),
+    );
+  }
+
+  it('is the single-step solver unchanged at one step per frame', () => {
+    // Recorded from the solver before steps read an interpolated body.
+    const { rig, spring } = makeTrajectoryFixture();
+    spring.update(0);
+    for (let frame = 1; frame <= 90; frame++) {
+      const t = frame / 60;
+      rig.bones.get('Hips')!.rotation.set(Math.sin(t * 2.1) * 0.3, Math.cos(t * 1.3) * 0.25, 0);
+      rig.bones.get('Head')!.rotation.set(0, Math.sin(t * 3.7) * 0.5, Math.sin(t * 2.9) * 0.2);
+      spring.update(STEP);
+    }
+    expect(state(spring)).toEqual(trajectoryRecord.sixtyHz);
+  });
+
+  it('feeds each step of a two-step frame the body at its own place in the frame', () => {
+    // A yaw about the spine's own axis is exact under slerp, so a frame of two
+    // steps must land where two frames of one step, posed at each, land.
+    const pose = (rig: SyntheticRig, t: number) => {
+      rig.bones.get('Hips')!.rotation.y = 1.3 * t;
+      rig.bones.get('Head')!.rotation.y = -2.1 * t;
+    };
+    const double = makeTrajectoryFixture();
+    const single = makeTrajectoryFixture();
+    double.spring.update(0);
+    single.spring.update(0);
+    for (let frame = 1; frame <= 30; frame++) {
+      pose(single.rig, (2 * frame - 1) * STEP);
+      single.spring.update(STEP);
+      pose(single.rig, 2 * frame * STEP);
+      single.spring.update(STEP);
+      pose(double.rig, 2 * frame * STEP);
+      double.spring.update(2 * STEP);
+    }
+    const a = state(double.spring);
+    const b = state(single.spring);
+    for (let i = 0; i < a.length; i++) {
+      for (let k = 0; k < 7; k++) expect(a[i]![k]).toBeCloseTo(b[i]![k]!, 9);
+    }
+  });
+
+  it('advances a chain evenly at 50 Hz instead of in 1-1-1-1-2 steps', () => {
+    const { rig, spring } = makeSpring(
+      [{ id: 'hair', stiffness: 1.2, drag: 0.5, roots: ['Hair'] }],
+      [{ parent: 'Head', root: 'Hair', joints: 3 }],
+    );
+    const head = rig.bones.get('Head')!;
+    const root = spring.groups[0]!.joints[0]!.bone;
+    const world = new THREE.Quaternion();
+    const last = new THREE.Quaternion();
+    const advance: number[] = [];
+    spring.update(0);
+    for (let frame = 1; frame <= 200; frame++) {
+      head.rotation.y = 0.6 * Math.sin(frame * 0.02 * Math.PI);
+      spring.update(0.02);
+      root.getWorldQuaternion(world);
+      if (frame > 1) advance.push(world.angleTo(last));
+      last.copy(world);
+    }
+    // Two seconds past the start-up transient. Measured 0.008 with each step
+    // reading the body at its own time, 0.061 with every step fed the frame's pose.
+    const steady = advance.slice(50, 150);
+    const mean = steady.reduce((sum, value) => sum + value, 0) / steady.length;
+    let roughness = 0;
+    for (let i = 1; i < steady.length - 1; i++) {
+      roughness += Math.abs(steady[i]! - (steady[i - 1]! + steady[i + 1]!) / 2);
+    }
+    roughness /= (steady.length - 2) * mean;
+    expect(mean).toBeGreaterThan(1e-3);
+    expect(roughness).toBeLessThan(0.03);
+  });
+
+  it('interpolates nothing across a reset and teleport', () => {
+    const pose = (rig: SyntheticRig) => {
+      rig.root.position.set(1.7, 0, -0.9);
+      rig.bones.get('Hips')!.rotation.y = 0.4;
+      rig.bones.get('Head')!.rotation.y = -0.3;
+    };
+    const moved = makeTrajectoryFixture();
+    moved.spring.update(0);
+    for (let frame = 1; frame <= 20; frame++) {
+      moved.rig.bones.get('Head')!.rotation.y = Math.sin(frame * 0.3) * 0.6;
+      moved.spring.update(0.02);
+    }
+    moved.spring.reset();
+    pose(moved.rig);
+    moved.spring.update(0.02);
+
+    const fresh = makeTrajectoryFixture();
+    pose(fresh.rig);
+    fresh.spring.update(0);
+    // Two steps each, so the first step of every frame reads an interpolated body.
+    for (let frame = 0; frame < 5; frame++) {
+      moved.spring.update(2 * STEP);
+      fresh.spring.update(2 * STEP);
+    }
+    expect(state(moved.spring)).toEqual(state(fresh.spring));
+  });
+
+  it('restarts an attached group switched back on mid-motion without a fling', () => {
+    const fixture = makeAnchorFixture();
+    const attached = fixture.spring.groups.find((group) => group.id === 'charm')!;
+    const hips = fixture.rig.bones.get('Hips')!;
+    fixture.spring.update(0);
+    for (let frame = 1; frame <= 8; frame++) {
+      hips.rotation.y = frame * 0.12;
+      if (frame === 6) attached.enabled = false;
+      if (frame === 8) attached.enabled = true;
+      // Two steps a frame, so the first reads a body between frames.
+      fixture.spring.update(2 * STEP);
+    }
+    for (const joint of attached.joints) {
+      expect(joint.cur.distanceTo(joint.prev)).toBeLessThan(0.005);
+    }
+    expect(anchorMiss(fixture)).toBeLessThan(1e-6);
+  });
+
+  it('keeps an attachment on the producers at 50 Hz', () => {
+    const fixture = makeAnchorFixture();
+    fixture.spring.update(0);
+    for (let frame = 1; frame <= 60; frame++) {
+      poseAnchorFixture(fixture, frame);
+      fixture.spring.update(0.02);
+      expect(anchorMiss(fixture)).toBeLessThan(1e-6);
+    }
   });
 });
 
