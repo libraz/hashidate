@@ -6,6 +6,7 @@ import type { SpeechState } from '../protocol';
 import { BgmLibrary, handleBgm } from './bgm';
 import { BgmCoordinator } from './bgm-state';
 import { Decks } from './decks';
+import { refuseForeign } from './guard';
 import { Hub } from './hub';
 import { Motions } from './motions';
 import { Recordings } from './recordings';
@@ -31,7 +32,8 @@ import { serveStatic } from './static';
  * **Binds to 127.0.0.1 only, and that is a licence condition, not a default.**
  * The avatar may not be republished. There is deliberately no CORS header
  * either — the viewer is same-origin, so allowing another origin would only
- * ever serve a page that is not ours.
+ * ever serve a page that is not ours — and a request whose `Host` or `Origin`
+ * is not loopback is refused outright; see `guard.ts`.
  *
  * usage: yarn start [--port 8765] [--root dist] [--slides show/slides]
  *                   [--scripts show/scripts] [--motions show/motions]
@@ -186,6 +188,8 @@ function main(): void {
   // perfectly without either directory.
   const pdfjs = pdfjsRoot();
   const server = createServer((req, res) => {
+    // Before every route, file and stream alike. See `guard.ts`.
+    if (refuseForeign(req, res)) return;
     if (handleBgm(req, res, bgm)) return;
     if (handleApi(req, res, hub, { decks, motions, scripts, bgm })) return;
     if (req.method === 'GET' || req.method === 'HEAD') {
