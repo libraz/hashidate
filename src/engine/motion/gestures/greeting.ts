@@ -1,14 +1,15 @@
 import type { GestureDef } from '../../types';
 import { V } from './base';
 import type { ArmPose } from './builders';
-import { both } from './builders';
+import { both, one } from './builders';
 import { OPEN_HAND, SOFT_HAND } from './hands';
 
 /**
  * Greeting — arriving, beckoning, and thanking.
  *
  * The entries a stream opens and closes with, so they are the ones most often
- * seen twice in a row: each is authored to read on either hand.
+ * seen twice in a row: each is authored to read on either hand. `comeHere` and
+ * `bow` use both hands; `wave` follows the caller's chosen hand.
  */
 
 export const GREETING = {
@@ -30,11 +31,10 @@ export const GREETING = {
         hand: V(0.14 + s * 0.18 * a, 0.96, 0.2),
         twist: s * 0.18 * a,
       };
-      return {
-        arms: { R: arm },
-        fingers: { R: OPEN_HAND },
-        spine: { head: [0, 0, 0.03 * s], chest: [0, 0.02 * s, 0] },
-      };
+      return one(v, arm, OPEN_HAND, {
+        head: [0, 0, 0.03 * s * v.side],
+        chest: [0, 0.02 * s * v.side, 0],
+      });
     },
   },
 

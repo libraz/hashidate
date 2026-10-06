@@ -199,7 +199,7 @@ export const wristOf = (profile: Profile, side: Side): THREE.Vector3 => {
 export function speeds(h: Harness, id: string, frames: number, side: Side = 'R'): number[] {
   h.rig.reset();
   h.body.update(DT);
-  h.body.play(id);
+  h.body.play(id, side);
   let previous = wristOf(h.profile, side);
   const out: number[] = [];
   for (let i = 0; i < frames; i++) {

@@ -36,7 +36,7 @@ describe('gesture entrance', () => {
     // only the terminal correction left to run.
     h.rig.reset();
     h.body.update(DT);
-    h.body.play('chin');
+    h.body.play('chin', 'R');
     const lead = h.body.gesture?.lead ?? 0;
     const track: THREE.Vector3[] = [];
     for (let i = 0; i < 120; i++) {
@@ -61,12 +61,12 @@ describe('gesture entrance', () => {
     expect(tail.at(-1)).toBeLessThan(s[peak] * 0.5);
   });
 
-  it('starts the shoulder before the hand', () => {
+  it.each(['L', 'R'] as const)('starts the %s shoulder before the hand', (side) => {
     // Proximo-distal sequencing. Compared as *fractions* of each link's own
     // travel, since the hand covers far more ground than the shoulder and would
     // win an absolute comparison whatever the ordering.
-    const shoulder = h.profile.bones['upperArm.R'];
-    const hand = h.profile.bones['hand.R'];
+    const shoulder = h.profile.bones[`upperArm.${side}`];
+    const hand = h.profile.bones[`hand.${side}`];
     if (!(shoulder && hand)) throw new Error('synthetic rig is missing an arm');
 
     const at = (bone: THREE.Bone) => {
@@ -78,7 +78,7 @@ describe('gesture entrance', () => {
     h.body.update(DT);
     const s0 = at(shoulder);
     const h0 = at(hand);
-    h.body.play(FAR);
+    h.body.play(FAR, side);
 
     const turned: Array<[number, number]> = [];
     for (let i = 0; i < 60; i++) {
@@ -88,6 +88,8 @@ describe('gesture entrance', () => {
     }
     const total = turned.at(-1);
     if (!total) throw new Error('no frames');
+    expect(total[0]).toBeGreaterThan(0.1);
+    expect(total[1]).toBeGreaterThan(0.1);
     const crosses = (which: 0 | 1) => turned.findIndex((t) => t[which] > total[which] * 0.15);
 
     expect(crosses(0)).toBeLessThan(crosses(1));

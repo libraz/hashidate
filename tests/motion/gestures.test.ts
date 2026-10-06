@@ -307,15 +307,11 @@ describe('which hand acts', () => {
     'modelTilt',
   ];
   const SPINE_ONLY: GestureId[] = ['nod', 'tilt', 'lean', 'shoulderShimmy', 'shoulderBounce'];
-  /** Authored on a fixed hand rather than through the side helper. */
-  const FIXED_RIGHT: GestureId[] = ['wave'];
-  const MIRRORED = IDS.filter((id) => ![...TWO_HANDED, ...SPINE_ONLY, ...FIXED_RIGHT].includes(id));
+  const MIRRORED = IDS.filter((id) => ![...TWO_HANDED, ...SPINE_ONLY].includes(id));
 
-  it('accounts for every gesture in exactly one of the four kinds', () => {
-    expect(TWO_HANDED.length + SPINE_ONLY.length + FIXED_RIGHT.length + MIRRORED.length).toBe(
-      IDS.length,
-    );
-    expect(MIRRORED.length).toBe(19);
+  it('accounts for every gesture in exactly one of the three kinds', () => {
+    expect(TWO_HANDED.length + SPINE_ONLY.length + MIRRORED.length).toBe(IDS.length);
+    expect(MIRRORED.length).toBe(20);
   });
 
   each(TWO_HANDED)('%s poses both arms whichever side is asked for', (id) => {
@@ -333,15 +329,19 @@ describe('which hand acts', () => {
     expect(sidesUsed(TABLE[id].build(0.3, LEFT))).toBe('L');
   });
 
-  each(FIXED_RIGHT)('%s stays on the right hand whichever side is asked for', (id) => {
-    expect(sidesUsed(TABLE[id].build(0.3, RIGHT))).toBe('R');
-    expect(sidesUsed(TABLE[id].build(0.3, LEFT))).toBe('R');
-  });
-
   each(IDS)('%s produces the same shape of pose on either side', (id) => {
     const right = TABLE[id].build(0.3, RIGHT);
     const left = TABLE[id].build(0.3, LEFT);
     expect(Object.keys(right).sort()).toEqual(Object.keys(left).sort());
+  });
+
+  it('mirrors wave torso accents with the acting hand', () => {
+    const right = TABLE.wave.build(0.3, RIGHT).spine;
+    const left = TABLE.wave.build(0.3, LEFT).spine;
+    expect(Math.abs(right?.head?.[2] ?? 0)).toBeGreaterThan(0.01);
+    expect(Math.abs(right?.chest?.[1] ?? 0)).toBeGreaterThan(0.01);
+    expect(left?.head?.[2]).toBeCloseTo(-(right?.head?.[2] ?? 0), 12);
+    expect(left?.chest?.[1]).toBeCloseTo(-(right?.chest?.[1] ?? 0), 12);
   });
 });
 
