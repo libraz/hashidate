@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { GESTURES } from '@/engine/motion/gestures';
 import type { Side } from '@/engine/types';
 import { type Harness, harness, wristOf } from './harness';
 
@@ -9,7 +10,7 @@ import { type Harness, harness, wristOf } from './harness';
  * tests cover every id; this is the runtime pass for the motions a viewer
  * reads as a mannerism.
  */
-const CUTE_PATTERNS = [
+const EXTRA_PATTERNS = [
   'cheekPoke',
   'catPaw',
   'beg',
@@ -19,6 +20,11 @@ const CUTE_PATTERNS = [
   'tinyDance',
   'cheekPeace',
 ] as const;
+
+const TABLE_CUTE_PATTERNS = Object.entries(GESTURES)
+  .filter(([, def]) => def.group === 'cute')
+  .map(([id]) => id);
+const CUTE_PATTERNS = [...new Set([...TABLE_CUTE_PATTERNS, ...EXTRA_PATTERNS])];
 
 const SIDES: Side[] = ['L', 'R'];
 const FRAME_RATES = [20, 30, 60] as const;
@@ -75,18 +81,27 @@ describe('cute gesture runtime', () => {
         h.body.play(id, side);
 
         let previous = wrists(h);
+        const excursion: Record<Side, number> = { L: 0, R: 0 };
         let fastest = 0;
         const entranceFrames = Math.ceil(1.2 / dt);
         for (let i = 0; i < entranceFrames; i++) {
           frame(h, dt);
           frame(idle, dt);
           const current = wrists(h);
+          const idleCurrent = wrists(idle);
           for (const hand of SIDES) {
             fastest = Math.max(fastest, previous[hand].distanceTo(current[hand]) / dt);
+            excursion[hand] = Math.max(
+              excursion[hand],
+              idleCurrent[hand].distanceTo(current[hand]),
+            );
           }
           previous = current;
           assertFiniteRig(h);
         }
+        // Each first gesture must move the actual rig beyond its matching idle;
+        // the next gesture cannot supply this witness on its behalf.
+        expect(Math.max(...Object.values(excursion))).toBeGreaterThan(0.02);
 
         // Exercise a real handoff between unlike cute mechanisms before
         // releasing, so continuity covers the reach/direct boundary as well.
@@ -144,7 +159,10 @@ describe('cute gesture runtime', () => {
     let breathMax = Number.NEGATIVE_INFINITY;
     let maxBreathChestDelta = 0;
     let maxWeightHipsDelta = 0;
-    for (let i = 0; i < 180; i++) {
+    // Stop short of the authored hold, so the assertion below proves the
+    // counterfactual is sampled while the gesture is still active.
+    const activeFrames = Math.ceil((GESTURES.catPaw.lead + GESTURES.catPaw.hold) / dt) - 2;
+    for (let i = 0; i < activeFrames; i++) {
       for (const h of [breathing, flat, shifting, still]) frame(h, dt);
       for (const h of [breathing, flat, shifting, still]) {
         expect(h.body.gesture?.id).toBe('catPaw');
@@ -179,6 +197,50 @@ describe('cute gesture runtime', () => {
     // Weight transfer is a separate slow term and moves the hips independently
     // of the gesture's arms.
     expect(maxWeightHipsDelta).toBeGreaterThan(0.001);
+  });
+
+  it('returns cleanly when a face reach is interrupted by a direct pose', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const h = harness();
+    const idle = harness();
+    configureIdle(h);
+    configureIdle(idle);
+    const dt = 1 / 60;
+    frame(h, dt);
+    frame(idle, dt);
+    h.body.play('cheekPoke', 'L');
+
+    let previous = wrists(h);
+    let fastest = 0;
+    const sample = (frames: number): number => {
+      let excursion = 0;
+      for (let i = 0; i < frames; i++) {
+        frame(h, dt);
+        frame(idle, dt);
+        const current = wrists(h);
+        const idleCurrent = wrists(idle);
+        for (const hand of SIDES) {
+          fastest = Math.max(fastest, previous[hand].distanceTo(current[hand]) / dt);
+          excursion = Math.max(excursion, idleCurrent[hand].distanceTo(current[hand]));
+        }
+        previous = current;
+        assertFiniteRig(h);
+      }
+      return excursion;
+    };
+
+    // Interrupt before the reach's lead has elapsed, then crossfade to a
+    // direct two-arm pose and release that pose after it has had time to enter.
+    expect(sample(Math.ceil(0.2 / dt))).toBeGreaterThan(0.001);
+    h.body.play('tinyDance', 'L');
+    expect(sample(Math.ceil(0.6 / dt))).toBeGreaterThan(0.02);
+    h.body.stopGesture();
+    sample(Math.ceil(2.5 / dt));
+
+    expect(fastest).toBeLessThan(WRIST_SPEED_LIMIT);
+    for (const hand of SIDES) {
+      expect(wristOf(h.profile, hand).distanceTo(wristOf(idle.profile, hand))).toBeLessThan(0.02);
+    }
   });
 
   it.each(SIDES)('wave moves the requested %s wrist while leaving the other at rest', (side) => {
