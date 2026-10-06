@@ -28,11 +28,11 @@ export const RECOVER_T = 0.2;
 /**
  * How far the hips may drop, metres.
  *
- * The rig has no legs — `profile/bones.ts` resolves the spine, the arms and the
- * fingers, and nothing below the hips — so a dip is the hips translating down
+ * On a rig without standing leg chains a dip is the hips translating down
  * with the feet still attached, and past a couple of centimetres the feet go
  * through the floor. In a bust framing that is invisible and the cap is only
- * there to keep the full-body view honest.
+ * there to keep the full-body view honest. Standing legs take the same dip at
+ * the knees, so the depth is authored once for both.
  */
 export const MAX_CROUCH = 0.05;
 
@@ -68,8 +68,8 @@ export interface JumpArc {
  *
  * Mass does not appear, here or anywhere below. It cancels out of free flight,
  * and the two places it would otherwise matter — how hard the legs push and
- * how the ground gives — are not modelled: there are no legs in this rig, and
- * the sway layer has no masses either, since its stiffness and drag are
+ * how the ground gives — are not modelled: the legs solve contact geometrically,
+ * and the sway layer has no masses either, since its stiffness and drag are
  * per-step ratios with the mass already folded into the authored figures.
  *
  * ## The phases are joined by velocity, not by eye
@@ -89,11 +89,10 @@ export interface JumpArc {
  * | absorb | `dip·π/2v₀` | dip depth, at rest |
  * | recover | `RECOVER_T` | standing, at rest |
  *
- * The absorb phase is short because the dip it has to stop inside is capped
- * by a rig with no knees, and stopping a metre per second inside two
- * centimetres is a stiff landing. That is honest rather than unfortunate: the
- * character really has nothing to absorb with, and the stiffness is exactly
- * what makes the landing legible in the chains.
+ * The absorb phase is short because the dip it has to stop inside is capped,
+ * and stopping a metre per second inside two centimetres is a stiff landing.
+ * The stiffness is what makes the landing legible in the chains; knee contact
+ * follows the same dip rather than reshaping the arc to fit the solver.
  *
  * ## A run of hops is one crouch and one recover
  *

@@ -302,7 +302,9 @@ export class Body {
   blend: number;
 
   hipsRest: THREE.Vector3;
-  hipsUnit: number;
+  /** Parent-local metre vectors for floor sway and world-up lift. */
+  hipsRight: THREE.Vector3;
+  hipsUp: THREE.Vector3;
 
   jumpHeight: number;
   gravity: number;
@@ -400,14 +402,20 @@ export class Body {
 
     const hips = profile.bones.hips;
     this.hipsRest = hips ? hips.position.clone() : new THREE.Vector3();
+    this.hipsRight = new THREE.Vector3(1, 0, 0);
+    this.hipsUp = new THREE.Vector3(0, 1, 0);
 
     /**
-     * Local units per metre at the hips.
+     * Parent-local vectors for metre-sized hips translations.
      *
      * The weight shift below is the one place in the runtime that writes a bone
      * *translation* rather than a rotation, and a translation is in the parent's
-     * units. Rotations are radians and are the same number on any rig, which is
-     * why nothing else has needed this — and why the omission was invisible.
+     * units — which may be rotated or scaled differently on each axis. Rotations
+     * are radians and are the same number on any rig, which is why nothing else
+     * has needed this — and why the omission was invisible. The sway follows the
+     * anatomical right projected onto the floor and the lift follows world up,
+     * the gravity the hop uses; each world metre goes through the inverse parent
+     * transform unnormalised, so it lands as a metre.
      *
      * One of these avatars is authored in centimetres under a 0.01 scale at the
      * armature (the same fact `profile/bones.ts` records for the arm lengths),
@@ -415,11 +423,45 @@ export class Body {
      * at all. The other is authored in metres and behaved as written, which is
      * exactly the shape of bug that survives being looked at on one avatar.
      */
-    this.hipsUnit = 1;
     if (hips?.parent) {
       profile.root.updateMatrixWorld(true);
-      const scale = hips.parent.getWorldScale(new THREE.Vector3()).x;
-      if (scale > 1e-6) this.hipsUnit = 1 / scale;
+      const parent = hips.parent;
+      const parentLinear = new THREE.Matrix3().setFromMatrix4(parent.matrixWorld);
+      const parentInverse = parentLinear.clone().invert();
+      const frameBone = profile.bones.chest ?? profile.bones.spine ?? profile.bones.hips;
+      const frame = profile.body;
+      const worldUp = new THREE.Vector3(0, 1, 0);
+      const xWorld = new THREE.Vector3(1, 0, 0).applyMatrix3(parentLinear);
+
+      if (frame && frameBone) {
+        const frameLinear = new THREE.Matrix3().setFromMatrix4(frameBone.matrixWorld);
+        const rightWorld = frame.right.clone().applyMatrix3(frameLinear).normalize();
+        rightWorld.y = 0;
+
+        // Exporters disagree on whether right is +X; the hips' rest X keeps the tuned sway sign.
+        if (rightWorld.lengthSq() > 1e-12) {
+          rightWorld.normalize();
+          const hipsRestQ = hips.getWorldQuaternion(new THREE.Quaternion());
+          const hipsXWorld = new THREE.Vector3(1, 0, 0).applyQuaternion(hipsRestQ);
+          hipsXWorld.y = 0;
+          if (hipsXWorld.lengthSq() > 1e-12) {
+            hipsXWorld.normalize();
+            if (rightWorld.dot(hipsXWorld) < 0) rightWorld.negate();
+          }
+
+          // Not normalised: a non-uniform scale needs the per-axis length for a metre.
+          this.hipsRight.copy(rightWorld).applyMatrix3(parentInverse);
+        } else if (xWorld.lengthSq() > 1e-12) {
+          // A vertical anatomical right has no floor projection: sway on parent-local X.
+          this.hipsRight.set(1 / xWorld.length(), 0, 0);
+        }
+
+        this.hipsUp.copy(worldUp).applyMatrix3(parentInverse);
+      } else {
+        // No body frame: sway on parent-local X, scaled to a world metre.
+        if (xWorld.lengthSq() > 1e-12) this.hipsRight.set(1 / xWorld.length(), 0, 0);
+        this.hipsUp.copy(worldUp).applyMatrix3(parentInverse);
+      }
     }
 
     // --- jump ---------------------------------------------------------------
@@ -479,7 +521,8 @@ export class Body {
       weightShift: this.weightShift,
       idleAmount: this.idleAmount,
       hipsRest: this.hipsRest,
-      hipsUnit: this.hipsUnit,
+      hipsRight: this.hipsRight,
+      hipsUp: this.hipsUp,
       jumpHeight: this.jumpHeight,
       rise: 0,
       load: 0,
@@ -914,7 +957,8 @@ export class Body {
     pin.weightShift = this.weightShift;
     pin.idleAmount = this.idleAmount;
     pin.hipsRest = this.hipsRest;
-    pin.hipsUnit = this.hipsUnit;
+    pin.hipsRight = this.hipsRight;
+    pin.hipsUp = this.hipsUp;
     pin.jumpHeight = this.jumpHeight;
     pin.rise = this._rise;
     pin.load = this._load;
@@ -945,6 +989,8 @@ export class Body {
     );
 
     rig.commitSpine();
+    // Before the live frame and reach origins are read; springs still see the pose last.
+    rig.plantLegs(this._rise);
     // Spine offsets change the body frame. Resolve it once here, after commit,
     // so every direction sent to Rig in this frame uses the same live basis.
     const frameReady = rig.anat.update();

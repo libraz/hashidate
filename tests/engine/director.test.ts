@@ -1,9 +1,11 @@
+import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { Director } from '@/engine/director';
 import { Blink } from '@/engine/face/blink';
+import { HOPS, planJump, sampleJump } from '@/engine/motion/jump';
 import { buildProfile } from '@/engine/profile';
 import type { PresetSpec } from '@/engine/types';
-import { buildRig } from '../helpers/scene';
+import { addBoneChain, buildRig } from '../helpers/scene';
 
 const DT = 1 / 60;
 
@@ -448,5 +450,66 @@ describe('Director / steady-state frames', () => {
       globalThis.Set = RealSet;
     }
     expect(built).toBe(0);
+  });
+});
+
+describe('standing contact and secondary motion', () => {
+  it('gives hair the current grounded pose throughout a cute bouncing performance', () => {
+    const built = buildRig({ legs: true });
+    addBoneChain(built, { parent: 'Head', root: 'Hair', joints: 3 });
+    const descriptor = {
+      ...built.descriptor,
+      sway: { groups: [{ id: 'hair', roots: ['Hair'], stiffness: 1.2, drag: 0.5 }] },
+    };
+    const profile = buildProfile(built.root, descriptor);
+    const director = new Director(profile);
+    const head = profile.bones.head;
+    const left = profile.bones['foot.L'];
+    const right = profile.bones['foot.R'];
+    if (!(head && left && right)) throw new Error('synthetic rig lacks head or feet');
+    const anchors = [left, right].map((bone) => bone.getWorldPosition(new THREE.Vector3()));
+    const headRest = head.getWorldPosition(new THREE.Vector3());
+    expect(director.spring.groups).toHaveLength(1);
+    const joints = director.spring.groups[0].joints;
+    expect(joints).toHaveLength(3);
+    const rootJoint = joints[0];
+    const arc = planJump(HOPS.bounce.height, director.body.gravity, HOPS.bounce.count);
+    director.body.play('catPaw', 'L');
+    director.body.hop(HOPS.bounce);
+    let elapsed = 0;
+    let headMovement = 0;
+    let tailMovement = 0;
+    let tailRest: THREE.Vector3 | null = null;
+    const dt = 1 / 60;
+    for (let i = 0; i < 240; i++) {
+      elapsed += dt;
+      director.update(dt);
+      const rise = Math.max(0, sampleJump(arc, elapsed).rise);
+      for (const [j, foot] of [left, right].entries()) {
+        const expected = anchors[j].clone().add(new THREE.Vector3(0, rise, 0));
+        expect(foot.getWorldPosition(new THREE.Vector3()).distanceTo(expected)).toBeLessThan(1e-7);
+      }
+      // The simulated hair tail must sit on the length sphere around this
+      // frame's head anchor. A spring pass before the leg/pelvis solve would
+      // constrain it around the previous pose instead.
+      const rootPosition = rootJoint.bone.getWorldPosition(new THREE.Vector3());
+      expect(Math.abs(rootJoint.cur.distanceTo(rootPosition) - rootJoint.length)).toBeLessThan(
+        1e-7,
+      );
+      for (const joint of joints) {
+        expect(
+          [...joint.cur.toArray(), ...joint.bone.quaternion.toArray()].every(Number.isFinite),
+        ).toBe(true);
+      }
+      tailRest ??= rootJoint.cur.clone();
+      tailMovement = Math.max(tailMovement, rootJoint.cur.distanceTo(tailRest));
+      headMovement = Math.max(
+        headMovement,
+        head.getWorldPosition(new THREE.Vector3()).distanceTo(headRest),
+      );
+    }
+    expect(headMovement).toBeGreaterThan(0.03);
+    expect(tailMovement).toBeGreaterThan(0.03);
+    expect(director.body.jumping).toBe(false);
   });
 });

@@ -32,7 +32,9 @@ export interface PostureInput {
   weightShift: number;
   idleAmount: number;
   hipsRest: THREE.Vector3;
-  hipsUnit: number;
+  /** Parent-local metre vectors: floor sway along right, lift along world up. */
+  hipsRight: THREE.Vector3;
+  hipsUp: THREE.Vector3;
   jumpHeight: number;
   /** Hips above rest this frame, metres. See `jump.ts`. */
   rise: number;
@@ -150,8 +152,9 @@ export class IdlePosture {
     // --- jump -------------------------------------------------------------
     // Written into the same translation the weight shift uses, and folded into
     // the spine so the body reads as loading and extending rather than as being
-    // moved by a crane. The fold is small: with no legs in the rig the spine is
-    // doing the work of the whole body, and a deep fold looks like a bow.
+    // moved by a crane. The fold stays small: it also serves rigs without a
+    // standing leg chain, where a deep fold looks like a bow. Standing legs
+    // take the pelvis drop through knee flexion after the spine is committed.
     if (s.rise !== 0) {
       const load = s.load;
       const stretch = Math.max(0, s.rise) / Math.max(0.005, s.jumpHeight);
@@ -162,12 +165,10 @@ export class IdlePosture {
 
     const hips = p.bones.hips;
     if (hips) {
-      const u = s.hipsUnit;
-      hips.position.set(
-        s.hipsRest.x + 0.012 * shift * u,
-        s.hipsRest.y + (0.0035 * d * br + s.rise) * u,
-        s.hipsRest.z,
-      );
+      hips.position
+        .copy(s.hipsRest)
+        .addScaledVector(s.hipsRight, 0.012 * shift)
+        .addScaledVector(s.hipsUp, 0.0035 * d * br + s.rise);
     }
 
     // --- head micro-motion and posture ------------------------------------

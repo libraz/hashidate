@@ -25,6 +25,12 @@ Beyond names and shapes, a descriptor can carry what one model's garments need:
 - `anchor` on a spring group — attaches the group's root to a point weighted across bones that are already simulated, so a part of a garment follows the skin it sits on.
 - `reflection` on a preserved PBR material — how strongly it reflects the runtime's own studio environment. Without it the material sees only the scene environment, which is empty without a backdrop, and a metal draws dark.
 
+## Standing legs
+
+The profile resolves optional `upperLeg`, `lowerLeg`, `foot`, and `toe` slots on both sides, using VRChat, Unity, or VRM bone names. Foot planting requires both complete hip-to-ankle chains in a standing rest pose; toes are optional. The core links must be direct parent-child chains below the hips, with uniform scales on the controlled bones. Nonuniform root or armature scale is supported. Rigs without these chains, seated rest poses, and avatars with an anatomy override retain their authored lower-body pose.
+
+For supported standing rigs, the feet keep their rest positions and orientations relative to the avatar root during breathing and weight shifts. The knees absorb a lower pelvis, and the pelvis is lowered when an upward offset would otherwise stretch a leg. Hops lift both foot anchors by the airborne rise and plant them again for the landing dip. The solver rotates the leg bones without changing their local translations or scales. It runs before arm reaches and secondary motion.
+
 ## Wardrobe
 
 Slots, presets and the hide-shapes that go with them, read from the model's meshes:

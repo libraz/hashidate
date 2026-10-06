@@ -7,7 +7,7 @@
  */
 
 import * as THREE from 'three';
-import type { BodyFrame, BoneSlot, FingerKey, FingerName, Side } from '../types';
+import type { BodyFrame, BoneSlot, FingerKey, FingerName, LegBoneSlot, Side } from '../types';
 import {
   BONE_CANDIDATES,
   FINGER_ALIASES,
@@ -18,6 +18,22 @@ import {
 } from './candidates';
 
 const SIDES: readonly Side[] = ['L', 'R'];
+
+/** The six links a leg solver needs; toes are an optional terminal detail. */
+const LEG_CORE_SLOTS: readonly LegBoneSlot[] = [
+  'upperLeg.L',
+  'lowerLeg.L',
+  'foot.L',
+  'upperLeg.R',
+  'lowerLeg.R',
+  'foot.R',
+];
+
+const isLegSlot = (slot: BoneSlot): slot is LegBoneSlot =>
+  slot.startsWith('upperLeg.') ||
+  slot.startsWith('lowerLeg.') ||
+  slot.startsWith('foot.') ||
+  slot.startsWith('toe.');
 
 /** The bones the profile resolved, by canonical slot. */
 export type BoneMap = Partial<Record<BoneSlot, THREE.Bone>>;
@@ -54,7 +70,14 @@ export function resolveBones(bonesByName: Map<string, THREE.Bone>): Resolved<Bon
       .map((n) => bonesByName.get(n))
       .find((b): b is THREE.Bone => b !== undefined);
     if (hit) bones[slot] = hit;
-    else missing.push(`bone:${slot}`);
+    // Legs are an optional profile extension. Their absence is normal, while a
+    // partially named core would otherwise produce six unrelated bone gaps.
+    else if (!isLegSlot(slot)) missing.push(`bone:${slot}`);
+  }
+  const matchedCore = LEG_CORE_SLOTS.filter((slot) => bones[slot]);
+  if (matchedCore.length > 0 && matchedCore.length < LEG_CORE_SLOTS.length) {
+    const missingCore = LEG_CORE_SLOTS.filter((slot) => !bones[slot]);
+    missing.push(`legs:incomplete(${missingCore.join(',')})`);
   }
   return { value: bones, missing };
 }
@@ -199,6 +222,17 @@ export function measureLimbs(
     if (up && lo && hd) {
       limb[`upper.${side}`] = worldPos(up).distanceTo(worldPos(lo));
       limb[`lower.${side}`] = worldPos(lo).distanceTo(worldPos(hd));
+    }
+
+    // A leg profile is optional, but once a side has its hip-to-ankle core the
+    // two measured links are useful to the lower-body solver. Keep these in
+    // world units for the same armature-scale reason as the arm lengths above.
+    const thigh = bones[`upperLeg.${side}`];
+    const shin = bones[`lowerLeg.${side}`];
+    const foot = bones[`foot.${side}`];
+    if (thigh && shin && foot) {
+      limb[`thigh.${side}`] = worldPos(thigh).distanceTo(worldPos(shin));
+      limb[`shin.${side}`] = worldPos(shin).distanceTo(worldPos(foot));
     }
 
     /**

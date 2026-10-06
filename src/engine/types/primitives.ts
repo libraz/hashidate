@@ -27,8 +27,13 @@ export type EyeSlot = `eye.${Side}`;
 
 export type ArmBoneSlot = `${ArmSlot}.${Side}`;
 
+/** The links a leg pose names, hip to toe. */
+export type LegSlot = 'upperLeg' | 'lowerLeg' | 'foot' | 'toe';
+
+export type LegBoneSlot = `${LegSlot}.${Side}`;
+
 /** Every bone slot the profile tries to resolve. */
-export type BoneSlot = SpineSlot | EyeSlot | ArmBoneSlot;
+export type BoneSlot = SpineSlot | EyeSlot | ArmBoneSlot | LegBoneSlot;
 
 /**
  * A direction in *character space*: x outward from the midline, y up, z

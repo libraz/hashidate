@@ -87,6 +87,8 @@ export type {
   FingerKey,
   FingerName,
   LabelledId,
+  LegBoneSlot,
+  LegSlot,
   ShapeWeights,
   Side,
   SpineSlot,

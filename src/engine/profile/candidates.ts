@@ -28,6 +28,14 @@ export const BONE_CANDIDATES: Record<BoneSlot, string[]> = {
   'lowerArm.R': ['LowerArm_R', 'RightLowerArm', 'J_Bip_R_LowerArm'],
   'hand.L': ['Hand_L', 'LeftHand', 'J_Bip_L_Hand'],
   'hand.R': ['Hand_R', 'RightHand', 'J_Bip_R_Hand'],
+  'upperLeg.L': ['UpperLeg_L', 'LeftUpperLeg', 'J_Bip_L_UpperLeg'],
+  'upperLeg.R': ['UpperLeg_R', 'RightUpperLeg', 'J_Bip_R_UpperLeg'],
+  'lowerLeg.L': ['LowerLeg_L', 'LeftLowerLeg', 'J_Bip_L_LowerLeg'],
+  'lowerLeg.R': ['LowerLeg_R', 'RightLowerLeg', 'J_Bip_R_LowerLeg'],
+  'foot.L': ['Foot_L', 'LeftFoot', 'J_Bip_L_Foot'],
+  'foot.R': ['Foot_R', 'RightFoot', 'J_Bip_R_Foot'],
+  'toe.L': ['Toe_L', 'LeftToes', 'J_Bip_L_ToeBase'],
+  'toe.R': ['Toe_R', 'RightToes', 'J_Bip_R_ToeBase'],
 };
 
 /** Fingers as the naming patterns spell them; the profile keys them lowercase. */
@@ -125,6 +133,12 @@ export const NEXT_IN_CHAIN: Partial<Record<BoneSlot, BoneSlot>> = {
   'shoulder.R': 'upperArm.R',
   'upperArm.R': 'lowerArm.R',
   'lowerArm.R': 'hand.R',
+  'upperLeg.L': 'lowerLeg.L',
+  'lowerLeg.L': 'foot.L',
+  'foot.L': 'toe.L',
+  'upperLeg.R': 'lowerLeg.R',
+  'lowerLeg.R': 'foot.R',
+  'foot.R': 'toe.R',
 };
 
 export const ARKIT_52 = new Set(

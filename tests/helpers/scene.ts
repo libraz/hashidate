@@ -32,6 +32,8 @@ export interface RigOptions {
   armatureScale?: number;
   /** Include finger chains. Off produces a rig whose hands never curl. */
   fingers?: boolean;
+  /** Include the optional bilateral hip-to-toe leg chains. */
+  legs?: boolean;
   /** Include eye bones. Without them the profile cannot build a face frame. */
   eyes?: boolean;
   /** Shape groups to write, as `[groupLabel, shapeNames]`. */
@@ -80,6 +82,12 @@ const SEGMENTS = {
   clavicleOut: 0.11,
   upperArm: 0.17,
   lowerArm: 0.15,
+  hipOut: 0.08,
+  hipDrop: 0.08,
+  upperLeg: 0.25,
+  lowerLeg: 0.24,
+  kneeForward: 0.025,
+  footToToe: 0.12,
   handToProximal: 0.05,
   phalanx: 0.025,
   eyeOut: 0.032,
@@ -100,6 +108,10 @@ const NAMES = {
     upperArm: (s: string) => `UpperArm_${s}`,
     lowerArm: (s: string) => `LowerArm_${s}`,
     hand: (s: string) => `Hand_${s}`,
+    upperLeg: (s: string) => `UpperLeg_${s}`,
+    lowerLeg: (s: string) => `LowerLeg_${s}`,
+    foot: (s: string) => `Foot_${s}`,
+    toe: (s: string) => `Toe_${s}`,
     finger: (f: string, s: string, i: number) =>
       `${f}${['Proximal', 'Intermediate', 'Distal'][i]}_${s}`,
   },
@@ -115,6 +127,10 @@ const NAMES = {
     upperArm: (s: string) => (s === 'L' ? 'LeftUpperArm' : 'RightUpperArm'),
     lowerArm: (s: string) => (s === 'L' ? 'LeftLowerArm' : 'RightLowerArm'),
     hand: (s: string) => (s === 'L' ? 'LeftHand' : 'RightHand'),
+    upperLeg: (s: string) => (s === 'L' ? 'LeftUpperLeg' : 'RightUpperLeg'),
+    lowerLeg: (s: string) => (s === 'L' ? 'LeftLowerLeg' : 'RightLowerLeg'),
+    foot: (s: string) => (s === 'L' ? 'LeftFoot' : 'RightFoot'),
+    toe: (s: string) => (s === 'L' ? 'LeftToes' : 'RightToes'),
     finger: (f: string, s: string, i: number) => `${s === 'L' ? 'Left' : 'Right'}Hand${f}${i + 1}`,
   },
   vrm: {
@@ -129,6 +145,10 @@ const NAMES = {
     upperArm: (s: string) => `J_Bip_${s}_UpperArm`,
     lowerArm: (s: string) => `J_Bip_${s}_LowerArm`,
     hand: (s: string) => `J_Bip_${s}_Hand`,
+    upperLeg: (s: string) => `J_Bip_${s}_UpperLeg`,
+    lowerLeg: (s: string) => `J_Bip_${s}_LowerLeg`,
+    foot: (s: string) => `J_Bip_${s}_Foot`,
+    toe: (s: string) => `J_Bip_${s}_ToeBase`,
     finger: (f: string, s: string, i: number) => `J_Bip_${s}_${f}${i + 1}`,
   },
 } as const;
@@ -196,6 +216,7 @@ export function buildRig(opts: RigOptions = {}): SyntheticRig {
   const naming = NAMES[opts.naming ?? 'vrchat'];
   const scale = opts.armatureScale ?? 1;
   const fingers = opts.fingers ?? true;
+  const legs = opts.legs ?? false;
   const eyes = opts.eyes ?? true;
 
   const bones = new Map<string, THREE.Bone>();
@@ -231,6 +252,18 @@ export function buildRig(opts: RigOptions = {}): SyntheticRig {
   const neck = add(naming.neck, chest, 0, S.chestToNeck, 0);
   const head = add(naming.head, neck, 0, S.neckToHead, 0);
   add('Crown', head, 0, S.headToCrown, 0);
+
+  if (legs) {
+    for (const side of ['L', 'R'] as const) {
+      const sign = side === 'L' ? -1 : 1;
+      const thigh = add(naming.upperLeg(side), hips, sign * S.hipOut, -S.hipDrop, 0);
+      // The knee sits a little forward of the hip/ankle line so a bend pole
+      // remains well-defined even in this otherwise straight synthetic pose.
+      const shin = add(naming.lowerLeg(side), thigh, 0, -S.upperLeg, S.kneeForward);
+      const foot = add(naming.foot(side), shin, 0, -S.lowerLeg, -S.kneeForward);
+      add(naming.toe(side), foot, 0, 0, S.footToToe);
+    }
+  }
 
   if (eyes) {
     for (const side of ['L', 'R'] as const) {

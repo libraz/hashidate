@@ -68,7 +68,7 @@ frames:
 
 `arms` names the four links shoulder to hand as directions in **character space**: x outward from the midline, y up, z forward. Each direction must have at least one nonzero component. Directions are normalised before interpolation, so their length does not matter and only their bearing does. `palm` is which way the palm faces, and it is worth stating, because aiming the hand only says where the fingers point and the roll about that axis is otherwise incidental.
 
-`fingers` is curl per finger, 0 straight and 1 fully closed. `spine` is additive offsets in radians per slot: `hips`, `spine`, `chest`, `neck`, `head`.
+`fingers` is curl per finger, 0 straight and 1 fully closed. `spine` is additive offsets in radians per slot: `hips`, `spine`, `chest`, `neck`, `head`. Each `[x, y, z]` uses XYZ Euler order in the avatar root's rest axes. The runtime converts these offsets to each bone's local axes, so exporter-specific bone orientations do not change their meaning. Parent rotations carry the child offsets with them.
 
 Sides are written out. The built-in table authors one pose and mirrors it onto whichever hand is free, which it can do because every entry was checked on both; a file states `L` or `R` and gets it.
 

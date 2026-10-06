@@ -12,6 +12,7 @@ import type {
 } from '../types';
 import { ElbowSearch } from './elbow';
 import { Hands } from './hands';
+import { GroundedLegs } from './legs';
 import { type PointRequest, PointSolver } from './point';
 import type { ArmSolution, ReachLinks } from './reach';
 import { poleAngle, solveReach } from './reach';
@@ -33,7 +34,8 @@ import { type OffsetSlot, SpineOffsets } from './spine';
  * are not the arm's are beside it — `spine.ts` for the additive half of a
  * frame, `hands.ts` for the fingers, `elbow.ts` for where the elbow goes once a
  * wrist position is fixed, and `point.ts` for turning a fingertip bearing into
- * a wrist target.
+ * a wrist target. `legs.ts` adds optional standing contact before those arm
+ * targets are solved, so a pelvis correction also moves their reach origins.
  */
 
 const _q = new THREE.Quaternion();
@@ -170,7 +172,9 @@ export class Rig {
   readonly joints: JointTable;
 
   /** The additive half of a frame: spine and eyes. See `spine.ts`. */
-  private readonly spine = new SpineOffsets();
+  private readonly spine: SpineOffsets;
+  /** Optional standing legs: foot contact is solved before the arms. */
+  private readonly legs: GroundedLegs | null;
   /** The fingers, which are curled rather than aimed. See `hands.ts`. */
   private readonly hands: Hands;
   /** Where the elbow goes once a wrist position is fixed. See `elbow.ts`. */
@@ -250,6 +254,8 @@ export class Rig {
 
     const all = [...Object.values(profile.bones), ...Object.values(profile.fingerBones).flat()];
     for (const b of all) this.rest.set(b, b.quaternion.clone());
+    this.spine = new SpineOffsets(profile);
+    this.legs = GroundedLegs.create(profile, (bone) => this.restOf(bone));
 
     this.joints = profile.anatomy ?? JOINTS;
     this.hands = new Hands(profile, this.joints, (bone) => this.restOf(bone));
@@ -317,6 +323,11 @@ export class Rig {
   /** Bake accumulated spine offsets into local quaternions. */
   commitSpine(): void {
     this.spine.commit(this.p, (bone) => this.restOf(bone));
+  }
+
+  /** Keep standing feet planted, or carry their contact points through a hop. */
+  plantLegs(rise: number): void {
+    this.legs?.apply(rise);
   }
 
   /**

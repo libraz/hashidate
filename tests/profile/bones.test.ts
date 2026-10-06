@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildProfile } from '@/engine/profile';
 import {
   buildRestDirections,
+  chainDirection,
   childDirection,
   collectBones,
   deriveSideSign,
@@ -10,12 +11,12 @@ import {
   resolveBones,
   resolveFingers,
 } from '@/engine/profile/bones';
-import type { BoneSlot, FingerKey } from '@/engine/types';
+import type { BoneSlot, FingerKey, LegBoneSlot } from '@/engine/types';
 import { must } from '../helpers/must';
 import { buildRig, type RigOptions } from '../helpers/scene';
 
 /** Every slot the profile is expected to fill on a complete humanoid. */
-const SLOTS: BoneSlot[] = [
+const SLOTS: Array<Exclude<BoneSlot, LegBoneSlot>> = [
   'hips',
   'spine',
   'chest',
@@ -46,8 +47,21 @@ const FINGER_KEYS: FingerKey[] = [
   'little.R',
 ];
 
+const LEG_SLOTS: LegBoneSlot[] = [
+  'upperLeg.L',
+  'upperLeg.R',
+  'lowerLeg.L',
+  'lowerLeg.R',
+  'foot.L',
+  'foot.R',
+  'toe.L',
+  'toe.R',
+];
+
 /** What each naming family calls the slot the profile has to land on. */
-const FAMILIES: Array<[NonNullable<RigOptions['naming']>, Record<BoneSlot, string>]> = [
+const FAMILIES: Array<
+  [NonNullable<RigOptions['naming']>, Record<Exclude<BoneSlot, LegBoneSlot>, string>]
+> = [
   [
     'vrchat',
     {
@@ -111,6 +125,48 @@ const FAMILIES: Array<[NonNullable<RigOptions['naming']>, Record<BoneSlot, strin
   ],
 ];
 
+const LEG_FAMILIES: Array<[NonNullable<RigOptions['naming']>, Record<LegBoneSlot, string>]> = [
+  [
+    'vrchat',
+    {
+      'upperLeg.L': 'UpperLeg_L',
+      'upperLeg.R': 'UpperLeg_R',
+      'lowerLeg.L': 'LowerLeg_L',
+      'lowerLeg.R': 'LowerLeg_R',
+      'foot.L': 'Foot_L',
+      'foot.R': 'Foot_R',
+      'toe.L': 'Toe_L',
+      'toe.R': 'Toe_R',
+    },
+  ],
+  [
+    'unity',
+    {
+      'upperLeg.L': 'LeftUpperLeg',
+      'upperLeg.R': 'RightUpperLeg',
+      'lowerLeg.L': 'LeftLowerLeg',
+      'lowerLeg.R': 'RightLowerLeg',
+      'foot.L': 'LeftFoot',
+      'foot.R': 'RightFoot',
+      'toe.L': 'LeftToes',
+      'toe.R': 'RightToes',
+    },
+  ],
+  [
+    'vrm',
+    {
+      'upperLeg.L': 'J_Bip_L_UpperLeg',
+      'upperLeg.R': 'J_Bip_R_UpperLeg',
+      'lowerLeg.L': 'J_Bip_L_LowerLeg',
+      'lowerLeg.R': 'J_Bip_R_LowerLeg',
+      'foot.L': 'J_Bip_L_Foot',
+      'foot.R': 'J_Bip_R_Foot',
+      'toe.L': 'J_Bip_L_ToeBase',
+      'toe.R': 'J_Bip_R_ToeBase',
+    },
+  ],
+];
+
 const world = (o: THREE.Object3D): THREE.Vector3 => o.getWorldPosition(new THREE.Vector3());
 
 describe('resolveBones', () => {
@@ -120,6 +176,71 @@ describe('resolveBones', () => {
 
     for (const slot of SLOTS) expect(must(bones[slot], slot).name).toBe(expected[slot]);
     expect(missing).toEqual([]);
+  });
+
+  it.each(LEG_FAMILIES)('fills the optional leg slots on a %s rig', (naming, expected) => {
+    const rig = buildRig({ naming, legs: true });
+    const { value: bones, missing } = resolveBones(collectBones(rig.root));
+
+    for (const slot of SLOTS) expect(must(bones[slot], slot)).toBeDefined();
+    for (const slot of LEG_SLOTS) expect(must(bones[slot], slot).name).toBe(expected[slot]);
+    expect(missing).toEqual([]);
+  });
+
+  it('does not report absent optional legs as missing bones', () => {
+    const rig = buildRig();
+
+    expect(resolveBones(collectBones(rig.root)).missing).toEqual([]);
+  });
+
+  it('reports one diagnostic for a partial leg core', () => {
+    const rig = buildRig({ legs: true });
+    must(rig.bones.get('Foot_L'), 'Foot_L').removeFromParent();
+
+    const { missing } = resolveBones(collectBones(rig.root));
+
+    expect(missing).toEqual(['legs:incomplete(foot.L)']);
+  });
+
+  it('accepts a complete core when optional toes are absent', () => {
+    const rig = buildRig({ legs: true });
+    must(rig.bones.get('Toe_L'), 'Toe_L').removeFromParent();
+    must(rig.bones.get('Toe_R'), 'Toe_R').removeFromParent();
+
+    const { value: bones, missing } = resolveBones(collectBones(rig.root));
+
+    expect(bones['foot.L']).toBeDefined();
+    expect(bones['foot.R']).toBeDefined();
+    expect(bones['toe.L']).toBeUndefined();
+    expect(bones['toe.R']).toBeUndefined();
+    expect(missing).toEqual([]);
+  });
+
+  it('prefers VRChat leg candidates when every naming family is present', () => {
+    const rig = buildRig({ legs: true });
+    const bonesByName = collectBones(rig.root);
+    const candidates: Record<LegBoneSlot, readonly [string, string, string]> = {
+      'upperLeg.L': ['UpperLeg_L', 'LeftUpperLeg', 'J_Bip_L_UpperLeg'],
+      'upperLeg.R': ['UpperLeg_R', 'RightUpperLeg', 'J_Bip_R_UpperLeg'],
+      'lowerLeg.L': ['LowerLeg_L', 'LeftLowerLeg', 'J_Bip_L_LowerLeg'],
+      'lowerLeg.R': ['LowerLeg_R', 'RightLowerLeg', 'J_Bip_R_LowerLeg'],
+      'foot.L': ['Foot_L', 'LeftFoot', 'J_Bip_L_Foot'],
+      'foot.R': ['Foot_R', 'RightFoot', 'J_Bip_R_Foot'],
+      'toe.L': ['Toe_L', 'LeftToes', 'J_Bip_L_ToeBase'],
+      'toe.R': ['Toe_R', 'RightToes', 'J_Bip_R_ToeBase'],
+    };
+
+    for (const names of Object.values(candidates)) {
+      for (const name of names.slice(1)) {
+        const alias = new THREE.Bone();
+        alias.name = name;
+        bonesByName.set(name, alias);
+      }
+    }
+
+    const { value: bones } = resolveBones(bonesByName);
+
+    for (const slot of LEG_SLOTS) expect(must(bones[slot], slot).name).toBe(candidates[slot][0]);
   });
 
   it('prefers UpperChest over Chest when the rig carries both', () => {
@@ -347,6 +468,26 @@ describe('measureLimbs', () => {
     // The hand is still there, so its fingertips are still measurable.
     expect(limb['tip.R.index']).toBeGreaterThan(0);
   });
+
+  it('measures complete leg cores in world units at both armature scales', () => {
+    const measure = (armatureScale: number) => {
+      const rig = buildRig({ armatureScale, legs: true });
+      const bonesByName = collectBones(rig.root);
+      const { value: bones } = resolveBones(bonesByName);
+      const { value: fingers } = resolveFingers(bonesByName);
+      return measureLimbs(rig.root, bones, fingers);
+    };
+
+    const metres = measure(1);
+    const centimetres = measure(0.01);
+
+    expect(metres['thigh.L']).toBeCloseTo(Math.hypot(0.25, 0.025), 9);
+    expect(metres['shin.L']).toBeCloseTo(Math.hypot(0.24, 0.025), 9);
+    expect(metres['thigh.R']).toBeCloseTo(metres['thigh.L'], 12);
+    expect(metres['shin.R']).toBeCloseTo(metres['shin.L'], 12);
+    expect(centimetres['thigh.L']).toBeCloseTo(metres['thigh.L'], 9);
+    expect(centimetres['shin.L']).toBeCloseTo(metres['shin.L'], 9);
+  });
 });
 
 describe('buildRestDirections', () => {
@@ -400,6 +541,42 @@ describe('buildRestDirections', () => {
     // "First child" would aim the upper arm at the twist helper.
     expect(childDirection(upper).y).toBeCloseTo(1, 12);
     expect(restDir['upperArm.L'].x).toBeCloseTo(-1, 12);
+  });
+
+  it('follows the explicit upper-leg to foot chain past twist helpers', () => {
+    const rig = buildRig({ legs: true });
+    const upper = must(rig.bones.get('UpperLeg_L'), 'UpperLeg_L');
+    const lower = must(rig.bones.get('LowerLeg_L'), 'LowerLeg_L');
+    const foot = must(rig.bones.get('Foot_L'), 'Foot_L');
+
+    const upperTwist = new THREE.Bone();
+    upperTwist.name = 'UpperLeg_L_twist';
+    upperTwist.position.set(0, 0.05, 0);
+    upper.add(upperTwist);
+    upper.children = [upperTwist, ...upper.children.filter((c) => c !== upperTwist)];
+
+    const lowerTwist = new THREE.Bone();
+    lowerTwist.name = 'LowerLeg_L_twist';
+    lowerTwist.position.set(0, 0.05, 0);
+    lower.add(lowerTwist);
+    lower.children = [lowerTwist, ...lower.children.filter((c) => c !== lowerTwist)];
+    rig.root.updateMatrixWorld(true);
+
+    const { restDir } = restOf(rig);
+
+    for (const slot of LEG_SLOTS) {
+      expect(must(restDir[slot], slot).length(), slot).toBeCloseTo(1, 9);
+    }
+    expect(childDirection(upper).y).toBeCloseTo(1, 12);
+    expect(childDirection(lower).y).toBeCloseTo(1, 12);
+    expect(restDir['upperLeg.L'].y).toBeLessThan(-0.99);
+    expect(restDir['upperLeg.L'].z).toBeGreaterThan(0);
+    expect(restDir['lowerLeg.L'].y).toBeLessThan(-0.99);
+    expect(restDir['lowerLeg.L'].z).toBeLessThan(0);
+    // Keep one direct assertion as a local sanity check for the chain helper;
+    // the restDir assertions above prove NEXT_IN_CHAIN supplies these targets.
+    expect(chainDirection(upper, lower).y).toBeLessThan(-0.99);
+    expect(chainDirection(lower, foot).y).toBeLessThan(-0.99);
   });
 
   it('falls back to bone-local up for a slot with no child bone', () => {

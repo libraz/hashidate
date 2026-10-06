@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { DROOP_RATE } from '@/engine/face/blink';
 import { Body } from '@/engine/motion/body';
 import { ScalarFollower } from '@/engine/motion/follow';
-import { breathCurve, INHALE } from '@/engine/motion/idle';
+import { breathCurve, INHALE, settle } from '@/engine/motion/idle';
 import { IdlePosture, type PostureInput } from '@/engine/motion/posture';
 import { minJerk } from '@/engine/motion/timing';
 import { buildProfile } from '@/engine/profile';
@@ -27,7 +27,9 @@ function postureHarness(breathDepth = BREATH_DEPTH) {
   const hips = profile.bones.hips;
   if (!hips?.parent) throw new Error('test profile is missing the hips parent');
   profile.root.updateMatrixWorld(true);
-  const hipsUnit = 1 / hips.parent.getWorldScale(new THREE.Vector3()).x;
+  const parentLinear = new THREE.Matrix3().setFromMatrix4(hips.parent.matrixWorld).invert();
+  const hipsRight = new THREE.Vector3(1, 0, 0).applyMatrix3(parentLinear);
+  const hipsUp = new THREE.Vector3(0, 1, 0).applyMatrix3(parentLinear);
   const input: PostureInput = {
     t: 0,
     speaking: false,
@@ -37,7 +39,8 @@ function postureHarness(breathDepth = BREATH_DEPTH) {
     weightShift: 0,
     idleAmount: 0,
     hipsRest: hips.position.clone(),
-    hipsUnit,
+    hipsRight,
+    hipsUp,
     jumpHeight: 0.2,
     rise: 0,
     load: 0,
@@ -75,6 +78,26 @@ function expectedTerms(phase: number, depth: number, speaking: boolean) {
 function phaseStep(phase: number, t: number, dt: number, breathPeriod: number, speaking: boolean) {
   const period = breathPeriod * (speaking ? 1.5 : 1) * (1 + 0.11 * Math.sin(t * 0.077 + 1.4));
   return (phase + dt / period) % 1;
+}
+
+function quietBody(scene: ReturnType<typeof buildRig>, withoutBodyFrame = false) {
+  scene.root.updateMatrixWorld(true);
+  const profile = buildProfile(scene.root, scene.descriptor);
+  if (withoutBodyFrame) profile.body = null;
+  const rig = new Rig(profile);
+  const body = new Body(rig, profile);
+  body.breathDepth = 0;
+  body.idleAmount = 0;
+  body.weightShift = 0;
+  body.gazeAmount = 0;
+  return { body, profile, rig };
+}
+
+function worldHips(profile: ReturnType<typeof buildProfile>): THREE.Vector3 {
+  const hips = profile.bones.hips;
+  if (!hips) throw new Error('synthetic rig has no hips');
+  hips.updateWorldMatrix(true, false);
+  return hips.getWorldPosition(new THREE.Vector3());
 }
 
 describe('IdlePosture speech breath bridge', () => {
@@ -269,5 +292,84 @@ describe('IdlePosture speech breath bridge', () => {
     expect(actual.d).toBeCloseTo(expectedD, 12);
     expect(actual.breath).toBeCloseTo((expectedBr + 1) / 2, 12);
     expect(breathCurve(INHALE)).toBe(1);
+  });
+});
+
+describe('IdlePosture world-space hips translation', () => {
+  it('keeps the tuned weight-shift phase when semantic right opposes hips local X', () => {
+    const scene = buildRig();
+    for (const [name, bone] of scene.bones) {
+      if (/_L$/.test(name) || /_R$/.test(name)) bone.position.x *= -1;
+    }
+    const h = quietBody(scene);
+    const hips = h.profile.bones.hips;
+    const chest = h.profile.bones.chest ?? h.profile.bones.spine;
+    const bodyFrame = h.profile.body;
+    if (!hips) throw new Error('synthetic rig has no hips');
+    if (!(chest && bodyFrame)) throw new Error('synthetic rig has no body frame');
+    const parent = hips.parent;
+    if (!parent) throw new Error('synthetic rig has no hips parent');
+    expect(bodyFrame.right.x).toBeLessThan(-0.99);
+
+    const rest = worldHips(h.profile);
+    h.body.weightShift = 1;
+    h.rig.reset();
+    h.body.update(0.5);
+    const delta = worldHips(h.profile).sub(rest);
+    const hipsRight = new THREE.Vector3(1, 0, 0)
+      .applyQuaternion(hips.getWorldQuaternion(new THREE.Quaternion()))
+      .normalize();
+    const anatomicalRight = bodyFrame.right
+      .clone()
+      .applyMatrix3(new THREE.Matrix3().setFromMatrix4(chest.matrixWorld))
+      .normalize();
+
+    // The mirrored fixture makes semantic right point world -X while the
+    // authored hips translation still points world +X. The rest-axis gauge
+    // keeps the existing phase and the counter-lean that accompanies it.
+    expect(delta.dot(hipsRight)).toBeGreaterThan(1e-4);
+    expect(delta.dot(anatomicalRight)).toBeLessThan(-1e-4);
+    const parentLinear = new THREE.Matrix3().setFromMatrix4(parent.matrixWorld);
+    expect(
+      h.body.hipsRight.clone().applyMatrix3(parentLinear).normalize().dot(hipsRight),
+    ).toBeGreaterThan(0.999);
+  });
+
+  it('keeps breath translation vertical in world space under a rotated non-uniform parent', () => {
+    const scene = buildRig();
+    scene.root.rotation.z = Math.PI / 2;
+    scene.root.scale.set(0.01, 0.02, 0.03);
+    const h = quietBody(scene);
+    h.body.breathDepth = 1;
+    const rest = worldHips(h.profile);
+    h.rig.reset();
+    h.body.update(0.5);
+    const delta = worldHips(h.profile).sub(rest);
+    const br = (h.body.breath - 0.5) * 2;
+    expect(delta.dot(new THREE.Vector3(0, 1, 0))).toBeCloseTo(0.0035 * br, 12);
+    expect(delta.x).toBeCloseTo(0, 12);
+    expect(delta.z).toBeCloseTo(0, 12);
+  });
+
+  it('uses world up for the no-body-frame fallback while retaining local-X sway', () => {
+    const scene = buildRig();
+    scene.root.rotation.z = Math.PI / 2;
+    scene.root.scale.set(0.01, 0.02, 0.03);
+    scene.root.updateMatrixWorld(true);
+    const h = quietBody(scene, true);
+    const hips = h.profile.bones.hips;
+    if (!hips?.parent) throw new Error('synthetic rig has no hips parent');
+    const parentLinear = new THREE.Matrix3().setFromMatrix4(hips.parent.matrixWorld);
+    const localXWorld = new THREE.Vector3(1, 0, 0).applyMatrix3(parentLinear).normalize();
+    const rest = worldHips(h.profile);
+    h.body.weightShift = 1;
+    h.rig.reset();
+    h.body.update(0.5);
+    const delta = worldHips(h.profile).sub(rest);
+
+    expect(delta.length()).toBeCloseTo(0.012 * settle(Math.sin(0.5 * 0.31)), 12);
+    expect(delta.clone().normalize().dot(localXWorld)).toBeCloseTo(1, 12);
+    const worldUpFromFallback = h.body.hipsUp.clone().applyMatrix3(parentLinear).normalize();
+    expect(worldUpFromFallback.dot(new THREE.Vector3(0, 1, 0))).toBeCloseTo(1, 12);
   });
 });
