@@ -26,7 +26,7 @@ import { BASE_PALM } from './gestures';
  * back-solved point. All three are optional per link, and the palm and the
  * twist are stated by some poses and derived for the rest.
  */
-interface ResolvedArm {
+export interface ResolvedArm {
   shoulder?: THREE.Vector3;
   upperArm?: THREE.Vector3;
   lowerArm?: THREE.Vector3;
@@ -73,6 +73,23 @@ function derivePalm(out: ArmSolution): void {
   if (p.lengthSq() < 4e-4) p.copy(BASE_PALM);
   p.normalize();
 }
+/**
+ * Resolved IK output for one gesture slot, both sides. Each slot owns one, so
+ * an outgoing reach and an incoming one can both be live during a crossfade
+ * and neither drags the other's elbow.
+ */
+export function mkReachScratch(): Record<Side, ArmSolution> {
+  const mk = (): ArmSolution => ({
+    upperArm: new THREE.Vector3(),
+    lowerArm: new THREE.Vector3(),
+    hand: new THREE.Vector3(),
+    palm: new THREE.Vector3(),
+    tip: new THREE.Vector3(),
+    twist: 0,
+  });
+  return { L: mk(), R: mk() };
+}
+
 export class ArmResolver {
   /** Joint strain from the last fingertip solve, per arm. */
   readonly pointStrain: Record<Side, number> = { L: 0, R: 0 };
@@ -94,10 +111,6 @@ export class ArmResolver {
   /** Whether the current gesture is carrying this side's hand through the room. */
   private readonly _travelling: Record<Side, boolean> = { L: false, R: false };
 
-  // Resolved IK output, one set per gesture slot so an outgoing reach and an
-  // incoming one can both be live during a crossfade.
-  private readonly _reach: { cur: Record<Side, ArmSolution>; prev: Record<Side, ArmSolution> };
-
   // Request object handed to the fingertip solver, reused rather than rebuilt
   // — `resolve` runs up to four times a frame.
   private readonly _point: PointSolveSpec = {
@@ -116,20 +129,7 @@ export class ArmResolver {
     private readonly rig: Rig,
     private readonly axes: CharacterFrame,
     private readonly anchors: ReachAnchors,
-  ) {
-    const mkReach = (): ArmSolution => ({
-      upperArm: new THREE.Vector3(),
-      lowerArm: new THREE.Vector3(),
-      hand: new THREE.Vector3(),
-      palm: new THREE.Vector3(),
-      tip: new THREE.Vector3(),
-      twist: 0,
-    });
-    this._reach = {
-      cur: { L: mkReach(), R: mkReach() },
-      prev: { L: mkReach(), R: mkReach() },
-    };
-  }
+  ) {}
 
   /** Whether a travelling reach is deciding where this side's hand goes. */
   travelling(side: Side): boolean {
@@ -169,19 +169,22 @@ export class ArmResolver {
    * solved result of a `reach`, or the back-solved result of a `point`. All
    * three come back in character space, so the blend path downstream cannot
    * tell them apart — which is what lets a point crossfade with a wave.
+   *
+   * `reach` is the calling slot's own solver output and elbow state; see
+   * `mkReachScratch`.
    */
   resolve(
     pose: Pose | null,
     side: Side,
     mirror: number,
-    slotName: 'cur' | 'prev',
+    reach: Record<Side, ArmSolution>,
     handEntrance: number,
     timed = false,
     frameReady?: boolean,
   ): ResolvedArm | null {
     const pt = pose?.point?.[side];
     if (pt) {
-      const out = this._reach[slotName][side];
+      const out = reach[side];
       // Azimuth is a bearing in the body's own frame, where positive is the
       // character's right for both arms. A gesture wants it mirrored — "point
       // outward" should work on either hand — and an external caller naming an
@@ -270,7 +273,7 @@ export class ArmResolver {
       this._travelling[side] = true;
     }
 
-    const out = this._reach[slotName][side];
+    const out = reach[side];
     const hint = r.hand
       ? this.axes.toWorld(this._pointDir, r.hand, side, mirror, frameReady)
       : null;

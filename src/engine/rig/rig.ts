@@ -260,6 +260,7 @@ export class Rig {
     this.elbow = new ElbowSearch(profile, this.anat, {
       solveReach: (side, target, angle, out) => this.solveReach(side, target, angle, out),
       armContext: (side) => this.armContext(side),
+      dt: () => this.dt,
     });
     this.point = new PointSolver(profile, this.anat, (side, wrist, handDir, palmN, out) =>
       this.elbow.search(side, wrist, handDir, palmN, out),
@@ -395,14 +396,21 @@ export class Rig {
    * own travel. It buys a couple of centimetres, which is the difference
    * between a forearm folded flat and one that reads as resting.
    *
-   * `dir` is the clavicle's aim, rewritten in place — the body layer's own
-   * tuple, deliberately, so the shoulder the arm is solved from is the shoulder
-   * that gets posed. The current angle is taken from `dir` rather than from
+   * `dir` is the clavicle's aim, and the turn it needs, scaled by `weight`, is
+   * added to `turnOut` as a rotation vector rather than applied: every reach in
+   * play adds its share, and `turnGirdle` applies the sum, bounded by the
+   * girdle's travel. The current angle is taken from `dir` rather than from
    * where the bone actually points, so the result is a function of the request
    * alone — read back from the posed bone it would measure its own correction,
    * find nothing left to do, and let the shoulder spring back on the next frame.
    */
-  girdleRoom(side: Side, targetWorld: THREE.Vector3, dir: Vec3Tuple, weight = 1): void {
+  girdleRoom(
+    side: Side,
+    targetWorld: THREE.Vector3,
+    dir: Vec3Tuple,
+    weight: number,
+    turnOut: THREE.Vector3,
+  ): void {
     const { bones, limb } = this.p;
     const clav = bones[`shoulder.${side}`];
     const upper = bones[`upperArm.${side}`];
@@ -443,7 +451,21 @@ export class Rig {
     // *toward* the target, which is the wrong way round and reads as a hunch.
     const axis = _gX.crossVectors(b, a);
     if (axis.lengthSq() < 1e-8) return;
-    a.applyAxisAngle(axis.normalize(), turn);
+    turnOut.addScaledVector(axis.normalize(), turn);
+  }
+
+  /**
+   * Turn the clavicle's aim `dir` in place by the rotation `girdleRoom`
+   * gathered, its angle clamped to the girdle's travel however many reaches
+   * contributed.
+   */
+  turnGirdle(dir: Vec3Tuple, turn: THREE.Vector3): void {
+    const angle = Math.min(turn.length(), GIRDLE_ROM);
+    if (angle < 1e-4) return;
+    const a = _gA
+      .set(dir[0], dir[1], dir[2])
+      .normalize()
+      .applyAxisAngle(_gX.copy(turn).normalize(), angle);
     dir[0] = a.x;
     dir[1] = a.y;
     dir[2] = a.z;

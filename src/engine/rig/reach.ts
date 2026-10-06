@@ -56,6 +56,8 @@ export interface ArmSolution extends ReachLinks {
   strain?: number;
   /** Last elbow angle a pole point resolved to, held across a frame where it cannot. */
   poleA?: number;
+  /** Where the elbow search left this slot's elbow; unset until its first solve. */
+  swivel?: number;
 }
 
 /**

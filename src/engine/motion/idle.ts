@@ -15,7 +15,7 @@ export const smoothstep = (x: number): number => x * x * (3 - 2 * x);
  * symmetric sine is one of the things that makes an idle read as mechanical
  * without the viewer being able to say why.
  */
-const INHALE = 0.38;
+export const INHALE = 0.38;
 export const breathCurve = (p: number): number =>
   p < INHALE
     ? 0.5 - 0.5 * Math.cos((p / INHALE) * Math.PI)

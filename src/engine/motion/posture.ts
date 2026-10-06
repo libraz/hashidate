@@ -1,7 +1,8 @@
 import type * as THREE from 'three';
 import type { Rig } from '../rig';
 import type { Profile } from '../types';
-import { breathCurve, settle } from './idle';
+import { breathCurve, INHALE, settle } from './idle';
+import { minJerk } from './timing';
 
 /**
  * What a character does while nothing is being asked of it.
@@ -45,13 +46,26 @@ export interface BreathTerms {
   d: number;
 }
 
+interface BreathBridge {
+  fromBr: number;
+  fromD: number;
+  startPhase: number;
+}
+
 export class IdlePosture {
   private _breathPhase = 0;
   private _wasSpeaking = false;
+  private _breathBridge: BreathBridge | null = null;
+  private _appliedBreath = 0;
+  private _appliedBr = -1;
+  private _appliedD = 0;
+  private _hasAppliedBreath = false;
+  /** Returned from `apply` and refilled each frame; read it before the next call. */
+  private readonly _terms: BreathTerms = { br: 0, d: 0 };
 
-  /** Breathing phase, 0..1, exposed so the UI can show it. */
+  /** Applied breath, 0..1, exposed so the UI can show it. */
   get breath(): number {
-    return breathCurve(this._breathPhase);
+    return this._appliedBreath;
   }
 
   apply(rig: Rig, p: Profile, dt: number, s: PostureInput): BreathTerms {
@@ -61,7 +75,19 @@ export class IdlePosture {
     //
     // Phase is accumulated rather than derived from absolute time, so changing
     // the period mid-stream eases instead of teleporting the chest.
-    if (s.speaking && !this._wasSpeaking) this._breathPhase = 0.04; // catch a breath
+    const rising = s.speaking && !this._wasSpeaking;
+    const falling = !s.speaking && this._wasSpeaking;
+    const phaseBeforeUpdate = this._breathPhase;
+    const fromBr = this._hasAppliedBreath ? this._appliedBr : -1;
+    const fromD = this._hasAppliedBreath ? this._appliedD : s.breathDepth;
+    if (rising) {
+      this._breathPhase = 0.04; // catch a breath
+      this._breathBridge = { fromBr, fromD, startPhase: 0.04 };
+    } else if (falling && this._breathBridge) {
+      // Carry only an unfinished onset bridge into idle; ordinary releases keep
+      // following the existing cycle directly.
+      this._breathBridge = { fromBr, fromD, startPhase: phaseBeforeUpdate };
+    }
     this._wasSpeaking = s.speaking;
     // Speech rides the exhale: the cycle stretches and shallows while talking,
     // and the breath before a line is the part people actually notice missing.
@@ -70,8 +96,27 @@ export class IdlePosture {
     this._breathPhase = (this._breathPhase + dt / period) % 1;
 
     const breath = breathCurve(this._breathPhase);
-    const br = (breath - 0.5) * 2; // -1 .. 1
-    const d = s.breathDepth * (s.speaking ? 0.7 : 1);
+    const targetBr = (breath - 0.5) * 2; // -1 .. 1
+    const targetD = s.breathDepth * (s.speaking ? 0.7 : 1);
+    let br = targetBr;
+    let d = targetD;
+    const bridge = this._breathBridge;
+    if (bridge) {
+      const span = INHALE - bridge.startPhase;
+      const u = span > 0 ? (this._breathPhase - bridge.startPhase) / span : 1;
+      if (u >= 1) {
+        // Land on the unchanged legacy target exactly when the bridge ends.
+        this._breathBridge = null;
+      } else {
+        const w = minJerk(u);
+        br = bridge.fromBr + (targetBr - bridge.fromBr) * w;
+        d = bridge.fromD + (targetD - bridge.fromD) * w;
+      }
+    }
+    this._appliedBreath = this._breathBridge ? (br + 1) * 0.5 : breath;
+    this._appliedBr = br;
+    this._appliedD = d;
+    this._hasAppliedBreath = true;
 
     rig.addOffset('spine', -0.014 * d * br, 0, 0);
     rig.addOffset('chest', -0.03 * d * br, 0, 0);
@@ -147,6 +192,8 @@ export class IdlePosture {
       rig.addOffset('chest', -0.008 * talk * Math.sin(s.t * 2.31 + 0.5), 0, 0);
     }
 
-    return { br, d };
+    this._terms.br = br;
+    this._terms.d = d;
+    return this._terms;
   }
 }

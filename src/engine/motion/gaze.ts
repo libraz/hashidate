@@ -8,6 +8,9 @@ import { smoothstep } from './idle';
  * owns one and reads the three offsets off it.
  */
 
+/** Natural frequency of the head settling after the eyes, rad/s. See `Gaze.update`. */
+export const HEAD_OMEGA = 3.4;
+
 // Below this the head does not commit to a glance at all — small saccades are
 // eyes-only, and driving the neck off every one of them makes the body fidget.
 const HEAD_DEADZONE = 0.05;
@@ -75,7 +78,7 @@ export class Gaze {
     // a neck does. Modelled as a spring left slightly under-damped, because a
     // critically damped head arrives dead and an exponential ease never
     // overshoots at all — and a real head does, slightly, every time.
-    const OMEGA = 3.4;
+    const OMEGA = HEAD_OMEGA;
     const ZETA = 0.72;
     const mag = Math.hypot(this.offset.x, this.offset.y);
     const follow = mag > HEAD_DEADZONE ? (mag - HEAD_DEADZONE) / mag : 0;

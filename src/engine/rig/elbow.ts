@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { ArmAnatomy } from '../anatomy';
 import type { Profile, Side } from '../types';
-import { poleAngle, type ReachLinks } from './reach';
+import { type ArmSolution, poleAngle, type ReachLinks } from './reach';
 
 /**
  * Where the elbow goes.
@@ -31,6 +31,8 @@ const SWIVEL_SAMPLES = 24;
 
 /** How far the elbow moves toward its answer each frame. See `search`. */
 const SWIVEL_TRACK = 0.25;
+/** `SWIVEL_TRACK` as a per-second rate at the 60 Hz it was set at, so tracking depends on time rather than call count. */
+const SWIVEL_RATE = -60 * Math.log(1 - SWIVEL_TRACK);
 
 /**
  * How close the elbow has to get before it is simply put there, in radians.
@@ -110,13 +112,11 @@ export interface ElbowContext {
   solveReach(side: Side, targetWorld: THREE.Vector3, angle: number, out: ReachLinks): unknown;
   /** Hand the anatomy model this arm's origin and segment lengths. */
   armContext(side: Side): boolean;
+  /** Seconds the current frame covers. */
+  dt(): number;
 }
 
 export class ElbowSearch {
-  // Where each elbow sat last frame, so the fingertip search has somewhere to
-  // prefer. Seeded slightly outward, which is where a hanging elbow is.
-  private readonly _swivel: Record<Side, number> = { L: 0, R: 0 };
-
   // Scratch for the elbow prior. Held apart from the solver's own, which is
   // live across the whole of a fingertip solve while the prior is computed
   // inside it.
@@ -146,6 +146,10 @@ export class ElbowSearch {
    * thing when the hand's direction is not decided until the elbow is.
    * `palmN` likewise: null means the palm is free to roll.
    *
+   * `out` carries the slot's own elbow state in `swivel`, so two slots solving
+   * one side in a frame do not pull a shared elbow between them. Unset, the
+   * answer is taken outright, which is what a probe solve wants.
+   *
    * Returns the winning cost, or null if the target cannot be solved at all.
    */
   search(
@@ -153,9 +157,10 @@ export class ElbowSearch {
     wristTarget: THREE.Vector3,
     handDir: THREE.Vector3 | null,
     palmN: THREE.Vector3 | null,
-    out: ReachLinks,
+    out: ArmSolution,
   ): number | null {
     const cand = this._cand;
+    const prev = out.swivel;
     this.ctx.armContext(side);
     // Computed before the sweep, not inside it: the prior is a function of the
     // target, and the target does not change while the circle is being sampled.
@@ -171,7 +176,7 @@ export class ElbowSearch {
       }
       // Continuity, so a target drifting between two equally comfortable elbow
       // positions does not flip between them.
-      const d = angle - this._swivel[side];
+      const d = angle - (prev ?? 0);
       return this.anat.cost() + SWIVEL_INERTIA * (1 - Math.cos(d));
     };
 
@@ -190,7 +195,7 @@ export class ElbowSearch {
       return a0;
     };
 
-    let bestA = this._swivel[side];
+    let bestA = prev ?? 0;
     let bestC = Number.POSITIVE_INFINITY;
     for (let i = 0; i < SWIVEL_SAMPLES; i++) {
       const a = -Math.PI + i * step;
@@ -202,8 +207,6 @@ export class ElbowSearch {
     }
     if (!Number.isFinite(bestC)) return null;
     bestA = refine(bestA, bestC);
-
-    const prev = this._swivel[side];
 
     // Track toward the answer instead of jumping to it.
     //
@@ -222,12 +225,16 @@ export class ElbowSearch {
     // is a function of the target alone, so the elbow still ends up in the same
     // place whatever route it took there — which is the property the prior
     // exists for, and the reason the stickiness that used to sit here is gone.
-    let d = bestA - prev;
-    d = Math.atan2(Math.sin(d), Math.cos(d)); // the short way round
-    const settled = Math.abs(d) < SWIVEL_SETTLE ? bestA : prev + d * SWIVEL_TRACK;
+    let settled = bestA;
+    if (prev !== undefined) {
+      let d = bestA - prev;
+      d = Math.atan2(Math.sin(d), Math.cos(d)); // the short way round
+      const k = 1 - Math.exp(-SWIVEL_RATE * this.ctx.dt());
+      if (Math.abs(d) >= SWIVEL_SETTLE) settled = prev + d * k;
+    }
 
     if (!this.ctx.solveReach(side, wristTarget, settled, out)) return null;
-    this._swivel[side] = settled;
+    out.swivel = settled;
     return bestC;
   }
 

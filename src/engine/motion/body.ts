@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Rig } from '../rig';
+import type { ArmSolution, Rig } from '../rig';
 import type {
   ArmSlot,
   FingerName,
@@ -14,15 +14,14 @@ import type {
 } from '../types';
 import { ReachAnchors } from './anchors';
 import { gestureDef } from './custom';
-import { DirFollower, ScalarFollower } from './follow';
+import { DirFollower, OMEGA_PER_RATE, ScalarFollower } from './follow';
 import { CharacterFrame, sideMirror } from './frame';
-import { Gaze } from './gaze';
+import { Gaze, HEAD_OMEGA } from './gaze';
 import { BASE_FINGERS, BASE_PALM, BASE_POSE, pointHand } from './gestures';
-import { DEFAULT_VARIATION } from './idle';
 import { CROUCH_T, type HopSpec, type JumpArc, planJump, sampleJump } from './jump';
 import { aimGaze } from './look';
-import { IdlePosture } from './posture';
-import { ArmResolver } from './resolve';
+import { IdlePosture, type PostureInput } from './posture';
+import { ArmResolver, mkReachScratch, type ResolvedArm } from './resolve';
 import { FINGER_ONSET, LINK_ONSET, minJerk, onset, reachEnvelope } from './timing';
 
 /**
@@ -92,6 +91,12 @@ const FINGER_FOLLOW = 13;
 const TRAVEL_FOLLOW = ARM_FOLLOW * 4;
 
 /**
+ * How fast the applied camera-tracking share follows `lookAt`: the head's own
+ * settle frequency, so a change in how much it tracks moves like a glance.
+ */
+const LOOK_FOLLOW = HEAD_OMEGA / OMEGA_PER_RATE;
+
+/**
  * Sides, in the order the arm loop walks them.
  */
 const SIDES: readonly Side[] = ['L', 'R'];
@@ -143,7 +148,35 @@ export interface ActiveGesture {
   lead: number;
   /** Playback time the exit starts at: the end of the hold, or a held pose's release. */
   exitAt: number;
+  /** Entrance progress, 0..1, at the moment it was let go; the entrance holds there while the exit runs. */
+  releasedIn: number;
 }
+
+/**
+ * A gesture on its way out. It keeps moving while its weight decays, and leaves
+ * only once that weight is spent — never because another gesture arrived.
+ */
+interface Outgoing {
+  g: ActiveGesture;
+  w: number;
+  /** This slot's own solver output and elbow state. */
+  reach: Record<Side, ArmSolution>;
+  /** This frame's pose and resolved arms. */
+  pose: Pose | null;
+  arm: Record<Side, ResolvedArm | null>;
+}
+
+const mkOutgoing = (g: ActiveGesture): Outgoing => ({
+  g,
+  w: 0,
+  reach: mkReachScratch(),
+  pose: null,
+  arm: { L: null, R: null },
+});
+
+/** Scratch for the girdle turn gathered across gesture slots. */
+const _girdleTurn = new THREE.Vector3();
+const _girdleDir = new THREE.Vector3();
 
 /** The frame's breath and drift terms, shared by every arm slot's compose step. */
 interface IdleEnv {
@@ -234,6 +267,15 @@ const mkFingerSpreadState = (): Record<FingerName, ScalarFollower> => ({
 
 const mkEnv = (): Envelope => ({ entrance: 0, exit: 1 });
 
+/**
+ * What the current gesture is worth for one channel this frame.
+ *
+ * Per channel rather than one number for the whole gesture, because the
+ * links of a limb do not start together — `this.blend` is what the same
+ * expression gives for a channel with no onset delay of its own.
+ */
+const plain = (e: Envelope): number => e.entrance * e.exit;
+
 const mkArmEnv = (): Record<ArmSlot, Envelope> => ({
   shoulder: mkEnv(),
   upperArm: mkEnv(),
@@ -258,8 +300,6 @@ export class Body {
 
   gesture: ActiveGesture | null;
   blend: number;
-  prev: ActiveGesture | null;
-  prevBlend: number;
 
   hipsRest: THREE.Vector3;
   hipsUnit: number;
@@ -271,10 +311,14 @@ export class Body {
 
   private _jump: JumpArc | null;
   private _jumpT: number;
+  /** A run asked for while one was in flight; it starts when that one lands. */
+  private _hopQueued: HopSpec | null;
   private _rise: number;
   private _load: number;
 
   private _gaze: Gaze;
+  /** The tracking share actually applied; chases `lookAt`. */
+  private readonly _look = new ScalarFollower(1);
 
   private _armDirs: Record<Side, Record<ArmSlot, Vec3Tuple>>;
   private _armWorld: Record<Side, Record<ArmSlot, Vec3Tuple>>;
@@ -301,6 +345,15 @@ export class Body {
   private _palmWorldOut: Record<Side, Vec3Tuple>;
   private _palmW: Record<Side, ScalarFollower>;
 
+  /** Gestures on their way out, oldest first. Only `handoff` adds to it. */
+  private readonly _fading: Outgoing[] = [];
+  /** Spent outgoing slots, kept so a gesture switch does not allocate. */
+  private readonly _spare: Outgoing[] = [];
+  /** The current gesture's solver output and elbow state. */
+  private _curReach = mkReachScratch();
+  /** Solver output for `travel`'s probe, so a probe moves no live slot's elbow. */
+  private readonly _probeReach = mkReachScratch();
+
   /** Where each arm link rests; the standing pose unless the avatar overrides it. */
   private readonly _rest: Record<ArmSlot, THREE.Vector3>;
   /** The character-space to world boundary. See `frame.ts`. */
@@ -309,6 +362,9 @@ export class Body {
   private readonly anchors: ReachAnchors;
   /** Breathing, weight, drift — what a standing body does. See `posture.ts`. */
   private readonly _posture = new IdlePosture();
+  /** The posture's per-frame input and the arms' idle terms, refilled rather than rebuilt. */
+  private readonly _postureIn: PostureInput;
+  private readonly _idleEnv: IdleEnv = { br: 0, d: 0, armDrift: 0, dt: 0 };
   /** What one arm of a pose actually asks for. See `resolve.ts`. */
   private readonly _arm: ArmResolver;
 
@@ -331,18 +387,16 @@ export class Body {
     this.idleAmount = 1; // head micro-motion, posture drift, arm drift
     this.weightShift = 1; // slow lateral shift of the standing weight
     this.gazeAmount = 1; // saccades layered on top of camera tracking
-    this.lookAt = 1; // 0 = straight ahead, 1 = track the camera
+    this.lookAt = 1; // 0 = straight ahead, 1 = track the camera; a target, see `_look`
 
     // Set per frame by the director from the mouth layer.
     this.speaking = false;
     this.speechEnergy = 0;
 
-    // Two gesture slots. The second holds whatever is on its way out, so a
+    // The current gesture, and `_fading` for whatever is on its way out, so a
     // switch crossfades instead of cutting.
     this.gesture = null;
     this.blend = 0;
-    this.prev = null;
-    this.prevBlend = 0;
 
     const hips = profile.bones.hips;
     this.hipsRest = hips ? hips.position.clone() : new THREE.Vector3();
@@ -376,6 +430,7 @@ export class Body {
     this.gravity = 9.81;
     this._jump = null;
     this._jumpT = 0;
+    this._hopQueued = null;
     this._rise = 0; // hips above rest this frame, metres
     this._load = 0; // 0..1, how far into the dip the body is
 
@@ -414,30 +469,48 @@ export class Body {
     // filter with momentum can undershoot past zero, and a negative weight
     // does not mean "less constrained", it means the palm faces backwards.
     this._palmW = { L: new ScalarFollower(1), R: new ScalarFollower(1) };
+
+    this._postureIn = {
+      t: 0,
+      speaking: false,
+      speechEnergy: 0,
+      breathPeriod: this.breathPeriod,
+      breathDepth: this.breathDepth,
+      weightShift: this.weightShift,
+      idleAmount: this.idleAmount,
+      hipsRest: this.hipsRest,
+      hipsUnit: this.hipsUnit,
+      jumpHeight: this.jumpHeight,
+      rise: 0,
+      load: 0,
+    };
   }
 
   /**
-   * Blend one arm slot's direction for this frame and write it into `_armDirs`.
+   * Blend one arm slot's target direction for this frame, in character space.
    *
-   * `pDir`/`cDir` are the outgoing and incoming gesture's directions for this
-   * slot, either of which may be absent. `pw`/`cw` are what each is worth this
-   * frame — per slot rather than per gesture, because the links of a limb do
-   * not start together.
+   * `cDir` is the incoming gesture's direction for this slot and may be absent;
+   * `cw` is what it is worth this frame — per slot rather than per gesture,
+   * because the links of a limb do not start together. The outgoing gestures
+   * come in at their own weights unless `outgoing` is false.
    */
-  private composeArmDir(
+  private composeArmTarget(
     slot: ArmSlot,
     side: Side,
     env: IdleEnv,
-    pDir: THREE.Vector3 | undefined,
     cDir: THREE.Vector3 | undefined,
-    pw: number,
     cw: number,
-    rate = ARM_FOLLOW,
-  ): Vec3Tuple {
+    outgoing: boolean,
+  ): THREE.Vector3 {
     const v = this._armVec[side][slot].copy(this._rest[slot]);
     // Outgoing first, then incoming: the incoming gesture takes over as its
     // blend rises, and the two never both sit at full weight.
-    if (pDir) v.lerp(pDir, pw).normalize();
+    if (outgoing) {
+      for (const f of this._fading) {
+        const pDir = slot === 'shoulder' ? f.pose?.arms?.[side]?.shoulder : f.arm[side]?.[slot];
+        if (pDir) v.lerp(pDir, f.w).normalize();
+      }
+    }
     if (cDir) v.lerp(cDir, cw).normalize();
 
     // Breathing and idle drift are added *after* the gesture blend, not before
@@ -451,10 +524,19 @@ export class Body {
     v.y += w * Math.sin(this.t * 0.27 + ph);
     v.z += w * 0.8 * Math.sin(this.t * 0.19 + ph + 0.6);
     v.x += w * 0.5 * Math.sin(this.t * 0.23 + ph + 1.3);
-    v.normalize();
+    return v.normalize();
+  }
 
+  /** Follow one arm slot's target and write the result into `_armDirs`. */
+  private followArm(
+    slot: ArmSlot,
+    side: Side,
+    v: THREE.Vector3,
+    dt: number,
+    rate: number,
+  ): Vec3Tuple {
     // Follow the target instead of snapping to it. See ARM_FOLLOW.
-    const s = this._armState[side][slot].step(v, env.dt, rate);
+    const s = this._armState[side][slot].step(v, dt, rate);
     const out = this._armDirs[side][slot];
     // Keep the follower output in character space. It is projected into world
     // space only at the Rig boundary, after the spine has been committed.
@@ -548,17 +630,11 @@ export class Body {
    */
   playDef(def: GestureDef, id: string, side?: Side): void {
     if (!def) return;
-    // Hand the outgoing gesture to the second slot so it fades out while the
-    // new one fades in. Dropping it outright leaves the standing blend weight
-    // pointing at a completely different pose, and the arms teleport on the
-    // switch frame — the most visible artefact this layer had.
-    if (this.gesture && this.blend > 0.02) {
-      this.prev = this.gesture;
-      this.prevBlend = this.blend;
-    } else {
-      this.prev = null;
-      this.prevBlend = 0;
-    }
+    // Hand the outgoing gesture on so it fades out while the new one fades in.
+    // Dropping it outright leaves the standing blend weight pointing at a
+    // completely different pose, and the arms teleport on the switch frame —
+    // the most visible artefact this layer had.
+    this.handoff();
     const v: GestureVariation = {
       // Frequency and amplitude, never phase: `build` is called from t=0 and a
       // phase offset would put every oscillation mid-swing on frame one, which
@@ -584,8 +660,8 @@ export class Body {
       speed: 0.93 + Math.random() * 0.14,
       lead,
       exitAt: lead + def.hold,
+      releasedIn: 1,
     };
-    this.blend = 0;
     this._env.entrance = 0;
     this._env.exit = 1;
     for (const slot of ARM_SLOTS) {
@@ -603,7 +679,8 @@ export class Body {
     let worst = 0;
     for (const side of ['L', 'R'] as const) {
       const mirror = sideMirror(side);
-      const arm = this._arm.resolve(pose, side, mirror, 'cur', 1);
+      this._probeReach[side].swivel = undefined;
+      const arm = this._arm.resolve(pose, side, mirror, this._probeReach, 1);
       if (!arm) continue;
       for (const slot of ARM_SLOTS) {
         const dir = arm[slot];
@@ -614,14 +691,58 @@ export class Body {
     return worst;
   }
 
+  /** Add one gesture slot's girdle turn for `side`, if it is a reach that states no shoulder. */
+  private girdleShare(
+    pose: Pose | null,
+    side: Side,
+    weight: number,
+    dir: Vec3Tuple,
+    turn: THREE.Vector3,
+    frameReady: boolean,
+  ): void {
+    const gr = pose?.reach?.[side];
+    if (!gr || pose?.arms?.[side]?.shoulder || weight <= 0) return;
+    const gt = this.anchors.target(gr, side, frameReady);
+    if (gt) this.rig.girdleRoom(side, gt, dir, weight, turn);
+  }
+
   /** Release the current gesture, including a sustained pose. */
   stopGesture(): void {
     const g = this.gesture;
-    if (!g) return;
-    // A pose held past its hold leaves from the moment it is let go, not from where the hold ran out.
-    if (g.def.sustain && !g.released) g.exitAt = Math.max(g.time, g.exitAt);
+    if (!g || g.released) return;
+    // A pose let go leaves from where it is, at the weight it has: the exit
+    // starts now, and the entrance stops where it got to rather than finishing.
+    const held = g.def.sustain === true;
+    g.exitAt = held ? g.time : Math.min(g.exitAt, g.time);
+    g.releasedIn = g.lead > 0 ? Math.min(1, g.time / g.lead) : 1;
     g.released = true;
-    g.time = Math.max(g.time, g.exitAt);
+  }
+
+  /**
+   * Move the current gesture into the outgoing slots at the weight it has now.
+   *
+   * The one place a gesture leaves the current slot early. It keeps its pose
+   * time and its solver state, and from here its weight only decays, so a
+   * switch can neither drop it nor raise it — however many arrive within one
+   * fade.
+   */
+  private handoff(): void {
+    const g = this.gesture;
+    if (g && this.blend > 0) {
+      const out = this._spare.pop() ?? mkOutgoing(g);
+      const reach = out.reach;
+      out.g = g;
+      out.w = this.blend;
+      out.reach = this._curReach;
+      out.pose = null;
+      this._curReach = reach;
+      this._fading.push(out);
+    }
+    // A new slot's elbow starts at its own answer; see `ElbowSearch.search`.
+    this._curReach.L.swivel = undefined;
+    this._curReach.R.swivel = undefined;
+    this.gesture = null;
+    this.blend = 0;
   }
 
   /**
@@ -629,12 +750,19 @@ export class Body {
    * than one is continuous — see there for why it needs no gap between them.
    */
   hop({ height = this.jumpHeight, count = 1 }: Partial<HopSpec> = {}): void {
+    // Restarting a run in flight would drop the hips to rest in one frame; the
+    // new one waits for the landing, which ends standing and at rest.
+    if (this._jump) {
+      this._hopQueued = { height, count };
+      return;
+    }
     this._jump = planJump(height, this.gravity, count);
     this._jumpT = 0;
   }
 
-  /** Finish the current hop, dropping any later cycles from a run. */
+  /** Finish the current hop, dropping any later cycles from a run and any run queued after it. */
   finishHop(): void {
+    this._hopQueued = null;
     const jump = this._jump;
     if (!jump) return;
     const cycle = jump.push + jump.flight + jump.brake;
@@ -662,6 +790,12 @@ export class Body {
     const s = sampleJump(j, this._jumpT);
     if (s.done) {
       this._jump = null;
+      const next = this._hopQueued;
+      if (next) {
+        this._hopQueued = null;
+        this._jump = planJump(next.height, this.gravity, next.count);
+        this._jumpT = 0;
+      }
       return;
     }
     this._rise = s.rise;
@@ -684,7 +818,8 @@ export class Body {
     return slot.def.build(slot.time * slot.speed, slot.v);
   }
 
-  update(dt: number, { headWorldTarget = null }: BodyContext = {}): void {
+  update(dt: number, ctx?: BodyContext): void {
+    const headWorldTarget = ctx?.headWorldTarget ?? null;
     this.t += dt;
     const { rig, p } = this;
     // The rig's anatomical limiter is the one thing below this line with a
@@ -693,7 +828,6 @@ export class Body {
 
     // --- gesture envelopes ------------------------------------------------
     let g: Pose | null = null;
-    const variation = this.gesture?.v ?? DEFAULT_VARIATION;
     if (this.gesture) {
       const { def, lead } = this.gesture;
       const t = this.gesture.time + dt;
@@ -707,7 +841,11 @@ export class Body {
       // being decided between: only one of them is ever off 1, so the product
       // is the same number the branch used to produce, and a reach can ask
       // which of the two a weight below 1 came from. See `Envelope`.
-      const xIn = lead > 0 ? Math.min(1, t / lead) : 1;
+      const xIn = this.gesture.released
+        ? this.gesture.releasedIn
+        : lead > 0
+          ? Math.min(1, t / lead)
+          : 1;
       const { exitAt } = this.gesture;
       const xOut = held || t < exitAt ? 1 : Math.max(0, 1 - (t - exitAt) / out);
       this._env.entrance = minJerk(xIn);
@@ -729,7 +867,9 @@ export class Body {
       // nothing but lateness and an exponential tail that never quite arrives —
       // and that tail was most of what made a finished gesture read as still
       // settling into itself.
-      const target = this._env.entrance * this._env.exit * variation.scale;
+      // No `v.scale` here: amplitude variation belongs to the oscillations a
+      // gesture writes, and a weight past 1 pushes a pose past what was authored.
+      const target = this._env.entrance * this._env.exit;
       this.blend = target;
       // Built from t=0, not from t-lead. Freezing the pose through the lead and
       // only starting the motion afterwards makes the gesture appear to begin
@@ -744,43 +884,47 @@ export class Body {
       this.blend *= Math.exp(-dt * 10);
     }
 
-    let gPrev: Pose | null = null;
-    if (this.prev) {
-      this.prevBlend *= Math.exp(-dt * 6);
-      if (this.prevBlend < 0.01) {
-        this.prev = null;
-        this.prevBlend = 0;
+    let kept = 0;
+    for (const f of this._fading) {
+      f.w *= Math.exp(-dt * 6);
+      if (f.w < 0.01) {
+        f.pose = null;
+        this._spare.push(f);
+        continue;
       }
       // The outgoing gesture keeps moving while it fades. Dissolving a frozen
       // pose looks different from a gesture being abandoned partway through,
       // and the second is what actually happened.
-      else gPrev = this.advance(this.prev, dt);
+      f.pose = this.advance(f.g, dt);
+      this._fading[kept++] = f;
     }
+    this._fading.length = kept;
 
     // Everything a standing body does on its own — breathing, the weight
     // shift, the hop's fold through the trunk, the head's drift. See
     // `posture.ts`. The hop is advanced first because the fold reads its
     // output; nothing about it touches the rig.
     this.jumpStep(dt);
-    const { br, d } = this._posture.apply(rig, p, dt, {
-      t: this.t,
-      speaking: this.speaking,
-      speechEnergy: this.speechEnergy,
-      breathPeriod: this.breathPeriod,
-      breathDepth: this.breathDepth,
-      weightShift: this.weightShift,
-      idleAmount: this.idleAmount,
-      hipsRest: this.hipsRest,
-      hipsUnit: this.hipsUnit,
-      jumpHeight: this.jumpHeight,
-      rise: this._rise,
-      load: this._load,
-    });
+    const pin = this._postureIn;
+    pin.t = this.t;
+    pin.speaking = this.speaking;
+    pin.speechEnergy = this.speechEnergy;
+    pin.breathPeriod = this.breathPeriod;
+    pin.breathDepth = this.breathDepth;
+    pin.weightShift = this.weightShift;
+    pin.idleAmount = this.idleAmount;
+    pin.hipsRest = this.hipsRest;
+    pin.hipsUnit = this.hipsUnit;
+    pin.jumpHeight = this.jumpHeight;
+    pin.rise = this._rise;
+    pin.load = this._load;
+    const { br, d } = this._posture.apply(rig, p, dt, pin);
     const idle = this.idleAmount;
-    // Both gesture slots contribute to the spine; the outgoing one is fading.
-    if (gPrev?.spine) {
-      for (const [slot, o] of Object.entries(gPrev.spine) as Array<[SpineSlot, Vec3Tuple]>) {
-        rig.addOffset(slot, o[0] * this.prevBlend, o[1] * this.prevBlend, o[2] * this.prevBlend);
+    // Every gesture slot contributes to the spine; the outgoing ones are fading.
+    for (const f of this._fading) {
+      if (!f.pose?.spine) continue;
+      for (const [slot, o] of Object.entries(f.pose.spine) as Array<[SpineSlot, Vec3Tuple]>) {
+        rig.addOffset(slot, o[0] * f.w, o[1] * f.w, o[2] * f.w);
       }
     }
     if (g?.spine) {
@@ -796,7 +940,7 @@ export class Body {
       rig,
       p,
       this._gaze,
-      { lookAt: this.lookAt, gazeAmount: this.gazeAmount },
+      { lookAt: this._look.step(this.lookAt, dt, LOOK_FOLLOW), gazeAmount: this.gazeAmount },
       headWorldTarget,
     );
 
@@ -807,17 +951,11 @@ export class Body {
 
     // --- arms -------------------------------------------------------------
     const armDrift = 0.016 * idle;
-    const env: IdleEnv = { br, d, armDrift, dt };
-    const scale = variation.scale;
-
-    /**
-     * What the current gesture is worth for one channel this frame.
-     *
-     * Per channel rather than one number for the whole gesture, because the
-     * links of a limb do not start together — `this.blend` is what the same
-     * expression gives for a channel with no onset delay of its own.
-     */
-    const plain = (e: Envelope): number => e.entrance * e.exit * scale;
+    const env = this._idleEnv;
+    env.br = br;
+    env.d = d;
+    env.armDrift = armDrift;
+    env.dt = dt;
 
     for (const side of SIDES) {
       const mirror = sideMirror(side);
@@ -835,43 +973,50 @@ export class Body {
       // by the time the next frame solves, so there is nothing to converge on.
       // Only authored directions are read here; a reach never states a shoulder.
       const es = this._armEnv.shoulder;
-      this.composeArmDir(
+      const sv = this.composeArmTarget(
         'shoulder',
         side,
         env,
-        gPrev?.arms?.[side]?.shoulder,
         g?.arms?.[side]?.shoulder,
-        this.prevBlend,
         plain(es),
+        true,
       );
 
       // Give the girdle its say before the shoulder is posed. Only for a reach,
       // and only where the pose has no shoulder of its own to state — a gesture
-      // that says where the shoulder goes means it.
-      const gr = g?.reach?.[side];
-      if (gr && !g?.arms?.[side]?.shoulder) {
-        const gt = this.anchors.target(gr, side, frameReady);
-        this.axes.tupleToWorld(worldDirs.shoulder, dirs.shoulder, side, mirror, frameReady);
-        if (gt) rig.girdleRoom(side, gt, worldDirs.shoulder, this.blend);
-      } else {
-        this.axes.tupleToWorld(worldDirs.shoulder, dirs.shoulder, side, mirror, frameReady);
+      // that says where the shoulder goes means it. Folded into the follower's
+      // target, every slot at its own weight, so the turn arrives and leaves
+      // with the reach rather than on the switch frame.
+      const turn = _girdleTurn.set(0, 0, 0);
+      this.axes.tupleToWorld(worldDirs.shoulder, sv, side, mirror, frameReady);
+      for (const f of this._fading) {
+        this.girdleShare(f.pose, side, f.w, worldDirs.shoulder, turn, frameReady);
       }
+      this.girdleShare(g, side, this.blend, worldDirs.shoulder, turn, frameReady);
+      if (turn.lengthSq() > 0) {
+        rig.turnGirdle(worldDirs.shoulder, turn);
+        this.axes.toCharacter(sv, _girdleDir.fromArray(worldDirs.shoulder), side, frameReady);
+      }
+      this.followArm('shoulder', side, sv, dt, ARM_FOLLOW);
+      this.axes.tupleToWorld(worldDirs.shoulder, dirs.shoulder, side, mirror, frameReady);
       rig.aimShoulder(side, worldDirs.shoulder);
 
-      const pArm = this._arm.resolve(
-        gPrev,
-        side,
-        mirror,
-        'prev',
-        this._armEnv.hand.entrance,
-        false,
-        frameReady,
-      );
+      for (const f of this._fading) {
+        f.arm[side] = this._arm.resolve(
+          f.pose,
+          side,
+          mirror,
+          f.reach,
+          this._armEnv.hand.entrance,
+          false,
+          frameReady,
+        );
+      }
       const cArm = this._arm.resolve(
         g,
         side,
         mirror,
-        'cur',
+        this._curReach,
         this._armEnv.hand.entrance,
         true,
         frameReady,
@@ -907,16 +1052,15 @@ export class Body {
       for (const slot of ARM_SLOTS) {
         if (slot === 'shoulder') continue;
         const carried = travelling && slot !== 'hand';
-        this.composeArmDir(
+        const v = this.composeArmTarget(
           slot,
           side,
           env,
-          pArm?.[slot],
           cArm?.[slot],
-          carried ? 0 : this.prevBlend,
           carried ? this._armEnv[slot].exit : plain(this._armEnv[slot]),
-          carried ? TRAVEL_FOLLOW : ARM_FOLLOW,
+          !carried,
         );
+        this.followArm(slot, side, v, dt, carried ? TRAVEL_FOLLOW : ARM_FOLLOW);
         this.axes.tupleToWorld(worldDirs[slot], dirs[slot], side, mirror, frameReady);
       }
 
@@ -931,12 +1075,17 @@ export class Body {
       // taking them at full weight from the first frame would be a step. They
       // arrive late instead, which is what a wrist does.
       const cw = plain(this._armEnv.hand);
-      const twistTarget = (pArm?.twist ?? 0) * this.prevBlend + (cArm?.twist ?? 0) * cw;
+      let twistTarget = 0;
+      for (const f of this._fading) twistTarget += (f.arm[side]?.twist ?? 0) * f.w;
+      twistTarget += (cArm?.twist ?? 0) * cw;
       this._twist[side].step(twistTarget, dt, ARM_FOLLOW);
 
       // Palm direction blends and follows like the limb directions do.
       const pt = this._palmTarget.copy(BASE_PALM);
-      if (pArm?.palm) pt.lerp(pArm.palm, this.prevBlend).normalize();
+      for (const f of this._fading) {
+        const palm = f.arm[side]?.palm;
+        if (palm) pt.lerp(palm, f.w).normalize();
+      }
       if (cArm?.palm) pt.lerp(cArm.palm, cw).normalize();
       const ps = this._palm[side].step(pt, dt, ARM_FOLLOW);
       const po = this._palmOut[side];
@@ -959,7 +1108,10 @@ export class Body {
       // pose releases the constraint as it blends in and the roll falls back to
       // whatever the aim itself produces.
       let hold = 1;
-      if (pArm && !pArm.palm) hold -= this.prevBlend;
+      for (const f of this._fading) {
+        const arm = f.arm[side];
+        if (arm && !arm.palm) hold -= f.w;
+      }
       if (cArm && !cArm.palm) hold -= cw;
       const palmW = Math.max(0, this._palmW[side].step(Math.max(0, hold), dt, ARM_FOLLOW));
 
@@ -971,25 +1123,25 @@ export class Body {
         palmW,
       );
 
-      const pf = gPrev?.fingers?.[side];
       const cf = g?.fingers?.[side];
-      const pfSpread = gPrev?.fingerSpread?.[side];
       const cfSpread = g?.fingerSpread?.[side];
       const spec = this._fingerSpec[side];
       const spread = this._fingerSpreadSpec[side];
       const fw = plain(this._fingerEnv);
       for (const f of FINGER_NAMES) {
         let val = BASE_FINGERS[f];
-        const pv = pf?.[f];
+        let spreadVal = 0;
+        for (const o of this._fading) {
+          const pv = o.pose?.fingers?.[side]?.[f];
+          if (pv !== undefined) val += (pv - val) * o.w;
+          const pvSpread = o.pose?.fingerSpread?.[side]?.[f];
+          if (pvSpread !== undefined) spreadVal += (pvSpread - spreadVal) * o.w;
+        }
         const cv = cf?.[f];
-        if (pv !== undefined) val += (pv - val) * this.prevBlend;
         if (cv !== undefined) val += (cv - val) * fw;
         spec[f] = this._fingerState[side][f].step(val, dt, FINGER_FOLLOW);
 
-        let spreadVal = 0;
-        const pvSpread = pfSpread?.[f];
         const cvSpread = cfSpread?.[f];
-        if (pvSpread !== undefined) spreadVal += pvSpread * this.prevBlend;
         if (cvSpread !== undefined) spreadVal += (cvSpread - spreadVal) * fw;
         spread[f] = this._fingerSpreadState[side][f].step(spreadVal, dt, FINGER_FOLLOW);
       }
