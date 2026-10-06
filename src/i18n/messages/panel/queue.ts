@@ -87,6 +87,7 @@ export const queueEn = {
   'panel.lint.cue.bgm.playNoTrack': 'bgm play',
   'panel.lint.cue.bgm.pause': 'bgm pause',
   'panel.lint.cue.bgm.stop': 'bgm stop',
+  'panel.lint.cue.bgm.set': 'bgm set',
   'panel.lint.strayBrackets':
     '{count} square brackets cannot be read as a cue (they are left out of the speech)',
   'panel.lint.readingBrackets': 'A reading cannot contain square brackets',
@@ -178,6 +179,7 @@ export const queueJa: Record<keyof typeof queueEn, string> = {
   'panel.lint.cue.bgm.playNoTrack': 'BGM 再生',
   'panel.lint.cue.bgm.pause': 'BGM 一時停止',
   'panel.lint.cue.bgm.stop': 'BGM 停止',
+  'panel.lint.cue.bgm.set': 'BGM 設定',
   'panel.lint.strayBrackets':
     'キューとして読めない角括弧が {count} 箇所あります(読み上げからは除かれます)',
   'panel.lint.readingBrackets': '読みに角括弧は書けません',

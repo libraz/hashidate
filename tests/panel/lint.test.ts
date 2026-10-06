@@ -95,6 +95,17 @@ describe('checkLine, on cues', () => {
     expect(check.spoken).toBe('あいうえおかきく');
   });
 
+  it('labels a structured BGM settings cue', () => {
+    const check = checkLine(
+      { text: `[@bgm set ${JSON.stringify({ volume: 0, loop: false })}]あ` },
+      vocabulary,
+    );
+    expect(check.cues.map((cue) => [cue.action.kind, cue.label, cue.known])).toEqual([
+      ['bgm', 'bgm set', true],
+    ]);
+    expect(check.findings).toEqual([]);
+  });
+
   it('flags a cue the performance table does not have', () => {
     // The session drops this rather than playing it, and drops it silently —
     // releasing the face mid-sentence over a typo would be worse. So this

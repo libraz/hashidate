@@ -72,6 +72,113 @@ describe('inline BGM cues', () => {
     });
   });
 
+  it('applies one mixed settings patch once across three renderers', () => {
+    const { hub: next, seen } = routed();
+    const cue = {
+      type: 'cue.fire' as const,
+      turn: 'turn-1',
+      cueId: 'turn-1:cue:0',
+      cue: {
+        kind: 'bgm' as const,
+        action: 'set' as const,
+        settings: {
+          action: 'play' as const,
+          track: 'song.mp3',
+          volume: 0.35,
+          loop: false,
+          fade: { outSeconds: 3 },
+          dsp: {
+            toneDb: -2,
+            reverb: { mix: 0.2 },
+            pitch: { semitones: 12 },
+            presence: { amount: 0.5 },
+          },
+        },
+      },
+    };
+
+    next.report({ bgm: bgm({ muted: true }), events: [cue] }, 'preview');
+    next.report({ bgm: bgm(), events: [cue] }, 'stage');
+    next.report({ bgm: bgm(), events: [cue] }, 'obs');
+
+    expect(seen).toHaveLength(2);
+    expect(next.snapshot().events).toHaveLength(1);
+    expect(next.snapshot().bgm).toMatchObject({
+      track: 'song.mp3',
+      volume: 0.35,
+      loop: false,
+      transport: 'playing',
+      fade: { inSeconds: 1, outSeconds: 3 },
+      dsp: {
+        toneDb: -2,
+        compression: 0,
+        width: 1,
+        reverb: { mix: 0.2, decay: 0.5, damping: 0.5 },
+        pitch: { semitones: 12, mix: 0 },
+        presence: { amount: 0.5, drive: 2, frequencyHz: 3200 },
+      },
+    });
+  });
+
+  it('keeps sibling settings when a late subscriber receives resolved patches', () => {
+    const { hub: next } = routed();
+    const first = {
+      type: 'cue.fire' as const,
+      turn: 'turn-1',
+      cueId: 'turn-1:cue:0',
+      cue: {
+        kind: 'bgm' as const,
+        action: 'set' as const,
+        settings: {
+          action: 'play' as const,
+          track: 'song.mp3',
+          fade: { inSeconds: 2, outSeconds: 4 },
+          dsp: {
+            toneDb: -1,
+            compression: 0.4,
+            width: 0.8,
+            reverb: { mix: 0.1, decay: 0.7, damping: 0.3 },
+            pitch: { semitones: 12, mix: 0.8 },
+            presence: { amount: 0.6, drive: 4, frequencyHz: 4200 },
+          },
+        },
+      },
+    };
+    const second = {
+      type: 'cue.fire' as const,
+      turn: 'turn-2',
+      cueId: 'turn-2:cue:0',
+      cue: {
+        kind: 'bgm' as const,
+        action: 'set' as const,
+        settings: {
+          fade: { outSeconds: 1 },
+          dsp: { reverb: { mix: 0.25 }, pitch: { mix: 0.5 }, presence: { drive: 6 } },
+        },
+      },
+    };
+
+    next.report({ bgm: bgm(), events: [first] }, 'stage');
+    next.report({ bgm: bgm({ revision: 1, track: 'song.mp3' }), events: [second] }, 'stage');
+
+    const late: StreamMessage[] = [];
+    next.subscribe((message) => late.push(message), 'late');
+    expect(late[0]?.commands[0]).toMatchObject({
+      cmd: 'bgm',
+      track: 'song.mp3',
+      transport: 'playing',
+      fade: { inSeconds: 2, outSeconds: 1 },
+      dsp: {
+        toneDb: -1,
+        compression: 0.4,
+        width: 0.8,
+        reverb: { mix: 0.25, decay: 0.7, damping: 0.3 },
+        pitch: { semitones: 12, mix: 0.5 },
+        presence: { amount: 0.6, drive: 6, frequencyHz: 4200 },
+      },
+    });
+  });
+
   it('keeps the cue id set bounded and accepts an id again after eviction', () => {
     const { hub: next, seen } = routed();
     const first = bgmCue('first', 'play', 'first.mp3');

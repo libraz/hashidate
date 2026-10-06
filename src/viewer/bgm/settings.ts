@@ -1,4 +1,10 @@
-import type { BgmCommand, BgmDsp, BgmFade, BgmTransport } from '@/protocol';
+import {
+  BGM_DSP_DEFAULTS,
+  type BgmCommand,
+  type BgmDsp,
+  type BgmFade,
+  type BgmTransport,
+} from '@/protocol';
 import type { BrowserAudioOutput } from '../audio-output';
 import type { BrowserBgmOptions } from './options';
 
@@ -18,7 +24,14 @@ export function isOutput(
 }
 
 export function cloneDsp(dsp: BgmDsp): BgmDsp {
-  return { ...dsp, reverb: { ...dsp.reverb } };
+  const pitch = dsp.pitch ?? BGM_DSP_DEFAULTS.pitch;
+  const presence = dsp.presence ?? BGM_DSP_DEFAULTS.presence;
+  return {
+    ...dsp,
+    reverb: { ...dsp.reverb },
+    pitch: { ...pitch },
+    presence: { ...presence },
+  };
 }
 
 export function cloneFade(fade: BgmFade): BgmFade {

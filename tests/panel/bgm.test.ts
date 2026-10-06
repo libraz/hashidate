@@ -9,7 +9,7 @@ import {
   trackSelectionIntent,
 } from '@/panel/bgm/BgmTab';
 import { EMPTY_BGM } from '@/panel/hooks';
-import { BGM_DSP_DEFAULTS, BGM_FADE_DEFAULTS, BGM_FADE_LIMITS } from '@/protocol';
+import { BGM_DSP_DEFAULTS, BGM_FADE_DEFAULTS, BGM_FADE_LIMITS, type BgmDsp } from '@/protocol';
 
 describe('BGM panel formatting', () => {
   it('formats short and long timeline values without moving the units', () => {
@@ -37,6 +37,13 @@ describe('BGM DSP display mapping', () => {
     expect(toBgmDspPatch('reverb.mix', 20)).toEqual({ reverb: { mix: 0.2 } });
     expect(toBgmDspPatch('reverb.decay', 70)).toEqual({ reverb: { decay: 0.7 } });
     expect(toBgmDspPatch('reverb.damping', 40)).toEqual({ reverb: { damping: 0.4 } });
+    expect(toBgmDspPatch('pitch.semitones', 7)).toEqual({ pitch: { semitones: 7 } });
+    expect(toBgmDspPatch('pitch.mix', 35)).toEqual({ pitch: { mix: 0.35 } });
+    expect(toBgmDspPatch('presence.amount', 25)).toEqual({ presence: { amount: 0.25 } });
+    expect(toBgmDspPatch('presence.drive', 3)).toEqual({ presence: { drive: 3 } });
+    expect(toBgmDspPatch('presence.frequencyHz', 3200)).toEqual({
+      presence: { frequencyHz: 3200 },
+    });
   });
 
   it('reads the same leaves back into operator-facing values', () => {
@@ -52,6 +59,19 @@ describe('BGM DSP display mapping', () => {
     expect(fromBgmDspValue(dsp, 'reverb.mix')).toBe(20);
     expect(fromBgmDspValue(dsp, 'reverb.decay')).toBe(70);
     expect(fromBgmDspValue(dsp, 'reverb.damping')).toBe(40);
+    const expanded = {
+      ...dsp,
+      pitch: { semitones: 7, mix: 0.35 },
+      presence: { amount: 0.25, drive: 3, frequencyHz: 3200 },
+    };
+    expect(fromBgmDspValue(expanded, 'pitch.semitones')).toBe(7);
+    expect(fromBgmDspValue(expanded, 'pitch.mix')).toBe(35);
+    expect(fromBgmDspValue(expanded, 'presence.amount')).toBe(25);
+    expect(fromBgmDspValue(expanded, 'presence.drive')).toBe(3);
+    expect(fromBgmDspValue(expanded, 'presence.frequencyHz')).toBe(3200);
+    const legacy = { ...dsp, pitch: undefined, presence: undefined } as unknown as BgmDsp;
+    expect(fromBgmDspValue(legacy, 'pitch.mix')).toBe(0);
+    expect(fromBgmDspValue(legacy, 'presence.frequencyHz')).toBe(3200);
   });
 });
 

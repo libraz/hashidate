@@ -397,6 +397,8 @@ describe('BGM reports and state', () => {
         compression: 0.2,
         width: 1,
         reverb: { mix: 0.35, decay: 0.7, damping: 0.4 },
+        pitch: { semitones: 0, mix: 0 },
+        presence: { amount: 0, drive: 2, frequencyHz: 3200 },
       },
       fade: { inSeconds: 1.5, outSeconds: 0.75 },
       transport: 'playing',
@@ -428,15 +430,55 @@ describe('BGM reports and state', () => {
     expect(bgmStateSchema.parse(state)).toMatchObject({
       fade: { inSeconds: 1, outSeconds: 1 },
       dspDegraded: false,
+      dsp: {
+        pitch: { semitones: 0, mix: 0 },
+        presence: { amount: 0, drive: 2, frequencyHz: 3200 },
+      },
+    });
+  });
+
+  it('defaults new DSP groups in older renderer reports', () => {
+    const report = bgmReportSchema.parse({
+      revision: 1,
+      dsp: {
+        toneDb: 0,
+        compression: 0,
+        width: 1,
+        reverb: { mix: 0, decay: 0.5, damping: 0.5 },
+      },
+    });
+    expect(report.dsp).toMatchObject({
+      pitch: { semitones: 0, mix: 0 },
+      presence: { amount: 0, drive: 2, frequencyHz: 3200 },
     });
   });
 
   it('rejects normalized DSP controls outside their range', () => {
-    expect(bgmReportSchema.safeParse({ revision: 1, dsp: { reverb: { mix: 1.1 } } }).success).toBe(
-      false,
-    );
+    const dsp = {
+      toneDb: 0,
+      compression: 0,
+      width: 1,
+      reverb: { mix: 0, decay: 0.5, damping: 0.5 },
+      pitch: { semitones: 0, mix: 0 },
+      presence: { amount: 0, drive: 2, frequencyHz: 3200 },
+    };
     expect(
-      bgmReportSchema.safeParse({ revision: 1, dsp: { reverb: { mix: 0, timeMs: 640 } } }).success,
+      bgmReportSchema.safeParse({
+        revision: 1,
+        dsp: { ...dsp, reverb: { ...dsp.reverb, mix: 1.1 } },
+      }).success,
+    ).toBe(false);
+    expect(
+      bgmReportSchema.safeParse({
+        revision: 1,
+        dsp: { ...dsp, pitch: { semitones: 25, mix: 0 } },
+      }).success,
+    ).toBe(false);
+    expect(
+      bgmReportSchema.safeParse({
+        revision: 1,
+        dsp: { ...dsp, presence: { amount: 0, drive: 2, frequencyHz: 499 } },
+      }).success,
     ).toBe(false);
   });
 });

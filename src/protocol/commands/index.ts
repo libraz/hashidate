@@ -92,6 +92,7 @@ export {
   bgmFadePatchSchema,
   bgmFadeSchema,
   bgmTransportSchema,
+  hasBgmSetting,
 } from './bgm';
 export {
   gestureCommandSchema,

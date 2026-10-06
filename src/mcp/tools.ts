@@ -6,6 +6,7 @@ import {
   bgmTrackIdSchema,
   cameraFrameSchema,
   emotionVectorSchema,
+  hasBgmSetting,
   type LabelledId,
   lookCommandSchema,
   overlayCommandSchema,
@@ -74,6 +75,11 @@ const MAX_DEPTH = 50;
  */
 export const MAX_PAGES = 20;
 
+const BGM_CUE_DSP_NOTE =
+  'dsp supports toneDb -6..6 dB, compression 0..1, width 0..2, reverb.mix 0..0.5, reverb.decay 0..0.9 and reverb.damping 0..1; pitch.semitones -24..24 and pitch.mix 0..1 (defaults 0/0, with mix 0 disabling the pitch shifter and keeping the original pitch); and presence.amount 0..1, presence.drive 0..8 and presence.frequencyHz 500..8000 (defaults 0/2/3200, with amount 0 disabling presence and generating no nonlinear harmonics from the selected frequency band). The fixed libsonare order is tone, compression, nonlinear presence, stereo width, tempo-preserving pitch, plate reverb; these controls affect BGM only.';
+const BGM_CUE_DSP_EXAMPLE =
+  'Example: [@bgm set {"dsp":{"toneDb":1,"pitch":{"semitones":7,"mix":0.35},"presence":{"amount":0.25,"drive":3,"frequencyHz":3200}}}].';
+
 // --- what the model is told --------------------------------------------------
 //
 // Hand-written, and knowingly a second copy of what the protocol comments say.
@@ -86,10 +92,11 @@ const SPEAK_NOTE = [
   '',
   '- Pass several lines at once. Calling one line at a time puts silence between them',
   '- Write reading. Only the writer knows how numbers, dates, proper nouns and homographs are read',
-  '- [performance_id] is shorthand for [@perform performance_id]. Typed cues are [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@bgm play], [@bgm play track filename], [@bgm pause] and [@bgm stop]. The brackets are not spoken',
+  '- [performance_id] is shorthand for [@perform performance_id]. Typed cues are [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@bgm play], [@bgm play track filename], [@bgm pause], [@bgm stop] and [@bgm set {JSON}]. The brackets are not spoken',
   '- For perform, expression, gesture and hop, the whole remainder is the id, so spaces and Japanese characters are allowed',
   '- [@bgm play] resumes the selected track. The filename after play may contain spaces and Japanese characters; [ and ] are reserved',
-  '- BGM volume, looping, fade and DSP stay in the bgm tool or panel settings. room, backdrop, deck and place stay in line-start stage',
+  `- [@bgm set {JSON}] applies one atomic BGM command patch at the written position. It accepts optional action (play, pause, stop), track (a filename or null), volume 0..1, loop, fade.inSeconds/outSeconds 0..10 and BGM-only dsp fields; omitted values persist. ${BGM_CUE_DSP_NOTE} ${BGM_CUE_DSP_EXAMPLE}`,
+  '- BGM set rejects unknown, command-envelope or server-stamped fields, empty patches at any level and out-of-range values. room, backdrop, deck and place stay in line-start stage',
   '- A document page goes in stage.slide. Write it on the line that talks about that page',
   '- Queue lines carrying pages in order and the document follows the speech. This is the only way to keep script and document together',
 ].join('\n');
@@ -121,7 +128,8 @@ const BGM_NOTE = [
   '- settings changes only the named BGM mix/DSP/fade fields and requires at least one setting',
   '- fade.inSeconds and fade.outSeconds are seconds in the range 0..10. Different-track play crossfades both tracks; 0 is a hard edge. The first/stopped play uses only fade-in. stop fades out over fade.outSeconds and keeps the selection; pause and resume are immediate',
   '- The transport actions can also be placed in speak text as [@bgm play], [@bgm play track filename], [@bgm pause] and [@bgm stop]. The filename remainder may contain spaces and Japanese characters; [ and ] are reserved',
-  '- Inline [@bgm play track] uses the current fade settings; fade is not part of inline cue syntax',
+  `- [@bgm set {JSON}] applies one atomic BGM command patch at the mouth position. It accepts action, track, volume, loop, fade and the fixed BGM-only libsonare dsp fields; omitted values persist, a track selects stopped unless action is play, and track:null unloads regardless of action. ${BGM_CUE_DSP_NOTE} ${BGM_CUE_DSP_EXAMPLE}`,
+  '- Inline [@bgm play track] uses the current fade settings; a structured set cue can patch fade at that position',
   '- DSP is BGM-only: it never changes synthesized voice processing or the staged room',
 ].join('\n');
 const BGM_TRACK_NOTE =
@@ -132,7 +140,7 @@ const BGM_FADE_NOTE = [
   'Optional BGM transition policy. Durations are seconds, each 0..10.',
   'On a different-track play while another track is playing, the old track fades out while the new one fades in. 0 is a hard edge.',
   'The first play, or a play from stopped, uses only fade-in. stop fades out over fade.outSeconds. Pause and resume are immediate.',
-  'Inline [@bgm play track] cues inherit the current fade settings; fade is not part of the cue syntax.',
+  'Inline [@bgm play track] cues inherit the current fade settings; a structured [@bgm set {JSON}] cue can patch fade at its position.',
 ].join('\n');
 const BGM_FADE_IN_NOTE = 'Fade in duration in seconds, 0..10. 0 starts at full level.';
 const BGM_FADE_OUT_NOTE =
@@ -141,6 +149,9 @@ const BGM_DSP_NOTE = [
   'Optional BGM-only libsonare Mixer controls. These leave synthesized voice processing and room acoustics untouched.',
   'toneDb: -6..6 dB tone tilt; compression: 0..1 amount; width: 0..2 stereo width.',
   'reverb.mix: 0..0.5, reverb.decay: 0..0.9, reverb.damping: 0..1.',
+  'pitch.semitones: -24..24 and pitch.mix: 0..1; defaults are 0 and 0, and mix 0 disables the pitch shifter while keeping the original pitch.',
+  'presence.amount: 0..1, presence.drive: 0..8, presence.frequencyHz: 500..8000; defaults are 0, 2 and 3200, and amount 0 disables presence and generates no nonlinear harmonics from the selected frequency band.',
+  'The fixed insert order is tone, compressor, nonlinear presence enhancer, stereo imager, pitch shifter and plate reverb; these controls affect BGM only.',
 ].join('\n');
 const BGM_TONE_NOTE = 'BGM-only tone tilt, -6..6 dB. Voice and room are unchanged.';
 const BGM_COMPRESSION_NOTE = 'BGM-only compression amount, 0..1. Voice and room are unchanged.';
@@ -148,6 +159,15 @@ const BGM_WIDTH_NOTE = 'BGM-only stereo width, 0..2. Voice and room are unchange
 const BGM_REVERB_MIX_NOTE = 'BGM-only reverb mix, 0..0.5. This is not the staged room.';
 const BGM_REVERB_DECAY_NOTE = 'BGM-only reverb decay, 0..0.9. This is not the staged room.';
 const BGM_REVERB_DAMPING_NOTE = 'BGM-only reverb damping, 0..1. This is not the staged room.';
+const BGM_PITCH_SEMITONES_NOTE =
+  'BGM-only pitch shift in semitones, -24..24. The pitch shifter preserves track tempo and duration.';
+const BGM_PITCH_MIX_NOTE =
+  'BGM-only pitch-shift mix, 0..1. The default 0 disables the pitch shifter and keeps the original pitch.';
+const BGM_PRESENCE_AMOUNT_NOTE =
+  'BGM-only nonlinear presence amount from the selected band, 0..1. The default 0 disables presence and generates no nonlinear harmonics.';
+const BGM_PRESENCE_DRIVE_NOTE = 'BGM-only nonlinear presence drive, 0..8.';
+const BGM_PRESENCE_FREQUENCY_NOTE =
+  'BGM-only presence-band center frequency, 500..8000 Hz. The default is 3200 Hz.';
 const STAGE_DECK_NOTE =
   'The id of the document to present. null takes it down. Normally the operator has already put one up, so there is no need to write this.';
 const STAGE_SLIDE_NOTE =
@@ -183,8 +203,7 @@ const REVISE_NOTE = [
   '- When the target is not found, the current queue comes back with the error. Call again with an id from it',
 ].join('\n');
 
-const TEXT_NOTE =
-  'The line to say. [performance_id] is shorthand for [@perform performance_id]. Typed cues are [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@bgm play], [@bgm play track filename], [@bgm pause] and [@bgm stop]. Dynamic ids and BGM filename remainders may contain spaces and Japanese characters. [@bgm play] resumes the selected track. BGM play cues inherit the current fade settings; fade is not written in the cue. The brackets are reserved and are not spoken.';
+const TEXT_NOTE = `The line to say. [performance_id] is shorthand for [@perform performance_id]. Typed cues are [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@bgm play], [@bgm play track filename], [@bgm pause], [@bgm stop] and [@bgm set {JSON}]. Dynamic ids and BGM filename remainders may contain spaces and Japanese characters. [@bgm play] resumes the selected track. A structured set cue applies one atomic BGM patch at its position; omitted values persist and its allowed fields are action, track, volume, loop, fade and BGM-only dsp. ${BGM_CUE_DSP_NOTE} ${BGM_CUE_DSP_EXAMPLE} The brackets are reserved and are not spoken.`;
 const READING_NOTE =
   'The kana reading of text. Numbers, dates, proper nouns and homographs get their reading decided here. Brackets cannot be written.';
 const PERFORM_NOTE = 'A named expression and motion. In effect only for the duration of the line.';
@@ -452,20 +471,55 @@ export type DeckInput = z.infer<typeof deckInput>;
  * Extending the protocol schema here is intentional: validation still comes
  * from `bgmDspPatchSchema`, so this tool cannot drift from the wire.
  */
-const bgmReverbPatch = bgmDspPatchSchema.shape.reverb.unwrap().extend({
-  mix: bgmDspPatchSchema.shape.reverb.unwrap().shape.mix.describe(BGM_REVERB_MIX_NOTE),
-  decay: bgmDspPatchSchema.shape.reverb.unwrap().shape.decay.describe(BGM_REVERB_DECAY_NOTE),
-  damping: bgmDspPatchSchema.shape.reverb.unwrap().shape.damping.describe(BGM_REVERB_DAMPING_NOTE),
-});
+const bgmReverbPatch = bgmDspPatchSchema.shape.reverb
+  .unwrap()
+  .extend({
+    mix: bgmDspPatchSchema.shape.reverb.unwrap().shape.mix.describe(BGM_REVERB_MIX_NOTE),
+    decay: bgmDspPatchSchema.shape.reverb.unwrap().shape.decay.describe(BGM_REVERB_DECAY_NOTE),
+    damping: bgmDspPatchSchema.shape.reverb
+      .unwrap()
+      .shape.damping.describe(BGM_REVERB_DAMPING_NOTE),
+  })
+  .strict()
+  .refine(hasBgmSetting, 'reverb requires at least one named control');
 
+const bgmPitchPatch = bgmDspPatchSchema.shape.pitch
+  .unwrap()
+  .extend({
+    semitones: bgmDspPatchSchema.shape.pitch
+      .unwrap()
+      .shape.semitones.describe(BGM_PITCH_SEMITONES_NOTE),
+    mix: bgmDspPatchSchema.shape.pitch.unwrap().shape.mix.describe(BGM_PITCH_MIX_NOTE),
+  })
+  .strict()
+  .refine(hasBgmSetting, 'pitch requires at least one named control');
+
+const bgmPresencePatch = bgmDspPatchSchema.shape.presence
+  .unwrap()
+  .extend({
+    amount: bgmDspPatchSchema.shape.presence
+      .unwrap()
+      .shape.amount.describe(BGM_PRESENCE_AMOUNT_NOTE),
+    drive: bgmDspPatchSchema.shape.presence.unwrap().shape.drive.describe(BGM_PRESENCE_DRIVE_NOTE),
+    frequencyHz: bgmDspPatchSchema.shape.presence
+      .unwrap()
+      .shape.frequencyHz.describe(BGM_PRESENCE_FREQUENCY_NOTE),
+  })
+  .strict()
+  .refine(hasBgmSetting, 'presence requires at least one named control');
+
+/** `dsp: {}`, `fade: {}` and empty nested groups are not settings, as in a cue. */
 const bgmDspInput = bgmDspPatchSchema
   .extend({
     toneDb: bgmDspPatchSchema.shape.toneDb.describe(BGM_TONE_NOTE),
     compression: bgmDspPatchSchema.shape.compression.describe(BGM_COMPRESSION_NOTE),
     width: bgmDspPatchSchema.shape.width.describe(BGM_WIDTH_NOTE),
     reverb: bgmReverbPatch.optional(),
+    pitch: bgmPitchPatch.optional(),
+    presence: bgmPresencePatch.optional(),
   })
   .strict()
+  .refine(hasBgmSetting, 'dsp requires at least one named control')
   .describe(BGM_DSP_NOTE);
 
 const bgmFadeInput = bgmFadePatchSchema
@@ -474,25 +528,8 @@ const bgmFadeInput = bgmFadePatchSchema
     outSeconds: bgmFadePatchSchema.shape.outSeconds.describe(BGM_FADE_OUT_NOTE),
   })
   .strict()
+  .refine(hasBgmSetting, 'fade requires at least one named control')
   .describe(BGM_FADE_NOTE);
-
-/** `dsp: {}` is not a setting; at least one actual BGM control must be named. */
-function hasDspSetting(value: unknown): boolean {
-  if (typeof value !== 'object' || value === null) return false;
-  const dsp = value as Record<string, unknown>;
-  if (dsp.toneDb !== undefined || dsp.compression !== undefined || dsp.width !== undefined) {
-    return true;
-  }
-  if (typeof dsp.reverb !== 'object' || dsp.reverb === null) return false;
-  return Object.values(dsp.reverb).some((setting) => setting !== undefined);
-}
-
-/** `fade: {}` is not a setting; at least one actual transition control must be named. */
-function hasFadeSetting(value: unknown): boolean {
-  if (typeof value !== 'object' || value === null) return false;
-  const fade = value as Record<string, unknown>;
-  return fade.inSeconds !== undefined || fade.outSeconds !== undefined;
-}
 
 const bgmSettingsInput = z
   .object({
@@ -507,8 +544,8 @@ const bgmSettingsInput = z
     (value) =>
       value.volume !== undefined ||
       value.loop !== undefined ||
-      hasDspSetting(value.dsp) ||
-      hasFadeSetting(value.fade),
+      value.dsp !== undefined ||
+      value.fade !== undefined,
     'settings requires at least one of volume, loop, DSP control, or fade control',
   );
 
@@ -750,7 +787,7 @@ function advise(issue: ZodError['issues'][number], tools: Tools): string {
   if (issue.code === 'custom' && field === 'text') {
     const ids = tools.vocabulary.performances?.map((item) => item.id) ?? [];
     const known = ids.length > 0 ? `\n    performance ids this avatar has: ${ids.join(', ')}` : '';
-    return `The brackets do not match up. Accepted forms: [performance_id], [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@bgm play], [@bgm play track filename], [@bgm pause] and [@bgm stop]. BGM filenames may contain spaces and Japanese characters; [ and ] are reserved. The brackets are not spoken.${known}`;
+    return `The brackets do not match up. Accepted forms: [performance_id], [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@bgm play], [@bgm play track filename], [@bgm pause], [@bgm stop] and [@bgm set {JSON}]. BGM filenames may contain spaces and Japanese characters; [ and ] are reserved. Structured BGM patches accept action, track, volume, loop, fade and BGM-only dsp fields; unknown, command-envelope and server-stamped fields are rejected. ${BGM_CUE_DSP_NOTE} ${BGM_CUE_DSP_EXAMPLE} The brackets are not spoken.${known}`;
   }
   if (issue.code === 'custom' && field === 'reading') {
     return 'Brackets cannot be written in a reading. A cue is a position inside the line, so it goes on the text side.';

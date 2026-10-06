@@ -4,6 +4,7 @@ import {
   BGM_DEFAULT_VOLUME,
   BGM_DSP_DEFAULTS,
   BGM_FADE_DEFAULTS,
+  type BgmDsp,
   type BgmState,
   type Snapshot,
 } from '@/protocol';
@@ -38,6 +39,8 @@ export const EMPTY_BGM: BgmState = {
   dsp: {
     ...BGM_DSP_DEFAULTS,
     reverb: { ...BGM_DSP_DEFAULTS.reverb },
+    pitch: { ...BGM_DSP_DEFAULTS.pitch },
+    presence: { ...BGM_DSP_DEFAULTS.presence },
   },
   fade: { ...BGM_FADE_DEFAULTS },
   transport: 'stopped',
@@ -49,6 +52,32 @@ export const EMPTY_BGM: BgmState = {
   error: null,
   dspDegraded: false,
 };
+
+type ReportedBgmDsp = Omit<BgmDsp, 'reverb' | 'pitch' | 'presence'> & {
+  reverb?: Partial<BgmDsp['reverb']>;
+  pitch?: Partial<BgmDsp['pitch']>;
+  presence?: Partial<BgmDsp['presence']>;
+};
+
+type ReportedBgmState = Omit<BgmState, 'dsp'> & { dsp?: ReportedBgmDsp };
+
+/** Fill DSP groups omitted by a server from before the newer BGM controls. */
+export function normalizeBgmState(state: BgmState | undefined): BgmState | undefined {
+  if (state === undefined) return undefined;
+  const reported = state as unknown as ReportedBgmState;
+  const dsp = reported.dsp;
+  return {
+    ...state,
+    dsp: {
+      toneDb: dsp?.toneDb ?? BGM_DSP_DEFAULTS.toneDb,
+      compression: dsp?.compression ?? BGM_DSP_DEFAULTS.compression,
+      width: dsp?.width ?? BGM_DSP_DEFAULTS.width,
+      reverb: { ...BGM_DSP_DEFAULTS.reverb, ...dsp?.reverb },
+      pitch: { ...BGM_DSP_DEFAULTS.pitch, ...dsp?.pitch },
+      presence: { ...BGM_DSP_DEFAULTS.presence, ...dsp?.presence },
+    },
+  };
+}
 
 /**
  * An empty snapshot is not the same as no snapshot.
@@ -159,7 +188,7 @@ export function useRuntime(): Runtime {
       },
       onSnapshot: (next) => {
         setError(null);
-        setSnapshot(next);
+        setSnapshot({ ...next, bgm: normalizeBgmState(next.bgm) });
       },
     });
   }

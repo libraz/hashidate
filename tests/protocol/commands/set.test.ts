@@ -174,6 +174,25 @@ describe('parseCommand degrading rather than throwing', () => {
       bgmCommandSchema.parse({ cmd: 'bgm', fade: { inSeconds: 1, curve: 'equal-power' } }),
     ).toEqual({ cmd: 'bgm', fade: { inSeconds: 1 } });
   });
+
+  it('shares the new libsonare controls between commands and structured cues', () => {
+    const dsp = {
+      pitch: { semitones: -12, mix: 1 },
+      presence: { amount: 0.3, drive: 2, frequencyHz: 3200 },
+    };
+    expect(bgmCommandSchema.parse({ cmd: 'bgm', dsp })).toEqual({ cmd: 'bgm', dsp });
+    expect(parseInlineCue(`@bgm set ${JSON.stringify({ dsp })}`)).toEqual({
+      kind: 'bgm',
+      action: 'set',
+      settings: { dsp },
+    });
+    expect(
+      bgmCommandSchema.parse({
+        cmd: 'bgm',
+        dsp: { pitch: { semitones: 0, future: true }, presence: { amount: 0, future: true } },
+      }),
+    ).toEqual({ cmd: 'bgm', dsp: { pitch: { semitones: 0 }, presence: { amount: 0 } } });
+  });
 });
 
 describe('commands whose absent argument means stop', () => {

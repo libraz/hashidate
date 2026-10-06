@@ -52,6 +52,7 @@ export {
   type FingerName,
   fingerNameSchema,
   gestureCommandSchema,
+  hasBgmSetting,
   hopCommandSchema,
   idleCommandSchema,
   interruptCommandSchema,

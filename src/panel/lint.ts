@@ -111,6 +111,7 @@ function cueLabel(action: InlineCueAction): string {
     case 'slide':
       return say('panel.lint.cue.slide', { page: action.page });
     case 'bgm':
+      if (action.action === 'set') return say('panel.lint.cue.bgm.set');
       return action.action === 'play'
         ? action.track
           ? say('panel.lint.cue.bgm.play', { track: action.track })

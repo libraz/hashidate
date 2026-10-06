@@ -14,9 +14,9 @@ import { show } from '../output';
  *
  * `bgm play` also accepts `--volume`, `--loop`, `--fade-in` and `--fade-out`
  * so a selected track can be started in one command. DSP flags stay on the
- * MCP/panel surfaces: tone, compression, width and reverb are mix decisions
- * that need to be judged against the rendered broadcast, not guessed from a
- * terminal.
+ * MCP/panel surfaces: tone, compression, width, reverb, pitch and presence are
+ * mix decisions that need to be judged against the rendered broadcast, not
+ * guessed from a terminal.
  */
 export const bgm: Handler = async (client, args) => {
   const action = args[0];

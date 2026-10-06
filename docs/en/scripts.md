@@ -61,9 +61,9 @@ That split is the one the command set already makes between what outlives a turn
 
 ## Cues in lines
 
-The `text` field can contain the legacy `[performanceId]` shorthand and typed cues such as `[@camera bust]`, `[@slide 2]`, and `[@bgm play opening.mp3]`. A cue fires at that point in the spoken line, so it can change the shot or BGM without adding a gap. `[@bgm play]` resumes the selected track; a track name may contain spaces and Japanese characters. Square brackets are reserved and are not spoken. The full syntax is in [Lines and cues](lines-and-cues.md).
+The `text` field can contain the legacy `[performanceId]` shorthand and typed cues such as `[@camera bust]`, `[@slide 2]`, `[@bgm play opening.mp3]`, and `[@bgm set {JSON}]`. A cue fires at that point in the spoken line, so it can change the shot or BGM without adding a gap. `[@bgm play]` resumes the selected track; a track name may contain spaces and Japanese characters. Square brackets are reserved and are not spoken. The full syntax is in [Lines and cues](lines-and-cues.md).
 
-Inline cues use the same text that `speak`, `say`, and `queue` accept; they are not a second script dialect. Line-start `stage` remains the place for `room`, `backdrop`, `deck`, and `place`, while BGM volume, looping, fade durations, and DSP stay in the `bgm` command or its panel and MCP controls. BGM play cues use the current fade settings.
+Inline cues use the same text that `speak`, `say`, and `queue` accept; they are not a second script dialect. Line-start `stage` remains the place for `room`, `backdrop`, `deck`, and `place`. BGM play cues use the current fade settings; a structured `set` cue changes the documented BGM volume, loop, fade and DSP fields at its position and keeps omitted values.
 
 ## The format reuses the wire vocabulary
 

@@ -1,11 +1,20 @@
 import { z } from 'zod';
+import { type BgmAction, bgmCueSettingsSchema, bgmTrackIdSchema } from './bgm-controls';
+
+export type { BgmAction, BgmCueSettings } from './bgm-controls';
+export {
+  bgmActionSchema,
+  bgmCueDspSchema,
+  bgmCueFadeSchema,
+  bgmCueSettingsSchema,
+  bgmTrackIdSchema,
+} from './bgm-controls';
 
 /** Camera framings shared by the camera command and inline camera cues. */
 export const cameraFrameSchema = z.enum(['face', 'bust', 'upper', 'full']);
 
 /** The transport verbs that can be scheduled from inside a spoken line. */
-export const bgmActionSchema = z.enum(['play', 'pause', 'stop']);
-export type BgmCueAction = z.infer<typeof bgmActionSchema>;
+export type BgmCueAction = BgmAction;
 
 /**
  * A single id in cue syntax. The legacy shorthand is deliberately narrower
@@ -24,24 +33,14 @@ const typedIdSchema = z
   );
 const legacyIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/);
 
-/** BGM filenames are flat, direct-directory ids, just like the BGM endpoint. */
-export const bgmTrackIdSchema = z
-  .string()
-  .min(1)
-  .max(255)
-  .refine((value) => {
-    if (value.startsWith('.') || /[/\\[\]]/u.test(value)) return false;
-    return !/\p{Cc}/u.test(value);
-  }, 'invalid BGM filename')
-  .regex(/\.(?:mp3|flac)$/iu, 'BGM tracks must be .mp3 or .flac');
-
 /**
  * The action carried by a typed inline cue.
  *
  * `kind` is the discriminant so the engine can apply visual actions locally.
  * BGM has a second `action` verb because the server owns its transport. The
- * union keeps `track` legal only for `play`; malformed combinations are
- * rejected at the protocol boundary instead of being silently ignored.
+ * union keeps `track` legal only for `play`, while `set` carries one strict
+ * JSON settings patch; malformed combinations are rejected at the protocol
+ * boundary instead of being silently ignored.
  */
 export const inlineCueActionSchema = z.union([
   z.object({ kind: z.literal('perform'), id: typedIdSchema }).strict(),
@@ -58,6 +57,9 @@ export const inlineCueActionSchema = z.union([
     })
     .strict(),
   z.object({ kind: z.literal('bgm'), action: z.enum(['pause', 'stop']) }).strict(),
+  z
+    .object({ kind: z.literal('bgm'), action: z.literal('set'), settings: bgmCueSettingsSchema })
+    .strict(),
 ]);
 
 export type InlineCueAction = z.infer<typeof inlineCueActionSchema>;
@@ -140,6 +142,15 @@ export function parseInlineCue(source: string): InlineCueAction | null {
       } else if (action === 'pause' || action === 'stop') {
         if (separator !== -1) return null;
         candidate = { kind: 'bgm', action };
+      } else if (action === 'set') {
+        if (separator === -1) return null;
+        let settings: unknown;
+        try {
+          settings = JSON.parse(remainder.slice(separator).trim()) as unknown;
+        } catch {
+          return null;
+        }
+        candidate = { kind: 'bgm', action, settings };
       } else {
         return null;
       }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { singleFlight } from '@/panel/hooks';
-import type { Snapshot } from '@/protocol';
+import { EMPTY_BGM, normalizeBgmState, singleFlight } from '@/panel/hooks';
+import type { BgmState, Snapshot } from '@/protocol';
 
 const snap = (seq: number) => ({ seq }) as unknown as Snapshot;
 
@@ -63,5 +63,47 @@ describe('singleFlight', () => {
     await h.poll();
     await h.poll();
     expect(h.calls()).toBe(2);
+  });
+});
+
+describe('normalizeBgmState', () => {
+  it('fills DSP groups omitted by an older server without resetting known leaves', () => {
+    const legacy = {
+      ...EMPTY_BGM,
+      dsp: {
+        toneDb: -2,
+        compression: 0.4,
+        width: 1.25,
+        reverb: { mix: 0.2, decay: 0.7, damping: 0.3 },
+      },
+    } as unknown as BgmState;
+
+    const normalized = normalizeBgmState(legacy);
+
+    expect(normalized).toMatchObject({
+      dsp: {
+        toneDb: -2,
+        compression: 0.4,
+        width: 1.25,
+        reverb: { mix: 0.2, decay: 0.7, damping: 0.3 },
+        pitch: { semitones: 0, mix: 0 },
+        presence: { amount: 0, drive: 2, frequencyHz: 3200 },
+      },
+    });
+    expect(normalized).not.toBe(legacy);
+    expect(normalized?.dsp).not.toBe(legacy.dsp);
+  });
+
+  it('merges partial new groups while preserving their supplied leaves', () => {
+    const state = {
+      ...EMPTY_BGM,
+      dsp: {
+        ...EMPTY_BGM.dsp,
+        pitch: { semitones: 7, mix: 0.35 },
+        presence: { amount: 0.25, drive: 3, frequencyHz: 3200 },
+      },
+    };
+
+    expect(normalizeBgmState(state)?.dsp).toEqual(state.dsp);
   });
 });

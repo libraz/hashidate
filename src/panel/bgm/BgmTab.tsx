@@ -27,14 +27,19 @@ interface Props {
   refresh: () => void;
 }
 
-/** The six independent leaves exposed by the BGM insert chain. */
+/** The independent leaves exposed by the BGM insert chain. */
 export type BgmDspControl =
   | 'toneDb'
   | 'compression'
   | 'width'
   | 'reverb.mix'
   | 'reverb.decay'
-  | 'reverb.damping';
+  | 'reverb.damping'
+  | 'pitch.semitones'
+  | 'pitch.mix'
+  | 'presence.amount'
+  | 'presence.drive'
+  | 'presence.frequencyHz';
 
 /**
  * Format a timeline value as the stable `m:ss` readout used by the panel.
@@ -74,11 +79,23 @@ export function toBgmDspPatch(control: BgmDspControl, displayValue: number): Bgm
       return { reverb: { decay: fraction } };
     case 'reverb.damping':
       return { reverb: { damping: fraction } };
+    case 'pitch.semitones':
+      return { pitch: { semitones: displayValue } };
+    case 'pitch.mix':
+      return { pitch: { mix: fraction } };
+    case 'presence.amount':
+      return { presence: { amount: fraction } };
+    case 'presence.drive':
+      return { presence: { drive: displayValue } };
+    case 'presence.frequencyHz':
+      return { presence: { frequencyHz: displayValue } };
   }
 }
 
 /** Convert the normalized state readout to the percentages shown by sliders. */
 export function fromBgmDspValue(dsp: BgmDsp, control: BgmDspControl): number {
+  const pitch = dsp.pitch ?? BGM_DSP_DEFAULTS.pitch;
+  const presence = dsp.presence ?? BGM_DSP_DEFAULTS.presence;
   switch (control) {
     case 'toneDb':
       return dsp.toneDb;
@@ -92,6 +109,16 @@ export function fromBgmDspValue(dsp: BgmDsp, control: BgmDspControl): number {
       return dsp.reverb.decay * 100;
     case 'reverb.damping':
       return dsp.reverb.damping * 100;
+    case 'pitch.semitones':
+      return pitch.semitones;
+    case 'pitch.mix':
+      return pitch.mix * 100;
+    case 'presence.amount':
+      return presence.amount * 100;
+    case 'presence.drive':
+      return presence.drive;
+    case 'presence.frequencyHz':
+      return presence.frequencyHz;
   }
 }
 
@@ -142,6 +169,8 @@ function format(track: BgmTrack): string {
 const DEFAULT_DSP: BgmDsp = {
   ...BGM_DSP_DEFAULTS,
   reverb: { ...BGM_DSP_DEFAULTS.reverb },
+  pitch: { ...BGM_DSP_DEFAULTS.pitch },
+  presence: { ...BGM_DSP_DEFAULTS.presence },
 };
 
 const DEFAULT_FADE: BgmFade = { ...BGM_FADE_DEFAULTS };
@@ -151,6 +180,8 @@ const RESET_DSP: BgmDspPatch = {
   compression: BGM_DSP_DEFAULTS.compression,
   width: BGM_DSP_DEFAULTS.width,
   reverb: { ...BGM_DSP_DEFAULTS.reverb },
+  pitch: { ...BGM_DSP_DEFAULTS.pitch },
+  presence: { ...BGM_DSP_DEFAULTS.presence },
 };
 
 const STATUS_KEYS = {
@@ -461,6 +492,60 @@ export function BgmTab({ snapshot, refresh }: Props) {
           unit="%"
           title="reverb.damping"
           onCommit={(value) => dspCommand(toBgmDspPatch('reverb.damping', value))}
+        />
+        <ChainSlider
+          label={t('panel.bgm.pitchSemitones')}
+          reported={fromBgmDspValue(bgm.dsp, 'pitch.semitones')}
+          min={-24}
+          max={24}
+          step={1}
+          precision={0}
+          unit={t('panel.voice.semitones')}
+          title="pitch.semitones"
+          onCommit={(value) => dspCommand(toBgmDspPatch('pitch.semitones', value))}
+        />
+        <ChainSlider
+          label={t('panel.bgm.pitchMix')}
+          reported={fromBgmDspValue(bgm.dsp, 'pitch.mix')}
+          min={0}
+          max={100}
+          step={5}
+          precision={0}
+          unit="%"
+          title="pitch.mix"
+          onCommit={(value) => dspCommand(toBgmDspPatch('pitch.mix', value))}
+        />
+        <ChainSlider
+          label={t('panel.bgm.presenceAmount')}
+          reported={fromBgmDspValue(bgm.dsp, 'presence.amount')}
+          min={0}
+          max={100}
+          step={5}
+          precision={0}
+          unit="%"
+          title="presence.amount"
+          onCommit={(value) => dspCommand(toBgmDspPatch('presence.amount', value))}
+        />
+        <ChainSlider
+          label={t('panel.bgm.presenceDrive')}
+          reported={fromBgmDspValue(bgm.dsp, 'presence.drive')}
+          min={0}
+          max={8}
+          step={0.1}
+          precision={1}
+          title="presence.drive"
+          onCommit={(value) => dspCommand(toBgmDspPatch('presence.drive', value))}
+        />
+        <ChainSlider
+          label={t('panel.bgm.presenceFrequency')}
+          reported={fromBgmDspValue(bgm.dsp, 'presence.frequencyHz')}
+          min={500}
+          max={8000}
+          step={100}
+          precision={0}
+          unit=" Hz"
+          title="presence.frequencyHz"
+          onCommit={(value) => dspCommand(toBgmDspPatch('presence.frequencyHz', value))}
         />
         <button
           type="button"

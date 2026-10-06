@@ -14,6 +14,8 @@ describe('projectStatus BGM projection', () => {
             compression: 0.6,
             width: 1.4,
             reverb: { mix: 0.25, decay: 0.7, damping: 0.3 },
+            pitch: { semitones: 7, mix: 0.35 },
+            presence: { amount: 0.25, drive: 3, frequencyHz: 3200 },
           },
           dspDegraded: true,
         }),
@@ -25,6 +27,10 @@ describe('projectStatus BGM projection', () => {
       transport: 'playing',
       dsp: { toneDb: -2, compression: 0.6, width: 1.4 },
       dspDegraded: true,
+    });
+    expect(status.bgm?.dsp).toMatchObject({
+      pitch: { semitones: 7, mix: 0.35 },
+      presence: { amount: 0.25, drive: 3, frequencyHz: 3200 },
     });
   });
 

@@ -212,7 +212,11 @@ describe('BgmCoordinator', () => {
       revision: 999,
       position: 77,
       at: 1,
-      dsp: { reverb: { mix: 0.3 } },
+      dsp: {
+        reverb: { mix: 0.3 },
+        pitch: { semitones: 12 },
+        presence: { amount: 0.4 },
+      },
       fade: { inSeconds: 2 },
     });
     expect(started).toMatchObject({
@@ -227,6 +231,8 @@ describe('BgmCoordinator', () => {
         compression: 0,
         width: 1,
         reverb: { mix: 0.3, decay: 0.5, damping: 0.5 },
+        pitch: { semitones: 12, mix: 0 },
+        presence: { amount: 0.4, drive: 2, frequencyHz: 3200 },
       },
       fade: { inSeconds: 2, outSeconds: 1 },
     });
@@ -243,7 +249,12 @@ describe('BgmCoordinator', () => {
     const settings = coordinator.apply({
       cmd: 'bgm',
       volume: 0.45,
-      dsp: { toneDb: 2, reverb: { damping: 0.6 } },
+      dsp: {
+        toneDb: 2,
+        reverb: { damping: 0.6 },
+        pitch: { mix: 0.75 },
+        presence: { frequencyHz: 6400 },
+      },
       fade: { outSeconds: 3 },
     });
     expect(settings.action).toBeUndefined();
@@ -256,6 +267,8 @@ describe('BgmCoordinator', () => {
         compression: 0,
         width: 1,
         reverb: { mix: 0.3, decay: 0.5, damping: 0.6 },
+        pitch: { semitones: 12, mix: 0.75 },
+        presence: { amount: 0.4, drive: 2, frequencyHz: 6400 },
       },
       fade: { inSeconds: 2, outSeconds: 3 },
     });
@@ -279,6 +292,33 @@ describe('BgmCoordinator', () => {
     expect(stopped).toMatchObject({ action: 'stop', track: 'paused.flac', position: 0 });
     const unloaded = coordinator.apply({ cmd: 'bgm', track: null, action: 'play' });
     expect(unloaded).toMatchObject({ track: null, transport: 'stopped', position: 0 });
+  });
+
+  it('isolates resolved nested DSP groups in snapshots and commands', () => {
+    const coordinator = new BgmCoordinator(() => 100);
+    const first = coordinator.state();
+    first.dsp.pitch.semitones = 12;
+    first.dsp.presence.amount = 1;
+    expect(coordinator.state().dsp).toMatchObject({
+      pitch: { semitones: 0, mix: 0 },
+      presence: { amount: 0, drive: 2, frequencyHz: 3200 },
+    });
+
+    coordinator.apply({ cmd: 'bgm', dsp: { pitch: { semitones: 12 }, presence: { amount: 1 } } });
+    const command = coordinator.command();
+    expect(command?.dsp).toMatchObject({
+      pitch: { semitones: 12, mix: 0 },
+      presence: { amount: 1, drive: 2, frequencyHz: 3200 },
+    });
+    if (command?.dsp === undefined) throw new Error('expected a canonical BGM command');
+    if (command.dsp.pitch === undefined || command.dsp.presence === undefined)
+      throw new Error('expected resolved nested DSP groups');
+    command.dsp.pitch.mix = 1;
+    command.dsp.presence.drive = 8;
+    expect(coordinator.state().dsp).toMatchObject({
+      pitch: { semitones: 12, mix: 0 },
+      presence: { amount: 1, drive: 2, frequencyHz: 3200 },
+    });
   });
 
   it('accepts one audible end, loops or stops, and rejects stale renderer echoes', () => {

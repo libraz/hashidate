@@ -544,7 +544,14 @@ describe('bgm', () => {
         track: 'opening.mp3',
         volume: 0.35,
         loop: false,
-        dsp: { toneDb: 2, compression: 0.4, width: 1.2, reverb: { mix: 0.2 } },
+        dsp: {
+          toneDb: 2,
+          compression: 0.4,
+          width: 1.2,
+          reverb: { mix: 0.2 },
+          pitch: { semitones: 7, mix: 0.35 },
+          presence: { amount: 0.25, drive: 3, frequencyHz: 3200 },
+        },
         fade: { inSeconds: 1.5, outSeconds: 0.75 },
       },
     });
@@ -555,7 +562,14 @@ describe('bgm', () => {
       track: 'opening.mp3',
       volume: 0.35,
       loop: false,
-      dsp: { toneDb: 2, compression: 0.4, width: 1.2, reverb: { mix: 0.2 } },
+      dsp: {
+        toneDb: 2,
+        compression: 0.4,
+        width: 1.2,
+        reverb: { mix: 0.2 },
+        pitch: { semitones: 7, mix: 0.35 },
+        presence: { amount: 0.25, drive: 3, frequencyHz: 3200 },
+      },
       fade: { inSeconds: 1.5, outSeconds: 0.75 },
     });
     expect(payloadOf(result)).toMatchObject({
@@ -582,9 +596,21 @@ describe('bgm', () => {
       name: 'bgm',
       arguments: { action: 'settings', fade: {} },
     });
+    const emptyPitch = await client.callTool({
+      name: 'bgm',
+      arguments: { action: 'settings', dsp: { pitch: {} } },
+    });
+    const emptyPresence = await client.callTool({
+      name: 'bgm',
+      arguments: { action: 'settings', dsp: { presence: {} } },
+    });
     const invalid = await client.callTool({
       name: 'bgm',
       arguments: { action: 'settings', dsp: { reverb: { mix: 0.6 } } },
+    });
+    const invalidPitch = await client.callTool({
+      name: 'bgm',
+      arguments: { action: 'settings', dsp: { pitch: { semitones: 25 } } },
     });
     const invalidFade = await client.callTool({
       name: 'bgm',
@@ -593,7 +619,24 @@ describe('bgm', () => {
 
     expect(empty.isError).toBe(true);
     expect(emptyFade.isError).toBe(true);
+    expect(emptyPitch.isError).toBe(true);
+    expect(emptyPresence.isError).toBe(true);
+    for (const group of ['reverb', 'pitch', 'presence']) {
+      const mixedEmpty = await client.callTool({
+        name: 'bgm',
+        arguments: { action: 'settings', dsp: { toneDb: 0, [group]: {} } },
+      });
+      expect(mixedEmpty.isError).toBe(true);
+    }
+    for (const patch of [{ fade: {} }, { dsp: {} }, { dsp: { pitch: {} } }]) {
+      const emptyOnPlay = await client.callTool({
+        name: 'bgm',
+        arguments: { action: 'play', track: 'opening.mp3', ...patch },
+      });
+      expect(emptyOnPlay.isError).toBe(true);
+    }
     expect(invalid.isError).toBe(true);
+    expect(invalidPitch.isError).toBe(true);
     expect(invalidFade.isError).toBe(true);
     expect(h.control.command).not.toHaveBeenCalled();
   });

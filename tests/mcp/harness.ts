@@ -186,6 +186,8 @@ export const bgmState = (over: Partial<BgmState> = {}): BgmState => ({
     compression: 0,
     width: 1,
     reverb: { mix: 0, decay: 0.5, damping: 0.5 },
+    pitch: { semitones: 0, mix: 0 },
+    presence: { amount: 0, drive: 2, frequencyHz: 3200 },
   },
   fade: { inSeconds: 1, outSeconds: 1 },
   transport: 'stopped',

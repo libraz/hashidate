@@ -581,11 +581,14 @@ export class Hub {
     this.seq += 1;
     this.events.push({ ...event, seq: this.seq, at });
 
-    const command: Command = {
-      cmd: 'bgm',
-      action: cue.action,
-      ...('track' in cue && cue.track !== undefined ? { track: cue.track } : {}),
-    };
+    const command: Command =
+      cue.action === 'set'
+        ? { cmd: 'bgm', ...cue.settings }
+        : {
+            cmd: 'bgm',
+            action: cue.action,
+            ...('track' in cue && cue.track !== undefined ? { track: cue.track } : {}),
+          };
     this.send({ type: 'command', commands: [command] });
     return true;
   }

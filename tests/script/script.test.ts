@@ -41,6 +41,28 @@ lines:
     );
   });
 
+  it('accepts compound BGM cues in YAML text and rejects unknown DSP controls', () => {
+    const text =
+      '音楽を変えます。[@bgm set {"volume":0.12,"dsp":{"width":0.6,"reverb":{"mix":0.1}}}]続けます。';
+    const parsed = script(`lines:\n  - text: '${text}'`);
+    expect(parsed.lines[0].text).toBe(text);
+    expect(() => script(`lines:\n  - text: '${text.replace('"width"', '"widht"')}'`)).toThrow(
+      ScriptError,
+    );
+  });
+
+  it('accepts libsonare pitch and harmonic presence cues through the script boundary', () => {
+    const text =
+      '音楽を変えます。[@bgm set {"dsp":{"pitch":{"semitones":7,"mix":1},"presence":{"amount":0.3,"drive":2,"frequencyHz":3200}}}]';
+    expect(script(`lines:\n  - text: '${text}'`).lines[0].text).toBe(text);
+    for (const invalid of [
+      text.replace('"semitones":7', '"semitones":25'),
+      text.replace('"drive":2', '"drive":9'),
+    ]) {
+      expect(() => script(`lines:\n  - text: '${invalid}'`)).toThrow(ScriptError);
+    }
+  });
+
   it('shows the hand in the outline, since that is what --check is read against', () => {
     const parsed = script('lines:\n  - { text: "ピース。", gesture: peace, side: L }');
     expect(outline(parsed).join('\n')).toContain('side L');

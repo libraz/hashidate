@@ -59,10 +59,7 @@ export class BgmCoordinator {
       track: null,
       volume: BGM_DEFAULT_VOLUME,
       loop: BGM_DEFAULT_LOOP,
-      dsp: {
-        ...BGM_DSP_DEFAULTS,
-        reverb: { ...BGM_DSP_DEFAULTS.reverb },
-      },
+      dsp: cloneDsp(BGM_DSP_DEFAULTS),
       fade: { ...BGM_FADE_DEFAULTS },
       transport: 'stopped',
       position: 0,
@@ -259,7 +256,7 @@ export class BgmCoordinator {
     this.materialize(at);
     return {
       ...this.stateValue,
-      dsp: { ...this.stateValue.dsp, reverb: { ...this.stateValue.dsp.reverb } },
+      dsp: cloneDsp(this.stateValue.dsp),
       fade: { ...this.stateValue.fade },
     };
   }
@@ -291,17 +288,43 @@ export class BgmCoordinator {
 
 /** Merge one partial effect patch without resetting sibling controls. */
 function mergeDsp(base: BgmDsp, patch: BgmDspPatch): BgmDsp {
+  const next = cloneDsp(base);
   return {
-    ...base,
+    ...next,
     ...(patch.toneDb === undefined ? {} : { toneDb: patch.toneDb }),
     ...(patch.compression === undefined ? {} : { compression: patch.compression }),
     ...(patch.width === undefined ? {} : { width: patch.width }),
     reverb: {
-      ...base.reverb,
+      ...next.reverb,
       ...(patch.reverb?.mix === undefined ? {} : { mix: patch.reverb.mix }),
       ...(patch.reverb?.decay === undefined ? {} : { decay: patch.reverb.decay }),
       ...(patch.reverb?.damping === undefined ? {} : { damping: patch.reverb.damping }),
     },
+    pitch: {
+      ...next.pitch,
+      ...(patch.pitch?.semitones === undefined ? {} : { semitones: patch.pitch.semitones }),
+      ...(patch.pitch?.mix === undefined ? {} : { mix: patch.pitch.mix }),
+    },
+    presence: {
+      ...next.presence,
+      ...(patch.presence?.amount === undefined ? {} : { amount: patch.presence.amount }),
+      ...(patch.presence?.drive === undefined ? {} : { drive: patch.presence.drive }),
+      ...(patch.presence?.frequencyHz === undefined
+        ? {}
+        : { frequencyHz: patch.presence.frequencyHz }),
+    },
+  };
+}
+
+/** Copy every nested group before state crosses a renderer or caller boundary. */
+function cloneDsp(dsp: BgmDsp): BgmDsp {
+  const pitch = dsp.pitch ?? BGM_DSP_DEFAULTS.pitch;
+  const presence = dsp.presence ?? BGM_DSP_DEFAULTS.presence;
+  return {
+    ...dsp,
+    reverb: { ...dsp.reverb },
+    pitch: { ...pitch },
+    presence: { ...presence },
   };
 }
 

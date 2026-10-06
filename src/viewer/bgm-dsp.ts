@@ -1,12 +1,14 @@
 import { init, Mixer, masteringInsertParamInfo } from '@libraz/libsonare';
-import type { BgmDsp, BgmDspPatch } from '@/protocol';
+import { BGM_DSP_DEFAULTS, type BgmDsp, type BgmDspPatch } from '@/protocol';
 
-/** The one strip and the four inserts used by the background track. */
+/** The one strip and the six inserts used by the background track. */
 export const BGM_STRIP_ID = 'bgm';
 export const BGM_INSERT_PROCESSORS = [
   'eq.tilt',
   'dynamics.compressor',
+  'spectral.presenceEnhancer',
   'stereo.imager',
+  'effects.modulation.pitchShifter',
   'effects.reverb.plate',
 ] as const;
 
@@ -19,6 +21,24 @@ export const BGM_DSP_FIXED = {
   makeupGainDb: 0,
   autoMakeup: false,
   modRateHz: 0.5,
+  presenceQ: 1.2,
+  /** libsonare's numeric enum value for the default `None` aliasing mode. */
+  presenceAliasing: 0,
+  pitch: {
+    cents: 0,
+    pan: 0,
+    semitones2: 0,
+    cents2: 0,
+    level2: 0,
+    pan2: 0,
+    feedback: 0,
+    mixLaw: 0,
+    interpolation: 0,
+    antiAlias: false,
+    windowMs: 22.5,
+    preDelayMs: 0,
+    preDelay2Ms: 0,
+  },
 } as const;
 
 /** A JSON-friendly insert as consumed by libsonare's Mixer scene parser. */
@@ -43,6 +63,30 @@ export interface BgmDspMapping {
     autoMakeup: boolean;
   };
   imager: { width: number };
+  pitch: {
+    semitones: number;
+    dryWet: number;
+    cents: number;
+    pan: number;
+    semitones2: number;
+    cents2: number;
+    level2: number;
+    pan2: number;
+    feedback: number;
+    mixLaw: number;
+    interpolation: number;
+    antiAlias: boolean;
+    windowMs: number;
+    preDelayMs: number;
+    preDelay2Ms: number;
+  };
+  presence: {
+    amount: number;
+    drive: number;
+    centerFrequencyHz: number;
+    q: number;
+    aliasing: number;
+  };
   reverb: { dryWet: number; decay: number; damping: number; modRateHz: number };
 }
 
@@ -58,6 +102,8 @@ export function compressionRatio(value: number): number {
 
 /** Merge a strict partial command patch without resetting sibling controls. */
 export function mergeBgmDsp(base: BgmDsp, patch: BgmDspPatch | undefined): BgmDsp {
+  const pitch = base.pitch ?? BGM_DSP_DEFAULTS.pitch;
+  const presence = base.presence ?? BGM_DSP_DEFAULTS.presence;
   return {
     toneDb: patch?.toneDb ?? base.toneDb,
     compression: patch?.compression ?? base.compression,
@@ -67,17 +113,28 @@ export function mergeBgmDsp(base: BgmDsp, patch: BgmDspPatch | undefined): BgmDs
       decay: patch?.reverb?.decay ?? base.reverb.decay,
       damping: patch?.reverb?.damping ?? base.reverb.damping,
     },
+    pitch: {
+      semitones: patch?.pitch?.semitones ?? pitch.semitones,
+      mix: patch?.pitch?.mix ?? pitch.mix,
+    },
+    presence: {
+      amount: patch?.presence?.amount ?? presence.amount,
+      drive: patch?.presence?.drive ?? presence.drive,
+      frequencyHz: patch?.presence?.frequencyHz ?? presence.frequencyHz,
+    },
   };
 }
 
 /**
- * Turn the four public BGM macros into the exact fixed Mixer insert chain.
+ * Turn the six public BGM macros into the exact fixed Mixer insert chain.
  *
  * This function has no WASM or browser dependency. The returned `params` are
  * objects for inspection; {@link buildBgmScene} serialises them at the boundary
  * where libsonare expects its scene format.
  */
 export function mapBgmDsp(dsp: BgmDsp): BgmDspMapping {
+  const pitchDsp = dsp.pitch ?? BGM_DSP_DEFAULTS.pitch;
+  const presenceDsp = dsp.presence ?? BGM_DSP_DEFAULTS.presence;
   const eq = { tiltDb: dsp.toneDb, pivotHz: BGM_DSP_FIXED.pivotHz };
   const compressor = {
     thresholdDb: compressionThresholdDb(dsp.compression),
@@ -89,6 +146,18 @@ export function mapBgmDsp(dsp: BgmDsp): BgmDspMapping {
     autoMakeup: BGM_DSP_FIXED.autoMakeup,
   };
   const imager = { width: dsp.width };
+  const pitch = {
+    semitones: pitchDsp.semitones,
+    dryWet: pitchDsp.mix,
+    ...BGM_DSP_FIXED.pitch,
+  };
+  const presence = {
+    amount: presenceDsp.amount,
+    drive: presenceDsp.drive,
+    centerFrequencyHz: presenceDsp.frequencyHz,
+    q: BGM_DSP_FIXED.presenceQ,
+    aliasing: BGM_DSP_FIXED.presenceAliasing,
+  };
   const reverb = {
     dryWet: dsp.reverb.mix,
     decay: dsp.reverb.decay,
@@ -98,10 +167,12 @@ export function mapBgmDsp(dsp: BgmDsp): BgmDspMapping {
   const inserts: BgmInsert[] = [
     { processor: 'eq.tilt', slot: 'pre', params: eq },
     { processor: 'dynamics.compressor', slot: 'pre', params: compressor },
+    { processor: 'spectral.presenceEnhancer', slot: 'pre', params: presence },
     { processor: 'stereo.imager', slot: 'post', params: imager },
+    { processor: 'effects.modulation.pitchShifter', slot: 'post', params: pitch },
     { processor: 'effects.reverb.plate', slot: 'post', params: reverb },
   ];
-  return { dsp, inserts, eq, compressor, imager, reverb };
+  return { dsp, inserts, eq, compressor, imager, pitch, presence, reverb };
 }
 
 /** The minimal valid one-stereo-strip Mixer scene for BGM. */
@@ -155,7 +226,7 @@ interface TargetSpec {
   params: readonly string[];
 }
 
-/** Every parameter in the scene is checked for realtime safety before use. */
+/** Every automated parameter is checked for realtime safety before use. */
 const TARGET_SPECS: readonly TargetSpec[] = [
   { processor: 'eq.tilt', params: ['tiltDb', 'pivotHz'] },
   {
@@ -170,14 +241,19 @@ const TARGET_SPECS: readonly TargetSpec[] = [
       'autoMakeup',
     ],
   },
+  {
+    processor: 'spectral.presenceEnhancer',
+    params: ['amount', 'drive', 'centerFrequencyHz'],
+  },
   { processor: 'stereo.imager', params: ['width'] },
+  { processor: 'effects.modulation.pitchShifter', params: ['semitones', 'dryWet'] },
   { processor: 'effects.reverb.plate', params: ['dryWet', 'decay', 'damping', 'modRateHz'] },
 ];
 
 /**
  * Initialise libsonare, parse the scene and discover stable numeric IDs.
  *
- * IDs are deliberately not hard-coded: the pinned 1.7.2 package is queried at
+ * IDs are deliberately not hard-coded: the pinned 1.8.1 package is queried at
  * startup, and any scene warning or non-rt-safe target turns into a dry BGM
  * fallback instead of silently misrouting a live fader.
  */
@@ -217,7 +293,12 @@ export async function createBgmDspPlan(dsp: BgmDsp): Promise<BgmDspPlan> {
           'dynamics.compressor.releaseMs': mapping.compressor.releaseMs,
           'dynamics.compressor.kneeDb': mapping.compressor.kneeDb,
           'dynamics.compressor.makeupGainDb': mapping.compressor.makeupGainDb,
+          'spectral.presenceEnhancer.amount': mapping.presence.amount,
+          'spectral.presenceEnhancer.drive': mapping.presence.drive,
+          'spectral.presenceEnhancer.centerFrequencyHz': mapping.presence.centerFrequencyHz,
           'stereo.imager.width': mapping.imager.width,
+          'effects.modulation.pitchShifter.semitones': mapping.pitch.semitones,
+          'effects.modulation.pitchShifter.dryWet': mapping.pitch.dryWet,
           'effects.reverb.plate.dryWet': mapping.reverb.dryWet,
           'effects.reverb.plate.decay': mapping.reverb.decay,
           'effects.reverb.plate.damping': mapping.reverb.damping,

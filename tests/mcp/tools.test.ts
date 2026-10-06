@@ -149,6 +149,24 @@ describe('the tool surface once everything is on it', () => {
     expect(JSON.stringify(fade)).toContain('0..10');
     expect(JSON.stringify(bgm?.description)).toContain('crossfade');
   });
+
+  it('advertises libsonare pitch and presence controls with their ranges', async () => {
+    h = harness();
+    const client = await connect(h.control);
+    const { tools } = await client.listTools();
+    const bgm = tools.find((tool) => tool.name === 'bgm');
+    expect(bgm).toBeDefined();
+
+    const schema = JSON.stringify(bgm?.inputSchema);
+    expect(schema).toContain('pitch');
+    expect(schema).toContain('presence');
+    expect(schema).toContain('-24');
+    expect(schema).toContain('8000');
+    expect(bgm?.description).toContain('pitch.semitones');
+    expect(bgm?.description).toContain('presence.frequencyHz');
+    expect(bgm?.description).toContain('mix 0 disabling the pitch shifter');
+    expect(bgm?.description).toContain('amount 0 disabling presence');
+  });
 });
 
 describe('react', () => {

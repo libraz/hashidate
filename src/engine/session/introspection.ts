@@ -78,10 +78,10 @@ export function describe(d: Director, { wardrobe, voice, scenery }: VocabularyCo
     hops: HOP_IDS.map((id) => ({ id, label: HOPS[id].label })),
     cue: {
       syntax:
-        '[performanceId] or [@perform id], [@expression id], [@gesture id], [@hop id], [@camera frame], [@slide N], [@bgm play] or [@bgm play track.mp3], [@bgm pause], [@bgm stop]',
+        '[performanceId] or [@perform id], [@expression id], [@gesture id], [@hop id], [@camera frame], [@slide N], [@bgm play] or [@bgm play track.mp3], [@bgm pause], [@bgm stop], [@bgm set {JSON}]',
       note: {
-        en: "Write a cue straight into say's text. It fires at the point written, and nothing inside square brackets is spoken. The legacy [performanceId] shorthand starts a performance; typed cues can change a performance, expression, gesture, hop, camera frame, slide, or BGM transport. A BGM track is an .mp3 or .flac filename and may contain spaces.",
-        ja: 'say の text にキューを直接書く。書いた位置で実行し、角括弧の中身は読み上げない。従来の [performanceId] は演技を開始し、[@...] 形式では演技、表情、ジェスチャ、ジャンプ、カメラ、スライド、BGM の再生・一時停止・停止を切り替えられる。BGM の曲名は .mp3 / .flac のファイル名で、空白も使える。',
+        en: "Write a cue straight into say's text. It fires at the point written, and nothing inside square brackets is spoken. The legacy [performanceId] shorthand starts a performance; typed cues can change a performance, expression, gesture, hop, camera frame, slide, or BGM transport; [@bgm set {JSON}] patches BGM level, looping, fades and effects at that point. A BGM track is an .mp3 or .flac filename and may contain spaces.",
+        ja: 'say の text にキューを直接書く。書いた位置で実行し、角括弧の中身は読み上げない。従来の [performanceId] は演技を開始し、[@...] 形式では演技、表情、ジェスチャ、ジャンプ、カメラ、スライド、BGM の再生・一時停止・停止を切り替えられる。[@bgm set {JSON}] はその位置で BGM の音量・ループ・フェード・エフェクトを変更する。BGM の曲名は .mp3 / .flac のファイル名で、空白も使える。',
       },
     },
     // Derived, so the vocabulary cannot drift from what the wire accepts.

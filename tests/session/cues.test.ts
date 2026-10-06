@@ -214,6 +214,29 @@ describe('cues in a line', () => {
     ]);
   });
 
+  it('dispatches a structured BGM settings cue without rewriting its payload', () => {
+    const { session, step } = build();
+    const settings = {
+      action: 'play' as const,
+      track: '日本語の曲 name.mp3',
+      volume: 0.2,
+      loop: false,
+      fade: { outSeconds: 2 },
+      dsp: { toneDb: -2, reverb: { mix: 0.2 } },
+    };
+    session.say({ id: 'bgm-set', text: `[@bgm set ${JSON.stringify(settings)}]あ` });
+    step(1);
+
+    expect(session.takeEvents().filter((event) => event.type === 'cue.fire')).toEqual([
+      {
+        type: 'cue.fire',
+        turn: 'bgm-set',
+        cueId: 'bgm-set:cue:0',
+        cue: { kind: 'bgm', action: 'set', settings },
+      },
+    ]);
+  });
+
   it('reports the cues whose effect outlives the line, and not the momentary ones', () => {
     const { session, step } = build();
     session.say({

@@ -265,7 +265,7 @@ export class BrowserBgm {
     return {
       revision: this.revision,
       track: this.track,
-      dsp: this.dsp,
+      dsp: cloneDsp(this.dsp),
       transport: this.transport,
       position,
       duration: this.duration,
