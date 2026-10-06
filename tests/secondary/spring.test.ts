@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildProfile } from '@/engine/profile';
 import { Spring } from '@/engine/secondary';
 import type { AvatarDescriptor, ColliderSpec, SwayGroupSpec } from '@/engine/types';
+import { must } from '../helpers/must';
 import { addBoneChain, buildRig, type SyntheticRig } from '../helpers/scene';
 import { skinnedPoint } from '../helpers/skinned-point';
 import trajectoryRecord from './spring-trajectory.json';
@@ -94,25 +95,23 @@ function makeAnchorFixture(
   addBoneChain(rig, { parent: 'Spine', root: 'ProducerB', joints: 3 });
   addBoneChain(rig, { parent: 'Hips', root: 'CharmRoot', joints: 3 });
   if (options.measuredFloat32Charm) {
-    const root = rig.bones.get('CharmRoot')!;
+    const root = must(rig.bones.get('CharmRoot'), 'CharmRoot');
     root.scale.set(1, Math.fround(0.9999998807907104), Math.fround(1.0000059604644775));
     for (const name of ['CharmRoot', 'CharmRoot_1', 'CharmRoot_2']) {
-      rig.bones
-        .get(name)!
-        .quaternion.set(
-          Math.fround(-0.5785567164421082),
-          Math.fround(0.5854491591453552),
-          Math.fround(-0.5619037747383118),
-          Math.fround(-0.08237501978874207),
-        );
+      must(rig.bones.get(name), name).quaternion.set(
+        Math.fround(-0.5785567164421082),
+        Math.fround(0.5854491591453552),
+        Math.fround(-0.5619037747383118),
+        Math.fround(-0.08237501978874207),
+      );
     }
   }
   if (options.simulatedAnchorParent) {
     const mount = new THREE.Bone();
     mount.name = 'CharmMount';
-    rig.bones.get('Hips')!.add(mount);
-    const charmRoot = rig.bones.get('CharmRoot')!;
-    charmRoot.parent!.remove(charmRoot);
+    must(rig.bones.get('Hips'), 'Hips').add(mount);
+    const charmRoot = must(rig.bones.get('CharmRoot'), 'CharmRoot');
+    must(charmRoot.parent, 'parent').remove(charmRoot);
     mount.add(charmRoot);
     rig.bones.set('CharmMount', mount);
   }
@@ -125,11 +124,12 @@ function makeAnchorFixture(
       { bone: 'ProducerB_2', weight: 0.2, position: [0, -1, -1] as [number, number, number] },
     ],
   };
-  if (options.invalidSource) anchor.influences[0]!.bone = options.invalidSource;
+  if (options.invalidSource)
+    must(anchor.influences[0], 'influences[0]').bone = options.invalidSource;
   if (options.duplicateSource) {
     const duplicate = new THREE.Bone();
     duplicate.name = 'ProducerA_1';
-    rig.bones.get('Hips')!.add(duplicate);
+    must(rig.bones.get('Hips'), 'Hips').add(duplicate);
   }
   const producerGroups: SwayGroupSpec[] = [
     {
@@ -159,7 +159,7 @@ function makeAnchorFixture(
     gravityDir: [0, -1, 0],
   };
   if (options.metadata && !options.missingMetadata) {
-    rig.bones.get('CharmRoot')!.userData.skinPointAnchor = anchor;
+    must(rig.bones.get('CharmRoot'), 'CharmRoot').userData.skinPointAnchor = anchor;
   }
   const groups = options.laterSource
     ? [anchorGroup, ...producerGroups]
@@ -226,8 +226,8 @@ function anchorMiss(fixture: ReturnType<typeof makeAnchorFixture>): number {
 }
 
 function poseAnchorFixture(fixture: ReturnType<typeof makeAnchorFixture>, frame: number): void {
-  const hips = fixture.rig.bones.get('Hips')!;
-  const spine = fixture.rig.bones.get('Spine')!;
+  const hips = must(fixture.rig.bones.get('Hips'), 'Hips');
+  const spine = must(fixture.rig.bones.get('Spine'), 'Spine');
   fixture.rig.root.position.set(
     0.3 + Math.sin(frame * 0.13) * 0.04,
     Math.cos(frame * 0.07) * 0.03,
@@ -495,8 +495,16 @@ describe('Spring step inputs', () => {
     spring.update(0);
     for (let frame = 1; frame <= 90; frame++) {
       const t = frame / 60;
-      rig.bones.get('Hips')!.rotation.set(Math.sin(t * 2.1) * 0.3, Math.cos(t * 1.3) * 0.25, 0);
-      rig.bones.get('Head')!.rotation.set(0, Math.sin(t * 3.7) * 0.5, Math.sin(t * 2.9) * 0.2);
+      must(rig.bones.get('Hips'), 'Hips').rotation.set(
+        Math.sin(t * 2.1) * 0.3,
+        Math.cos(t * 1.3) * 0.25,
+        0,
+      );
+      must(rig.bones.get('Head'), 'Head').rotation.set(
+        0,
+        Math.sin(t * 3.7) * 0.5,
+        Math.sin(t * 2.9) * 0.2,
+      );
       spring.update(STEP);
     }
     expect(state(spring)).toEqual(trajectoryRecord.sixtyHz);
@@ -506,8 +514,8 @@ describe('Spring step inputs', () => {
     // A yaw about the spine's own axis is exact under slerp, so a frame of two
     // steps must land where two frames of one step, posed at each, land.
     const pose = (rig: SyntheticRig, t: number) => {
-      rig.bones.get('Hips')!.rotation.y = 1.3 * t;
-      rig.bones.get('Head')!.rotation.y = -2.1 * t;
+      must(rig.bones.get('Hips'), 'Hips').rotation.y = 1.3 * t;
+      must(rig.bones.get('Head'), 'Head').rotation.y = -2.1 * t;
     };
     const double = makeTrajectoryFixture();
     const single = makeTrajectoryFixture();
@@ -524,7 +532,11 @@ describe('Spring step inputs', () => {
     const a = state(double.spring);
     const b = state(single.spring);
     for (let i = 0; i < a.length; i++) {
-      for (let k = 0; k < 7; k++) expect(a[i]![k]).toBeCloseTo(b[i]![k]!, 9);
+      for (let k = 0; k < 7; k++)
+        expect(must(must(a[i], 'a[i]')[k], 'a[i][k]')).toBeCloseTo(
+          must(must(b[i], 'b[i]')[k], 'b[i][k]'),
+          9,
+        );
     }
   });
 
@@ -533,8 +545,8 @@ describe('Spring step inputs', () => {
       [{ id: 'hair', stiffness: 1.2, drag: 0.5, roots: ['Hair'] }],
       [{ parent: 'Head', root: 'Hair', joints: 3 }],
     );
-    const head = rig.bones.get('Head')!;
-    const root = spring.groups[0]!.joints[0]!.bone;
+    const head = must(rig.bones.get('Head'), 'Head');
+    const root = must(must(spring.groups[0], 'groups[0]').joints[0], 'joints[0]').bone;
     const world = new THREE.Quaternion();
     const last = new THREE.Quaternion();
     const advance: number[] = [];
@@ -552,7 +564,10 @@ describe('Spring step inputs', () => {
     const mean = steady.reduce((sum, value) => sum + value, 0) / steady.length;
     let roughness = 0;
     for (let i = 1; i < steady.length - 1; i++) {
-      roughness += Math.abs(steady[i]! - (steady[i - 1]! + steady[i + 1]!) / 2);
+      roughness += Math.abs(
+        must(steady[i], 'steady[i]') -
+          (must(steady[i - 1], 'steady[i - 1]') + must(steady[i + 1], 'steady[i + 1]')) / 2,
+      );
     }
     roughness /= (steady.length - 2) * mean;
     expect(mean).toBeGreaterThan(1e-3);
@@ -562,13 +577,13 @@ describe('Spring step inputs', () => {
   it('interpolates nothing across a reset and teleport', () => {
     const pose = (rig: SyntheticRig) => {
       rig.root.position.set(1.7, 0, -0.9);
-      rig.bones.get('Hips')!.rotation.y = 0.4;
-      rig.bones.get('Head')!.rotation.y = -0.3;
+      must(rig.bones.get('Hips'), 'Hips').rotation.y = 0.4;
+      must(rig.bones.get('Head'), 'Head').rotation.y = -0.3;
     };
     const moved = makeTrajectoryFixture();
     moved.spring.update(0);
     for (let frame = 1; frame <= 20; frame++) {
-      moved.rig.bones.get('Head')!.rotation.y = Math.sin(frame * 0.3) * 0.6;
+      must(moved.rig.bones.get('Head'), 'Head').rotation.y = Math.sin(frame * 0.3) * 0.6;
       moved.spring.update(0.02);
     }
     moved.spring.reset();
@@ -588,8 +603,11 @@ describe('Spring step inputs', () => {
 
   it('restarts an attached group switched back on mid-motion without a fling', () => {
     const fixture = makeAnchorFixture();
-    const attached = fixture.spring.groups.find((group) => group.id === 'charm')!;
-    const hips = fixture.rig.bones.get('Hips')!;
+    const attached = must(
+      fixture.spring.groups.find((group) => group.id === 'charm'),
+      'charm group',
+    );
+    const hips = must(fixture.rig.bones.get('Hips'), 'Hips');
     fixture.spring.update(0);
     for (let frame = 1; frame <= 8; frame++) {
       hips.rotation.y = frame * 0.12;
@@ -659,18 +677,24 @@ describe('Spring weighted root attachments', () => {
 
   it('keeps one multi-influence attachment at the actual point through lifecycle changes', () => {
     const fixture = makeAnchorFixture();
-    const attached = fixture.spring.groups.find((group) => group.id === 'charm')!;
+    const attached = must(
+      fixture.spring.groups.find((group) => group.id === 'charm'),
+      'charm group',
+    );
     fixture.spring.update(0);
 
-    const initialTarget = fixture.spring.anchorDiagnostics[0]!.targetWorld;
+    const initialTarget = must(
+      fixture.spring.anchorDiagnostics[0],
+      'anchorDiagnostics[0]',
+    ).targetWorld;
     const initialJoints = attached.joints.map((joint) => ({
       cur: joint.cur.toArray(),
       prev: joint.prev.toArray(),
     }));
     fixture.rig.root.position.x += 0.73;
-    fixture.rig.bones.get('Hips')!.rotation.z += 0.31;
+    must(fixture.rig.bones.get('Hips'), 'Hips').rotation.z += 0.31;
     fixture.spring.update(0);
-    const zeroStep = fixture.spring.anchorDiagnostics[0]!;
+    const zeroStep = must(fixture.spring.anchorDiagnostics[0], 'anchorDiagnostics[0]');
     expect(zeroStep.targetWorld).not.toEqual(initialTarget);
     expect(zeroStep.error).toBeLessThan(1e-8);
     expect(
@@ -681,7 +705,9 @@ describe('Spring weighted root attachments', () => {
     fixture.spring.reset();
     fixture.rig.root.position.z -= 0.42;
     fixture.spring.update(0);
-    expect(fixture.spring.anchorDiagnostics[0]!.error).toBeLessThan(1e-8);
+    expect(must(fixture.spring.anchorDiagnostics[0], 'anchorDiagnostics[0]').error).toBeLessThan(
+      1e-8,
+    );
     expect(attached.joints.every((joint) => joint.cur.equals(joint.prev))).toBe(true);
 
     const producerBeforeDisable = originalDynamicsState(fixture.spring);
@@ -689,7 +715,9 @@ describe('Spring weighted root attachments', () => {
     fixture.rig.root.position.y += 0.36;
     fixture.spring.update(0);
     expect(originalDynamicsState(fixture.spring)).toEqual(producerBeforeDisable);
-    expect(fixture.spring.anchorDiagnostics[0]!.error).toBeLessThan(1e-8);
+    expect(must(fixture.spring.anchorDiagnostics[0], 'anchorDiagnostics[0]').error).toBeLessThan(
+      1e-8,
+    );
     expect(attached.joints.every((joint) => joint.bone.quaternion.angleTo(joint.rest) < 1e-8)).toBe(
       true,
     );
@@ -699,18 +727,24 @@ describe('Spring weighted root attachments', () => {
     fixture.spring.update(0);
     expect(originalDynamicsState(fixture.spring)).toEqual(producerBeforeEnable);
     expect(attached.joints.every((joint) => joint.cur.distanceTo(joint.prev) < 1e-12)).toBe(true);
-    expect(fixture.spring.anchorDiagnostics[0]!.error).toBeLessThan(1e-8);
+    expect(must(fixture.spring.anchorDiagnostics[0], 'anchorDiagnostics[0]').error).toBeLessThan(
+      1e-8,
+    );
 
     fixture.spring.enabled = false;
     fixture.rig.root.position.x -= 0.51;
     fixture.spring.update(0);
-    expect(fixture.spring.anchorDiagnostics[0]!.error).toBeLessThan(1e-8);
+    expect(must(fixture.spring.anchorDiagnostics[0], 'anchorDiagnostics[0]').error).toBeLessThan(
+      1e-8,
+    );
     expect(attached.joints.every((joint) => joint.bone.quaternion.angleTo(joint.rest) < 1e-8)).toBe(
       true,
     );
     fixture.spring.enabled = true;
     fixture.spring.update(0);
-    expect(fixture.spring.anchorDiagnostics[0]!.error).toBeLessThan(1e-8);
+    expect(must(fixture.spring.anchorDiagnostics[0], 'anchorDiagnostics[0]').error).toBeLessThan(
+      1e-8,
+    );
     expect(
       fixture.spring.groups.every((group) =>
         group.joints.every((joint) => joint.cur.equals(joint.prev)),
@@ -720,13 +754,16 @@ describe('Spring weighted root attachments', () => {
 
   it('places a disabled accessory after its producers in every fixed substep', () => {
     const fixture = makeAnchorFixture();
-    const attached = fixture.spring.groups.find((group) => group.id === 'charm')!;
+    const attached = must(
+      fixture.spring.groups.find((group) => group.id === 'charm'),
+      'charm group',
+    );
     fixture.spring.update(0);
-    const before = fixture.spring.anchorDiagnostics[0]!.targetWorld;
+    const before = must(fixture.spring.anchorDiagnostics[0], 'anchorDiagnostics[0]').targetWorld;
     poseAnchorFixture(fixture, 7);
     attached.enabled = false;
     fixture.spring.update(STEP);
-    const after = fixture.spring.anchorDiagnostics[0]!;
+    const after = must(fixture.spring.anchorDiagnostics[0], 'anchorDiagnostics[0]');
     expect(after.targetWorld).not.toEqual(before);
     expect(after.error).toBeLessThan(1e-8);
     expect(anchorMiss(fixture)).toBeLessThan(1e-6);
@@ -752,8 +789,8 @@ describe('Spring weighted root attachments', () => {
   it('uses the solved parent for every attached link and settles world-down with zero stiffness', () => {
     const loose = makeSimpleAnchor(0);
     const tilted = makeSimpleAnchor(1.8);
-    loose.rig.bones.get('Hips')!.rotation.z = 0.72;
-    tilted.rig.bones.get('Hips')!.rotation.z = 0.72;
+    must(loose.rig.bones.get('Hips'), 'Hips').rotation.z = 0.72;
+    must(tilted.rig.bones.get('Hips'), 'Hips').rotation.z = 0.72;
     loose.spring.update(0);
     tilted.spring.update(0);
 
@@ -763,9 +800,11 @@ describe('Spring weighted root attachments', () => {
     }
 
     const direction = (fixture: ReturnType<typeof makeSimpleAnchor>) => {
-      const group = fixture.spring.groups[0]!;
-      const base = new THREE.Vector3().setFromMatrixPosition(group.joints[0]!.bone.matrixWorld);
-      return group.joints[0]!.cur.clone().sub(base).normalize();
+      const group = must(fixture.spring.groups[0], 'groups[0]');
+      const base = new THREE.Vector3().setFromMatrixPosition(
+        must(group.joints[0], 'joints[0]').bone.matrixWorld,
+      );
+      return must(group.joints[0], 'joints[0]').cur.clone().sub(base).normalize();
     };
     const worldDown = new THREE.Vector3(0, -1, 0);
     const looseDot = direction(loose).dot(worldDown);
@@ -773,10 +812,10 @@ describe('Spring weighted root attachments', () => {
     expect(looseDot).toBeGreaterThan(0.995);
     expect(tiltedDot).toBeLessThan(looseDot - 0.2);
 
-    const group = loose.spring.groups[0]!;
+    const group = must(loose.spring.groups[0], 'groups[0]');
     for (let index = 0; index < group.joints.length - 1; index++) {
-      const parentJoint = group.joints[index]!;
-      const childJoint = group.joints[index + 1]!;
+      const parentJoint = must(group.joints[index], 'joints[index]');
+      const childJoint = must(group.joints[index + 1], 'joints[index + 1]');
       const childHead = new THREE.Vector3().setFromMatrixPosition(childJoint.bone.matrixWorld);
       expect(childHead.distanceTo(parentJoint.cur)).toBeLessThan(1e-6);
     }
@@ -784,9 +823,12 @@ describe('Spring weighted root attachments', () => {
 
   it('normalizes animated measured Float32 charm rotations while preserving ppm TRS scale', () => {
     const fixture = makeAnchorFixture({ measuredFloat32Charm: true });
-    const group = fixture.spring.groups.find((candidate) => candidate.id === 'charm')!;
-    const rootScale = fixture.rig.bones.get('CharmRoot')!.scale.toArray();
-    const encodedQ = group.joints[0]!.bone.quaternion;
+    const group = must(
+      fixture.spring.groups.find((candidate) => candidate.id === 'charm'),
+      'charm group',
+    );
+    const rootScale = must(fixture.rig.bones.get('CharmRoot'), 'CharmRoot').scale.toArray();
+    const encodedQ = must(group.joints[0], 'joints[0]').bone.quaternion;
     expect(Math.abs(encodedQ.length() - 1)).toBeGreaterThan(4e-8);
     expect(Math.abs(encodedQ.length() - 1)).toBeLessThan(5e-8);
 
@@ -794,8 +836,12 @@ describe('Spring weighted root attachments', () => {
     const durations = [STEP, 1 / 30, 0.05, STEP, 0.007, 0];
     for (let frame = 0; frame < 120; frame++) {
       poseAnchorFixture(fixture, frame);
-      fixture.spring.update(durations[frame % durations.length]!);
-      expect(fixture.rig.bones.get('CharmRoot')!.scale.toArray()).toEqual(rootScale);
+      fixture.spring.update(
+        must(durations[frame % durations.length], 'durations[frame % durations.length]'),
+      );
+      expect(must(fixture.rig.bones.get('CharmRoot'), 'CharmRoot').scale.toArray()).toEqual(
+        rootScale,
+      );
       if (durations[frame % durations.length] !== 0) {
         for (const joint of group.joints) {
           expect(Math.abs(joint.bone.quaternion.length() - 1)).toBeLessThan(1e-12);
@@ -814,7 +860,7 @@ describe('Spring weighted root attachments', () => {
     for (let frame = 0; frame < 240; frame++) {
       poseAnchorFixture(plain, frame);
       poseAnchorFixture(anchored, frame);
-      const dt = durations[frame % durations.length]!;
+      const dt = must(durations[frame % durations.length], 'durations[frame % durations.length]');
       plain.spring.update(dt);
       anchored.spring.update(dt);
       expect(originalMotionState(anchored.spring)).toEqual(originalMotionState(plain.spring));
@@ -847,10 +893,13 @@ describe('Spring weighted root attachments', () => {
     plain.spring.update(0);
     broken.spring.update(0);
 
-    const group = broken.spring.groups.find((candidate) => candidate.id === 'charm')!;
-    const source = broken.rig.bones.get('ProducerA_1')!;
-    const place = group.anchor!.place.bind(group.anchor);
-    group.anchor!.place = () => {
+    const group = must(
+      broken.spring.groups.find((candidate) => candidate.id === 'charm'),
+      'charm group',
+    );
+    const source = must(broken.rig.bones.get('ProducerA_1'), 'ProducerA_1');
+    const place = must(group.anchor, 'anchor').place.bind(group.anchor);
+    must(group.anchor, 'anchor').place = () => {
       place();
       source.updateWorldMatrix(true, false);
     };

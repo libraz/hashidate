@@ -3,6 +3,7 @@ import {
   createOriginal01MainCuffLaceGravity,
   createOriginal01MainPoutSpeechCorrective,
 } from '@/avatars/original01';
+import { must } from '../helpers/must';
 
 describe('cuff lace candidate', () => {
   it('retains Main contracts and adds only eight cuff lace roots and hand colliders', () => {
@@ -12,9 +13,9 @@ describe('cuff lace candidate', () => {
     expect(candidate.materials).toEqual(base.materials);
     expect(candidate.presets).toEqual(base.presets);
     expect(candidate.sway?.groups.slice(0, base.sway?.groups.length)).toEqual(base.sway?.groups);
-    const added = candidate.sway!.groups.slice(base.sway!.groups.length);
+    const added = must(candidate.sway, 'sway').groups.slice(must(base.sway, 'sway').groups.length);
     expect(added).toHaveLength(8);
-    expect(new Set(added.flatMap((group) => group.roots!)).size).toBe(8);
+    expect(new Set(added.flatMap((group) => must(group.roots, 'roots'))).size).toBe(8);
     for (const side of ['L', 'R'])
       for (const sector of ['F', 'U', 'B', 'D']) {
         const group = added.find((g) => g.id === `mainCuffLace${side}${sector}`);

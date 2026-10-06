@@ -5,12 +5,8 @@ import { BODY_ANCHORS, buildProfile, FACE_ANCHORS } from '@/engine/profile';
 import { collectBones, resolveBones } from '@/engine/profile/bones';
 import { buildFaceFrame } from '@/engine/profile/frames';
 import type { BodyFrame, FaceFrame, Profile } from '@/engine/types';
+import { must } from '../helpers/must';
 import { buildRig } from '../helpers/scene';
-
-function must<T>(value: T | null | undefined, what: string): T {
-  if (value === null || value === undefined) throw new Error(`the profile has no ${what}`);
-  return value;
-}
 
 const world = (o: THREE.Object3D): THREE.Vector3 => o.getWorldPosition(new THREE.Vector3());
 

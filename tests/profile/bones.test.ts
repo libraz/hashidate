@@ -11,6 +11,7 @@ import {
   resolveFingers,
 } from '@/engine/profile/bones';
 import type { BoneSlot, FingerKey } from '@/engine/types';
+import { must } from '../helpers/must';
 import { buildRig, type RigOptions } from '../helpers/scene';
 
 /** Every slot the profile is expected to fill on a complete humanoid. */
@@ -109,11 +110,6 @@ const FAMILIES: Array<[NonNullable<RigOptions['naming']>, Record<BoneSlot, strin
     },
   ],
 ];
-
-function must<T>(value: T | undefined, what: string): T {
-  if (value === undefined) throw new Error(`the rig has no ${what}`);
-  return value;
-}
 
 const world = (o: THREE.Object3D): THREE.Vector3 => o.getWorldPosition(new THREE.Vector3());
 

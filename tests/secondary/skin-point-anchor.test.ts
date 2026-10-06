@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { SkinPointAnchor } from '@/engine/secondary/skin-point-anchor';
 import type { SkinPointAnchorSpec } from '@/engine/types';
+import { must } from '../helpers/must';
 import { skinnedPoint } from '../helpers/skinned-point';
 
 function makeSkinFixture() {
@@ -57,10 +58,10 @@ function makeSkinFixture() {
   const spec: SkinPointAnchorSpec = {
     influences: sources.map((bone, index) => ({
       bone: bone.name,
-      weight: weights[index]!,
+      weight: must(weights[index], 'weights[index]'),
       position: encoded
         .clone()
-        .applyMatrix4(skeleton.boneInverses[index + 1]!)
+        .applyMatrix4(must(skeleton.boneInverses[index + 1], 'boneInverses[index + 1]'))
         .toArray() as [number, number, number],
     })),
   };
@@ -106,10 +107,10 @@ describe('SkinPointAnchor', () => {
     fixture.avatar.position.set(-1.7, 0.6, 2.2);
     fixture.avatar.quaternion.setFromEuler(new THREE.Euler(-0.27, 0.42, -0.19));
     fixture.hips.rotation.set(0.2, -0.13, 0.34);
-    fixture.sources[0]!.rotation.set(0.18, 0.12, -0.3);
-    fixture.sources[1]!.position.x += 7;
-    fixture.sources[2]!.rotation.set(-0.24, 0.31, 0.16);
-    fixture.sources[3]!.position.z -= 5;
+    must(fixture.sources[0], 'sources[0]').rotation.set(0.18, 0.12, -0.3);
+    must(fixture.sources[1], 'sources[1]').position.x += 7;
+    must(fixture.sources[2], 'sources[2]').rotation.set(-0.24, 0.31, 0.16);
+    must(fixture.sources[3], 'sources[3]').position.z -= 5;
 
     const sourceNodes: THREE.Object3D[] = [
       fixture.scene,
@@ -147,8 +148,8 @@ describe('SkinPointAnchor', () => {
 
     const dominantOnly = fixture.encoded
       .clone()
-      .applyMatrix4(fixture.skeleton.boneInverses[4]!)
-      .applyMatrix4(fixture.sources[3]!.matrixWorld);
+      .applyMatrix4(must(fixture.skeleton.boneInverses[4], 'boneInverses[4]'))
+      .applyMatrix4(must(fixture.sources[3], 'sources[3]').matrixWorld);
     expect(dominantOnly.distanceTo(actual)).toBeGreaterThan(1e-3);
     expect(fixture.anchor.diagnostics.targetWorld).toEqual(fixture.anchor.targetWorld.toArray());
   });
@@ -246,7 +247,7 @@ describe('SkinPointAnchor', () => {
     expect(() => animated.anchor.place()).toThrow(/scale changed after resolution/);
 
     const subToleranceChange = makeSkinFixture();
-    const subToleranceSource = subToleranceChange.sources[0]!;
+    const subToleranceSource = must(subToleranceChange.sources[0], 'sources[0]');
     subToleranceSource.scale.x += 1e-7;
     // The old composed mean-scale tolerance accepted this real per-axis change.
     expect(() => subToleranceChange.anchor.place()).toThrow(/scale changed after resolution/);
@@ -269,30 +270,36 @@ describe('SkinPointAnchor', () => {
     expect(() =>
       make({
         influences: [
-          { ...fixture.spec.influences[0]!, weight: Number.NaN },
+          { ...must(fixture.spec.influences[0], 'influences[0]'), weight: Number.NaN },
           ...fixture.spec.influences.slice(1),
         ],
       }),
     ).toThrow(/weight is invalid/);
     expect(() =>
       make({
-        influences: [fixture.spec.influences[0]!, { ...fixture.spec.influences[0]!, weight: 0.9 }],
+        influences: [
+          must(fixture.spec.influences[0], 'influences[0]'),
+          { ...must(fixture.spec.influences[0], 'influences[0]'), weight: 0.9 },
+        ],
       }),
     ).toThrow(/duplicate influence/);
     expect(() =>
       make({
         influences: [
           ...fixture.spec.influences.slice(0, 3),
-          { ...fixture.spec.influences[3]!, weight: 0.2 },
+          { ...must(fixture.spec.influences[3], 'influences[3]'), weight: 0.2 },
         ],
       }),
     ).toThrow(/sum to one/);
 
     const missing = new Map(fixture.bonesByName);
-    missing.delete(fixture.spec.influences[0]!.bone);
+    missing.delete(must(fixture.spec.influences[0], 'influences[0]').bone);
     expect(() => make(fixture.spec, missing)).toThrow(/resolve uniquely/);
     const duplicate = new Map(fixture.bonesByName);
-    duplicate.set(fixture.spec.influences[0]!.bone, [fixture.sources[0]!, new THREE.Bone()]);
+    duplicate.set(must(fixture.spec.influences[0], 'influences[0]').bone, [
+      must(fixture.sources[0], 'sources[0]'),
+      new THREE.Bone(),
+    ]);
     expect(() => make(fixture.spec, duplicate)).toThrow(/resolve uniquely/);
 
     fixture.avatar.scale.set(0.01, 0.02, 0.01);
@@ -302,11 +309,11 @@ describe('SkinPointAnchor', () => {
     expect(() => make(fixture.spec)).toThrow(/manual matrixWorld override/);
 
     const changedWorldMode = makeSkinFixture();
-    changedWorldMode.sources[0]!.matrixWorldAutoUpdate = false;
+    must(changedWorldMode.sources[0], 'sources[0]').matrixWorldAutoUpdate = false;
     expect(() => changedWorldMode.anchor.place()).toThrow(/manual matrixWorld override/);
 
     const movedSource = makeSkinFixture();
-    movedSource.avatar.add(movedSource.sources[0]!);
+    movedSource.avatar.add(must(movedSource.sources[0], 'sources[0]'));
     expect(() => movedSource.anchor.place()).toThrow(/path was reparented/);
 
     const movedRoot = makeSkinFixture();
