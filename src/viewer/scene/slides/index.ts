@@ -256,6 +256,11 @@ export class SlideStage implements Slides {
   }
 
   setSlide(page: number): void {
+    if (this.opening) {
+      // Kept for `load`, which clamps it once the page count is known.
+      this.want = Math.max(1, Math.floor(page));
+      return;
+    }
     if (this.pages === 0) return;
     this.want = Math.min(Math.max(Math.floor(page), 1), this.pages);
     void this.settle();
@@ -269,8 +274,17 @@ export class SlideStage implements Slides {
    * pages instead of racing the rasteriser and advancing one.
    */
   turnSlide(by: number): void {
+    if (this.opening) {
+      this.want = Math.max(1, this.want + Math.trunc(by));
+      return;
+    }
     if (this.pages === 0 || this.want === 0) return;
     this.setSlide(this.want + Math.trunc(by));
+  }
+
+  /** A deck was asked for and its document is still being read. */
+  private get opening(): boolean {
+    return this.deckId !== null && this.source === null && this.error === null;
   }
 
   report(): SlideReport {

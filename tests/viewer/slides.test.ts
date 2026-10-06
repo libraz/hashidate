@@ -319,6 +319,59 @@ describe('a document that will not open', () => {
   });
 });
 
+describe('commands that arrive while the document is opening', () => {
+  function slowDeck(pages: number) {
+    const deck = fakeDeck(pages);
+    let release = (): void => {};
+    const arriving = new Promise<void>((resolve) => {
+      release = () => resolve();
+    });
+    const { stage } = build(async () => {
+      await arriving;
+      return deck.source;
+    });
+    return { stage, release };
+  }
+
+  it('keeps an absolute slide sent right behind the deck', async () => {
+    const { stage, release } = slowDeck(9);
+    stage.setDeck('intro');
+    stage.setSlide(5);
+    release();
+    await settled();
+    expect(stage.report().page).toBe(5);
+  });
+
+  it('keeps relative turns and clamps them once the page count is known', async () => {
+    const { stage, release } = slowDeck(4);
+    stage.setDeck('intro');
+    stage.turnSlide(2);
+    stage.turnSlide(1);
+    release();
+    await settled();
+    expect(stage.report().page).toBe(4);
+
+    const again = slowDeck(4);
+    again.stage.setDeck('intro');
+    again.stage.setSlide(40);
+    again.release();
+    await settled();
+    expect(again.stage.report().page).toBe(4);
+  });
+
+  it('forgets them when the document fails to open', async () => {
+    const { stage } = build(async () => {
+      throw new Error('gone');
+    });
+    stage.setDeck('intro');
+    stage.setSlide(3);
+    await settled();
+    expect(stage.report()).toMatchObject({ page: 0, pages: 0 });
+    stage.setSlide(2);
+    expect(stage.report().page).toBe(0);
+  });
+});
+
 describe('disposing the layer', () => {
   it('lets go of the document and takes the element off the page', async () => {
     const { stage, host, deck } = overDeck(3);
