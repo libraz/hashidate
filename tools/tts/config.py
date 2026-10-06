@@ -50,7 +50,7 @@ LATENTS = VOICE / "latents"
 
 # The checkpoints this sidecar is known to run, by the name HASHIDATE_TTS_MODEL
 # takes. A closed table rather than a repo id: the pinned upstream commit runs
-# these two, and `DEFAULT_STEPS` was tuned on small and has only been timed on
+# these, and `DEFAULT_STEPS` was tuned on small and has only been timed on
 # large. Both sit over the same codec, so one set of reference latents serves
 # either.
 #
@@ -60,6 +60,8 @@ LATENTS = VOICE / "latents"
 CHECKPOINTS = {
     "small": "Aratako/Irodori-TTS-v4.1-Small",
     "large": "Aratako/Irodori-TTS-v4-Large",
+    # MeanFlow distillation of small; sampled at 4 steps (see `STEPS`).
+    "mf": "Aratako/Irodori-TTS-v4.1-Small-MF",
 }
 DEFAULT_MODEL = "small"
 
@@ -90,7 +92,12 @@ PRECISION = "fp32"
 # 40 (the upstream default) costs roughly twice the time of 16 and measured
 # very slightly *worse*. 16 is the point where quality has arrived and time has
 # not yet been wasted.
-DEFAULT_STEPS = 16
+#
+# The count belongs to the checkpoint: warm-up, the `/speak` default and
+# `/health` all read `DEFAULT_STEPS`, so they cannot disagree. The MeanFlow
+# checkpoint is sampled at 4, as upstream does, rather than at 16.
+STEPS = {"small": 16, "large": 16, "mf": 4}
+DEFAULT_STEPS = STEPS[MODEL]
 
 # Reference loudness target. Matches what the waveform path applies, so a
 # precomputed latent stays interchangeable with the clip it came from.
