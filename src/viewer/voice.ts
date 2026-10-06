@@ -120,23 +120,29 @@ const wallSeconds = (): number => performance.now() / 1000;
  * filter in front of it would only add lateness.
  */
 export function buildEnvelope(samples: Float32Array, sampleRate: number): Float32Array {
-  const width = Math.max(1, Math.round(sampleRate / ENVELOPE_HZ));
-  const count = Math.max(1, Math.ceil(samples.length / width));
+  const count = Math.max(1, Math.ceil((samples.length * ENVELOPE_HZ) / sampleRate));
   const out = new Float32Array(count);
 
   for (let i = 0; i < count; i++) {
-    const from = i * width;
-    const to = Math.min(samples.length, from + width);
+    const from = Math.min(samples.length, Math.floor((i * sampleRate) / ENVELOPE_HZ));
+    // At sample rates below the envelope rate, adjacent time boundaries can
+    // land on the same sample. Keep those windows real rather than averaging
+    // an empty range.
+    const to = Math.min(
+      samples.length,
+      Math.max(from + 1, Math.floor(((i + 1) * sampleRate) / ENVELOPE_HZ)),
+    );
     let sum = 0;
     for (let j = from; j < to; j++) sum += samples[j] * samples[j];
     out[i] = to > from ? Math.sqrt(sum / (to - from)) : 0;
   }
 
-  // Scale so the loud parts of this take reach 1. A take of pure silence has no
-  // level to normalise against and stays flat at zero, which is a mouth that
-  // does not move for audio that makes no sound.
+  // Scale so the loud parts of this take reach 1. A mostly silent take can put
+  // its percentile reference at zero even when a short burst is audible, so
+  // use its loudest window in that case. Pure silence stays flat at zero.
   const sorted = Float32Array.from(out).sort();
-  const reference = sorted[Math.min(count - 1, Math.floor(count * ENVELOPE_REFERENCE))];
+  let reference = sorted[Math.min(count - 1, Math.floor(count * ENVELOPE_REFERENCE))];
+  if (reference === 0) reference = sorted[count - 1];
   if (!(reference > 0)) return out.fill(0);
   for (let i = 0; i < count; i++) out[i] = Math.min(1, out[i] / reference);
   return out;

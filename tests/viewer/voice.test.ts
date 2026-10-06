@@ -37,9 +37,18 @@ const RATE = 48_000;
 
 /** A tone at a given amplitude, for `seconds`. */
 function tone(amplitude: number, seconds: number, hz = 220): Float32Array {
-  const out = new Float32Array(Math.round(RATE * seconds));
+  return toneAtRate(amplitude, seconds, RATE, hz);
+}
+
+function toneAtRate(
+  amplitude: number,
+  seconds: number,
+  sampleRate: number,
+  hz = 220,
+): Float32Array {
+  const out = new Float32Array(Math.round(sampleRate * seconds));
   for (let i = 0; i < out.length; i++) {
-    out[i] = amplitude * Math.sin((2 * Math.PI * hz * i) / RATE);
+    out[i] = amplitude * Math.sin((2 * Math.PI * hz * i) / sampleRate);
   }
   return out;
 }
@@ -223,6 +232,19 @@ describe('buildEnvelope', () => {
   it('yields silence for silence rather than dividing by nothing', () => {
     const envelope = buildEnvelope(tone(0, 1), RATE);
     expect(Array.from(envelope).every((v) => v === 0)).toBe(true);
+  });
+
+  it('keeps an isolated burst after a mostly silent take', () => {
+    const envelope = buildEnvelope(concat(tone(0, 1.98), tone(0.6, 0.02)), RATE);
+    expect(envelopeAt(envelope, 1.5)).toBe(0);
+    expect(envelopeAt(envelope, 1.99)).toBeGreaterThan(0.9);
+  });
+
+  it.each([22_050, 44_100, 48_000])('uses exact 10 ms boundaries at %d Hz', (sampleRate) => {
+    const envelope = buildEnvelope(toneAtRate(0.5, 20, sampleRate), sampleRate);
+    expect(envelope).toHaveLength(2_000);
+    expect(envelopeAt(envelope, 19.999)).toBeGreaterThan(0.9);
+    expect(envelopeAt(envelope, 20)).toBe(0);
   });
 
   it('survives an empty take', () => {
