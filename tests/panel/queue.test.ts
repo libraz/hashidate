@@ -43,9 +43,11 @@ describe('QueueTab drag and edit boundaries', () => {
   });
 
   const renderQueue = async (queue: QueueEntry[]) => {
-    host = document.createElement('div');
-    document.body.append(host);
-    root = createRoot(host);
+    if (host === null) {
+      host = document.createElement('div');
+      document.body.append(host);
+      root = createRoot(host);
+    }
     await act(async () => {
       root?.render(
         createElement(QueueTab, {
@@ -101,5 +103,36 @@ describe('QueueTab drag and edit boundaries', () => {
     });
 
     expect(api.queueMove).not.toHaveBeenCalled();
+  });
+
+  it('keeps an open draft, with a notice, when its entry leaves the queue', async () => {
+    await renderQueue([entry('q1', 'first'), entry('q2', 'second')]);
+    const edit = host?.querySelector<HTMLButtonElement>('li[draggable] button[title="Edit"]');
+    const buttons = [...(host?.querySelectorAll('li[draggable] button') ?? [])];
+    const open = edit ?? buttons.find((b) => b.getAttribute('title')?.match(/edit/i));
+    if (!open) throw new Error('edit button missing');
+    await act(async () => {
+      (open as HTMLButtonElement).click();
+    });
+    const area = host?.querySelector('textarea');
+    if (!area) throw new Error('editor missing');
+    expect(area.value).toBe('first');
+
+    // The line went on air: no longer pending.
+    await renderQueue([entry('q2', 'second')]);
+    expect(host?.querySelector('textarea')?.value).toBe('first');
+    expect(host?.querySelector('textarea')).toBe(area);
+
+    // Saving it adds it again rather than updating an id nothing holds.
+    const submit = [...(host?.querySelectorAll('button') ?? [])].find(
+      (b) => b.textContent === 'Add to the end',
+    );
+    await act(async () => {
+      submit?.click();
+      await Promise.resolve();
+    });
+    expect(api.queueUpdate).not.toHaveBeenCalled();
+    expect(api.queueAdd).toHaveBeenCalledOnce();
+    expect(host?.querySelector('textarea')).toBeNull();
   });
 });

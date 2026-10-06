@@ -66,13 +66,21 @@ interface Props {
 const PANEL_SOURCE = 'panel';
 
 export function QueueTab({ snapshot, refresh }: Props) {
-  const [editing, setEditing] = useState<string | null>(null);
+  /** The entry as it was when editing began, so the draft outlives the row. */
+  const [editing, setEditing] = useState<{ entry: QueueEntry; index: number } | null>(null);
   const [composing, setComposing] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
   const { t } = useT();
 
   const entries = snapshot.queue;
+  const gone = editing !== null && !entries.some((e) => e.id === editing.entry.id);
+  // An entry that went on air or was dropped mid-edit keeps its slot, so the
+  // editor stays mounted with the draft in it.
+  const shown =
+    editing !== null && gone
+      ? [...entries.slice(0, editing.index), editing.entry, ...entries.slice(editing.index)]
+      : entries;
   const { checks, seconds, warnings } = checkQueue(entries, snapshot.vocabulary);
   const running = snapshot.state.turn ?? null;
 
@@ -110,7 +118,9 @@ export function QueueTab({ snapshot, refresh }: Props) {
   };
 
   const save = async (id: string, turn: LineDraft): Promise<unknown> => {
-    const result = await queueUpdate(id, turn);
+    const result = gone
+      ? await queueAdd([turn as TurnRequest], { at: 'push', source: PANEL_SOURCE })
+      : await queueUpdate(id, turn);
     if (isFailure(result)) return result;
     setEditing(null);
     refresh();
@@ -171,7 +181,7 @@ export function QueueTab({ snapshot, refresh }: Props) {
         </div>
       </div>
 
-      {entries.length === 0 ? (
+      {shown.length === 0 ? (
         <p className={styles.empty}>
           {t('panel.queue.empty.before')} <code>POST /api/queue</code>{' '}
           {t('panel.queue.empty.after')}
@@ -185,20 +195,21 @@ export function QueueTab({ snapshot, refresh }: Props) {
             drop();
           }}
         >
-          {entries.map((entry, index) => (
+          {shown.map((entry, index) => (
             <RowOrEditor
               key={entry.id}
               entry={entry}
               index={index}
               snapshot={snapshot}
               check={checks.get(entry.id)}
-              editing={editing === entry.id}
+              editing={editing?.entry.id === entry.id}
+              gone={editing?.entry.id === entry.id && gone}
               dropAt={dragId === null ? null : dropAt}
               dragging={dragId === entry.id}
               onDragStart={() => setDragId(entry.id)}
               onDragOver={setDropAt}
               onDragEnd={clearDrag}
-              onEdit={() => setEditing(entry.id)}
+              onEdit={() => setEditing({ entry, index })}
               onCancelEdit={() => setEditing(null)}
               onSave={(turn) => save(entry.id, turn)}
               onRemove={() => void run(queueRemove(entry.id))}
@@ -302,6 +313,7 @@ function RowOrEditor({
   snapshot,
   check,
   editing,
+  gone,
   onCancelEdit,
   onSave,
   ...row
@@ -312,6 +324,8 @@ function RowOrEditor({
   /** Absent for a row that arrived between the poll and this render. */
   check: LineCheck | undefined;
   editing: boolean;
+  /** The edited entry has left the queue; its draft is saved as a new line. */
+  gone: boolean;
   dropAt: number | null;
   dragging: boolean;
   onDragStart: () => void;
@@ -327,11 +341,12 @@ function RowOrEditor({
   if (editing) {
     return (
       <li className={styles.editingRow}>
+        {gone ? <p className={styles.warnings}>{t('panel.queue.gone')}</p> : null}
         <LineEditor
           initial={entry}
           vocabulary={snapshot.vocabulary}
-          editing
-          submitLabel={t('panel.queue.save')}
+          editing={!gone}
+          submitLabel={t(gone ? 'panel.queue.push' : 'panel.queue.save')}
           onSubmit={onSave}
           onCancel={onCancelEdit}
         />

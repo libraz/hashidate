@@ -21,6 +21,8 @@ export const queueEn = {
   'panel.queue.push': 'Add to the end',
   'panel.queue.interject': 'Interject next',
   'panel.queue.save': 'Save',
+  'panel.queue.gone':
+    'This line has already left the queue, so it cannot be saved over. The draft is kept; add it again or cancel.',
   'panel.queue.onAir': 'On air',
   'panel.queue.standingBy': 'Standing by',
   'panel.queue.held': 'Held',
@@ -112,6 +114,8 @@ export const queueJa: Record<keyof typeof queueEn, string> = {
   'panel.queue.push': '末尾に追加',
   'panel.queue.interject': '次に割り込む',
   'panel.queue.save': '保存',
+  'panel.queue.gone':
+    'この行はすでに待ち行列を離れており、上書き保存できません。下書きは残してあります。追加し直すか取り消してください。',
   'panel.queue.onAir': '発話中',
   'panel.queue.standingBy': '待機',
   'panel.queue.held': '停止中',
