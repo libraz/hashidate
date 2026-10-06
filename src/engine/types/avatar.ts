@@ -131,6 +131,23 @@ export interface ColliderSpec {
   inside?: boolean;
 }
 
+/** A bind-space point on each named source bone, blended into a world anchor. */
+export interface SkinPointAnchorInfluenceSpec {
+  bone: string;
+  weight: number;
+  /** The encoded skin point transformed by this bone's inverse bind matrix. */
+  position: Vec3Tuple;
+}
+
+export interface SkinPointAnchorSpec {
+  influences: SkinPointAnchorInfluenceSpec[];
+}
+
+/** Resolve the validated point contract from the attached GLB root node extras. */
+export interface SkinPointAnchorMetadataSpec {
+  source: 'bone-metadata';
+}
+
 export interface SwayGroupSpec {
   id: string;
   /** Shown in the renderer's own tuning readout, so both languages. */
@@ -148,6 +165,8 @@ export interface SwayGroupSpec {
   childrenOf?: string[];
   /** Collider set ids from `SwaySpec.colliders`. */
   colliders?: string[];
+  /** Keep one explicit root attached to a weighted point on already-simulated bones. */
+  anchor?: SkinPointAnchorSpec | SkinPointAnchorMetadataSpec;
 }
 
 export interface SwaySpec {

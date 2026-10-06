@@ -7,6 +7,7 @@
  * from outside.
  */
 
+export { SkinPointAnchor } from './skin-point-anchor';
 export type { Collider, Joint, SpringGroup } from './spring';
 export { Spring } from './spring';
 export { Tail } from './tail';

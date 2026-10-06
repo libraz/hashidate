@@ -1,6 +1,13 @@
 import * as THREE from 'three';
 import { type Localized, same } from '../../i18n/locale';
-import type { AvatarDescriptor, ColliderSpec, Profile } from '../types';
+import type {
+  AvatarDescriptor,
+  ColliderSpec,
+  Profile,
+  SkinPointAnchorMetadataSpec,
+  SkinPointAnchorSpec,
+} from '../types';
+import { SkinPointAnchor, type SkinPointAnchorDiagnostics } from './skin-point-anchor';
 
 /**
  * Secondary motion — the parts that swing because the body moved, not because
@@ -278,6 +285,10 @@ export interface SpringGroup {
   gravityDir: THREE.Vector3;
   radius: number;
   colliders: Collider[];
+  /** Optional root placement driven by a skinned point on earlier groups. */
+  anchor: SkinPointAnchor | null;
+  /** Internal edge state so toggling an attached group only seeds its own chain. */
+  anchorEnabled: boolean;
 }
 
 /**
@@ -352,8 +363,15 @@ export class Spring {
     if (!spec?.groups?.length) return;
 
     const byName = new Map<string, THREE.Bone>();
+    const bonesByName = new Map<string, THREE.Bone[]>();
     this.root.traverse((o) => {
-      if (o instanceof THREE.Bone && !byName.has(o.name)) byName.set(o.name, o);
+      if (!(o instanceof THREE.Bone)) return;
+      // Preserve the legacy first-name-wins lookup for unanchored groups. The
+      // attachment resolver below uses the strict all-matches map instead.
+      if (!byName.has(o.name)) byName.set(o.name, o);
+      const matches = bonesByName.get(o.name) ?? [];
+      matches.push(o);
+      bonesByName.set(o.name, matches);
     });
     this.root.updateMatrixWorld(true);
 
@@ -391,6 +409,38 @@ export class Spring {
         roots.push(...kids);
       }
 
+      let anchor: SkinPointAnchor | null = null;
+      if (g.anchor !== undefined) {
+        try {
+          if (!Array.isArray(g.roots) || g.roots.length !== 1 || (g.childrenOf?.length ?? 0) > 0) {
+            throw new Error('requires exactly one explicit root and no childrenOf');
+          }
+          const rootName = g.roots[0]!;
+          const rootMatches = bonesByName.get(rootName) ?? [];
+          if (rootMatches.length !== 1 || roots.length !== 1) {
+            throw new Error(`root bone must resolve uniquely: ${rootName}`);
+          }
+          const rootBone = roots[0]!;
+          let anchorSpec: SkinPointAnchorSpec;
+          const declaration = g.anchor as SkinPointAnchorSpec | SkinPointAnchorMetadataSpec;
+          if (typeof declaration === 'object' && declaration !== null && 'source' in declaration) {
+            if (declaration.source !== 'bone-metadata' || Object.keys(declaration).length !== 1) {
+              throw new Error('has an unsupported metadata source declaration');
+            }
+            anchorSpec = rootBone.userData.skinPointAnchor as SkinPointAnchorSpec;
+            if (!anchorSpec) throw new Error('is missing root userData.skinPointAnchor metadata');
+          } else {
+            anchorSpec = declaration as SkinPointAnchorSpec;
+          }
+          anchor = new SkinPointAnchor(rootBone, anchorSpec, bonesByName);
+        } catch (error) {
+          this.missing.push(
+            `sway:${g.id} anchor: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          continue;
+        }
+      }
+
       const runs: RunLink[][] = [];
       for (const r of roots) collectRuns(r, runs);
 
@@ -407,7 +457,10 @@ export class Spring {
           if (j.valid) joints.push(j);
         }
       }
-      if (!joints.length) continue;
+      if (!joints.length) {
+        if (anchor) this.missing.push(`sway:${g.id} anchor: root has no simulated descendants`);
+        continue;
+      }
 
       const rootBones = new Set<THREE.Bone>(roots);
       this.groups.push({
@@ -424,6 +477,8 @@ export class Spring {
         gravity: def.gravity,
         gravityDir: new THREE.Vector3().fromArray(def.gravityDir).normalize(),
         radius: def.radius,
+        anchor,
+        anchorEnabled: true,
         colliders: (g.colliders ?? []).flatMap((id) => {
           const c = colliders.get(id);
           if (!c) this.missing.push(`collider group:${id}`);
@@ -432,8 +487,82 @@ export class Spring {
       });
     }
 
+    this.#validateAnchors();
     this.#calibrate();
     this.reset();
+  }
+
+  #validateAnchors(): void {
+    if (!this.groups.some((group) => group.anchor)) return;
+    const owners = new Map<THREE.Object3D, number[]>();
+    for (let index = 0; index < this.groups.length; index++) {
+      for (const joint of this.groups[index]!.joints) {
+        const groups = owners.get(joint.bone) ?? [];
+        groups.push(index);
+        owners.set(joint.bone, groups);
+      }
+    }
+
+    const removed = new Set<SpringGroup>();
+    for (let index = 0; index < this.groups.length; index++) {
+      const group = this.groups[index]!;
+      const anchor = group.anchor;
+      if (!anchor) continue;
+      let problem: string | null = null;
+      const hasOtherOwner = (node: THREE.Object3D): boolean =>
+        (owners.get(node) ?? []).some(
+          (owner) => owner !== index && !removed.has(this.groups[owner]!),
+        );
+
+      for (let current: THREE.Object3D | null = anchor.root; current; current = current.parent) {
+        if (hasOtherOwner(current)) {
+          problem = `root ancestor is simulated by another group: ${current.name}`;
+          break;
+        }
+      }
+      if (!problem) {
+        anchor.root.traverse((node) => {
+          if (!problem && hasOtherOwner(node)) {
+            problem = `root subtree is simulated by another group: ${node.name}`;
+          }
+        });
+      }
+      if (!problem) {
+        for (const influence of anchor.influences) {
+          for (
+            let current: THREE.Object3D | null = influence.bone;
+            current;
+            current = current.parent
+          ) {
+            for (const owner of owners.get(current) ?? []) {
+              if (removed.has(this.groups[owner]!)) continue;
+              if (owner >= index) {
+                problem = `source ${influence.bone.name} depends on group ${this.groups[owner]!.id} at or after this group`;
+                break;
+              }
+            }
+            if (problem) break;
+          }
+          if (problem) break;
+        }
+      }
+      if (problem) {
+        this.missing.push(`sway:${group.id} anchor: ${problem}`);
+        removed.add(group);
+      }
+    }
+    if (removed.size) {
+      for (let index = this.groups.length - 1; index >= 0; index--) {
+        if (removed.has(this.groups[index]!)) this.groups.splice(index, 1);
+      }
+    }
+  }
+
+  /** Current weighted target and root residual for attachment diagnostics. */
+  get anchorDiagnostics(): Array<{ groupId: string } & SkinPointAnchorDiagnostics> {
+    return this.groups.flatMap((group) =>
+      group.anchor ? [{ groupId: group.id, ...group.anchor.diagnostics }] : [],
+    );
   }
 
   /**
@@ -465,6 +594,7 @@ export class Spring {
   #calibrate(): void {
     this.root.updateMatrixWorld(true);
     for (const g of this.groups) {
+      g.anchor?.place();
       for (const j of g.joints) j.seed();
     }
     for (const g of this.groups) {
@@ -508,6 +638,10 @@ export class Spring {
    */
   calibrateDrive(id: string, poses: THREE.Quaternion[]): void {
     const g = this.groups.find((x) => x.id === id);
+    if (g?.anchor) {
+      this.missing.push(`drive:${id} cannot own an attached spring root`);
+      return;
+    }
     if (!(g?.colliders.length && g.rootJoints.length && poses?.length)) return;
 
     for (const q of poses) {
@@ -559,6 +693,10 @@ export class Spring {
   enableDrive(id: string): Joint[] | null {
     const g = this.groups.find((x) => x.id === id);
     if (!g?.rootJoints.length) return null;
+    if (g.anchor) {
+      this.missing.push(`drive:${id} cannot own an attached spring root`);
+      return null;
+    }
     for (const j of g.rootJoints) {
       if (j.driven) continue;
       j.driven = true;
@@ -587,7 +725,27 @@ export class Spring {
   #seed(): void {
     this.root.updateMatrixWorld(true);
     for (const g of this.groups) {
+      g.anchor?.place();
       for (const j of g.joints) j.seed();
+      if (g.anchor) g.anchorEnabled = g.enabled;
+    }
+  }
+
+  #placeAnchors(): void {
+    for (const g of this.groups) g.anchor?.place();
+  }
+
+  #syncAnchorToggles(): void {
+    for (const g of this.groups) {
+      if (!g.anchor || g.anchorEnabled === g.enabled) continue;
+      g.anchorEnabled = g.enabled;
+      if (g.enabled) {
+        g.anchor.place();
+        for (const joint of g.joints) joint.seed();
+      } else {
+        for (const joint of g.joints) joint.restQuat(joint.bone.quaternion);
+        g.anchor.place();
+      }
     }
   }
 
@@ -627,6 +785,7 @@ export class Spring {
       // everything below them stays where `#restore` left it and the chain moves
       // as one rigid piece, which is the honest picture of the sway being off.
       for (const j of this.drivenJoints) j.restQuat(j.bone.quaternion);
+      this.#placeAnchors();
       return;
     }
     // Coming back on, the chains have been standing still while the body moved
@@ -642,6 +801,7 @@ export class Spring {
     // read below would otherwise be one frame stale, which reads as hair that
     // anticipates the head instead of following it.
     this.root.updateMatrixWorld(true);
+    this.#syncAnchorToggles();
 
     if (this._pending) {
       this.#seed();
@@ -651,14 +811,20 @@ export class Spring {
     }
 
     this._acc = Math.min(this._acc + dt, STEP * MAX_STEPS);
+    let steps = 0;
     while (this._acc >= STEP) {
       this.#step(STEP);
       this._acc -= STEP;
+      steps++;
     }
+    if (steps === 0) this.#placeAnchors();
   }
 
   #step(dt: number): void {
     for (const g of this.groups) {
+      // Place after prior cloth/producer groups in this same fixed step, even
+      // when this accessory group itself is switched off.
+      g.anchor?.place();
       if (!g.enabled) continue;
       for (const c of g.colliders) c.place();
 
@@ -671,9 +837,17 @@ export class Spring {
       for (const j of g.joints) {
         const bone = j.bone;
         const parent = j.parent;
+        if (g.anchor && bone !== g.anchor.root) {
+          // A preceding attached link may have turned during this same pass;
+          // refresh only this new subtree node from its solved parent.
+          bone.updateMatrix();
+          bone.matrixWorld.multiplyMatrices(parent.matrixWorld, bone.matrix);
+        }
         worldQuat(parent, _pq);
+        if (g.anchor) _pq.normalize();
         _bp.setFromMatrixPosition(bone.matrixWorld);
         j.restDir(_pq, _dir);
+        if (g.anchor) _dir.normalize();
 
         _vel.subVectors(j.cur, j.prev);
         _next
@@ -713,11 +887,14 @@ export class Spring {
         if (j.driven) _q.multiply(j.drive);
         _q.multiply(j.rest).premultiply(_aim);
         bone.quaternion.copy(_pq).invert().multiply(_q);
+        if (g.anchor) bone.quaternion.normalize();
 
         // The next joint down reads this bone's world matrix, and three will not
         // refresh it until render. Propagating one link by hand is cheaper than
         // an `updateMatrixWorld` per joint, which would walk the whole subtree
         // once per joint and turn a linear pass into a quadratic one.
+        // Only the parent rotation is fresh for that joint: outside an anchored
+        // group its own origin is read from its matrixWorld as of the last step.
         bone.updateMatrix();
         bone.matrixWorld.multiplyMatrices(parent.matrixWorld, bone.matrix);
       }
