@@ -346,6 +346,9 @@ const original01: AvatarDescriptor = {
 
 export default original01;
 
+const baseWardrobe = original01.wardrobe;
+if (!baseWardrobe) throw new Error('All-outfits profile requires wardrobe data');
+
 /**
  * Isolated all-outfits probe declaration. The legacy default above remains
  * bound to its existing GLB, while this declaration is loaded only with an
@@ -384,14 +387,14 @@ export const original01AllOutfits: AvatarDescriptor = {
           },
         ],
       },
-      ...original01.wardrobe!.slots,
+      ...baseWardrobe.slots,
     },
     presets: {
-      ...original01.wardrobe!.presets,
+      ...baseWardrobe.presets,
       default: {
         label: { en: 'Default', ja: '標準' },
         set: {
-          ...original01.wardrobe!.presets?.default?.set,
+          ...baseWardrobe.presets?.default?.set,
           outfit: 'v02-main-dress',
         },
       },

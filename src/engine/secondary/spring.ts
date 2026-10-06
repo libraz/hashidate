@@ -480,15 +480,15 @@ export class Spring {
       let anchor: SkinPointAnchor | null = null;
       if (g.anchor !== undefined) {
         try {
-          if (!Array.isArray(g.roots) || g.roots.length !== 1 || (g.childrenOf?.length ?? 0) > 0) {
+          const rootName = Array.isArray(g.roots) && g.roots.length === 1 ? g.roots[0] : undefined;
+          if (rootName === undefined || (g.childrenOf?.length ?? 0) > 0) {
             throw new Error('requires exactly one explicit root and no childrenOf');
           }
-          const rootName = g.roots[0]!;
           const rootMatches = bonesByName.get(rootName) ?? [];
-          if (rootMatches.length !== 1 || roots.length !== 1) {
+          const rootBone = roots.length === 1 ? roots[0] : undefined;
+          if (rootMatches.length !== 1 || rootBone === undefined) {
             throw new Error(`root bone must resolve uniquely: ${rootName}`);
           }
-          const rootBone = roots[0]!;
           let anchorSpec: SkinPointAnchorSpec;
           const declaration = g.anchor as SkinPointAnchorSpec | SkinPointAnchorMetadataSpec;
           if (typeof declaration === 'object' && declaration !== null && 'source' in declaration) {
@@ -563,25 +563,26 @@ export class Spring {
 
   #validateAnchors(): void {
     if (!this.groups.some((group) => group.anchor)) return;
-    const owners = new Map<THREE.Object3D, number[]>();
-    for (let index = 0; index < this.groups.length; index++) {
-      for (const joint of this.groups[index]!.joints) {
+    const owners = new Map<THREE.Object3D, SpringGroup[]>();
+    for (const group of this.groups) {
+      for (const joint of group.joints) {
         const groups = owners.get(joint.bone) ?? [];
-        groups.push(index);
+        groups.push(group);
         owners.set(joint.bone, groups);
       }
     }
 
     const removed = new Set<SpringGroup>();
-    for (let index = 0; index < this.groups.length; index++) {
-      const group = this.groups[index]!;
+    const earlier = new Set<SpringGroup>();
+    for (const group of this.groups) {
       const anchor = group.anchor;
-      if (!anchor) continue;
+      if (!anchor) {
+        earlier.add(group);
+        continue;
+      }
       let problem: string | null = null;
       const hasOtherOwner = (node: THREE.Object3D): boolean =>
-        (owners.get(node) ?? []).some(
-          (owner) => owner !== index && !removed.has(this.groups[owner]!),
-        );
+        (owners.get(node) ?? []).some((owner) => owner !== group && !removed.has(owner));
 
       for (let current: THREE.Object3D | null = anchor.root; current; current = current.parent) {
         if (hasOtherOwner(current)) {
@@ -604,9 +605,9 @@ export class Spring {
             current = current.parent
           ) {
             for (const owner of owners.get(current) ?? []) {
-              if (removed.has(this.groups[owner]!)) continue;
-              if (owner >= index) {
-                problem = `source ${influence.bone.name} depends on group ${this.groups[owner]!.id} at or after this group`;
+              if (removed.has(owner)) continue;
+              if (!earlier.has(owner)) {
+                problem = `source ${influence.bone.name} depends on group ${owner.id} at or after this group`;
                 break;
               }
             }
@@ -619,11 +620,11 @@ export class Spring {
         this.missing.push(`sway:${group.id} anchor: ${problem}`);
         removed.add(group);
       }
+      earlier.add(group);
     }
     if (removed.size) {
-      for (let index = this.groups.length - 1; index >= 0; index--) {
-        if (removed.has(this.groups[index]!)) this.groups.splice(index, 1);
-      }
+      const kept = this.groups.filter((group) => !removed.has(group));
+      this.groups.splice(0, this.groups.length, ...kept);
     }
   }
 
