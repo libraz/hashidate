@@ -507,7 +507,16 @@ describe('Spring step inputs', () => {
       );
       spring.update(STEP);
     }
-    expect(state(spring)).toEqual(trajectoryRecord.sixtyHz);
+    // Close to 12 places rather than equal: x64 and arm64 libm round the last bit differently.
+    const actual = state(spring);
+    expect(actual.map((joint) => joint.length)).toEqual(
+      trajectoryRecord.sixtyHz.map((joint) => joint.length),
+    );
+    for (const [i, joint] of actual.entries()) {
+      for (const [k, value] of joint.entries()) {
+        expect(value).toBeCloseTo(trajectoryRecord.sixtyHz[i][k], 12);
+      }
+    }
   });
 
   it('feeds each step of a two-step frame the body at its own place in the frame', () => {
