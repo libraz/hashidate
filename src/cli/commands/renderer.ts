@@ -5,7 +5,7 @@ import {
   tuneCommandSchema,
   wearCommandSchema,
 } from '../../protocol';
-import { build, type Handler, splitOnce } from '../args';
+import { build, type Handler, NUMBER, splitOnce } from '../args';
 import { fail } from '../client';
 import { show } from '../output';
 
@@ -15,8 +15,12 @@ import { show } from '../output';
  * measurements over the frame.
  */
 
+/**
+ * `wear --slot outer coat`, or `--item coat`; `none` takes the slot's garment
+ * off. An item that would not reach a slot is refused rather than dropped.
+ */
 export const wear: Handler = async (client, args) => {
-  const { values } = parseArgs({
+  const { values, positionals } = parseArgs({
     args,
     options: {
       slot: { type: 'string' },
@@ -25,12 +29,19 @@ export const wear: Handler = async (client, args) => {
     },
     allowPositionals: true,
   });
+  if (positionals.length > 1 || (positionals.length > 0 && values.item !== undefined)) {
+    fail(`wear takes one item, after the slot or as --item: ${positionals.join(' ')}`);
+  }
+  const named = values.item ?? positionals[0];
+  if (named !== undefined && values.slot === undefined) {
+    fail(`wear needs --slot to put ${named} in`);
+  }
   show(
     await client.command(
       build(wearCommandSchema, {
         cmd: 'wear',
         slot: values.slot,
-        item: values.item,
+        item: named === 'none' ? null : named,
         preset: values.preset,
       }),
     ),
@@ -66,8 +77,10 @@ export const tune: Handler = async (client, args) => {
     if (raw === null || field === null)
       fail(`a tuning is written group.field=value: ${assignment}`);
     // Numbers stay numbers and the two words stay booleans; anything else is
-    // left as written so the schema can say what is wrong with it.
-    const value = raw === 'true' ? true : raw === 'false' ? false : Number(raw);
+    // left as written so the schema can say what is wrong with it. Only a whole
+    // number counts: `Number('')` is 0, which would send an empty value as one.
+    const value =
+      raw === 'true' ? true : raw === 'false' ? false : NUMBER.test(raw) ? Number(raw) : raw;
     patch[group] = { ...patch[group], [field]: value };
   }
 

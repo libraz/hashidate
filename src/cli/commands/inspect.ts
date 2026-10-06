@@ -50,6 +50,15 @@ export const vocab: Handler = async (client) => {
   console.log(
     `rooms: ${rooms.length === 0 ? '(no audio)' : rooms.map((r) => `${r.id} (${localized(r.label)})`).join(', ')}`,
   );
+  // Printed even when empty, so a missing list reads as "none" rather than as
+  // a listing that forgot them.
+  const listed = (items: Vocabulary['backdrops'] | undefined): string =>
+    items === undefined || items.length === 0
+      ? '(none)'
+      : items.map((i) => `${i.id} (${localized(i.label)})`).join(', ');
+  console.log(`backdrops: ${listed(vocabulary.backdrops)}`);
+  console.log(`voice presets: ${listed(vocabulary.voicePresets)}`);
+  console.log(`wear presets: ${listed(vocabulary.wardrobePresets)}`);
   const wardrobe: Vocabulary['wardrobe'] = vocabulary.wardrobe ?? {};
   for (const [slot, entry] of Object.entries(wardrobe)) {
     console.log(

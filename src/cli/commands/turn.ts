@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
 import { commandSchema, pauseCommandSchema, sayCommandSchema } from '../../protocol';
-import { build, expandGreedy, type Handler, normaliseWait, parseVec } from '../args';
+import { build, expandGreedy, type Handler, normaliseWait, parseVec, toInteger } from '../args';
 import { fail } from '../client';
 import { show } from '../output';
 
@@ -58,7 +58,7 @@ export const say: Handler = async (client, args) => {
         backdrop: empty(values.backdrop),
         room: empty(values.room),
         deck: empty(values.deck),
-        slide: values.slide === undefined ? undefined : Number(values.slide),
+        slide: values.slide === undefined ? undefined : toInteger(values.slide, '--slide'),
       };
   const command = build(sayCommandSchema, {
     cmd: 'say',

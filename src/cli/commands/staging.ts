@@ -7,7 +7,7 @@ import {
   roomCommandSchema,
   slideCommandSchema,
 } from '../../protocol';
-import { build, type Handler, NUMBER } from '../args';
+import { build, type Handler, NUMBER, toInteger, toNumber } from '../args';
 import { fail } from '../client';
 import { localized, show } from '../output';
 
@@ -29,15 +29,16 @@ export const camera: Handler = async (client, args) => {
     options: { yaw: { type: 'string' }, pitch: { type: 'string' }, zoom: { type: 'string' } },
     allowPositionals: true,
   });
-  const degrees = (raw: string | undefined) => (raw === undefined ? undefined : Number(raw));
+  const degrees = (raw: string | undefined, flag: string) =>
+    raw === undefined ? undefined : toNumber(raw, 0, flag);
   show(
     await client.command(
       build(cameraCommandSchema, {
         cmd: 'camera',
         frame: positionals[0],
-        yaw: degrees(values.yaw),
-        pitch: degrees(values.pitch),
-        zoom: degrees(values.zoom),
+        yaw: degrees(values.yaw, '--yaw'),
+        pitch: degrees(values.pitch, '--pitch'),
+        zoom: degrees(values.zoom, '--zoom'),
       }),
     ),
   );
@@ -92,7 +93,7 @@ export const deck: Handler = async (client, args) => {
       build(deckCommandSchema, {
         cmd: 'deck',
         id: id === 'none' ? null : id,
-        page: values.page === undefined ? undefined : Number(values.page),
+        page: values.page === undefined ? undefined : toInteger(values.page, '--page'),
       }),
     ),
   );
@@ -114,7 +115,7 @@ export const slide: Handler = async (client, args) => {
 export function move(where: string | undefined): { page?: number; by?: number } {
   if (where === undefined || where === 'next') return { by: 1 };
   if (where === 'prev') return { by: -1 };
-  if (NUMBER.test(where)) return { page: Number.parseInt(where, 10) };
+  if (NUMBER.test(where)) return { page: toInteger(where, 'slide') };
   fail(`slide takes next / prev / a page number: ${where}`);
 }
 
@@ -143,12 +144,13 @@ export const place: Handler = async (client, args) => {
   // `fit` is how a picture fills its rectangle, which the character's does not
   // have — it is a render of a scene rather than an image with edges.
   if (layer === 'avatar' && values.fit !== undefined) fail('--fit can only be given for slide');
-  const number = (raw: string | undefined) => (raw === undefined ? undefined : Number(raw));
+  const number = (raw: string | undefined, flag: string) =>
+    raw === undefined ? undefined : toNumber(raw, 0, flag);
   const placement = {
     anchor: values.anchor,
-    width: number(values.width),
-    height: number(values.height),
-    margin: number(values.margin),
+    width: number(values.width, '--width'),
+    height: number(values.height, '--height'),
+    margin: number(values.margin, '--margin'),
     ...(layer === 'slide' ? { fit: values.fit } : {}),
   };
   show(await client.command(build(placeCommandSchema, { cmd: 'place', [layer]: placement })));

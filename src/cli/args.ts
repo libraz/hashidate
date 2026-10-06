@@ -107,9 +107,14 @@ export function extractNumbers(
 
 export function toNumber(raw: string | undefined, fallback: number, label: string): number {
   if (raw === undefined) return fallback;
-  const value = Number.parseFloat(raw);
-  if (!Number.isFinite(value)) fail(`${label} takes a number: ${raw}`);
-  return value;
+  if (!NUMBER.test(raw)) fail(`${label} takes a number: ${raw}`);
+  return Number.parseFloat(raw);
+}
+
+/** A whole number, refused rather than truncated: `2.7` is not page 2. */
+export function toInteger(raw: string, label: string): number {
+  if (!/^[+-]?\d+$/.test(raw)) fail(`${label} takes a whole number: ${raw}`);
+  return Number.parseInt(raw, 10);
 }
 
 /** `--emotion joy=0.8 relaxed=0.2` -> `{ joy: 0.8, relaxed: 0.2 }`. */

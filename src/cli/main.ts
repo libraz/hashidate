@@ -35,7 +35,7 @@ import { voice } from './commands/voice';
  *     yarn ctl camera bust
  *     yarn ctl backdrop dusk
  *     yarn ctl wear --preset stream
- *     yarn ctl voice stream
+ *     yarn ctl voice bright-idol
  *     yarn ctl voice --bypass
  *     yarn ctl bgm play opening.mp3 --fade-in 1.5 --fade-out 0.75
  *     yarn ctl bgm fade 1.5 0.75
@@ -105,7 +105,7 @@ function usage(): never {
       '  yarn ctl debug        # overlay the measurements on every viewer (off clears them)',
       '  yarn ctl avatar manuka',
       '  yarn ctl tune sway.stiffness=2 idle.breathDepth=1.2',
-      '  yarn ctl voice stream     # choose a voice preset',
+      '  yarn ctl voice bright-idol # choose a voice preset',
       '  yarn ctl voice --bypass   # play the synthesiser output unprocessed',
       '  yarn ctl deck intro --page 3',
       '  yarn ctl bgm list && yarn ctl bgm play opening.mp3 --volume 0.2 --fade-in 1 --fade-out 1',
