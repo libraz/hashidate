@@ -21,7 +21,7 @@ Embedding last removes the conflict. The denoiser runs at full strength on audio
 that carries no mark yet, and the mark is then written into a signal that is
 already clean, which is a better outcome for both. Order in `server.py`:
 
-    synthesize -> clean_take -> trim -> mark
+    synthesize -> clean_take -> close_tail -> trim -> mark
 
 ## A short line carries a mark nobody can read
 

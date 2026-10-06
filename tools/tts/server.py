@@ -30,10 +30,12 @@ import argparse
 import errno
 import io
 import os
+import signal
 import socket
 import stat
 import threading
 import time
+import traceback
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
@@ -104,6 +106,7 @@ _gpu = threading.Lock()
 
 _runtime: InferenceRuntime | None = None
 _latents: list[str] = []
+_startup_error: Exception | None = None
 
 
 class SpeakRequest(BaseModel):
@@ -121,37 +124,64 @@ class SpeakRequest(BaseModel):
     seed: int | None = DEFAULT_SEED
 
 
+def _stop_serving() -> None:
+    """Ask this process to shut down the way a terminal interrupt would."""
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+def _load_model() -> None:
+    """
+    Bring the model in, off the thread that serves requests.
+
+    It runs beside the server rather than ahead of it, so the socket answers
+    `/health` with `ready: false` for the whole load instead of leaving callers
+    waiting in the listen backlog. `_runtime` is published last, which is what
+    makes ready mean that marking has been proven on a real take. A failure
+    stops the process: a sidecar that is up but can never become ready is the
+    one state worse than none.
+    """
+    global _runtime, _latents, _startup_error
+    try:
+        latents = sorted(str(p) for p in LATENTS.glob("*.pt"))
+        if not latents:
+            raise RuntimeError(f"no reference latents in {LATENTS}; run refs.py first")
+        runtime = InferenceRuntime.from_key(runtime_key())
+        # Before anything is generated: the runtime marks takes on the way out of
+        # the decoder, and `speak` needs to mark them at the end instead.
+        watermark.claim(runtime)
+        # One synthesis so the first real line does not pay for the backend
+        # compiling its kernels — which it otherwise does, visibly, mid-sentence.
+        #
+        # A sentence rather than a word, because this take is also what the
+        # watermark is checked against and the payload needs about a second of audio
+        # to be readable back. See `watermark.WATERMARK_MIN_SECONDS`.
+        warmup = runtime.synthesize(
+            SamplingRequest(
+                text="音声の準備をしています。",
+                ref_latents=latents,
+                num_steps=DEFAULT_STEPS,
+                seed=DEFAULT_SEED,
+            )
+        )
+        # And it doubles as the proof that marking works, on the real path rather
+        # than on a tone. A failure here stops the sidecar: audio that goes out
+        # carrying the wrong payload, or none, is worse than no audio at all.
+        watermark.self_test(
+            runtime, warmup.audio.squeeze().cpu().numpy(), int(warmup.sample_rate)
+        )
+    except Exception as error:
+        _startup_error = error
+        traceback.print_exc()
+        _stop_serving()
+        return
+    _latents = latents
+    _runtime = runtime
+    print(f"speech ready on {DEVICE}: {MODEL} model, {len(latents)} reference latents", flush=True)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    global _runtime, _latents
-    _latents = sorted(str(p) for p in LATENTS.glob("*.pt"))
-    if not _latents:
-        raise RuntimeError(f"no reference latents in {LATENTS}; run refs.py first")
-    _runtime = InferenceRuntime.from_key(runtime_key())
-    # Before anything is generated: the runtime marks takes on the way out of
-    # the decoder, and `speak` needs to mark them at the end instead.
-    watermark.claim(_runtime)
-    # One synthesis so the first real line does not pay for the backend
-    # compiling its kernels — which it otherwise does, visibly, mid-sentence.
-    #
-    # A sentence rather than a word, because this take is also what the
-    # watermark is checked against and the payload needs about a second of audio
-    # to be readable back. See `watermark.WATERMARK_MIN_SECONDS`.
-    warmup = _runtime.synthesize(
-        SamplingRequest(
-            text="音声の準備をしています。",
-            ref_latents=_latents,
-            num_steps=DEFAULT_STEPS,
-            seed=DEFAULT_SEED,
-        )
-    )
-    # And it doubles as the proof that marking works, on the real path rather
-    # than on a tone. A failure here stops the sidecar: audio that goes out
-    # carrying the wrong payload, or none, is worse than no audio at all.
-    watermark.self_test(
-        _runtime, warmup.audio.squeeze().cpu().numpy(), int(warmup.sample_rate)
-    )
-    print(f"speech ready on {DEVICE}: {MODEL} model, {len(_latents)} reference latents", flush=True)
+    threading.Thread(target=_load_model, name="speech-load", daemon=True).start()
     yield
 
 
@@ -394,6 +424,8 @@ def main() -> None:
         with suppress(OSError):
             sock.close()
         where.unlink(missing_ok=True)
+    if _startup_error is not None:
+        raise SystemExit(f"speech failed to start: {_startup_error}")
 
 
 if __name__ == "__main__":

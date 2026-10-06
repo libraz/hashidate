@@ -14,7 +14,9 @@ import os
 import socket
 import stat
 import tempfile
+import threading
 import types
+import traceback
 import unittest
 from pathlib import Path
 
@@ -48,6 +50,48 @@ def load_boundary_functions() -> types.SimpleNamespace:
 
 
 BOUNDARY = load_boundary_functions()
+
+
+class StubHttpError(Exception):
+    def __init__(self, status_code, detail):
+        super().__init__(detail)
+        self.status_code = status_code
+
+
+def load_startup(latents_dir: Path, runtime, watermark) -> dict:
+    """The startup and health functions, over stubs for the model and the mark."""
+    source_path = Path(__file__).with_name("server.py")
+    tree = ast.parse(source_path.read_text())
+    wanted = {"_load_model", "health", "speak"}
+    functions = []
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in wanted:
+            node.decorator_list = []
+            functions.append(node)
+    namespace = {
+        "__doc__": "",
+        "LATENTS": latents_dir,
+        "InferenceRuntime": types.SimpleNamespace(from_key=lambda key: runtime),
+        "runtime_key": lambda: None,
+        "watermark": watermark,
+        "SamplingRequest": lambda **kwargs: kwargs,
+        "SpeakRequest": object,
+        "Response": object,
+        "HTTPException": StubHttpError,
+        "traceback": traceback,
+        "DEFAULT_STEPS": 4,
+        "DEFAULT_SEED": 1,
+        "DEVICE": "mps",
+        "MODEL": "small",
+        "MAX_SECONDS": 30.0,
+        "_runtime": None,
+        "_latents": [],
+        "_startup_error": None,
+        "stopped": [],
+    }
+    namespace["_stop_serving"] = lambda: namespace["stopped"].append(True)
+    exec(compile(ast.Module(body=functions, type_ignores=[]), str(source_path), "exec"), namespace)
+    return namespace
 
 
 class ServerBoundaryTests(unittest.TestCase):
@@ -159,6 +203,74 @@ class ServerBoundaryTests(unittest.TestCase):
 
             self.assertEqual(stat.S_IMODE(parent.stat().st_mode), 0o755)
             self.assertFalse(path.exists())
+
+
+class StartupTests(unittest.TestCase):
+    def make_runtime(self, gate: threading.Event, order: list):
+        audio = types.SimpleNamespace(
+            squeeze=lambda: types.SimpleNamespace(
+                cpu=lambda: types.SimpleNamespace(numpy=lambda: b"audio")
+            )
+        )
+
+        def synthesize(request):
+            order.append("warmup")
+            gate.wait(5)
+            return types.SimpleNamespace(audio=audio, sample_rate=48000)
+
+        return types.SimpleNamespace(synthesize=synthesize)
+
+    def test_health_answers_loading_until_the_mark_is_proven(self):
+        with tempfile.TemporaryDirectory(prefix="hashidate-tts-") as root:
+            (Path(root) / "ref.pt").write_bytes(b"x")
+            gate = threading.Event()
+            order: list = []
+            mark = types.SimpleNamespace(
+                claim=lambda runtime: order.append("claim"),
+                self_test=lambda runtime, audio, rate: order.append("self_test"),
+            )
+            ns = load_startup(Path(root), self.make_runtime(gate, order), mark)
+            loader = threading.Thread(target=ns["_load_model"])
+            loader.start()
+            try:
+                while "warmup" not in order:
+                    loader.join(0.01)
+                self.assertFalse(ns["health"]()["ready"])
+                with self.assertRaises(StubHttpError) as refused:
+                    ns["speak"](types.SimpleNamespace())
+                self.assertEqual(refused.exception.status_code, 503)
+            finally:
+                gate.set()
+                loader.join(5)
+            self.assertEqual(order, ["claim", "warmup", "self_test"])
+            self.assertTrue(ns["health"]()["ready"])
+            self.assertEqual(ns["stopped"], [])
+
+    def test_a_failed_self_test_never_becomes_ready_and_stops_the_process(self):
+        with tempfile.TemporaryDirectory(prefix="hashidate-tts-") as root:
+            (Path(root) / "ref.pt").write_bytes(b"x")
+            gate = threading.Event()
+            gate.set()
+
+            def refuse(runtime, audio, rate):
+                raise RuntimeError("mark unreadable")
+
+            mark = types.SimpleNamespace(claim=lambda runtime: None, self_test=refuse)
+            ns = load_startup(Path(root), self.make_runtime(gate, []), mark)
+            with contextlib.redirect_stderr(io.StringIO()):
+                ns["_load_model"]()
+            self.assertFalse(ns["health"]()["ready"])
+            self.assertEqual(ns["stopped"], [True])
+            self.assertIsInstance(ns["_startup_error"], RuntimeError)
+
+    def test_missing_reference_latents_stop_the_process(self):
+        with tempfile.TemporaryDirectory(prefix="hashidate-tts-") as root:
+            mark = types.SimpleNamespace(claim=lambda r: None, self_test=lambda r, a, s: None)
+            ns = load_startup(Path(root), None, mark)
+            with contextlib.redirect_stderr(io.StringIO()):
+                ns["_load_model"]()
+            self.assertEqual(ns["stopped"], [True])
+            self.assertFalse(ns["health"]()["ready"])
 
 
 if __name__ == "__main__":

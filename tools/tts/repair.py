@@ -79,7 +79,7 @@ functions have already finished with. Both passes below therefore run at full
 strength, and neither has a setting that exists to protect anything.
 
 The order that makes that true is in `server.py`, and it is the only order that
-works: clean, trim, then mark.
+works: clean, close, trim, then mark.
 """
 
 import numpy as np
