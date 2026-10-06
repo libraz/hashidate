@@ -198,8 +198,8 @@ describe('original01 root-hinge integration descriptor', () => {
     );
   });
 
-  it('builds the V128 main-cuffs roster from an explicit exported URL', () => {
-    const url = '/models/v128-main-cuffs.glb';
+  it('builds the main-cuffs roster from an explicit exported URL', () => {
+    const url = '/models/main-cuffs.glb';
     const descriptor = createOriginal01AllOutfitsRootHingeMainCuffs(url);
     const base = mainDress(original01AllOutfitsRootHinge);
     const main = mainDress(descriptor);
@@ -214,7 +214,7 @@ describe('original01 root-hinge integration descriptor', () => {
       'V125_Main_SleeveCuffBinding_R_Prox',
     ];
 
-    expect(descriptor.id).toBe('original-01-v02-all-outfits-root-hinge-main-cuffs-v128');
+    expect(descriptor.id).toBe('original-01-v02-all-outfits-root-hinge-main-cuffs');
     expect(descriptor.url).toBe(url);
     expect(main.meshes).toEqual([
       'V02_Main_Bodice_R034',
@@ -264,14 +264,14 @@ describe('original01 root-hinge integration descriptor', () => {
   });
 
   it('appends exactly one rear-bow connector to Main while preserving shared descriptor objects', () => {
-    const url = '/models/v208-rear-bow-v004.glb';
+    const url = '/models/rear-bow.glb';
     const base = createOriginal01AllOutfitsRootHingeMainCuffs(url);
     const descriptor = createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector(url);
     const baseMain = mainDress(base);
     const main = mainDress(descriptor);
     const connector = 'V02WaistPreview_Back_Connector';
 
-    expect(descriptor.id).toBe('original-01-v02-all-outfits-root-hinge-main-cuffs-rear-bow-v208');
+    expect(descriptor.id).toBe('original-01-v02-all-outfits-root-hinge-main-cuffs-rear-bow');
     expect(descriptor.url).toBe(url);
     expect(main.meshes.filter((mesh) => mesh === connector)).toEqual([connector]);
     expect(main.meshes).toEqual([...baseMain.meshes, connector]);
@@ -295,14 +295,14 @@ describe('original01 root-hinge integration descriptor', () => {
     );
   });
 
-  it('appends exactly one Mid-band frill to the V208 main dress', () => {
-    const url = '/models/v477-mid-frill.glb';
+  it('appends exactly one Mid-band frill to the rear-bow main dress', () => {
+    const url = '/models/mid-frill.glb';
     const base = createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector(url);
     const descriptor = createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidFrill(url);
     const frill = 'V477_Main_Skirt_Mid_Frill_Upper';
 
     expect(descriptor.id).toBe(
-      'original-01-v02-all-outfits-root-hinge-main-cuffs-rear-bow-mid-frill-v477',
+      'original-01-v02-all-outfits-root-hinge-main-cuffs-rear-bow-mid-frill',
     );
     expect(descriptor.url).toBe(url);
     expect(mainDress(descriptor).meshes).toEqual([...mainDress(base).meshes, frill]);

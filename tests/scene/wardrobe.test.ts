@@ -77,8 +77,8 @@ function dress(table: WardrobeTable = TABLE): Fixture {
 }
 
 describe('wardrobe visibility', () => {
-  it('shows all main cuffs only with the main outfit on the V128 descriptor', () => {
-    const descriptor = createOriginal01AllOutfitsRootHingeMainCuffs('/models/v128-test.glb');
+  it('shows all main cuffs only with the main outfit on the main-cuffs descriptor', () => {
+    const descriptor = createOriginal01AllOutfitsRootHingeMainCuffs('/models/main-cuffs-test.glb');
     const table = descriptor.wardrobe;
     if (!table) throw new Error('main-cuffs wardrobe is missing');
     const garments = [
@@ -116,9 +116,10 @@ describe('wardrobe visibility', () => {
     expect(rig.meshes.get('V02_CapeJacket_Shell')?.visible).toBe(true);
   });
 
-  it('resolves the V208 connector exactly once and keeps it Main-only', () => {
-    const descriptor =
-      createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector('/models/v208-test.glb');
+  it('resolves the rear-bow connector exactly once and keeps it Main-only', () => {
+    const descriptor = createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector(
+      '/models/rear-bow-test.glb',
+    );
     const table = descriptor.wardrobe;
     if (!table) throw new Error('rear-bow connector wardrobe is missing');
     const garments = [

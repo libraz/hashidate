@@ -6,12 +6,12 @@ import {
 
 describe('Pout speech corrective candidate', () => {
   it('clones the cuff charm profile and maps Pout to its excluded helper key', () => {
-    const base = createOriginal01MainCuffCharmGravity('/v510.glb');
-    const candidate = createOriginal01MainPoutSpeechCorrective('/v512-candidate.glb');
+    const base = createOriginal01MainCuffCharmGravity('/base.glb');
+    const candidate = createOriginal01MainPoutSpeechCorrective('/candidate.glb');
     const helper = 'V02_SpeechNeutralizer_Pout';
 
-    expect(candidate.id).toBe('original-01-main-pout-speech-corrective-v512');
-    expect(candidate.url).toBe('/v512-candidate.glb');
+    expect(candidate.id).toBe('original-01-main-pout-speech-corrective');
+    expect(candidate.url).toBe('/candidate.glb');
     expect(candidate.sway).toEqual(base.sway);
     expect(candidate.wardrobe).toEqual(base.wardrobe);
     expect(candidate.materials).toEqual(base.materials);

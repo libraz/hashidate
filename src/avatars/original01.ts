@@ -662,7 +662,7 @@ const mainCuffMeshes = [
 ];
 
 /**
- * Build the V128 descriptor for a GLB exported with `--main-cuffs --tiered-skirt`
+ * Build the main-cuffs descriptor for a GLB exported with `--main-cuffs --tiered-skirt`
  * from `all-outfits-stockings-boots-waist-tail`, the all-outfits root-hinge /
  * tail-compatible profile. The caller supplies the actual exported GLB URL;
  * this factory never invents or reuses one.
@@ -703,17 +703,17 @@ export function createOriginal01AllOutfitsRootHingeMainCuffs(url: string): Avata
   };
   return {
     ...original01AllOutfitsRootHinge,
-    id: 'original-01-v02-all-outfits-root-hinge-main-cuffs-v128',
+    id: 'original-01-v02-all-outfits-root-hinge-main-cuffs',
     url,
     wardrobe,
   };
 }
 
 /**
- * Build the V208 descriptor for the rear-bow connector addition.
+ * Build the descriptor that adds the rear-bow connector to the main-cuffs dress.
  *
  * The connector belongs to the main dress only.  Keeping this as a second
- * factory means the V128 main-cuffs descriptor, its registry consumers, and
+ * factory means the main-cuffs descriptor, its registry consumers, and
  * all shared motion/material/preset objects remain unchanged.
  */
 export function createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector(
@@ -722,14 +722,14 @@ export function createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector(
   return withMainDressMesh(
     createOriginal01AllOutfitsRootHingeMainCuffs(url),
     'V02WaistPreview_Back_Connector',
-    'original-01-v02-all-outfits-root-hinge-main-cuffs-rear-bow-v208',
+    'original-01-v02-all-outfits-root-hinge-main-cuffs-rear-bow',
     'Rear-bow connector',
   );
 }
 
 /**
- * Build the V477 descriptor for a GLB exported with `--mid-upper-frill`: the
- * V208 main dress plus the extra ruffle tier on the skirt's Mid band.
+ * Build the Mid-band frill descriptor for a GLB exported with `--mid-upper-frill`:
+ * the rear-bow main dress plus the extra ruffle tier on the skirt's Mid band.
  */
 export function createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidFrill(
   url: string,
@@ -737,7 +737,7 @@ export function createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidF
   return withMainDressMesh(
     createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector(url),
     'V477_Main_Skirt_Mid_Frill_Upper',
-    'original-01-v02-all-outfits-root-hinge-main-cuffs-rear-bow-mid-frill-v477',
+    'original-01-v02-all-outfits-root-hinge-main-cuffs-rear-bow-mid-frill',
     'Mid-band frill',
   );
 }
@@ -748,7 +748,7 @@ export function createOriginal01MainOverskirtFrontSpring(url: string): AvatarDes
   if (!base.sway) throw new Error('Main overskirt requires spring data');
   return {
     ...base,
-    id: 'original-01-main-overskirt-front-v508',
+    id: 'original-01-main-overskirt-front',
     sway: {
       ...base.sway,
       groups: [
@@ -796,7 +796,7 @@ export function createOriginal01MainOverskirtCharmGravity(
           },
         }
       : {}),
-    id: 'original-01-main-overskirt-charm-gravity-v509',
+    id: 'original-01-main-overskirt-charm-gravity',
     sway: {
       ...base.sway,
       groups: [
@@ -824,7 +824,7 @@ export function createOriginal01MainCuffCharmGravity(url: string): AvatarDescrip
   if (!base.sway) throw new Error('Main cuff ornaments require spring data');
   return {
     ...base,
-    id: 'original-01-main-cuff-charm-gravity-v510',
+    id: 'original-01-main-cuff-charm-gravity',
     sway: {
       ...base.sway,
       groups: [
@@ -845,7 +845,7 @@ export function createOriginal01MainCuffCharmGravity(url: string): AvatarDescrip
   };
 }
 
-/** Add the authored Pout-only speech neutralizer contract to the V510 cuff profile. */
+/** Add the authored Pout-only speech neutralizer contract to the cuff charm profile. */
 export function createOriginal01MainPoutSpeechCorrective(url: string): AvatarDescriptor {
   const base = createOriginal01MainCuffCharmGravity(url);
   const presets = base.presets;
@@ -853,7 +853,7 @@ export function createOriginal01MainPoutSpeechCorrective(url: string): AvatarDes
 
   return {
     ...base,
-    id: 'original-01-main-pout-speech-corrective-v512',
+    id: 'original-01-main-pout-speech-corrective',
     presets: {
       ...presets,
       exclude: [...(presets.exclude ?? []), 'V02_SpeechNeutralizer_Pout'],
@@ -869,13 +869,13 @@ export function createOriginal01MainPoutSpeechCorrective(url: string): AvatarDes
   };
 }
 
-/** Resolve the V519 cuff lace chains without changing the registered Main profile. */
+/** Resolve the cuff lace chains without changing the registered Main profile. */
 export function createOriginal01MainCuffLaceGravity(url: string): AvatarDescriptor {
   const base = createOriginal01MainPoutSpeechCorrective(url);
   if (!base.sway) throw new Error('Main cuff lace requires spring data');
   return {
     ...base,
-    id: 'original-01-main-cuff-lace-gravity-v519',
+    id: 'original-01-main-cuff-lace-gravity',
     sway: {
       ...base.sway,
       colliders: {
