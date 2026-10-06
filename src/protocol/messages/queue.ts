@@ -115,7 +115,8 @@ export type QueueUpdate = z.infer<typeof queueUpdateSchema>;
  * apart.
  *
  * `interrupt` decides what happens to the line currently on air: cut it off
- * where it is, or let it finish and start the rewound script after it. It is a
+ * where it is, or let it finish and start the rewound script after it. A `from`
+ * that cuts it puts it back too, after the lines it followed. It is a
  * choice per operation and has no default — cutting a character off mid-word is
  * sometimes exactly right and is never something to do by accident.
  */

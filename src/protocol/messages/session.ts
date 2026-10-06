@@ -57,9 +57,13 @@ export const sessionEventSchema = z.object({
   turns: z.array(z.string()).optional(),
   queued: z.number().optional(),
   seconds: z.number().optional(),
-  /** Stable `${turn}:cue:${ordinal}` id for an inline BGM cue. */
+  /** Stable `${turn}:cue:${ordinal}` id for an inline cue that fired. */
   cueId: z.string().optional(),
-  /** The BGM inline cue action requested at that point in the turn. */
+  /**
+   * The inline cue action that fired: BGM, which the server runs, or a camera,
+   * page or performance cue, whose lasting effect the server keeps for a
+   * renderer that attaches later.
+   */
   cue: inlineCueActionSchema.optional(),
   /** Stamped by the server on arrival, not by the engine. */
   seq: z.number().optional(),

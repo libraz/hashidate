@@ -54,13 +54,15 @@ An axis left out of `stage` keeps what it had; `null` empties it — dry for a r
 | `GET /api/bgm` | The MP3 and FLAC files directly under the configured BGM directory. Re-scanned on every request. |
 | `GET /bgm/<id>` | One BGM file for a renderer, with byte-range requests. `HEAD` is accepted too. |
 | `GET /api/scripts` | The scripts in `show/scripts/`, summarised — title, how many lines, when it was saved — with any file that would not parse listed beside them. Re-read rather than cached, because a script is edited in a text editor beside the panel. |
-| `POST /api/scripts/run` | Clear, setup, queue: the three steps a script needs, done here because the panel cannot read a file. Holds the queue by default; `pause: false` runs it live. |
+| `POST /api/scripts/run` | Setup, then queue: the steps a script needs, done here because the panel cannot read a file. The pending list is cleared first only with `replace: true`. Holds the queue by default; `pause: false` runs it live. |
 | `POST /api/record/start` | Open a take and tell the renderers to roll. `release: true` releases a held queue once bytes are actually being written. |
 | `POST /api/record/stop` | End it. The file stays open for a moment afterwards while the encoder flushes what it is holding. |
 | `POST /api/record/chunk` | The renderer's encoded video, a second at a time. Not for callers, and the one route here whose body is not JSON. |
 | `GET /api/stream` | The viewer's SSE down-channel. |
 | `POST /api/report` | The viewer's up-channel, and its heartbeat. Not for callers. |
 | `POST /api/speech` | The viewer's route to the speech sidecar. Not for callers. 503 when there is no sidecar, which is a normal answer. |
+
+Every route answers loopback only. A request whose `Host` is not `127.0.0.1` or `localhost`, or whose `Origin` is not the address it was sent to, is refused with `403` before anything is applied or served, and no CORS header is ever sent. Callers with no browser behind them send no `Origin` and are unaffected. JSON bodies are capped at 4 MiB; a larger one is answered `413`.
 
 Unknown command elements in a mixed `batch` are dropped while known elements are still delivered. If no element is known, the request returns `400` (`no command`). Unknown fields are stripped from ordinary command schemas. `tune` is strict at its command and group boundaries, so a misspelled group or field fails instead of becoming a successful no-op. The orchestrator and the renderer are separate processes with separate release cycles, so a newer caller talking to an older renderer degrades without breaking the stream.
 
@@ -83,13 +85,19 @@ Beside the state it carries three things the renderer reports about *itself* rat
 And four the *server* owns rather than any renderer, because they concern files it has open, the list it holds, and standing state it coordinates:
 
 - `recording` — the take being written, with how many bytes have landed on disk. Null when there is none. It is the server's own figure because a recorder that has quietly stopped and one that is still going look identical from the page doing the recording.
-- `airing` — the turns a renderer has started and not yet ended, with their text. `state.turn` says which line is being said and this says what it says: a started line is out of `queue` by then and does not reach the history until it is over. Only lines that went through the queue are here — a `say` posted straight to `/api/command` never enters it.
+- `airing` — the turns a renderer has started and not yet ended, with their text. `state.turn` says which line is being said and this says what it says: a started line is out of `queue` by then and does not reach the history until it is over. Every turn goes through the queue, a `say` posted to `/api/command` included, so every line said is here.
 - `paused` — whether the queue is held. See [Recording](recording.md).
 - `bgm` — the selected track, transport and position, level, loop, fade settings and resolved BGM-only DSP values. It also folds in playback errors and a dry-effect fallback reported by audible renderers.
 
 The viewer sends the same page identity as `?renderer=<id>` on its SSE connection and reports. This lets the server distinguish a reconnect from the loss of every renderer that started an on-air line.
 
-A `turn.end` event with `interrupted: true` means the active turn ended during avatar replacement or renderer recovery. The server files that line as interrupted in history and retains pending lines. An operator interrupt still uses `turn.interrupted` and clears the pending queue.
+A `turn.end` event with `interrupted: true` means the active turn ended during avatar replacement or renderer recovery. The server files that line as interrupted in history and retains pending lines.
+
+The server's queue is the only one that counts. `say`, `clear`, `interrupt` and `queue` posted to `/api/command` change it on arrival, before any renderer hears of them, and a renderer's `turn.interrupted` or `queue.dropped` afterwards only files the line that was cut. That is why a rewind that cuts the line on air keeps the list it put back, however many renderers answer the cut.
+
+A renderer that attaches while a line is on air is handed the queue held, and released when that line ends, so it joins in step rather than running a line ahead of the others. It is also handed the shot, the set, the page and the mood as the lines said so far left them, not only as commands set them.
+
+`POST /api/command` answers with `fates`, one per command: `delivered` to at least one viewer, `retained` by the server for whichever renderer attaches next — the setup, the queue verbs and the BGM transport — or `lost`. `ok` is false, with status 503, only when something was lost. `POST /api/scripts/run` reports its setup the same way, as `setupFates`.
 
 ## Next
 

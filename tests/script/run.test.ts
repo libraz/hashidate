@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CommandRequest, QueueResponse, TurnRequest } from '@/protocol';
 import type { LoadedScript } from '@/script';
-import { runScript, type ScriptControl } from '@/script/run';
+import { runScript, type ScriptControl, setupOutcome } from '@/script/run';
 
 const loaded = (setup?: LoadedScript['script']['setup']): LoadedScript => ({
   id: 'opening',
@@ -94,5 +94,37 @@ describe('runScript', () => {
     const client = control();
     await runScript(client, loaded(), { hold: true });
     expect(client.calls).toEqual(['hold true', 'queue']);
+  });
+});
+
+describe('setupOutcome', () => {
+  const commands = [{ cmd: 'avatar' }, { cmd: 'gesture' }];
+  const fates = (...f: string[]) => ({ ok: false, viewers: 0, ids: [], fates: f });
+
+  it('reports an error string and a bare refusal as failures', () => {
+    expect(setupOutcome({ error: 'HTTP 400' }, commands)).toEqual({ error: 'HTTP 400', lost: [] });
+    expect(setupOutcome({ ok: false }, commands).error).toBe('control command was not delivered');
+  });
+
+  it('names lost commands rather than failing when the response also carries an error string', () => {
+    expect(
+      setupOutcome({ ...fates('retained', 'lost'), error: 'no viewer connected' }, commands),
+    ).toEqual({ error: null, lost: ['gesture'] });
+  });
+
+  it('names only the commands that were lost when fates are present', () => {
+    expect(setupOutcome(fates('retained', 'lost'), commands)).toEqual({
+      error: null,
+      lost: ['gesture'],
+    });
+  });
+
+  it('stays quiet for a delivered setup', () => {
+    expect(
+      setupOutcome({ ok: true, viewers: 1, ids: [], fates: ['delivered', 'delivered'] }, commands),
+    ).toEqual({
+      error: null,
+      lost: [],
+    });
   });
 });

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionEvent, StreamMessage } from '@/protocol';
-import { EXPECTED_INTERRUPT_SECONDS, Hub, STATE_STALE_SECONDS } from '@/server/hub';
+import { ECHO_SECONDS, Hub, STATE_STALE_SECONDS } from '@/server/hub';
 import { EPOCH_MS, event, state } from './fixtures';
 
 /**
@@ -94,7 +94,16 @@ describe('the pending queue', () => {
 
     const reconnect: StreamMessage[] = [];
     hub.subscribe((message) => reconnect.push(message));
-    expect(reconnect).toEqual([{ type: 'command', commands: [{ cmd: 'queue', turns: [] }] }]);
+    // Held as well, because the line it missed the start of is still on air.
+    expect(reconnect).toEqual([
+      {
+        type: 'command',
+        commands: [
+          { cmd: 'pause', on: true },
+          { cmd: 'queue', turns: [] },
+        ],
+      },
+    ]);
     expect(hub.queue.airing().map((entry) => entry.id)).toEqual([running.id]);
   });
 
@@ -106,18 +115,62 @@ describe('the pending queue', () => {
     expect(hub.queue.list().map((e) => e.id)).toEqual([b.id]);
   });
 
-  it('empties itself when the renderer reports an interrupt', () => {
-    hub.queue.add([{ text: 'あ' }, { text: 'い' }]);
-    hub.report({ events: [{ type: 'turn.interrupted', turn: 'x' }] });
-    // Without this the list would be re-delivered on the next edit and the
-    // stream would resume a script the operator had just killed.
-    expect(hub.queue.list()).toEqual([]);
+  it('empties itself when an interrupt or a clear is sent, before any renderer answers', () => {
+    for (const cmd of ['interrupt', 'clear'] as const) {
+      hub.queue.add([{ text: 'あ' }, { text: 'い' }]);
+      hub.send({ type: 'command', commands: [{ cmd }] });
+      // Without this a publish in the gap before the renderers answer would
+      // hand them back the script the operator had just killed.
+      expect(hub.queue.list()).toEqual([]);
+    }
   });
 
-  it('drops exactly the entries a clear dropped', () => {
+  it('empties itself with nothing attached, and a later publish brings nothing back', () => {
+    hub.queue.add([{ text: 'あ' }, { text: 'い' }]);
+    expect(hub.command([{ cmd: 'clear' }]).fates).toEqual(['retained']);
+
+    const frames: StreamMessage[] = [];
+    hub.subscribe((message) => frames.push(message));
+    hub.queue.add([{ text: 'う' }]);
+    hub.publishQueue();
+
+    const last = frames.at(-1);
+    const queue = last?.type === 'command' ? last.commands.at(-1) : undefined;
+    expect(queue?.cmd === 'queue' ? queue.turns.map((turn) => turn.text) : null).toEqual(['う']);
+  });
+
+  it('acts on nothing when a renderer reports what it dropped', () => {
     const [a, b, c] = hub.queue.add([{ text: 'あ' }, { text: 'い' }, { text: 'う' }]);
     hub.report({ events: [{ type: 'queue.dropped', turns: [a.id, c.id] }] });
-    expect(hub.queue.list().map((e) => e.id)).toEqual([b.id]);
+    expect(hub.queue.list().map((e) => e.id)).toEqual([a.id, b.id, c.id]);
+  });
+
+  it('queues a say from the command route, so a later publish carries it', () => {
+    const frames: StreamMessage[] = [];
+    hub.subscribe((message) => frames.push(message));
+    const { ids, fates } = hub.command([{ cmd: 'say', id: 'mine', text: 'direct' }]);
+    hub.queue.add([{ text: 'queued' }]);
+    hub.publishQueue();
+
+    expect(ids).toEqual(['mine']);
+    expect(fates).toEqual(['delivered']);
+    const last = frames.at(-1);
+    const queue = last?.type === 'command' ? last.commands[0] : undefined;
+    expect(queue?.cmd === 'queue' ? queue.turns.map((turn) => turn.id) : null).toEqual([
+      'mine',
+      expect.any(String),
+    ]);
+    // The renderer never receives a bare say the server does not also hold.
+    expect(frames.flatMap((frame) => frame.commands).some((c) => c.cmd === 'say')).toBe(false);
+    hub.report({ events: [event('mine', 'turn.end')] });
+    expect(hub.queue.history().map((entry) => entry.id)).toEqual(['mine']);
+  });
+
+  it('mints a fresh id for a say whose id already names a turn', () => {
+    const { ids: first } = hub.command([{ cmd: 'say', id: 'same', text: 'a' }]);
+    const { ids: second } = hub.command([{ cmd: 'say', id: 'same', text: 'b' }]);
+    expect(first).toEqual(['same']);
+    expect(second[0]).not.toBe('same');
   });
 
   it('reports the queue even when the state has gone stale', () => {
@@ -282,14 +335,15 @@ describe('the history and rewinding', () => {
     expect(hub.queue.history().map((e) => e.id)).toEqual([id]);
   });
 
-  it('files the line that was cut off, and drops the rest of the list', () => {
+  it('files the line that was cut off, and leaves the pending list to the server', () => {
     const [running] = hub.queue.add([{ text: 'running' }]);
     hub.queue.add([{ text: 'pending' }]);
+    hub.report({ events: [event(running.id, 'turn.start')] });
     hub.report({ events: [event(running.id, 'turn.interrupted')] });
 
-    // Everything pending goes: the operator killed the script. The line that was
-    // being said is kept, because it was said, if only partly.
-    expect(hub.queue.list()).toEqual([]);
+    // A renderer's report of a cut files the line, which was said if only
+    // partly. What happens to the rest was decided when the interrupt was sent.
+    expect(hub.queue.list().map((e) => e.text)).toEqual(['pending']);
     expect(hub.queue.history().map((e) => e.interrupted)).toEqual([true]);
   });
 
@@ -321,74 +375,52 @@ describe('the history and rewinding', () => {
     expect(commands[0]).toMatchObject({ cmd: 'queue' });
   });
 
-  it('does not empty the queue on the interrupt its own rewind caused', () => {
-    const first = spoke('a');
-    const second = spoke('b');
-    const running = hub.queue.add([{ text: 'on air' }])[0].id;
-
-    hub.rewind(first, 'from', { interrupt: true });
-    // The renderer answers the interrupt a moment later.
-    hub.report({ events: [event(running, 'turn.interrupted')] });
-
-    expect(hub.queue.list().map((e) => e.text)).toEqual(['a', 'b']);
-    expect(second).not.toBe(first);
-  });
-
   /**
-   * The case the interrupt window is actually for.
-   *
-   * Every renderer answers one cut, so the same `turn.interrupted` comes back
-   * once per renderer — and read as a report each, the second one is the
-   * operator hitting stop and empties the list the rewind had just filled. The
-   * reports are spaced past `ECHO_SECONDS` on purpose: this is the window doing
-   * the work and not the echo filter, and both have to hold on their own.
+   * Every renderer answers one cut, and the real `Session.interrupt` answers
+   * with both a `turn.interrupted` and a `queue.dropped` naming every line it
+   * held. Spaced past `ECHO_SECONDS`, so this is not the echo filter at work.
    */
-  it('takes one cut answered by three renderers as the one interrupt it caused', () => {
+  it('keeps the rewound line and every pending line through the cut three renderers answer', () => {
     const said = spoke('a');
     const running = hub.queue.add([{ text: 'on air' }])[0].id;
-    hub.queue.add([{ text: 'pending' }]);
+    hub.report({ events: [event(running, 'turn.start')] });
+    const [pending] = hub.queue.add([{ text: 'pending' }]);
 
     hub.rewind(said, 'one', { interrupt: true });
     for (let i = 0; i < 3; i += 1) {
-      hub.report({ events: [event(running, 'turn.interrupted')] });
-      vi.advanceTimersByTime(1_200);
+      hub.report({
+        events: [
+          event(running, 'turn.interrupted'),
+          { type: 'queue.dropped', turns: [pending.id] },
+        ],
+      });
+      vi.advanceTimersByTime(ECHO_SECONDS * 1000 + 200);
     }
 
     expect(hub.queue.list().map((e) => e.text)).toEqual(['a', 'pending']);
+    expect(hub.queue.list()[1].id).toBe(pending.id);
+    expect(hub.queue.history().map((e) => e.text)).toEqual(['a', 'on air']);
   });
 
-  it('empties it for an interrupt naming another turn, however late in the window', () => {
-    const said = spoke('a');
-    hub.rewind(said, 'one', { interrupt: true });
-    hub.report({ events: [event('on-air', 'turn.interrupted')] });
-    expect(hub.queue.list()).toHaveLength(1);
+  it('puts the cut line back after the lines a from-rewind brings back', () => {
+    const first = spoke('a');
+    spoke('b');
+    const running = hub.queue.add([{ text: 'on air' }])[0].id;
+    hub.report({ events: [event(running, 'turn.start')] });
+    hub.queue.add([{ text: 'pending' }]);
 
-    // Still inside the window, and still not ours: the rewind cut the turn it
-    // named, so anything after it is a line that came later.
-    vi.advanceTimersByTime((EXPECTED_INTERRUPT_SECONDS - 1) * 1000);
-    hub.report({ events: [event('the-next-one', 'turn.interrupted')] });
-    expect(hub.queue.list()).toEqual([]);
+    hub.rewind(first, 'from', { interrupt: true });
+    hub.report({ events: [event(running, 'turn.interrupted')] });
+
+    expect(hub.queue.list().map((e) => e.text)).toEqual(['a', 'b', 'on air', 'pending']);
   });
 
-  it('expects one interrupt only, so the next genuine one still empties it', () => {
+  it('still empties the list for an interrupt sent after a rewind', () => {
     const id = spoke('a');
     hub.rewind(id, 'one', { interrupt: true });
-    hub.report({ events: [event('on-air-1', 'turn.interrupted')] });
     expect(hub.queue.list()).toHaveLength(1);
 
-    // The operator hits stop. Nothing about this one was asked for.
-    hub.report({ events: [event('on-air-2', 'turn.interrupted')] });
-    expect(hub.queue.list()).toEqual([]);
-  });
-
-  it('stops expecting an interrupt that never came', () => {
-    const id = spoke('a');
-    hub.rewind(id, 'one', { interrupt: true });
-    vi.advanceTimersByTime(EXPECTED_INTERRUPT_SECONDS * 1000);
-
-    hub.report({ events: [event('on-air', 'turn.interrupted')] });
-
-    // A renderer that never answered must not leave the kill switch disarmed.
+    hub.send({ type: 'command', commands: [{ cmd: 'interrupt' }] });
     expect(hub.queue.list()).toEqual([]);
   });
 

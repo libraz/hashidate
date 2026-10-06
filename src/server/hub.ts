@@ -17,6 +17,7 @@ import type {
   Vocabulary,
   VoiceReport,
 } from '../protocol';
+import type { CommandFate } from '../protocol/messages';
 import type { BgmSource } from './bgm';
 import { BgmCoordinator } from './bgm-state';
 import type { DeckSource } from './decks';
@@ -80,34 +81,6 @@ export const RECORD_FLUSH_SECONDS = 6.0;
 export const RECORD_ORPHAN_SECONDS = 6.0;
 
 /**
- * How long an interrupt this server sent stays expected.
- *
- * A rewind that cuts the line on air sends `interrupt` and the rewound list in
- * the same breath, and the renderer answers with `turn.interrupted` a moment
- * later. That event normally means the operator hit the kill switch, and this
- * hub answers it by emptying the pending list — which, arriving just after a
- * rewind, would empty the list the rewind had only just filled.
- *
- * The window is long enough to cover a renderer that is a frame or two behind
- * and short enough that it cannot swallow a genuine interrupt the operator
- * meant.
- *
- * **What is expected is a turn, not a report.** More than one renderer is the
- * ordinary case rather than the odd one — the panel's preview and whatever is
- * on air are two, and the native shell's stage window is a third — and one
- * interrupt cuts the same line in all of them, so the same `turn.interrupted`
- * comes back once per renderer. Expecting a single report and then forgetting
- * meant the second renderer's echo read as the operator hitting stop, and the
- * list the rewind had just filled was emptied by the rewind's own answer. So
- * the first echo inside the window says which turn was cut, and every echo of
- * that same turn is the one interrupt being reported again. An echo naming a
- * *different* turn is somebody having pressed something, and still empties the
- * list: a rewind has already cut the turn it named, so a later interrupt can
- * only be about a line that came after it.
- */
-export const EXPECTED_INTERRUPT_SECONDS = 5.0;
-
-/**
  * How long an event already logged stays the same event when it arrives again.
  *
  * Every renderer reports what it did, and they are all doing the same thing —
@@ -116,12 +89,29 @@ export const EXPECTED_INTERRUPT_SECONDS = 5.0;
  * an orchestrator polling `/api/events`, and an LLM loop waiting for a line to
  * finish is woken once per renderer instead of once per line.
  *
- * A repeat is only an echo while the same subject and event type are inside the
- * short window. A line put back by a rewind is said again under a new id; a
- * legacy client reusing one must wait past this window before its second event
- * can be distinguished from another renderer's report.
+ * Turn lifecycle events are not timed at all: a turn id names one line once —
+ * the queue mints a fresh one for a line put back by a rewind — so its start,
+ * end and interrupt are each kept once however far apart renderers report them.
+ * See `acceptedTurnEvents`. This window is for the rest: a drop names a set of
+ * lines, and the same set can be dropped again later.
  */
 export const ECHO_SECONDS = 2.0;
+
+/** The turn lifecycle events matched by id rather than by `ECHO_SECONDS`. */
+const TURN_EVENTS = new Set<SessionEvent['type']>(['turn.start', 'turn.end', 'turn.interrupted']);
+
+/** The verbs that act on the server's queue, and are applied to it before any renderer. */
+const QUEUE_VERBS = new Set<Command['cmd']>(['say', 'queue', 'clear', 'interrupt']);
+
+/** What became of one command in a caller's batch. See `commandFateSchema`. */
+export interface CommandOutcome {
+  /** How many viewers the batch was handed to. */
+  viewers: number;
+  /** One per command, in order. */
+  fates: CommandFate[];
+  /** The turn id each `say` was queued under, by position; undefined for the rest. */
+  ids: (string | undefined)[];
+}
 
 /** One connected viewer's down-channel. */
 export type ViewerListener = (message: StreamMessage) => void;
@@ -130,6 +120,8 @@ export type ViewerListener = (message: StreamMessage) => void;
 interface ViewerClient {
   listener: ViewerListener;
   rendererId?: string;
+  /** Attached mid-line, and held until the line on air ends. See `subscribe`. */
+  held?: boolean;
 }
 
 /** Internal owner marker for a legacy report that carried no renderer id. */
@@ -171,6 +163,14 @@ function eventSubject(event: SessionEvent): string | null {
   return null;
 }
 
+/** Add a key to an arrival-ordered set, dropping the oldest past `EVENT_LOG_MAX`. */
+function remember(keys: Set<string>, key: string): void {
+  keys.add(key);
+  if (keys.size <= EVENT_LOG_MAX) return;
+  const oldest = keys.values().next().value;
+  if (oldest !== undefined) keys.delete(oldest);
+}
+
 export class Hub {
   // The original guarded every field here with a re-entrant lock and woke
   // waiters through a condition variable. Node runs one thread and nothing
@@ -204,16 +204,11 @@ export class Hub {
   /** Last valid report, including avatar-only heartbeats. */
   private heartbeatAt = 0;
   private stateAt = 0;
-  /** See `EXPECTED_INTERRUPT_SECONDS`. Epoch seconds, zero for none pending. */
-  private interruptExpectedUntil = 0;
   /**
-   * Which turn the interrupt inside that window cut, once a renderer has said.
-   *
-   * Null until the first echo arrives, because the line on air is the
-   * renderer's to name: this hub knows it only from the last report, which may
-   * be a report behind by the time the interrupt lands.
+   * `type:turn` keys of the lifecycle events already logged, in arrival order
+   * and bounded like the event log. See `ECHO_SECONDS`.
    */
-  private interruptExpectedTurn: string | null = null;
+  private readonly acceptedTurnEvents = new Set<string>();
 
   /**
    * The pending turns, and the authority on what they are. See `queue.ts`.
@@ -312,6 +307,11 @@ export class Hub {
    * including the queue, which is why the two cannot be sent as two frames: the
    * queue arriving on its own after the hold had ended would be applied to the
    * old scene.
+   *
+   * A renderer attaching while a line is on air is handed the queue held, and
+   * released when that line ends. The on-air line is not replayed, so without
+   * the hold it would start the next line while every other renderer is still
+   * saying this one, and run a line ahead of them for the rest of the show.
    */
   subscribe(listener: ViewerListener, rendererId?: string): () => void {
     const client: ViewerClient = { listener, rendererId };
@@ -321,6 +321,8 @@ export class Hub {
       this.cancelOrphan(rendererId);
       this.rendererConnected(rendererId);
     }
+    // After the ownership pass, which may have filed an abandoned line.
+    client.held = this.queue.airing().length > 0;
     const commands = this.standing.commands();
     const bgm = this.bgmCoordinator.currentCommand();
     if (bgm !== null) commands.push(bgm);
@@ -329,10 +331,21 @@ export class Hub {
     // completion; silence would leave stale local rows available to play.
     // Only pending entries are re-delivered. The on-air copy is owned by the
     // renderer that started it and must not be replayed on reconnect.
+    if (client.held) commands.push({ cmd: 'pause', on: true });
     commands.push(this.queue.command());
     this.observeQueue();
     if (commands.length > 0) listener({ type: 'command', commands });
     return () => this.detach(client);
+  }
+
+  /** Hand the hold back to renderers that attached mid-line, once nothing is on air. */
+  private releaseHeld(): void {
+    if (this.queue.airing().length > 0) return;
+    for (const client of this.clients) {
+      if (!client.held) continue;
+      client.held = false;
+      client.listener({ type: 'command', commands: [{ cmd: 'pause', on: this.standing.paused }] });
+    }
   }
 
   /**
@@ -344,8 +357,7 @@ export class Hub {
    * message and no synthesis.
    */
   publishQueue(): number {
-    this.observeQueue();
-    return this.send({ type: 'command', commands: [this.queue.command()] });
+    return this.dispatch([this.queue.command()]).viewers;
   }
 
   unsubscribe(listener: ViewerListener, rendererId?: string): void {
@@ -468,11 +480,14 @@ export class Hub {
     const at = now();
     this.seq += 1;
     this.events.push({ type: 'turn.end', turn: turnId, interrupted: true, seq: this.seq, at });
+    // The end this files stands for every renderer's, should one still arrive.
+    remember(this.acceptedTurnEvents, `turn.end:${turnId}`);
     this.queue.complete(turnId, { interrupted: true });
     if (this.events.length > EVENT_LOG_MAX) {
       this.events.splice(0, this.events.length - EVENT_LOG_MAX);
     }
     this.observeQueue();
+    this.releaseHeld();
     this.wake();
   }
 
@@ -486,43 +501,21 @@ export class Hub {
    * lost the connection would be left holding a queue that had just been
    * rewound out from under it.
    *
+   * The interrupt is dispatched rather than sent: it cuts the line on air and
+   * must not empty the list it travels with, which an `interrupt` from a caller
+   * does. Nothing a renderer reports back removes a pending line either, so
+   * however many renderers answer the cut, the rewound list stands.
+   *
    * Returns the entries that went back, or null for an id the history no longer
    * has.
    */
   rewind(id: string, mode: RewindMode, { interrupt = false } = {}): QueueEntry[] | null {
-    const added = this.queue.rewind(id, mode);
+    const added = this.queue.rewind(id, mode, { cut: interrupt });
     if (added === null) return null;
-    const commands: Command[] = [];
-    if (interrupt) {
-      // Before the send, not after: the report can come back inside the same
-      // tick as the write on loopback.
-      this.interruptExpectedUntil = now() + EXPECTED_INTERRUPT_SECONDS;
-      this.interruptExpectedTurn = null;
-      commands.push({ cmd: 'interrupt' });
-    }
+    const commands: Command[] = interrupt ? [{ cmd: 'interrupt' }] : [];
     commands.push(this.queue.command());
-    this.send({ type: 'command', commands });
+    this.dispatch(commands);
     return added;
-  }
-
-  /**
-   * Whether this interrupt is one we asked for. True for every renderer's echo
-   * of it, and false for an interrupt that names any other turn.
-   *
-   * See `EXPECTED_INTERRUPT_SECONDS` for why it is counted by turn rather than
-   * by report.
-   */
-  private isExpectedInterrupt(turn: string | undefined): boolean {
-    if (now() >= this.interruptExpectedUntil) return false;
-    // An interrupt that names nothing is still one interrupt, and every
-    // renderer answers it the same way, so the empty string is a turn like any
-    // other here.
-    const named = turn ?? '';
-    if (this.interruptExpectedTurn === null) {
-      this.interruptExpectedTurn = named;
-      return true;
-    }
-    return this.interruptExpectedTurn === named;
   }
 
   /**
@@ -535,6 +528,12 @@ export class Hub {
    * the other type.
    */
   private isEcho(event: SessionEvent, at: number): boolean {
+    if (TURN_EVENTS.has(event.type) && event.turn !== undefined) {
+      const key = `${event.type}:${event.turn}`;
+      if (this.acceptedTurnEvents.has(key)) return true;
+      remember(this.acceptedTurnEvents, key);
+      return false;
+    }
     const subject = eventSubject(event);
     if (subject === null) return false;
     for (let i = this.events.length - 1; i >= 0; i -= 1) {
@@ -576,11 +575,7 @@ export class Hub {
 
     const { cueId, cue } = event;
     if (this.acceptedCueIds.has(cueId)) return true;
-    this.acceptedCueIds.add(cueId);
-    if (this.acceptedCueIds.size > EVENT_LOG_MAX) {
-      const oldest = this.acceptedCueIds.values().next().value;
-      if (oldest !== undefined) this.acceptedCueIds.delete(oldest);
-    }
+    remember(this.acceptedCueIds, cueId);
 
     const at = event.at ?? now();
     this.seq += 1;
@@ -596,6 +591,20 @@ export class Hub {
   }
 
   /**
+   * Fold one fired camera, page or performance cue into the setup.
+   *
+   * Every renderer fires the same cue and any of them may report it first; the
+   * id is consumed once, as a BGM cue's is. Not logged: what it changes is the
+   * setup, which a renderer is handed rather than told about.
+   */
+  private foldCue(event: SessionEvent): void {
+    if (event.cueId === undefined || event.cue === undefined) return;
+    if (this.acceptedCueIds.has(event.cueId)) return;
+    remember(this.acceptedCueIds, event.cueId);
+    this.standing.recordCue(event.cue);
+  }
+
+  /**
    * Hand one message to every connected viewer. Returns the count.
    *
    * Every command this server sends passes through here, which is why the setup
@@ -604,26 +613,111 @@ export class Hub {
    * connect later has to be able to hear it too.
    */
   send(message: StreamMessage): number {
-    this.observeQueue();
-    const commands = message.commands.map((command) =>
-      command.cmd === 'bgm' ? this.bgmCoordinator.apply(command) : command,
-    );
-    // Swapping an avatar creates a fresh session. Carry the authoritative
-    // pending list in the same frame so that session is not left with an empty
-    // queue until some unrelated edit happens. A caller that already supplied
-    // a queue command owns its exact replacement and must not be overwritten.
-    const avatar = commands.findIndex((command) => command.cmd === 'avatar');
-    if (avatar !== -1 && !commands.some((command) => command.cmd === 'queue')) {
-      commands.splice(avatar + 1, 0, this.queue.command());
-    }
-    for (const command of commands) this.standing.record(command);
-    this.broadcast({ type: 'command', commands });
-    return this.clients.size;
+    return this.command(message.commands).viewers;
   }
 
-  /** Fan out an already canonical message without applying it a second time. */
+  /**
+   * Apply a caller's batch, and say what became of each command in it.
+   *
+   * The queue verbs act on the server's list before any renderer hears of them:
+   * `say` queues its line, `queue` replaces the list, `clear` and `interrupt`
+   * empty it. The list then travels as one canonical `queue` after the last of
+   * them and after any avatar swap, so a renderer never holds a line the server
+   * does not, and a later publish cannot bring back a line a clear dropped.
+   *
+   * Nothing is lost for want of a renderer if the server keeps it: a queued
+   * line, a cleared list, the BGM transport and the standing setup all reach a
+   * renderer that attaches later, and are `retained` rather than `lost`.
+   */
+  command(commands: Command[]): CommandOutcome {
+    const out: Command[] = [];
+    /** Which input each outgoing command came from; -1 for the canonical queue. */
+    const origin: number[] = [];
+    const ids: (string | undefined)[] = commands.map(() => undefined);
+    let queueAt = -1;
+    let avatarAt = -1;
+    commands.forEach((command, index) => {
+      switch (command.cmd) {
+        case 'say': {
+          const { cmd: _cmd, ...turn } = command;
+          ids[index] = this.queue.say(turn).id;
+          queueAt = out.length;
+          return;
+        }
+        case 'queue':
+          this.queue.replace(command.turns);
+          queueAt = out.length;
+          return;
+        case 'clear':
+        case 'interrupt':
+          this.queue.clear();
+          queueAt = out.length + 1;
+          break;
+        case 'avatar':
+          avatarAt = out.length;
+          break;
+      }
+      out.push(command);
+      origin.push(index);
+    });
+    if (queueAt !== -1 || avatarAt !== -1) {
+      const at = Math.max(queueAt, avatarAt + 1);
+      out.splice(at, 0, this.queue.command());
+      origin.splice(at, 0, -1);
+    }
+    const { viewers, kept } = this.dispatch(out);
+    const fates: CommandFate[] = commands.map((command) =>
+      viewers > 0
+        ? 'delivered'
+        : QUEUE_VERBS.has(command.cmd) || command.cmd === 'bgm'
+          ? 'retained'
+          : 'lost',
+    );
+    if (viewers === 0) {
+      origin.forEach((index, i) => {
+        if (index !== -1 && kept[i]) fates[index] = 'retained';
+      });
+    }
+    return { viewers, fates, ids };
+  }
+
+  /**
+   * Record and fan out commands exactly as given, with no queue verb applied.
+   *
+   * For the hub's own frames, which already carry the canonical list: a rewind's
+   * `interrupt` cuts the line on air and must not empty the list beside it.
+   * Answers the viewer count and, per command, whether the standing kept it.
+   */
+  private dispatch(commands: Command[]): { viewers: number; kept: boolean[] } {
+    this.observeQueue();
+    const canonical = commands.map((command) =>
+      command.cmd === 'bgm' ? this.bgmCoordinator.apply(command) : command,
+    );
+    const kept = canonical.map((command) => this.standing.record(command));
+    this.broadcast({ type: 'command', commands: canonical });
+    return { viewers: this.clients.size, kept };
+  }
+
+  /**
+   * Fan out an already canonical message without applying it a second time.
+   *
+   * A renderer held mid-line keeps its hold through any `pause` sent meanwhile;
+   * `releaseHeld` hands it the standing value when the line ends.
+   */
   private broadcast(message: StreamMessage): void {
-    for (const client of this.clients) client.listener(message);
+    const holding = message.commands.some((command) => command.cmd === 'pause');
+    for (const client of this.clients) {
+      if (client.held && holding) {
+        client.listener({
+          type: 'command',
+          commands: message.commands.map((command) =>
+            command.cmd === 'pause' ? { ...command, on: true } : command,
+          ),
+        });
+      } else {
+        client.listener(message);
+      }
+    }
   }
 
   get viewers(): number {
@@ -791,15 +885,18 @@ export class Hub {
     if ((this.rendererConnections.get(owner) ?? 0) === 0) this.armOrphan(owner);
     const result = await this.recordings.append(session, owner, mime, chunk);
     if (result.status === 'failed') {
-      // A terminal chunk that failed at the sink still owns this take. Close it
-      // so a subsequent take is not blocked forever by a renderer that already
-      // reported its last chunk. Stale and conflict responses must never close
-      // a live take they do not own.
-      if (final) {
-        this.clearFlush();
-        await this.recordings.close(session);
-        this.clearFinishedRecording(session);
-      }
+      // A sink that failed takes no more bytes, so the take ends here: the
+      // renderers stop encoding, the file is closed, and a hold that was waiting
+      // for this take to roll comes off rather than holding the queue for a
+      // recording that is not happening. Stale and conflict responses must never
+      // close a live take they do not own.
+      const held = this.releaseOn === session;
+      if (!final) this.stopRecording(session);
+      this.releaseOn = null;
+      this.clearFlush();
+      await this.recordings.close(session);
+      this.clearFinishedRecording(session);
+      if (held) this.send({ type: 'command', commands: [{ cmd: 'pause', on: false }] });
       return result;
     }
     if (result.status !== 'accepted') return result;
@@ -947,21 +1044,25 @@ export class Hub {
       // the audible renderer's report. Once accepted, the id is consumed even
       // if another renderer reports the same cue much later.
       if (event.type === 'cue.fire') {
-        this.routeBgmCue(event, body.bgm);
+        if (event.cue?.kind === 'bgm') this.routeBgmCue(event, body.bgm);
+        else this.foldCue(event);
         continue;
       }
       const at = event.at ?? now();
-      // Dropped before anything acts on it, not merely kept out of the log:
-      // the second renderer's answer to one interrupt must not reach the kill
-      // switch below, and a turn that has already been filed does not need
-      // filing again. See `ECHO_SECONDS`.
+      // Dropped before anything acts on it, not merely kept out of the log: a
+      // turn that has already been filed does not need filing again, and a
+      // start already handed off must not fold its line a second time. See
+      // `ECHO_SECONDS`.
       if (this.isEcho(event, at)) continue;
       this.seq += 1;
       this.events.push({ ...event, seq: this.seq, at });
       // A start is the hand-off from the server's pending list to the
-      // renderer-owned on-air set. The event has already passed echo filtering,
-      // so only the first renderer's start performs this move.
-      if (event.type === 'turn.start' && event.turn) this.queue.start(event.turn);
+      // renderer-owned on-air set, and the moment what the line leaves behind —
+      // its stage and its mood — becomes the setup a later renderer is handed.
+      if (event.type === 'turn.start' && event.turn) {
+        const started = this.queue.start(event.turn);
+        if (started !== null) this.standing.recordTurn(started);
+      }
       // A line the renderer has finished with stops being pending and starts
       // being history. Driven off the event rather than off the reported
       // `queued` count, because the count says how many are left and not which
@@ -970,20 +1071,16 @@ export class Hub {
         this.queue.complete(event.turn, { interrupted: event.interrupted });
         this.clearTurnOwners(event.turn);
       }
-      // An interrupt drops everything pending in the renderer. Mirroring it here
-      // is what keeps the two lists the same: without it the queue would be
-      // re-delivered on the next edit and the stream would resume a script the
-      // operator had just killed. The line that was cut off is filed rather than
-      // dropped — it was said, if only partly, and it is the one most likely to
-      // be wanted back.
-      if (event.type === 'turn.interrupted') {
-        if (event.turn) {
-          this.queue.complete(event.turn, { interrupted: true });
-          this.clearTurnOwners(event.turn);
-        }
-        if (!this.isExpectedInterrupt(event.turn)) this.queue.clear();
+      // The line that was cut off is filed rather than dropped — it was said, if
+      // only partly, and it is the one most likely to be wanted back. The
+      // pending list is not touched: the interrupt that caused this emptied it
+      // when the server sent it, and a rewind's interrupt travelled with the
+      // list that must survive it. `queue.dropped` is logged for the same reason
+      // and acts on nothing.
+      if (event.type === 'turn.interrupted' && event.turn) {
+        this.queue.complete(event.turn, { interrupted: true });
+        this.clearTurnOwners(event.turn);
       }
-      if (event.type === 'queue.dropped') for (const id of event.turns ?? []) this.queue.remove(id);
     }
     if (this.events.length > EVENT_LOG_MAX) {
       this.events.splice(0, this.events.length - EVENT_LOG_MAX);
@@ -991,6 +1088,7 @@ export class Hub {
     // After the events, because every one of them above can be the thing that
     // emptied the queue. See `considerTail`.
     this.observeQueue(previousWork);
+    this.releaseHeld();
     this.wake();
     return this.seq;
   }

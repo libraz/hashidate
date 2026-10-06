@@ -149,8 +149,8 @@ describe('recording', () => {
     expect(seen.filter((c) => c.cmd === 'pause')).toHaveLength(1);
   });
 
-  it('releases a hold only after a successful non-empty write', async () => {
-    const takes = store({ fail: true });
+  it('releases a hold on the first non-empty write, not on an empty one', async () => {
+    const takes = store();
     const h = new Hub(null, null, null, takes);
     h.send({ type: 'command', commands: [{ cmd: 'pause', on: true }] });
     const seen = watch(h);
@@ -161,11 +161,25 @@ describe('recording', () => {
       (await h.recordChunk(opened.session, 'renderer-a', 'video/mp4', Buffer.alloc(0))).status,
     ).toBe('accepted');
     expect(seen.some((command) => command.cmd === 'pause' && command.on === false)).toBe(false);
-    expect(
-      (await h.recordChunk(opened.session, 'renderer-a', 'video/mp4', Buffer.from('x'))).status,
-    ).toBe('failed');
-    expect(seen.some((command) => command.cmd === 'pause' && command.on === false)).toBe(false);
-    expect(h.recording).toMatchObject({ bytes: 0, mime: null, error: 'sink offline' });
+  });
+
+  it('ends a take whose sink failed, and lets go of the hold it was waiting on', async () => {
+    const takes = store({ fail: true });
+    const h = new Hub(null, null, null, takes);
+    h.send({ type: 'command', commands: [{ cmd: 'pause', on: true }] });
+    const seen = watch(h);
+    const opened = h.startRecording({ ...OPEN, release: true });
+    if (opened === null) throw new Error('the take did not open');
+
+    const failed = await h.recordChunk(opened.session, 'renderer-a', 'video/mp4', Buffer.from('x'));
+
+    expect(failed).toMatchObject({ status: 'failed', recording: { error: 'sink offline' } });
+    expect(seen).toContainEqual({ cmd: 'record', on: false, session: opened.session });
+    expect(seen.at(-1)).toEqual({ cmd: 'pause', on: false });
+    expect(h.snapshot().paused).toBe(false);
+    expect(takes.closed.map((take) => take.error)).toEqual(['sink offline']);
+    expect(h.recording).toBeNull();
+    expect(h.startRecording(OPEN)).not.toBeNull();
   });
 
   it('closes a failed take on its terminal chunk and permits the next take', async () => {
@@ -174,16 +188,11 @@ describe('recording', () => {
     const opened = h.startRecording(OPEN);
     if (opened === null) throw new Error('the take did not open');
 
-    const failed = await h.recordChunk(opened.session, 'renderer-a', 'video/mp4', Buffer.from('x'));
-    expect(failed.status).toBe('failed');
-    expect(failed.recording).toMatchObject({ bytes: 0, error: 'sink offline' });
-    expect(h.recording).not.toBeNull();
-
     const terminal = await h.recordChunk(
       opened.session,
       'renderer-a',
       'video/mp4',
-      Buffer.alloc(0),
+      Buffer.from('x'),
       { final: true },
     );
     expect(terminal.status).toBe('failed');

@@ -216,27 +216,25 @@ describe('an event reported by more than one renderer', () => {
     expect(events.filter((entry) => entry.type === 'turn.end')).toHaveLength(1);
   });
 
-  it('does not swallow a line said a second time under the same id', () => {
+  it('logs each lifecycle event of a turn once, however far apart renderers report it', () => {
     const id = hub.queue.add([{ text: 'a' }])[0].id;
-    hub.report({ events: [event(id, 'turn.end')] });
-    // Put back by a rewind and said again. The start between the two endings is
-    // what tells a second ending from a second report of the first. The replay
-    // is delayed past the echo window; an event with the same subject and type
-    // inside that window is deliberately treated as another renderer's echo.
-    hub.report({ events: [event(id, 'turn.start')] });
-    vi.advanceTimersByTime(ECHO_SECONDS * 1000);
-    hub.report({ events: [event(id, 'turn.end')] });
+    // A renderer that was reloaded mid-show can answer a line long after the
+    // others; a turn id names one line, so its end is still the same end.
+    for (let i = 0; i < 3; i += 1) {
+      hub.report({ events: [event(id, 'turn.start')] });
+      hub.report({ events: [event(id, 'turn.end')] });
+      vi.advanceTimersByTime(ECHO_SECONDS * 1000 * 5);
+    }
 
-    expect(ending(id).map((e) => e.type)).toEqual(['turn.end', 'turn.start', 'turn.end']);
+    expect(ending(id).map((e) => e.type)).toEqual(['turn.start', 'turn.end']);
   });
 
-  it('stops treating a repeat as an echo once it is old enough to be a second one', () => {
-    const id = hub.queue.add([{ text: 'a' }])[0].id;
-    hub.report({ events: [event(id, 'turn.end')] });
+  it('stops treating a repeated drop as an echo once it is old enough to be a second one', () => {
+    hub.report({ events: [{ type: 'queue.dropped', turns: ['a'] }] });
     vi.advanceTimersByTime(ECHO_SECONDS * 1000);
-    hub.report({ events: [event(id, 'turn.end')] });
+    hub.report({ events: [{ type: 'queue.dropped', turns: ['a'] }] });
 
-    expect(ending(id)).toHaveLength(2);
+    expect(hub.snapshot().events.filter((e) => e.type === 'queue.dropped')).toHaveLength(2);
   });
 
   it('leaves alone an event that is about no turn in particular', () => {

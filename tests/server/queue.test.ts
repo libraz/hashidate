@@ -155,7 +155,7 @@ describe('TurnQueue.command', () => {
 describe('TurnQueue history', () => {
   it('moves a started entry from pending to airing before history', () => {
     const [a, b] = fill('a', 'b');
-    expect(queue.start(a)).toBe(true);
+    expect(queue.start(a)).toMatchObject({ id: a });
     expect(ids()).toEqual([b]);
     expect(queue.airing().map((entry) => entry.id)).toEqual([a]);
     expect(queue.command()).toMatchObject({ cmd: 'queue', turns: [{ id: b }] });

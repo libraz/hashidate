@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
 import { loadScript, outline, ScriptError } from '../../script';
-import { runScript } from '../../script/run';
+import { runScript, setupOutcome } from '../../script/run';
 import type { Handler } from '../args';
 import { fail } from '../client';
 import { localized, show } from '../output';
@@ -62,20 +62,15 @@ export const play: Handler = async (client, args) => {
   });
   let setupError: string | null = null;
   if (result.setup !== undefined) {
-    setupError = show(result.setup, { exitOnError: false });
-    // The two halves have different fates when no renderer is attached: the
-    // lines wait on the server's queue and play when one arrives, the setup was
-    // a live command and is simply gone. Said out loud, because the difference
-    // is invisible in a run that otherwise looks like it worked.
-    if (
-      typeof result.setup === 'object' &&
-      result.setup !== null &&
-      (result.setup as { ok?: unknown }).ok === false
-    ) {
-      console.error('setup was not delivered: no viewer is connected');
-      console.error(
-        'the lines still queue, but they will play against whatever state a renderer comes up in',
-      );
+    show(result.setup, { exitOnError: false });
+    // With no renderer attached the server keeps the setup and hands it to the
+    // next one, so only a command it could not keep is worth a word — and it is
+    // a warning rather than a failure, because the run itself went through.
+    const outcome = setupOutcome(result.setup, script.setup ?? []);
+    setupError = outcome.error;
+    if (outcome.lost.length > 0) {
+      console.error(`not delivered, no viewer connected: ${outcome.lost.join(', ')}`);
+      console.error('the rest of the setup is kept and applies when a renderer attaches');
     }
   }
   // Stamped with the script's own name. A queue holding a scripted segment, a

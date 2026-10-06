@@ -12,7 +12,7 @@ import {
 } from 'electron';
 import { ControlClient } from '../control/client';
 import { loadScript, ScriptError } from '../script';
-import { runScript } from '../script/run';
+import { runScript, setupOutcome } from '../script/run';
 import {
   CONTROL_LOG_NAME,
   CONTROL_PATH,
@@ -398,8 +398,19 @@ async function chooseAndRunScript(): Promise<void> {
   try {
     const loaded = await loadScript(selected);
     const run = await runScript(client, loaded);
-    if (run.setup !== undefined && isRefused(run.setup)) {
-      console.warn('script setup was not delivered: no viewer is connected');
+    if (run.setup !== undefined) {
+      const outcome = setupOutcome(run.setup, loaded.script.setup ?? []);
+      if (outcome.error !== null) {
+        dialog.showErrorBox(
+          'Script setup failed',
+          `${outcome.error}\n\nThe ${loaded.script.lines.length} lines were queued anyway.`,
+        );
+      } else if (outcome.lost.length > 0) {
+        dialog.showErrorBox(
+          'Script setup not delivered',
+          `No viewer is connected for: ${outcome.lost.join(', ')}\n\nThe rest of the setup is kept and applies when a renderer attaches.`,
+        );
+      }
     }
     console.log(
       `${loaded.script.lines.length} queued from ${loaded.id}: ${run.queue.queue.length} pending, ${run.queue.viewers} viewer(s)`,
@@ -408,10 +419,6 @@ async function chooseAndRunScript(): Promise<void> {
     const message = error instanceof ScriptError ? error.message : reason(error);
     dialog.showErrorBox('Could not run script', message);
   }
-}
-
-function isRefused(value: unknown): boolean {
-  return typeof value === 'object' && value !== null && (value as { ok?: unknown }).ok === false;
 }
 
 async function refreshStatus(): Promise<void> {

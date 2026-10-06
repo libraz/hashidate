@@ -65,6 +65,15 @@ const QUIET = ['/api/stream', '/api/report', '/api/speech', '/api/state', '/api/
  */
 export const RECORD_CHUNK_MAX_BYTES = 64 * 1024 * 1024;
 
+/**
+ * The most a JSON request body may be, on every route that reads one.
+ *
+ * The largest real one is a renderer's report carrying its vocabulary, tens of
+ * kilobytes; this is far past that and still small enough that a body sent by
+ * mistake cannot be a way to fill memory, for the reason the chunk cap above is.
+ */
+export const JSON_BODY_MAX_BYTES = 4 * 1024 * 1024;
+
 interface StampedCommand {
   command: Command;
   id: string;
@@ -196,28 +205,54 @@ function launch(res: ServerResponse, work: Promise<void>): void {
   });
 }
 
+/** A JSON body that ran past `JSON_BODY_MAX_BYTES`. */
+const TOO_LARGE = Symbol('too large');
+
 /**
  * Read a JSON body. `null` means the body was invalid or was discarded after
  * the peer went away; an empty body is an empty object, which is what a bare
- * POST means.
+ * POST means. `TOO_LARGE` means reading stopped at the cap, with the rest of
+ * the body left unread.
  */
-async function readBody(req: IncomingMessage): Promise<{ value: unknown } | null> {
-  const chunks: Buffer[] = [];
-  try {
-    for await (const chunk of req) chunks.push(chunk as Buffer);
-  } catch {
+function readBody(req: IncomingMessage): Promise<{ value: unknown } | typeof TOO_LARGE | null> {
+  // Refused on the declared length before a byte is read, when there is one.
+  if (Number(req.headers['content-length']) > JSON_BODY_MAX_BYTES) {
+    return Promise.resolve(TOO_LARGE);
+  }
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let settled = false;
+    const settle = (result: { value: unknown } | typeof TOO_LARGE | null): void => {
+      if (settled) return;
+      settled = true;
+      req.off('data', onData);
+      resolve(result);
+    };
+    const onData = (chunk: Buffer): void => {
+      bytes += chunk.byteLength;
+      if (bytes > JSON_BODY_MAX_BYTES) {
+        req.pause();
+        settle(TOO_LARGE);
+        return;
+      }
+      chunks.push(chunk);
+    };
+    req.on('data', onData);
+    req.once('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8');
+      if (raw.trim() === '') return settle({ value: {} });
+      try {
+        settle({ value: JSON.parse(raw) as unknown });
+      } catch {
+        settle(null);
+      }
+    });
     // A renderer or panel going away mid-post is a discarded request, not a
-    // server fault. Returning null lets the route classify it as invalid while
-    // keeping the iterator rejection inside the body reader.
-    return null;
-  }
-  const raw = Buffer.concat(chunks).toString('utf8');
-  if (raw.trim() === '') return { value: {} };
-  try {
-    return { value: JSON.parse(raw) as unknown };
-  } catch {
-    return null;
-  }
+    // server fault, and is classified as invalid like any other unreadable body.
+    req.once('error', () => settle(null));
+    req.once('close', () => settle(null));
+  });
 }
 
 function toInt(raw: string | null): number | undefined {
@@ -377,6 +412,13 @@ async function post(
   params: URLSearchParams,
 ): Promise<void> {
   const body = await readBody(req);
+  if (body === TOO_LARGE) {
+    // Answered, then the connection is dropped rather than the rest drained.
+    res.setHeader('Connection', 'close');
+    res.once('finish', () => req.destroy());
+    json(res, { error: 'body too large' }, 413);
+    return;
+  }
   if (body === null) {
     if (!(req.destroyed || res.destroyed || res.writableEnded)) {
       json(res, { error: 'invalid json' }, 400);
@@ -445,7 +487,7 @@ async function runScript(
   // arrangement of these commands in which a renderer holds a full queue with
   // nothing yet telling it not to start.
   const commands: Command[] = [...setup, { cmd: 'pause', on: paused }, hub.queue.command()];
-  const viewers = hub.send({ type: 'command', commands });
+  const { viewers, fates } = hub.command(commands);
 
   const payload: ScriptRunResponse = {
     queue: hub.queue.list(),
@@ -453,6 +495,7 @@ async function runScript(
     id: loaded.id,
     setup: setup.length,
     setupDelivered: setup.length === 0 ? 0 : viewers,
+    setupFates: fates.slice(0, setup.length),
     paused,
   };
   return json(res, payload);
@@ -555,7 +598,8 @@ async function recordChunk(
     );
   }
   if (outcome.status === 'failed') {
-    return json(res, { error: 'recording write failed', recording: hub.recording }, 500);
+    // The take has been closed; this is how it ended.
+    return json(res, { error: 'recording write failed', recording: outcome.recording }, 500);
   }
   return json(res, { ok: true, recording: hub.recording });
 }
@@ -722,13 +766,18 @@ async function command(
   }
   const commands: StampedCommand[] = parsed.data.map(stamp);
 
-  const delivered = hub.send({ type: 'command', commands: commands.map((c) => c.command) });
+  // Classified once, by the hub: only a command neither delivered nor kept by
+  // the server is a failure. See `commandFateSchema`.
+  const outcome = hub.command(commands.map((c) => c.command));
+  const ids = commands.map((c, index) => outcome.ids[index] ?? c.id);
+  const lost = outcome.fates.includes('lost');
   const result: CommandResponse = {
-    ok: delivered > 0,
-    viewers: delivered,
-    ids: commands.map((c) => c.id),
+    ok: !lost,
+    viewers: outcome.viewers,
+    ids,
+    fates: outcome.fates,
   };
-  if (delivered === 0) {
+  if (lost) {
     result.error = 'no viewer connected';
     return json(res, result, 503);
   }
@@ -737,10 +786,11 @@ async function command(
   if (wait) {
     // Resolve when the last queued turn has ended. Anything that is not a turn
     // completes on arrival, so only "say" is worth waiting on.
-    const last = commands.filter((c) => c.command.cmd === 'say').at(-1);
-    if (last) {
+    const last = commands.findLastIndex((c) => c.command.cmd === 'say');
+    if (last !== -1) {
+      const turn = ids[last];
       const { snapshot, completed } = await hub.waitFor(
-        (snap) => snap.events.some((e) => e.type === 'turn.end' && e.turn === last.id),
+        (snap) => snap.events.some((e) => e.type === 'turn.end' && e.turn === turn),
         waitSeconds(wait, COMMAND_WAIT_SECONDS) * 1000,
       );
       result.completed = completed;

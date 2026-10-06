@@ -1,4 +1,6 @@
-import type { Command } from '../protocol';
+import { performanceDef } from '../engine/performance';
+import type { Command, TurnRequest } from '../protocol';
+import type { InlineCueAction } from '../protocol/cues';
 
 /**
  * The setup, kept so that a renderer which arrives late can be told about it.
@@ -34,7 +36,16 @@ import type { Command } from '../protocol';
  *
  * The emotion is the awkward one and is in: the command set states that a mood
  * persists because it does not end with the sentence, and a standing state that
- * disagreed with the protocol about a lifetime would be a second opinion.
+ * disagreed with the protocol about a lifetime would be a second opinion. So it
+ * follows every path a mood is set by — `emotion`, `reset`, a performance's
+ * mood, and a started line's — and not the `emotion` command alone.
+ *
+ * ## A started line is a decision too
+ *
+ * A line's `stage` and mood stay put after it, like the commands they mirror,
+ * and so do the camera, page and performance cues fired inside it. `recordTurn`
+ * and `recordCue` turn each into the command it mirrors and fold that through
+ * `record`, so a line and a command cannot fold one axis two different ways.
  *
  * ## A relative page turn is resolved here
  *
@@ -256,9 +267,32 @@ export class Standing {
       case 'emotion':
         this.last.set(command.cmd, command);
         return true;
+      // A reset puts the mood back to neutral, which a renderer would otherwise
+      // be handed the old one of.
+      case 'reset':
+        this.last.set('emotion', { cmd: 'emotion', vec: { neutral: 1 } });
+        return true;
+      // The act is a moment and is not kept, but the mood it sets outlives it.
+      // Answers false: what a renderer attaching later gets is not the act.
+      case 'perform': {
+        const mood = command.id ? performanceDef(command.id)?.emotion : undefined;
+        if (mood) this.last.set('emotion', { cmd: 'emotion', vec: mood });
+        return false;
+      }
       default:
         return false;
     }
+  }
+
+  /** Fold what a line leaves behind once it has started. See the module docstring. */
+  recordTurn(turn: TurnRequest): void {
+    for (const command of turnCommands(turn)) this.record(command);
+  }
+
+  /** Fold one inline cue that has fired, when its effect outlives the line. */
+  recordCue(action: InlineCueAction): void {
+    const command = cueCommand(action);
+    if (command !== null) this.record(command);
   }
 
   /** The setup as a batch, in the order a renderer should be given it. */
@@ -314,6 +348,45 @@ export class Standing {
     if (typeof count !== 'number' || !Number.isFinite(count) || count <= 0) return lower;
     const upper = Math.max(FIRST_PAGE, Math.trunc(count));
     return Math.min(lower, upper);
+  }
+}
+
+/**
+ * The commands a started line amounts to, in the order the renderer applies them:
+ * the stage axes as `Stage.apply` takes them, then the performance's mood, then
+ * the line's own emotion over it.
+ */
+function turnCommands({ stage, perform, emotion }: TurnRequest): Command[] {
+  const out: Command[] = [];
+  if (stage?.camera !== undefined) out.push({ cmd: 'camera', frame: stage.camera });
+  if (stage?.backdrop !== undefined) out.push({ cmd: 'backdrop', id: stage.backdrop });
+  if (stage?.room !== undefined) out.push({ cmd: 'room', id: stage.room });
+  if (stage?.deck !== undefined) {
+    out.push({
+      cmd: 'deck',
+      id: stage.deck,
+      ...(stage.slide === undefined ? {} : { page: stage.slide }),
+    });
+  } else if (stage?.slide !== undefined) {
+    out.push({ cmd: 'slide', page: stage.slide });
+  }
+  if (stage?.place !== undefined) out.push({ cmd: 'place', ...stage.place });
+  if (perform) out.push({ cmd: 'perform', id: perform });
+  if (emotion) out.push({ cmd: 'emotion', vec: emotion });
+  return out;
+}
+
+/** The command an inline cue mirrors, or null for one whose effect ends with the line. */
+function cueCommand(action: InlineCueAction): Command | null {
+  switch (action.kind) {
+    case 'camera':
+      return { cmd: 'camera', frame: action.frame };
+    case 'slide':
+      return { cmd: 'slide', page: action.page };
+    case 'perform':
+      return { cmd: 'perform', id: action.id };
+    default:
+      return null;
   }
 }
 

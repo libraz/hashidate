@@ -66,7 +66,7 @@ export const slidesEn = {
   'panel.script.replaces':
     'Loading one also drops the {count} pending lines that did not come from a script.',
   'panel.script.noRenderer':
-    'The lines are queued, but the script\u2019s setup went nowhere: no renderer is connected. Open the stage and load it again.',
+    'The lines are queued, but part of the script\u2019s setup reached no renderer and could not be kept for the next one. Open the stage and load it again.',
 } as const;
 
 export const slidesJa: Record<keyof typeof slidesEn, string> = {
@@ -132,5 +132,5 @@ export const slidesJa: Record<keyof typeof slidesEn, string> = {
     'オンなら、一行目の前に画角を決められるよう止めたまま読み込む。オフなら、押した台本がそのまま再生される。',
   'panel.script.replaces': '読み込むと、台本の外から入った待機中の {count} 行も捨てられる。',
   'panel.script.noRenderer':
-    '行はキューに入ったが、台本の setup は届いていない。レンダラーが接続されていない。ステージを開いてから読み込み直す。',
+    '行はキューに入ったが、台本の setup の一部はレンダラーに届かず、次のレンダラーのために保持もされなかった。ステージを開いてから読み込み直す。',
 };

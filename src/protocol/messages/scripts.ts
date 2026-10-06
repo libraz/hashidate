@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { commandFateSchema } from './envelope';
 import { queueResponseSchema } from './queue';
 
 /**
@@ -82,18 +83,19 @@ export type ScriptRun = z.infer<typeof scriptRunSchema>;
 /**
  * The reply to `POST /api/scripts/run`.
  *
- * The queue as it now stands, plus what was run and whether the setup got
- * anywhere. Those last two are separate because they have separate fates: the
- * lines belong to the server's queue and survive having no renderer attached,
- * while the setup is live commands and is simply refused when there is nothing
- * to apply them to. A caller told only "ok" would have no way to know that the
- * avatar, the costume and the framing its script asked for never happened.
+ * The queue as it now stands, plus what was run and what became of the setup.
+ * The lines belong to the server's queue and survive having no renderer
+ * attached; so does every setup command the standing state keeps, which is
+ * handed to a renderer when it attaches. Only a setup command that is neither
+ * delivered nor kept is `lost`, and `setupFates` says which.
  */
 export const scriptRunResponseSchema = queueResponseSchema.extend({
   id: z.string(),
   /** How many setup commands were sent, and how many viewers took them. */
   setup: z.number(),
   setupDelivered: z.number(),
+  /** One per setup command, in order. See `commandFateSchema`. */
+  setupFates: z.array(commandFateSchema),
   /** Whether the queue was left held. See `pauseCommandSchema`. */
   paused: z.boolean(),
 });

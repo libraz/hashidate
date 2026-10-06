@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ControlClient } from '@/cli/client';
 import { point } from '@/cli/commands/body';
+import { vocab } from '@/cli/commands/inspect';
 import { tune } from '@/cli/commands/renderer';
 import { play } from '@/cli/commands/show';
 import { parseVoiceArgs, voice } from '@/cli/commands/voice';
@@ -145,31 +146,103 @@ describe('command response failures', () => {
   });
 });
 
-describe('play setup failures', () => {
-  it('queues the script and prints its summary before exiting for refused setup', async () => {
+describe('play setup with no viewer connected', () => {
+  /** A control client whose batch answers with `fate` for each setup command. */
+  const fake = (fate: (cmd: string, index: number) => 'retained' | 'lost') => {
+    const commands: unknown[] = [];
+    const queue: QueueResponse = { queue: [], viewers: 0 };
+    const client = {
+      command: vi.fn(async (command: unknown) => {
+        commands.push(command);
+        if (typeof command !== 'object' || command === null || !('batch' in command)) {
+          return { ok: true, viewers: 0, ids: [''], fates: ['retained'] };
+        }
+        const batch = (command as { batch: { cmd: string }[] }).batch;
+        const fates = batch.map((c, i) => fate(c.cmd, i));
+        const lost = fates.includes('lost');
+        return {
+          ok: !lost,
+          viewers: 0,
+          ids: batch.map(() => ''),
+          fates,
+          ...(lost ? { error: 'no viewer connected' } : {}),
+        };
+      }),
+      queueAdd: vi.fn(async () => queue),
+    } as unknown as ControlClient;
+    return { client, commands };
+  };
+
+  it('succeeds without a warning when the server kept the whole setup', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process exited');
+    });
+    const { client, commands } = fake(() => 'retained');
+
+    await play(client, ['demo']);
+
+    expect(commands).toEqual([{ batch: expect.any(Array) }, { cmd: 'pause', on: false }]);
+    expect(client.queueAdd).toHaveBeenCalledOnce();
+    expect(error).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it('warns about exactly the setup commands nobody kept, and still succeeds', async () => {
     const output = vi.spyOn(console, 'log').mockImplementation(() => {});
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('process exited');
     });
-    const commands: unknown[] = [];
-    const queue: QueueResponse = { queue: [], viewers: 0 };
-    const fake = {
-      command: vi.fn(async (command: unknown) => {
-        commands.push(command);
-        return typeof command === 'object' && command !== null && 'batch' in command
-          ? { ok: false, viewers: 0, ids: [], error: 'no viewer connected' }
-          : { ok: true, viewers: 0 };
-      }),
-      queueAdd: vi.fn(async () => queue),
-    } as unknown as ControlClient;
+    const { client } = fake((_cmd, index) => (index === 0 ? 'lost' : 'retained'));
 
-    await expect(play(fake, ['demo'])).rejects.toThrow('process exited');
+    await play(client, ['demo']);
 
-    expect(commands).toEqual([{ batch: expect.any(Array) }, { cmd: 'pause', on: false }]);
-    expect(fake.queueAdd).toHaveBeenCalledOnce();
     expect(output).toHaveBeenCalledWith(expect.stringContaining('queued from demo'));
-    expect(error).toHaveBeenCalledWith('setup was not delivered: no viewer is connected');
-    expect(exit).toHaveBeenCalledWith(1);
+    expect(error).toHaveBeenCalledWith('not delivered, no viewer connected: reset');
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it('fails when the setup response is a bare error with no fates', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process exited');
+    });
+    const { client } = fake(() => 'retained');
+    vi.mocked(client.command).mockImplementationOnce(async () => ({ error: 'HTTP 400' }));
+
+    await expect(play(client, ['demo'])).rejects.toThrow('process exited');
+  });
+});
+
+describe('ctl vocab', () => {
+  const labelled = (id: string) => ({ id, label: { en: id, ja: id } });
+  const printed = async (vocabulary: unknown): Promise<string> => {
+    const out: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      out.push(String(line));
+    });
+    await vocab({ vocabulary: async () => vocabulary } as unknown as ControlClient, []);
+    return out.join('\n');
+  };
+
+  it('lists the backdrop, voice preset and wear preset ids other verbs take', async () => {
+    const text = await printed({
+      backdrops: [labelled('dusk')],
+      voicePresets: [labelled('bright-idol')],
+      wardrobePresets: [labelled('stream')],
+    });
+    expect(text).toContain('backdrops: dusk (dusk)');
+    expect(text).toContain('voice presets: bright-idol (bright-idol)');
+    expect(text).toContain('wear presets: stream (stream)');
+  });
+
+  it('still prints the three headings when the lists are empty', async () => {
+    const text = await printed({ backdrops: [], voicePresets: [], wardrobePresets: [] });
+    expect(text).toContain('backdrops: (none)');
+    expect(text).toContain('voice presets: (none)');
+    expect(text).toContain('wear presets: (none)');
   });
 });

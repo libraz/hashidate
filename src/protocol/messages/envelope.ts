@@ -71,19 +71,34 @@ export type CommandRequest = Command | { batch: Command[] };
 export type ParsedCommandRequest = ParsedCommandElements;
 
 /**
+ * What became of one command, decided once per command by the server.
+ *
+ * `delivered` went to at least one viewer. `retained` reached none but is kept
+ * by the server and reaches whichever renderer attaches next — the standing
+ * setup, the queue verbs (a `say` is a queued line) and the BGM transport.
+ * `lost` reached none and is not kept: a gesture with nobody to make it.
+ */
+export const commandFateSchema = z.enum(['delivered', 'retained', 'lost']);
+
+export type CommandFate = z.infer<typeof commandFateSchema>;
+
+/**
  * The reply to a command.
  *
- * `ok` is about delivery, not about the avatar: it says a viewer was connected
- * to receive this, nothing about whether the pose looked right. `ids` are the
- * stamped correlation ids, in the order the commands were given, and are what a
- * caller matches the turn events against. `completed` and `state` appear only
- * for a request that asked to wait, and `completed: false` there means the wait
- * timed out rather than that anything failed.
+ * `ok` is about delivery, not about the avatar: it is false only when some
+ * command is `lost`, and says nothing about whether the pose looked right.
+ * `fates` says which, one per command. `ids` are the stamped correlation ids, in
+ * the order the commands were given — for a `say`, the id its turn was queued
+ * under — and are what a caller matches the turn events against. `completed`
+ * and `state` appear only for a request that asked to wait, and
+ * `completed: false` there means the wait timed out rather than that anything
+ * failed.
  */
 export const commandResponseSchema = z.object({
   ok: z.boolean(),
   viewers: z.number(),
   ids: z.array(z.string()),
+  fates: z.array(commandFateSchema),
   error: z.string().optional(),
   completed: z.boolean().optional(),
   state: sessionStateSchema.partial().optional(),

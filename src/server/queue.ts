@@ -154,6 +154,61 @@ export class TurnQueue {
   }
 
   /**
+   * Queue one line at the end under the id its caller chose, as `say` promises.
+   *
+   * The caller's id is honoured only while it names nothing this queue has seen
+   * — pending, on air or filed — and is minted otherwise, so one id never comes
+   * to stand for two turns. The returned entry carries the id the events will.
+   */
+  say(turn: TurnRequest): QueueEntry {
+    const entry = { ...turn, id: this.claim(turn.id, new Set()), at: now() };
+    this.entries.push(entry);
+    return entry;
+  }
+
+  /**
+   * Replace every pending entry with this list, in order.
+   *
+   * A pending entry the list names by id keeps its source, note and timestamp;
+   * a line already on air is skipped rather than made pending a second time.
+   */
+  replace(turns: TurnRequest[]): void {
+    const pending = new Map(this.entries.map((entry) => [entry.id, entry]));
+    const taken = new Set<string>();
+    const stamp = now();
+    const next: QueueEntry[] = [];
+    for (const turn of turns) {
+      if (turn.id !== undefined && this.onAir.some((entry) => entry.id === turn.id)) continue;
+      const kept = turn.id === undefined || taken.has(turn.id) ? undefined : pending.get(turn.id);
+      if (kept !== undefined) {
+        taken.add(kept.id);
+        next.push({
+          ...turn,
+          id: kept.id,
+          ...(kept.source === undefined ? {} : { source: kept.source }),
+          ...(kept.note === undefined ? {} : { note: kept.note }),
+          at: kept.at,
+        });
+        continue;
+      }
+      const id = this.claim(turn.id, taken);
+      taken.add(id);
+      next.push({ ...turn, id, at: stamp });
+    }
+    this.entries = next;
+  }
+
+  /** A caller's id when no turn here uses it, otherwise a minted one. */
+  private claim(id: string | undefined, taken: Set<string>): string {
+    if (id === undefined || id === '' || taken.has(id)) return this.mint();
+    const used = (entry: QueueEntry) => entry.id === id;
+    if (this.entries.some(used) || this.onAir.some(used) || this.spoken.some(used)) {
+      return this.mint();
+    }
+    return id;
+  }
+
+  /**
    * Rewrite one entry in place.
    *
    * The id, the timestamp and the source survive: this is an edit to a line, not
@@ -214,15 +269,16 @@ export class TurnQueue {
    *
    * A start report is the ownership hand-off: after it is accepted, queue
    * editors must not be able to see or mutate this line. A duplicate start is
-   * harmless and leaves the first hand-off intact.
+   * harmless and leaves the first hand-off intact. Answers the entry that moved,
+   * or null when nothing did.
    */
-  start(id: string): boolean {
-    if (this.onAir.some((entry) => entry.id === id)) return false;
+  start(id: string): QueueEntry | null {
+    if (this.onAir.some((entry) => entry.id === id)) return null;
     const index = this.entries.findIndex((entry) => entry.id === id);
-    if (index === -1) return false;
+    if (index === -1) return null;
     const [entry] = this.entries.splice(index, 1);
     this.onAir.push(entry);
-    return true;
+    return { ...entry };
   }
 
   /** Empty it. */
@@ -292,21 +348,28 @@ export class TurnQueue {
    * ended, and nothing correlating against the event log could tell the two
    * apart. `source` and `note` survive, so a row still says where it came from.
    *
+   * `cut` says the line on air is being cut by the same rewind. A `from` then
+   * puts it back too, after the lines it followed: the script resumes from the
+   * named line, and the cut one is part of what comes after it.
+   *
    * Returns the new entries, front of the queue first, or null for an id the
    * history does not have — which is the ordinary outcome of clicking a row that
    * aged off the end while the panel was open.
    */
-  rewind(id: string, mode: RewindMode = 'from'): QueueEntry[] | null {
+  rewind(id: string, mode: RewindMode = 'from', { cut = false } = {}): QueueEntry[] | null {
     const index = this.spoken.findIndex((entry) => entry.id === id);
     if (index === -1) return null;
-    const taken = mode === 'one' ? [this.spoken[index]] : this.spoken.splice(index);
+    const taken: QueueEntry[] = mode === 'one' ? [this.spoken[index]] : this.spoken.splice(index);
+    if (cut && mode === 'from') taken.push(...this.onAir);
     const added = taken.map((entry) => this.requeue(entry));
     this.entries.unshift(...added);
     return added;
   }
 
-  /** One spoken entry, as a pending one again. See `rewind`. */
-  private requeue(entry: HistoryEntry): QueueEntry {
+  /** One spoken or airing entry, as a pending one again. See `rewind`. */
+  private requeue(
+    entry: QueueEntry & Partial<Pick<HistoryEntry, 'saidAt' | 'interrupted'>>,
+  ): QueueEntry {
     const { id: _id, at: _at, saidAt: _saidAt, interrupted: _interrupted, ...turn } = entry;
     return { ...turn, id: this.mint(), at: now() };
   }

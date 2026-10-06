@@ -48,8 +48,6 @@ describe('what counts as standing', () => {
     ['clear', { cmd: 'clear' }],
     ['expression', { cmd: 'expression', id: 'F_DOYA' }],
     ['overlay', { cmd: 'overlay', id: 'FX_BLUSH' }],
-    ['reset', { cmd: 'reset' }],
-    ['perform', { cmd: 'perform', id: 'hello' }],
     ['gesture', { cmd: 'gesture', id: 'wave' }],
     ['hop', { cmd: 'hop' }],
     ['point', { cmd: 'point', azimuth: 30 }],
@@ -57,6 +55,53 @@ describe('what counts as standing', () => {
   ])('drops %s, which is a moment rather than a setup', (_verb, command) => {
     expect(standing.record(command)).toBe(false);
     expect(standing.commands()).toEqual([]);
+  });
+
+  it('puts the mood back to neutral on a reset, as the renderer does', () => {
+    standing.record({ cmd: 'emotion', vec: { joy: 1 } });
+    expect(standing.record({ cmd: 'reset' })).toBe(true);
+    expect(standing.commands()).toEqual([{ cmd: 'emotion', vec: { neutral: 1 } }]);
+  });
+
+  it('keeps the mood a performance leaves behind, and not the performance', () => {
+    expect(standing.record({ cmd: 'perform', id: 'hello' })).toBe(false);
+    expect(standing.commands()).toEqual([{ cmd: 'emotion', vec: { joy: 0.85 } }]);
+  });
+
+  it('folds a started line through the same per-axis fold as the commands it mirrors', () => {
+    standing.record({ cmd: 'camera', frame: 'bust', yaw: 10 });
+    standing.recordTurn({
+      text: 'あ',
+      perform: 'hello',
+      emotion: { anger: 1 },
+      stage: {
+        camera: 'full',
+        room: null,
+        deck: 'intro',
+        slide: 3,
+        place: { avatar: { width: 0.3 } },
+      },
+    });
+    expect(standing.commands()).toEqual([
+      { cmd: 'camera', frame: 'full', yaw: 10 },
+      { cmd: 'place', avatar: { width: 0.3 } },
+      { cmd: 'deck', id: 'intro', page: 3 },
+      { cmd: 'room', id: null },
+      { cmd: 'emotion', vec: { anger: 1 } },
+    ]);
+  });
+
+  it('folds fired camera, page and performance cues, and ignores the momentary ones', () => {
+    standing.recordCue({ kind: 'camera', frame: 'face' });
+    standing.recordCue({ kind: 'slide', page: 5 });
+    standing.recordCue({ kind: 'perform', id: 'hello' });
+    standing.recordCue({ kind: 'gesture', id: 'wave' });
+    standing.recordCue({ kind: 'expression', id: 'F_DOYA' });
+    expect(standing.commands()).toEqual([
+      { cmd: 'camera', frame: 'face' },
+      { cmd: 'slide', page: 5 },
+      { cmd: 'emotion', vec: { joy: 0.85 } },
+    ]);
   });
 
   it('never keeps the telemetry readout, however long it was left on', () => {

@@ -11,10 +11,10 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Hub } from '@/server/hub';
 import { Recordings } from '@/server/recordings';
-import { handleApi } from '@/server/routes';
+import { handleApi, JSON_BODY_MAX_BYTES } from '@/server/routes';
 
 let server: Server | null = null;
 let streamRequest: ClientRequest | null = null;
@@ -252,6 +252,90 @@ describe('command validation and stamping', () => {
       body: JSON.stringify({ batch: [{ cmd: 'future-command' }] }),
     });
     expect(unknown.status).toBe(400);
+  });
+
+  it('queues a say as a server turn and completes the wait under the id it returned', async () => {
+    const { origin, hub } = await listenApi();
+    const pending = fetch(`${origin}/api/command?wait=5`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cmd: 'say', text: 'あ' }),
+    });
+    // The line is on the server's list before any renderer has seen it, so a
+    // queue edit made meanwhile republishes it rather than erasing it.
+    await vi.waitFor(() => expect(hub.queue.list()).toHaveLength(1));
+    const [entry] = hub.queue.list();
+    hub.queue.add([{ text: 'い' }]);
+    hub.publishQueue();
+    expect(hub.queue.list().map((e) => e.id)).toContain(entry.id);
+
+    hub.report({ events: [{ type: 'turn.start', turn: entry.id }] });
+    hub.report({ events: [{ type: 'turn.end', turn: entry.id }] });
+    const response = await pending;
+    const body = (await response.json()) as { ids: string[]; completed: boolean; fates: string[] };
+
+    expect(response.status).toBe(200);
+    expect(body.ids).toEqual([entry.id]);
+    expect(body.fates).toEqual(['retained']);
+    expect(body.completed).toBe(true);
+  });
+
+  it('answers 503 only for a command neither delivered nor kept', async () => {
+    const { origin } = await listenApi();
+    const post = (body: unknown) =>
+      fetch(`${origin}/api/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+    const kept = await post({ batch: [{ cmd: 'camera', frame: 'bust' }, { cmd: 'clear' }] });
+    expect(kept.status).toBe(200);
+    expect(await kept.json()).toMatchObject({ ok: true, fates: ['retained', 'retained'] });
+
+    const mixed = await post({
+      batch: [
+        { cmd: 'camera', frame: 'bust' },
+        { cmd: 'gesture', id: 'wave' },
+      ],
+    });
+    expect(mixed.status).toBe(503);
+    expect(await mixed.json()).toMatchObject({ ok: false, fates: ['retained', 'lost'] });
+  });
+
+  it('answers 413 to a JSON body past the cap, declared or streamed', async () => {
+    const { origin, hub } = await listenApi();
+    const url = new URL(`${origin}/api/command`);
+    const post = (headers: Record<string, string>, write: (req: ClientRequest) => void) =>
+      new Promise<number>((resolve) => {
+        const req = request(
+          { host: url.hostname, port: url.port, path: url.pathname, method: 'POST', headers },
+          (res) => {
+            res.resume();
+            resolve(res.statusCode ?? 0);
+          },
+        );
+        // The connection is dropped after the answer; a write still in flight may fail.
+        req.on('error', () => resolve(-1));
+        write(req);
+      });
+
+    // Declared too long: refused before a byte of it is read.
+    expect(
+      await post({ 'Content-Length': String(JSON_BODY_MAX_BYTES + 1) }, (req) =>
+        req.flushHeaders(),
+      ),
+    ).toBe(413);
+    // Streamed with no length: reading stops at the cap. The answer races the
+    // reset of a body still being sent, so either is the server refusing it.
+    const streamed = await post({}, (req) => {
+      const chunk = Buffer.alloc(1024 * 1024, 0x20);
+      for (let sent = 0; sent <= JSON_BODY_MAX_BYTES; sent += chunk.length) req.write(chunk);
+      req.end();
+    });
+    expect([413, -1]).toContain(streamed);
+    expect(hub.snapshot().events).toEqual([]);
+    expect((await fetch(`${origin}/api/state`)).status).toBe(200);
   });
 
   it('requires a renderer identity and rejects a second owner without mixing bytes', async () => {

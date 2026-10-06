@@ -152,8 +152,8 @@ export class ControlClient {
 
   /**
    * Put turns on the server's queue — the copy that survives a viewer reload and
-   * that the panel can edit. Not the same thing as a `say` command, which goes
-   * straight to the renderer and is visible nowhere.
+   * that the panel can edit. A `say` command lands there too; this is the form
+   * that takes a batch at either end and a `source`.
    *
    * `source` is stamped on every turn in the batch and is never spoken. It is
    * what keeps a queue legible when a script, a comment and something typed by

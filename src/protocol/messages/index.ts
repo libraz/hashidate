@@ -47,8 +47,10 @@ export {
   deckTextResponseSchema,
 } from './decks';
 export {
+  type CommandFate,
   type CommandRequest,
   type CommandResponse,
+  commandFateSchema,
   commandRequestSchema,
   commandResponseSchema,
   type ParsedCommandElements,

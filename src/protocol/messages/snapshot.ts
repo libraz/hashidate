@@ -126,9 +126,9 @@ export const snapshotSchema = z.object({
    * entry here. A reader after the line on air matches `state.turn` against it
    * rather than taking the first.
    *
-   * Only what went through this server's queue is here. A `say` posted straight
-   * to `/api/command` never enters it, so its text is not the server's to
-   * report — the same boundary the history draws.
+   * Every turn goes through this server's queue, a `say` posted to
+   * `/api/command` included, so every line said is here — the same boundary
+   * the history draws.
    *
    * Optional, like the fields added after it were: the shell probes a port and
    * adopts whatever control server answers, which may have been started from an

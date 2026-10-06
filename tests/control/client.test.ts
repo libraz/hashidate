@@ -33,9 +33,28 @@ describe('ControlClient command responses', () => {
   it('preserves a real HTTP 503 command response for callers to classify', async () => {
     const client = new ControlClient(await listen());
 
-    const result = await client.command({ cmd: 'pause', on: true });
+    const result = await client.command({ cmd: 'gesture', id: 'wave' });
 
-    expect(result).toMatchObject({ ok: false, viewers: 0, error: 'no viewer connected' });
+    expect(result).toMatchObject({
+      ok: false,
+      viewers: 0,
+      fates: ['lost'],
+      error: 'no viewer connected',
+    });
+  });
+
+  it('answers ok for a setting the server keeps for a renderer that attaches later', async () => {
+    const client = new ControlClient(await listen());
+
+    const result = await client.command({
+      batch: [
+        { cmd: 'pause', on: true },
+        { cmd: 'say', text: 'あ' },
+      ],
+    });
+
+    expect(result).toMatchObject({ ok: true, viewers: 0, fates: ['retained', 'retained'] });
+    expect(result).not.toHaveProperty('error');
   });
 
   it('preserves a real HTTP 400 command body', async () => {

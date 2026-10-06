@@ -44,6 +44,14 @@ interface Props {
   refresh: () => void;
 }
 
+/** The first pending entry that came from a script in `known`: the one the picker lights. */
+export function loadedScript(
+  entries: readonly QueueEntry[],
+  known: ReadonlySet<string>,
+): string | undefined {
+  return entries.find((entry) => entry.source !== undefined && known.has(entry.source))?.source;
+}
+
 export function ScriptPicker({ entries, refresh }: Props) {
   const { t } = useT();
   const [roster, setRoster] = useState<ScriptsResponse | null>(null);
@@ -77,10 +85,11 @@ export function ScriptPicker({ entries, refresh }: Props) {
       return;
     }
     // The lines are on the server's queue whatever happened; the setup is live
-    // commands and is simply refused when nothing is attached. Worth saying,
+    // commands: what the server keeps as standing state applies when a renderer
+    // attaches, and only a command it could not keep is lost. Worth saying,
     // because it is the difference between a script that will play as written
     // and one whose avatar, costume and framing never happened.
-    if (result.setup > 0 && result.setupDelivered === 0) {
+    if (result.setupFates.includes('lost')) {
       setNotice(t('panel.script.noRenderer'));
     }
     refresh();
@@ -97,9 +106,7 @@ export function ScriptPicker({ entries, refresh }: Props) {
    * `TurnQueue.add` — so a panel opened after the script was loaded still marks
    * the right one, which is the same rule the document picker follows.
    */
-  const loaded = entries.find(
-    (entry) => entry.source !== undefined && known.has(entry.source),
-  )?.source;
+  const loaded = loadedScript(entries, known);
 
   /**
    * Pending lines that did not come from a script, which are the ones a load
