@@ -351,6 +351,8 @@ export class StageRecorder {
   private readonly pendingShutdowns = new Set<Promise<void>>();
   /** Public lifecycle calls invalidate every older asynchronous start. */
   private generation = 0;
+  /** Session of the take running or being started; null once stopped. */
+  private wanted: string | null = null;
   /** The document layer, held between frames. See `SlideComposite`. */
   private readonly slideCache = new SlideComposite();
   /** Uploads are chained so the server appends them in the order they were made. */
@@ -394,6 +396,7 @@ export class StageRecorder {
     if (this.disposed) return;
     if (this.take?.request.session === request.session) return;
     const generation = ++this.generation;
+    this.wanted = request.session;
     await this.shutdownCurrent();
     if (!this.current(generation)) return;
     this.failure = null;
@@ -513,8 +516,15 @@ export class StageRecorder {
     }
   }
 
-  /** Stop, and let the encoder flush. Safe to call when nothing is running. */
-  async stop(): Promise<void> {
+  /**
+   * Stop, and let the encoder flush. Safe to call when nothing is running.
+   *
+   * With a `session`, only the take (or pending start) for that session is
+   * stopped; a stop naming another leaves the current one alone.
+   */
+  async stop(session?: string): Promise<void> {
+    if (session !== undefined && session !== this.wanted) return;
+    this.wanted = null;
     ++this.generation;
     await this.shutdownCurrent();
   }
@@ -523,6 +533,7 @@ export class StageRecorder {
   async dispose(): Promise<void> {
     if (!this.disposed) {
       this.disposed = true;
+      this.wanted = null;
       ++this.generation;
       if (typeof globalThis.removeEventListener === 'function') {
         globalThis.removeEventListener('pagehide', this.onPageHide);

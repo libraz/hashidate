@@ -487,6 +487,22 @@ describe('StageRecorder lifecycle', () => {
     expect(borrowedStop).not.toHaveBeenCalled();
   });
 
+  it('ignores a stop that names a different session', async () => {
+    const env = recorderEnvironment();
+    await env.recorder.start({ session: 'take-2', width: 640, height: 360, fps: 24 });
+    const media = FakeMediaRecorder.instances[0];
+
+    await env.recorder.stop('take-1');
+    expect(media.stopCalls).toBe(0);
+    expect(env.recorder.recording).toBe(true);
+
+    const stopping = env.recorder.stop('take-2');
+    media.emitStop();
+    await stopping;
+    expect(media.stopCalls).toBe(1);
+    expect(env.recorder.recording).toBe(false);
+  });
+
   it('waits for onstop, then posts a renderer-bound final marker after data', async () => {
     const env = recorderEnvironment();
     await env.recorder.start({ session: 'take-1', width: 1280, height: 720, fps: 30 });

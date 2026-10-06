@@ -67,6 +67,17 @@ describe('BrowserAudioOutput', () => {
     output.dispose();
   });
 
+  it('still hands a recorder the capture stream while the context is refused', async () => {
+    const fake = context();
+    (fake.ctx as unknown as { state: string }).state = 'suspended';
+    (fake.ctx as unknown as { resume: () => Promise<void> }).resume = () => new Promise(() => {});
+    const output = new BrowserAudioOutput({ context: fake.ctx, muted: false, resumeWaitMs: 1 });
+
+    expect(await output.captureStream()).toBe(fake.stream);
+    output.dispose();
+    expect(await output.captureStream()).toBeNull();
+  });
+
   it('keeps voice and BGM on separate buses while sharing the context', () => {
     const fake = context();
     const output = new BrowserAudioOutput({ context: fake.ctx, muted: false });

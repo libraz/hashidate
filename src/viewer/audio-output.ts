@@ -127,10 +127,15 @@ export class BrowserAudioOutput {
     return started ? this.context : null;
   }
 
-  /** The stream captured after the final master, or null when start was refused. */
+  /**
+   * The stream captured after the final master, or null once disposed.
+   *
+   * The destination exists from construction, so a refused start still yields
+   * a track (silent until the context runs) that a recorder can be built on.
+   */
   async captureStream(): Promise<MediaStream | null> {
-    const context = await this.ensureRunning();
-    return context === null ? null : this.captureDestination.stream;
+    await this.ensureRunning();
+    return this.disposed ? null : this.captureDestination.stream;
   }
 
   /** Release the page-owned context and every gesture listener. */

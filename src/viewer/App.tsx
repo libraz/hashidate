@@ -89,7 +89,8 @@ export function App() {
         client.setAvatarStatus({ phase: 'failed', error: next.message });
         // A failed load cannot end the hold that was waiting for it. The old
         // session, when there is one, remains usable for subsequent commands.
-        client.discardHeld();
+        // With another avatar queued behind it the hold is for that one.
+        if (!rt.hasQueuedLoad) client.discardHeld();
       } else {
         client.setAvatarStatus({ phase: next.phase });
         if (next.phase === 'ready') client.bind(next.loaded.session, next.loaded.avatar.id);

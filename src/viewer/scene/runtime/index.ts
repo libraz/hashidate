@@ -350,7 +350,7 @@ export class AvatarRuntime {
     take: { session: string; width: number; height: number; fps: number },
   ): void {
     if (on) void this.recorder.start(take);
-    else void this.recorder.stop();
+    else void this.recorder.stop(take.session);
   }
 
   /** Why the last take would not start, or null. Rides on the report. */
@@ -693,6 +693,11 @@ export class AvatarRuntime {
    */
   get avatarId(): string | null {
     return this.queued?.id ?? this.loading ?? this.current?.avatar.id ?? null;
+  }
+
+  /** Whether another avatar is waiting behind the load that just settled. */
+  get hasQueuedLoad(): boolean {
+    return this.queued !== null;
   }
 
   private isLoadCurrent(generation: number, avatarId: string): boolean {

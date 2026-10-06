@@ -139,4 +139,31 @@ describe('avatar load teardown', () => {
     expect(statuses.map((status) => status.phase)).toEqual(['idle', 'loading']);
     expect(runtime.avatarId).toBeNull();
   });
+
+  it('reports a queued successor while the failed load is announced', async () => {
+    const load = pending<unknown>();
+    const runtime = bareRuntime({
+      loadAsync: (url) => (url === '/missing.glb' ? load.promise : new Promise(() => {})),
+    });
+    const seen: boolean[] = [];
+    runtime.onStatus((status) => {
+      if (status.phase === 'failed') seen.push(runtime.hasQueuedLoad);
+    });
+
+    const first = runtime.load(avatar('missing'));
+    void runtime.load(avatar('next'));
+    load.reject(new Error('absent'));
+    await first;
+    expect(seen).toEqual([true]);
+
+    const lone = pending<unknown>();
+    const alone = bareRuntime({ loadAsync: () => lone.promise });
+    alone.onStatus((status) => {
+      if (status.phase === 'failed') seen.push(alone.hasQueuedLoad);
+    });
+    const only = alone.load(avatar('missing'));
+    lone.reject(new Error('absent'));
+    await only;
+    expect(seen).toEqual([true, false]);
+  });
 });
