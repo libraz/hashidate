@@ -5,7 +5,8 @@ import { Field } from '@/ui/Field';
 import { Section } from '@/ui/Section';
 import { Segmented } from '@/ui/Segmented';
 import { Toggle } from '@/ui/Toggle';
-import { isFailure, recordStart, recordStop } from '../api';
+import { isFailure, readScripts, recordStart, recordStop } from '../api';
+import { loadedScript } from '../script/ScriptPicker';
 import styles from './RecordTab.module.css';
 
 /**
@@ -122,11 +123,13 @@ export function basename(path: string): string {
  *
  * `source` is stamped on every entry a run adds — see `TurnQueue.add` — so this
  * is the script whose lines are actually pending rather than the last one
- * anybody pressed. It is what the take gets named after, which means the name
- * is right even for a panel that was opened after the script was loaded.
+ * anybody pressed. Only ids the roster knows count, as in the picker: a line
+ * typed in the panel or queued by an orchestrator carries a source too, and
+ * must not name the take. It is what the take gets named after, which means the
+ * name is right even for a panel that was opened after the script was loaded.
  */
-export function queuedScript(snapshot: Snapshot): string | undefined {
-  return snapshot.queue.find((entry) => entry.source !== undefined)?.source;
+export function queuedScript(snapshot: Snapshot, known: ReadonlySet<string>): string | undefined {
+  return loadedScript(snapshot.queue, known);
 }
 
 export function RecordTab({ snapshot, refresh }: Props) {
@@ -159,8 +162,10 @@ export function RecordTab({ snapshot, refresh }: Props) {
     setBusy(true);
     setNotice(null);
     const [width, height] = frame.split('x').map(Number);
+    const roster = await readScripts();
+    const known = new Set(isFailure(roster) ? [] : roster.scripts.map((script) => script.id));
     const result = await recordStart({
-      name: queuedScript(snapshot),
+      name: queuedScript(snapshot, known),
       width,
       height,
       fps: Number(fps),

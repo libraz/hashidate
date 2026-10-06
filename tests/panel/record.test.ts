@@ -4,6 +4,7 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  queuedScript,
   RecordTab,
   recordingError,
   recordingFrameValue,
@@ -48,6 +49,23 @@ function snapshot(recordingState: Snapshot['recording'] = null): Snapshot {
     recording: recordingState,
   };
 }
+
+describe('naming a take after the queued script', () => {
+  const queued = (...sources: Array<string | undefined>): Snapshot => ({
+    ...snapshot(),
+    queue: sources.map((source, i) => ({ id: `q${i}`, text: 'あ', at: 1, source })),
+  });
+
+  it('skips entries that did not come from a known script', () => {
+    const known = new Set(['demo']);
+    expect(queuedScript(queued('panel', 'demo'), known)).toBe('demo');
+    expect(queuedScript(queued(undefined, 'orchestrator', 'demo'), known)).toBe('demo');
+  });
+
+  it('names nothing when no pending line came from a script', () => {
+    expect(queuedScript(queued('panel', undefined), new Set(['demo']))).toBeUndefined();
+  });
+});
 
 describe('recording panel state', () => {
   it('uses the open take dimensions instead of the panel default', () => {
