@@ -10,14 +10,14 @@
  */
 
 import type * as THREE from 'three';
-import type { ExpressionPreset, MouthViseme } from './face';
+import type { BlinkContext, ExpressionPreset, MouthViseme } from './face';
 import {
   Blink,
   buildIdleFaces,
   buildOverlays,
   buildPresets,
-  composeArkit,
-  composeNative,
+  composeArkitInto,
+  composeNativeInto,
   dominantEmotion,
   Mouth,
   scaleTrack,
@@ -150,8 +150,6 @@ export class Director {
   /** the one currently faded in */
   private _preset: string | null = null;
   private _presetW = 0;
-  /** Whether the currently visible preset belongs to the idle layer. */
-  private _presetAuto = false;
 
   private readonly _extraFaces: string[];
   private _faceTimer = 0;
@@ -173,10 +171,14 @@ export class Director {
   /** Effects raised by idle, kept apart from caller-owned overlays. */
   private readonly _autoOverlay = new Map<string, number>();
 
-  /** mesh -> Map<index, value> for this frame */
-  private _morphs = new Map<THREE.Mesh, Map<number, number>>();
-  /** mesh -> Set<index> written last frame */
-  private _written = new Map<THREE.Mesh, Set<number>>();
+  /** mesh -> Map<index, value> for this frame; inner maps are emptied, not replaced */
+  private readonly _morphs = new Map<THREE.Mesh, Map<number, number>>();
+  /** mesh -> Set<index> written last frame; emptied and refilled each frame */
+  private readonly _written = new Map<THREE.Mesh, Set<number>>();
+  // Per-frame scratch, held so the face path allocates nothing in steady state.
+  private readonly _composed: Record<string, number> = {};
+  private readonly _blinkCtx: BlinkContext = { speaking: false, suppressed: false };
+  private readonly _want: WantedPreset = { id: '', w: 0 };
 
   /**
    * `avatar` defaults to the profile's own descriptor rather than to an empty
@@ -254,15 +256,14 @@ export class Director {
 
     // Idle owns all of its transient channels. Drop them together so one stale
     // face, overlay or held pose cannot survive after the layer has yielded.
+    // An idle face leaves through the preset fade rather than in one frame.
     this.releaseAutoAct();
     this._autoPreset = null;
     this._autoOverlay.clear();
-    if (this._presetAuto) {
-      this._preset = null;
-      this._presetW = 0;
-      this._presetAuto = false;
-    }
-    this._idleEmotion = { ...this.emotion };
+    // The baseline takes over from what is on screen and eases on toward the
+    // caller's target, so the face does not jump from idle's mood to it.
+    for (const key of Object.keys(this.emotion) as EmotionName[]) delete this.emotion[key];
+    Object.assign(this.emotion, this._idleEmotion);
     this._idleTarget = { ...this.target };
   }
 
@@ -364,14 +365,10 @@ export class Director {
     this.releaseAutoAct();
     this._manualPreset = null;
     this._autoPreset = null;
-    this._presetAuto = false;
     this._overlay.clear();
     this._autoOverlay.clear();
     this.setEmotion({ neutral: 1 });
-    if (this._auto) {
-      this._idleEmotion = { ...this.emotion };
-      this._idleTarget = { neutral: 1 };
-    }
+    if (this._auto) this._idleTarget = { neutral: 1 };
     // Hold off the autopilot briefly, or it repoints on the very next frame and
     // the reset never becomes visible.
     this._faceTimer = 3 + Math.random() * 3;
@@ -582,17 +579,24 @@ export class Director {
 
   /** Ease one emotion channel without changing the ownership of either map. */
   private easeEmotion(current: EmotionVector, target: EmotionVector, k: number): void {
-    const keys = new Set<EmotionName>([
-      ...(Object.keys(current) as EmotionName[]),
-      ...(Object.keys(target) as EmotionName[]),
-    ]);
-    for (const key of keys) {
-      const cur = current[key] ?? 0;
-      const to = target[key] ?? 0;
-      const next = cur + (to - cur) * k;
-      if (next < 0.001 && to === 0) delete current[key];
-      else current[key] = next;
+    // Every key of either map once: the current ones, then target-only ones.
+    for (const key in current) this.easeKey(current, target, key as EmotionName, k);
+    for (const key in target) {
+      if (!(key in current)) this.easeKey(current, target, key as EmotionName, k);
     }
+  }
+
+  private easeKey(
+    current: EmotionVector,
+    target: EmotionVector,
+    key: EmotionName,
+    k: number,
+  ): void {
+    const cur = current[key] ?? 0;
+    const to = target[key] ?? 0;
+    const next = cur + (to - cur) * k;
+    if (next < 0.001 && to === 0) delete current[key];
+    else current[key] = next;
   }
 
   // --- autopilot ---------------------------------------------------------
@@ -707,8 +711,8 @@ export class Director {
 
   /** Which authored face the current state asks for, and how strongly. */
   private wantedPreset(): WantedPreset | null {
-    if (this._manualPreset) return { id: this._manualPreset, w: 1 };
-    if (this._autoPreset) return { id: this._autoPreset, w: 1 };
+    if (this._manualPreset) return this.want(this._manualPreset, 1);
+    if (this._autoPreset) return this.want(this._autoPreset, 1);
     if (!this.useNativePresets) return null;
     // The emotion vector blends, an authored face does not, so only the
     // dominant emotion can claim one — and only once it is clearly dominant.
@@ -721,7 +725,14 @@ export class Director {
     // the eye fires, never how much of it is drawn. Asking for four tenths of
     // one leaves the default iris four tenths of the way out of its opening,
     // which is a broken eyeball rather than a milder feeling.
-    return { id, w: this.swapsTheEye(id) ? 1 : w };
+    return this.want(id, this.swapsTheEye(id) ? 1 : w);
+  }
+
+  /** Fill the one `WantedPreset` this class hands out; read it before the next call. */
+  private want(id: string, w: number): WantedPreset {
+    this._want.id = id;
+    this._want.w = w;
+    return this._want;
   }
 
   private updatePreset(dt: number): void {
@@ -740,25 +751,21 @@ export class Director {
       if (this.swapsTheEye(this._preset)) {
         this._presetW = 0;
         this._preset = null;
-        this._presetAuto = false;
         return;
       }
       this._presetW -= this._presetW * k;
       if (this._presetW < 0.02) {
         this._presetW = 0;
         this._preset = null;
-        this._presetAuto = false;
       }
       return;
     }
     if (!this._preset) {
       if (!want) {
         this._presetW = 0;
-        this._presetAuto = false;
         return;
       }
       this._preset = want.id;
-      this._presetAuto = this._auto && !this._manualPreset;
     }
     if (this.swapsTheEye(this._preset)) {
       this._presetW = want?.w ?? 0;
@@ -791,7 +798,7 @@ export class Director {
   private writeFace(dt: number): void {
     const { p, mouth } = this;
     const emotion = this.effectiveEmotion;
-    this._morphs.clear();
+    for (const m of this._morphs.values()) m.clear();
 
     // An authored face goes down first and the composed one yields to it in
     // proportion. Layering muscle weights on top of a finished drawing does not
@@ -824,14 +831,17 @@ export class Director {
     // vertices — and it is what an avatar gets when nobody has written a
     // profile for it yet.
     if (this.useArkit && p.arkit.supported) {
-      const arkit = composeArkit(emotion, { mouthBusy: mouth.busy });
-      for (const [shape, v] of Object.entries(arkit)) this.set(shape, v * composed);
+      const arkit = composeArkitInto(emotion, mouth.busy, this._composed);
+      for (const shape in arkit) this.set(shape, arkit[shape] * composed);
     } else if (this.a.emotionShapes && composed > 0.02) {
-      const native = composeNative(emotion, this.a.emotionShapes, {
-        mouthBusy: mouth.busy,
-        mouthShapes: this.a.mouthShapePattern ?? null,
-      });
-      for (const [shape, v] of Object.entries(native)) this.set(shape, v * composed);
+      const native = composeNativeInto(
+        emotion,
+        this.a.emotionShapes,
+        mouth.busy,
+        this.a.mouthShapePattern ?? null,
+        this._composed,
+      );
+      for (const shape in native) this.set(shape, native[shape] * composed);
     } else if (composed > 0.02) {
       // One preset at a time. Named presets are whole-face sculpts that fight
       // over the same vertices, so layering "joy 0.55 + relaxed 0.45" distorts
@@ -854,7 +864,9 @@ export class Director {
     }
 
     // Mouth: explicit viseme shapes take priority over composed ones.
-    for (const [v, w] of Object.entries(mouth.weights) as Array<[MouthViseme, number]>) {
+    for (const key in mouth.weights) {
+      const v = key as MouthViseme;
+      const w = mouth.weights[v];
       if (w < 0.005) continue;
       const shape = p.viseme[v];
       if (shape) this.set(shape, w);
@@ -872,21 +884,23 @@ export class Director {
     // at a squint gets the remainder, and a wink blinks on the open side alone.
     // A drawing may instead preserve its authored eyes. That changes the morph
     // writes, not the blink state machine or its existing surprise suppression.
-    this.#blink.update(dt, {
-      speaking: this.mouth.speaking,
-      // Surprise holds the eyes open; blinking through it looks wrong.
-      suppressed: (emotion.surprise ?? 0) > 0.4,
-    });
+    const blinkCtx = this._blinkCtx;
+    blinkCtx.speaking = this.mouth.speaking;
+    // Surprise holds the eyes open; blinking through it looks wrong.
+    blinkCtx.suppressed = (emotion.surprise ?? 0) > 0.4;
+    this.#blink.update(dt, blinkCtx);
     const blink = this.#blink.weight;
     const preserveBlink = preset?.blink === 'preserve' && pw > 0.02;
     if (blink > 0.001 && !preserveBlink) {
       const lid = preset ? preset.lid : null;
-      const room = (v: number): number => (lid ? Math.max(0, 1 - v * pw) : 1);
-      if (p.blink.L) {
-        this.set(p.blink.L, blink * room(lid?.L ?? 0));
-        this.set(p.blink.R, blink * room(lid?.R ?? 0));
+      // The travel the preset has left the lid, per side.
+      const roomL = lid ? Math.max(0, 1 - (lid.L ?? 0) * pw) : 1;
+      const roomR = lid ? Math.max(0, 1 - (lid.R ?? 0) * pw) : 1;
+      if (p.blink.L && p.blink.R) {
+        this.set(p.blink.L, blink * roomL);
+        this.set(p.blink.R, blink * roomR);
       } else {
-        this.set(p.blink.both, blink * room(Math.max(lid?.L ?? 0, lid?.R ?? 0)));
+        this.set(p.blink.both, blink * Math.min(roomL, roomR));
       }
     }
 
@@ -895,20 +909,21 @@ export class Director {
     // which live on the same meshes but are owned by another layer.
     for (const [mesh, indices] of this._written) {
       const infl = mesh.morphTargetInfluences;
-      if (!infl) continue;
-      for (const i of indices) infl[i] = 0;
+      if (infl) for (const i of indices) infl[i] = 0;
+      indices.clear();
     }
-    const written = new Map<THREE.Mesh, Set<number>>();
     for (const [mesh, values] of this._morphs) {
       const infl = mesh.morphTargetInfluences;
-      if (!infl) continue;
-      const indices = new Set<number>();
+      if (!infl || values.size === 0) continue;
+      let indices = this._written.get(mesh);
+      if (!indices) {
+        indices = new Set<number>();
+        this._written.set(mesh, indices);
+      }
       for (const [i, v] of values) {
         infl[i] = v;
         indices.add(i);
       }
-      written.set(mesh, indices);
     }
-    this._written = written;
   }
 }

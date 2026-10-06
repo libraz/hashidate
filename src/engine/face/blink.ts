@@ -7,6 +7,14 @@
  * routes to whatever the avatar calls its blink shapes.
  */
 
+import { ScalarFollower } from '../motion/follow';
+
+/**
+ * How fast the lid floor follows `droop`, in the follower's first-order terms:
+ * the director's default emotion rate, so heavy lids arrive with the face.
+ */
+const DROOP_RATE = 3.5;
+
 /**
  * Blink shape. Closing takes about a third of the blink and opening the rest;
  * a symmetric pulse reads as a flutter rather than as a blink.
@@ -40,7 +48,7 @@ export interface BlinkOptions {
 }
 
 export class Blink {
-  /** Off holds the lids open and abandons any blink in flight. */
+  /** Off eases the lids open and abandons any blink in flight. */
   enabled = true;
 
   /**
@@ -54,8 +62,12 @@ export class Blink {
    * It outranks `suppressed` — that flag is the director noticing surprise, and
    * a caller that has explicitly said the eyes are closing knows better. It does
    * not outrank `enabled`, which is a debug kill switch for the whole layer.
+   *
+   * A target: the lids follow it rather than jumping to it.
    */
   droop = 0;
+  /** Where the lids actually sit between blinks; chases `droop`. */
+  readonly #lid = new ScalarFollower(0);
 
   readonly #random: () => number;
   #weight = 0;
@@ -100,16 +112,17 @@ export class Blink {
 
   /** Advance one frame. Returns the weight, which `weight` also reports. */
   update(dt: number, ctx: BlinkContext): number {
+    this.#lid.step(this.enabled ? Math.min(1, Math.max(0, this.droop)) : 0, dt, DROOP_RATE);
     if (!this.enabled) {
-      this.#weight = 0;
+      this.#weight = this.#floor();
       this.#t = -1;
       return this.#weight;
     }
 
-    // Surprise holds the eyes open; blinking through it looks wrong.
-    if (ctx.suppressed) {
+    // Surprise holds the eyes open; blinking through it looks wrong. A blink
+    // already in flight finishes rather than snapping the lid open.
+    if (ctx.suppressed && this.#t < 0) {
       this.#weight = this.#floor();
-      this.#t = -1;
       return this.#weight;
     }
 
@@ -149,7 +162,7 @@ export class Blink {
   }
 
   #floor(): number {
-    return Math.min(1, Math.max(0, this.droop));
+    return Math.min(1, Math.max(0, this.#lid.value));
   }
 
   /**

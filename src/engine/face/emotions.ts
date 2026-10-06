@@ -154,9 +154,6 @@ const MOUTH_SOFT = new Set([
 ]);
 const SOFT_FLOOR = 0.4;
 
-/** Emotion entries, typed for iteration. The vector is a partial record. */
-type EmotionEntries = Array<[EmotionName, number | undefined]>;
-
 /**
  * Compose an emotion vector into an ARKit weight map.
  * `weights` is e.g. { joy: 0.8, surprise: 0.2 }.
@@ -167,19 +164,32 @@ export function composeArkit(
   weights: EmotionVector,
   { mouthBusy = 0 }: { mouthBusy?: number } = {},
 ): ShapeWeights {
-  const out: ShapeWeights = {};
-  for (const [name, w] of Object.entries(weights) as EmotionEntries) {
+  return composeArkitInto(weights, mouthBusy, {});
+}
+
+/**
+ * `composeArkit` into a record the caller keeps, for the frame loop. Every key
+ * already in `out` is reset to 0 first, so a shape no longer asked for reads 0.
+ */
+export function composeArkitInto(
+  weights: EmotionVector,
+  mouthBusy: number,
+  out: ShapeWeights,
+): ShapeWeights {
+  for (const k in out) out[k] = 0;
+  for (const name in weights) {
+    const w = weights[name as EmotionName];
     if (!w) continue;
-    const table = EMOTIONS[name];
+    const table = EMOTIONS[name as EmotionName];
     if (!table) continue;
-    for (const [shape, v] of Object.entries(table)) {
+    for (const shape in table) {
       let scale = 1;
       if (MOUTH_LOCKED.has(shape)) scale = 1 - mouthBusy;
       else if (MOUTH_SOFT.has(shape)) scale = 1 - mouthBusy * (1 - SOFT_FLOOR);
-      out[shape] = (out[shape] ?? 0) + v * w * scale;
+      out[shape] = (out[shape] ?? 0) + (table[shape] ?? 0) * w * scale;
     }
   }
-  for (const k of Object.keys(out)) out[k] = Math.min(1, out[k]);
+  for (const k in out) out[k] = Math.min(1, out[k]);
   return out;
 }
 
@@ -208,17 +218,29 @@ export function composeNative(
   table: Partial<Record<EmotionName, ShapeWeights>>,
   { mouthBusy = 0, mouthShapes = null }: { mouthBusy?: number; mouthShapes?: RegExp | null } = {},
 ): ShapeWeights {
-  const out: ShapeWeights = {};
-  for (const [name, w] of Object.entries(weights) as EmotionEntries) {
+  return composeNativeInto(weights, table, mouthBusy, mouthShapes, {});
+}
+
+/** `composeNative` into a record the caller keeps; see `composeArkitInto`. */
+export function composeNativeInto(
+  weights: EmotionVector,
+  table: Partial<Record<EmotionName, ShapeWeights>>,
+  mouthBusy: number,
+  mouthShapes: RegExp | null,
+  out: ShapeWeights,
+): ShapeWeights {
+  for (const k in out) out[k] = 0;
+  for (const name in weights) {
+    const w = weights[name as EmotionName];
     if (!w) continue;
-    const shapes = table[name];
+    const shapes = table[name as EmotionName];
     if (!shapes) continue;
-    for (const [shape, v] of Object.entries(shapes)) {
+    for (const shape in shapes) {
       const scale = mouthShapes?.test(shape) ? 1 - mouthBusy * (1 - SOFT_FLOOR) : 1;
-      out[shape] = (out[shape] ?? 0) + v * w * scale;
+      out[shape] = (out[shape] ?? 0) + (shapes[shape] ?? 0) * w * scale;
     }
   }
-  for (const k of Object.keys(out)) out[k] = Math.min(1, out[k]);
+  for (const k in out) out[k] = Math.min(1, out[k]);
   return out;
 }
 
@@ -226,9 +248,10 @@ export function composeNative(
 export function dominantEmotion(weights: EmotionVector): EmotionName {
   let best: EmotionName | null = null;
   let bestV = 0;
-  for (const [k, v] of Object.entries(weights) as EmotionEntries) {
+  for (const k in weights) {
+    const v = weights[k as EmotionName];
     if (v && v > bestV) {
-      best = k;
+      best = k as EmotionName;
       bestV = v;
     }
   }

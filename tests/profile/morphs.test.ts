@@ -325,6 +325,20 @@ describe('viseme and blink resolution', () => {
     expect(profile.blink.L).toBe('eyeBlinkLeft');
   });
 
+  it.each([
+    ['blinkRight', 'R'],
+    ['blinkLeft', 'L'],
+  ])('reports the side that is missing when %s alone is gone', (shape, side) => {
+    const rig = buildRig({ arkit: false });
+    const dict = must(must(rig.meshes.get('Face'), 'Face').morphTargetDictionary, 'face dict');
+    delete dict[shape];
+
+    const profile = buildProfile(rig.root);
+
+    expect(profile.missing).toContain(`blink:${side}`);
+    expect(profile.missing).not.toContain('blink');
+  });
+
   it('reports blink as missing when the rig closes its eyes no way at all', () => {
     const rig = buildRig({ arkit: false });
     const dict = must(must(rig.meshes.get('Face'), 'Face').morphTargetDictionary, 'face dict');

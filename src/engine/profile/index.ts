@@ -84,7 +84,9 @@ export function buildProfile(
     L: first(dict, candidates(BLINK_CANDIDATES.L, own.blink?.L)),
     R: first(dict, candidates(BLINK_CANDIDATES.R, own.blink?.R)),
   };
-  if (!(blink.both || blink.L)) missing.push('blink');
+  if (!(blink.both || blink.L || blink.R)) missing.push('blink');
+  // One eye alone is a wink: reported, and the face falls back to `both` instead.
+  else if (!blink.L !== !blink.R) missing.push(`blink:${blink.L ? 'R' : 'L'}`);
 
   // ARKit support is the primary expression channel. 52 minus tongueOut is
   // normal for Japanese avatars, so anything above 45 counts as supported.

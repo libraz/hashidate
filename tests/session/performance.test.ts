@@ -36,11 +36,11 @@ describe('performances', () => {
     const { session, director, step } = build();
     session.lookAt(0.8);
     session.perform('doze');
-    step(4);
+    step(120);
     expect(director.blink).toBeGreaterThan(0.9);
     expect(director.body.lookAt).toBe(0);
     session.perform(null);
-    step(4);
+    step(120);
     expect(director.blink).toBeLessThan(0.9);
     expect(director.body.lookAt).toBe(0.8);
   });
@@ -56,7 +56,7 @@ describe('performances', () => {
     expect(director.body.gesture?.id).toBe('nod');
   });
 
-  it('ignores an id the table does not have, rather than clearing what is up', () => {
+  it('releases what is up when handed an id the table does not have', () => {
     const { session, step } = build();
     session.perform('bored');
     step(2);
@@ -71,10 +71,10 @@ describe('performances', () => {
   it('is cleared by resetExpression, lids and all', () => {
     const { session, director, step } = build();
     session.perform('doze');
-    step(4);
+    step(120);
     expect(director.blink).toBeGreaterThan(0.9);
     session.resetExpression();
-    step(4);
+    step(120);
     expect(session.state().performance).toBeNull();
     expect(director.blink).toBeLessThan(0.9);
   });

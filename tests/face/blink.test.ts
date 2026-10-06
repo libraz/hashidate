@@ -280,14 +280,18 @@ describe('Blink / context', () => {
     expect(blink.closing).toBe(false);
   });
 
-  it('cancels a blink already in flight when suppression arrives', () => {
+  it('lets a blink already in flight finish when suppression arrives, then starts no more', () => {
     const blink = new Blink({ random: mulberry32(5) });
     warm(blink);
     blink.trigger();
     run(blink, 0.04, IDLE);
-    expect(blink.weight).toBeGreaterThan(0);
-    expect(blink.update(DT, SUPPRESSED)).toBe(0);
+    const at = blink.weight;
+    expect(at).toBeGreaterThan(0);
+    // The lid carries on along the blink rather than snapping open.
+    expect(blink.update(DT, SUPPRESSED)).toBeGreaterThan(at * 0.5);
+    run(blink, 0.5, SUPPRESSED);
     expect(blink.closing).toBe(false);
+    expect(countBlinks(blink, 30, SUPPRESSED)).toBe(0);
   });
 
   it('produces nothing at all while disabled', () => {
@@ -362,20 +366,45 @@ describe('Blink / context', () => {
   });
 });
 
+/** Long enough for the lid floor to arrive at its droop. */
+function settle(blink: Blink): void {
+  run(blink, 4, SUPPRESSED);
+}
+
+/** What is left of a droop change once `settle` has run. */
+const SETTLED = 1e-6;
+
 describe('Blink / droop', () => {
+  it('eases the lids shut and open instead of stepping', () => {
+    // No blink in the first 2.5 s, so every frame here is the floor alone.
+    const blink = new Blink({ random: () => 0.999 });
+    blink.droop = 0.95;
+    const shut = [0, ...run(blink, 1.2, IDLE)];
+    blink.droop = 0;
+    const open = run(blink, 1.2, IDLE);
+    const all = [...shut, ...open];
+    const step = Math.max(...all.slice(1).map((w, i) => Math.abs(w - all[i])));
+    expect(step).toBeLessThan(0.02);
+    expect(Math.max(...shut)).toBeGreaterThan(0.9);
+    expect(open.at(-1)).toBeLessThan(0.05);
+    for (let i = 1; i < shut.length; i++) expect(shut[i]).toBeGreaterThanOrEqual(shut[i - 1]);
+  });
+
   it('holds the lids at the droop between blinks', () => {
     const blink = new Blink({ random: mulberry32(5) });
     blink.droop = 0.4;
-    for (const w of run(blink, 20, IDLE)) expect(w).toBeGreaterThanOrEqual(0.4);
+    settle(blink);
+    for (const w of run(blink, 20, IDLE)) expect(w).toBeGreaterThanOrEqual(0.4 - SETTLED);
   });
 
   it('still blinks under a light droop, and closes past it', () => {
     // Heavy lids that blink, which is what drowsiness looks like before sleep.
     const blink = new Blink({ random: mulberry32(5) });
     blink.droop = 0.4;
+    settle(blink);
     const weights = run(blink, 40, IDLE);
     expect(Math.max(...weights)).toBeGreaterThan(0.9);
-    expect(Math.min(...weights)).toBe(0.4);
+    expect(Math.min(...weights)).toBeCloseTo(0.4, 6);
   });
 
   it('never lets a blink open the eyes further than the droop', () => {
@@ -383,30 +412,36 @@ describe('Blink / droop', () => {
     // to blink and settling back.
     const blink = new Blink({ random: mulberry32(7) });
     blink.droop = 0.75;
+    settle(blink);
     warm(blink);
     blink.trigger();
-    for (const w of run(blink, 2, IDLE)) expect(w).toBeGreaterThanOrEqual(0.75);
+    for (const w of run(blink, 2, IDLE)) expect(w).toBeGreaterThanOrEqual(0.75 - SETTLED);
   });
 
   it('outranks suppression, which is the director guessing rather than being told', () => {
     const blink = new Blink({ random: mulberry32(5) });
     blink.droop = 0.9;
-    expect(blink.update(DT, SUPPRESSED)).toBe(0.9);
+    run(blink, 4, SUPPRESSED);
+    expect(blink.update(DT, SUPPRESSED)).toBeCloseTo(0.9, 6);
   });
 
   it('does not outrank the layer being switched off', () => {
     const blink = new Blink({ random: mulberry32(5) });
     blink.droop = 1;
     blink.enabled = false;
-    expect(blink.update(DT, IDLE)).toBe(0);
+    expect(run(blink, 4, IDLE).every((w) => w === 0)).toBe(true);
   });
 
   it('is clamped rather than trusted', () => {
     const blink = new Blink({ random: mulberry32(5) });
     blink.droop = 4;
-    expect(blink.update(DT, IDLE)).toBe(1);
+    const shut = run(blink, 4, SUPPRESSED);
+    expect(Math.max(...shut)).toBeLessThanOrEqual(1);
+    expect(shut.at(-1)).toBeCloseTo(1, 6);
     blink.droop = -2;
-    expect(blink.update(DT, IDLE)).toBe(0);
+    const open = run(blink, 4, SUPPRESSED);
+    expect(Math.min(...open)).toBeGreaterThanOrEqual(0);
+    expect(open.at(-1)).toBeCloseTo(0, 6);
   });
 
   it('goes back to an ordinary rhythm when it is cleared', () => {
@@ -415,7 +450,7 @@ describe('Blink / droop', () => {
     run(blink, 10, IDLE);
     blink.droop = 0;
     const weights = run(blink, 20, IDLE);
-    expect(Math.min(...weights)).toBe(0);
+    expect(Math.min(...weights)).toBeCloseTo(0, 6);
     expect(countBlinks(new Blink({ random: mulberry32(5) }), 30, IDLE)).toBeGreaterThan(0);
   });
 });

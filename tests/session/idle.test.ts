@@ -178,6 +178,8 @@ describe('idle ownership', () => {
 
       expect(director.auto).toBe(false);
       expect(session.state().emotion).toEqual({ neutral: 1 });
+      // The idle face leaves through the preset fade rather than in one frame.
+      step(60);
       expect(director.expression).toBeNull();
     } finally {
       random.mockRestore();
@@ -344,5 +346,50 @@ describe('the autopilot and a pose nothing owns', () => {
       if (director.body.gesture?.id !== 'nod') break;
     }
     expect(director.body.gesture?.id).toBe('nod');
+  });
+});
+
+describe('idle handing the face back', () => {
+  /** Largest change of any emotion channel between two frames. */
+  const jump = (a: Record<string, number>, b: Record<string, number>): number => {
+    let worst = 0;
+    for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      worst = Math.max(worst, Math.abs((a[key] ?? 0) - (b[key] ?? 0)));
+    }
+    return worst;
+  };
+
+  it.each([
+    ['idle switched off', (s: ReturnType<typeof build>) => s.session.setIdle(false)],
+    ['a performance', (s: ReturnType<typeof build>) => s.session.perform('agree')],
+    ['a reset while idle', (s: ReturnType<typeof build>) => s.session.resetExpression()],
+  ])('eases the emotion on screen across %s instead of stepping it', (_, act) => {
+    const h = build({ idle: true });
+    // 'guarded' — a mood well away from the neutral baseline underneath.
+    const random = vi.spyOn(Math, 'random').mockReturnValue(31 / 35 + 0.001);
+    try {
+      h.step(Math.ceil((IDLE_AFTER + 1) / DT));
+      let elapsed = 0;
+      while (h.director.performance !== 'guarded' && elapsed < 10) {
+        h.step(1);
+        elapsed += DT;
+      }
+      h.step(Math.ceil(2 / DT));
+    } finally {
+      random.mockRestore();
+    }
+    const before = { ...h.director.effectiveEmotion };
+    expect(jump(before, { neutral: 1 })).toBeGreaterThan(0.3);
+    act(h);
+    let last = before;
+    let worst = 0;
+    for (let i = 0; i < 120; i++) {
+      h.step(1);
+      const now = { ...h.director.effectiveEmotion };
+      worst = Math.max(worst, jump(last, now));
+      last = now;
+    }
+    // Bounded by one frame of the emotion ease, not the distance between moods.
+    expect(worst).toBeLessThan(1 - Math.exp(-DT * h.director.emotionRate) + 1e-9);
   });
 });

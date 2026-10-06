@@ -11,7 +11,9 @@ export type { BlinkContext, BlinkOptions } from './blink';
 export { BLINK_CLOSE, Blink, blinkCurve, MIN_BLINK_GAP } from './blink';
 export {
   composeArkit,
+  composeArkitInto,
   composeNative,
+  composeNativeInto,
   dominantEmotion,
   EMOTION_LABELS,
   EMOTIONS,

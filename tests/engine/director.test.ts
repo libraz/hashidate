@@ -396,3 +396,57 @@ describe('buildRig / stated deltas', () => {
     expect(dy('blink')).not.toBeCloseTo(DELTAS.F_SWAP, 9);
   });
 });
+
+describe('Director / a rig with one per-eye blink shape', () => {
+  it('blinks both eyes through the shared shape instead of winking', () => {
+    const rig = buildRig({ arkit: false });
+    const face = rig.meshes.get('Face');
+    if (!face?.morphTargetDictionary) throw new Error('the synthetic rig built no face');
+    delete face.morphTargetDictionary.blinkRight;
+    const profile = buildProfile(rig.root, rig.descriptor);
+    expect(profile.blink.L).not.toBeNull();
+    expect(profile.blink.R).toBeNull();
+    const director = new Director(profile);
+    const weight = (id: string): number => {
+      const index = face.morphTargetDictionary?.[id];
+      return index === undefined ? 0 : (face.morphTargetInfluences?.[index] ?? 0);
+    };
+    for (let i = 0; i < 60; i++) director.update(DT);
+    director.triggerBlink();
+    director.update(DT);
+    director.update(DT);
+    expect(director.blink).toBeGreaterThan(0);
+    expect(weight('blink')).toBeGreaterThan(0);
+    expect(weight('blinkLeft')).toBe(0);
+  });
+});
+
+describe('Director / steady-state frames', () => {
+  it('builds no Map or Set once the face has settled', () => {
+    const { director, step } = build();
+    director.setEmotion({ joy: 0.6, relaxed: 0.3 });
+    step(120);
+    const RealMap = globalThis.Map;
+    const RealSet = globalThis.Set;
+    let built = 0;
+    globalThis.Map = class extends RealMap<unknown, unknown> {
+      constructor(entries?: Iterable<readonly [unknown, unknown]> | null) {
+        super(entries);
+        built++;
+      }
+    } as MapConstructor;
+    globalThis.Set = class extends RealSet<unknown> {
+      constructor(values?: Iterable<unknown> | null) {
+        super(values);
+        built++;
+      }
+    } as SetConstructor;
+    try {
+      step(60);
+    } finally {
+      globalThis.Map = RealMap;
+      globalThis.Set = RealSet;
+    }
+    expect(built).toBe(0);
+  });
+});
