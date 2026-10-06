@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import '@/styles/global.css';
 import { Panel } from './Panel';
@@ -14,4 +15,8 @@ if (!host) throw new Error('#root missing from panel/index.html');
  * forms — the double effect costs one extra request and is worth having, because
  * a poll that survives its own teardown is exactly the bug it catches.
  */
-createRoot(host).render(<Panel />);
+createRoot(host).render(
+  <StrictMode>
+    <Panel />
+  </StrictMode>,
+);

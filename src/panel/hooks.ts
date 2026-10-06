@@ -79,6 +79,61 @@ export const EMPTY: Snapshot = {
   bgmTracks: [],
 };
 
+interface ReaderSinks {
+  alive: () => boolean;
+  onFailure: (message: string) => void;
+  onSnapshot: (snapshot: Snapshot) => void;
+}
+
+/**
+ * One `/state` read at a time.
+ *
+ * A request arriving while a read is in flight does not start another: it asks
+ * for one follow-up read, so a burst of mutations costs one extra round trip
+ * rather than a fan-out whose answers land in any order. A snapshot older than
+ * the one shown is dropped; after a failure the floor is forgotten, because a
+ * restarted server counts from zero again.
+ */
+export function singleFlight(
+  read: () => Promise<Snapshot | { error: string }>,
+  sinks: ReaderSinks,
+): () => Promise<void> {
+  let inFlight: Promise<void> | null = null;
+  let again = false;
+  let shown = -1;
+
+  const once = async (): Promise<void> => {
+    const result = await read();
+    if (!sinks.alive()) return;
+    if (isFailure(result)) {
+      shown = -1;
+      sinks.onFailure(result.error);
+    } else if (result.seq >= shown) {
+      shown = result.seq;
+      sinks.onSnapshot(result);
+    }
+  };
+
+  return () => {
+    if (inFlight !== null) {
+      again = true;
+      return inFlight;
+    }
+    const run = (async () => {
+      try {
+        do {
+          again = false;
+          await once();
+        } while (again && sinks.alive());
+      } finally {
+        inFlight = null;
+      }
+    })();
+    inFlight = run;
+    return run;
+  };
+}
+
 export function useRuntime(): Runtime {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,19 +147,24 @@ export function useRuntime(): Runtime {
   const alive = useRef(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const poll = useCallback(async () => {
-    const result = await readState();
-    if (!alive.current) return;
-    if (isFailure(result)) {
-      // The last snapshot is kept rather than cleared. A restarted server means
-      // the panel goes blank for half a second otherwise, and a queue that
-      // flickers empty is one an operator will click on by mistake.
-      setError(result.error);
-    } else {
-      setError(null);
-      setSnapshot(result);
-    }
-  }, []);
+  const reader = useRef<(() => Promise<void>) | null>(null);
+  if (reader.current === null) {
+    reader.current = singleFlight(readState, {
+      alive: () => alive.current,
+      onFailure: (message) => {
+        // The last snapshot is kept rather than cleared. A restarted server means
+        // the panel goes blank for half a second otherwise, and a queue that
+        // flickers empty is one an operator will click on by mistake.
+        setError(message);
+      },
+      onSnapshot: (next) => {
+        setError(null);
+        setSnapshot(next);
+      },
+    });
+  }
+
+  const poll = useCallback(() => (reader.current as () => Promise<void>)(), []);
 
   const refresh = useCallback(() => {
     void poll();
@@ -115,13 +175,17 @@ export function useRuntime(): Runtime {
     // Chained timeouts rather than an interval: a slow or hung request must not
     // let a second one start behind it, which on a restarting server is how a
     // panel ends up with a dozen sockets waiting on a port nothing is on.
+    // Per-mount flag: under StrictMode the first mount's loop outlives its
+    // cleanup, and the shared `alive` is true again by then.
+    let stopped = false;
     const loop = async (): Promise<void> => {
       await poll();
-      if (!alive.current) return;
+      if (stopped || !alive.current) return;
       timer.current = setTimeout(() => void loop(), POLL_INTERVAL);
     };
     void loop();
     return () => {
+      stopped = true;
       alive.current = false;
       if (timer.current !== null) clearTimeout(timer.current);
     };
