@@ -17,6 +17,7 @@ import { saturate } from './idle';
 
 const _tmp = new THREE.Vector3();
 const _dir = new THREE.Vector3();
+const _rootQ = new THREE.Quaternion();
 
 /** How much of the target is honoured, and how loud the wander over it is. */
 export interface LookSettings {
@@ -38,6 +39,8 @@ export function aimGaze(
     head.updateWorldMatrix(true, false);
     const hp = head.getWorldPosition(_tmp);
     const dir = _dir.copy(headWorldTarget).sub(hp).normalize();
+    // Bearing in root space, so tracking follows the avatar's placement, not the room.
+    dir.applyQuaternion(p.root.getWorldQuaternion(_rootQ).invert());
     // Partial aim only: a full aim would cancel the idle motion above.
     const k = lookAt;
     const camYaw = Math.atan2(dir.x, dir.z) * k;

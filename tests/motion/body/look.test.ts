@@ -15,6 +15,36 @@ function headAngle(h: Harness): number {
 }
 
 describe('look-at share', () => {
+  it('tracks the same relative bearing when the avatar turns in the room', () => {
+    const deltas = [0, Math.PI / 2, Math.PI].map((yaw) => {
+      const h = harness(yaw);
+      const head = h.profile.bones.head;
+      if (!head) throw new Error('synthetic rig has no head');
+      h.profile.root.position.set(0.4, 0.2, -0.3);
+      h.profile.root.updateMatrixWorld(true);
+      const camera = new THREE.Vector3(1.2, 0.35, 2)
+        .applyQuaternion(h.profile.root.getWorldQuaternion(new THREE.Quaternion()))
+        .add(head.getWorldPosition(new THREE.Vector3()));
+      h.rig.reset();
+      h.body.update(DT, { headWorldTarget: camera });
+      expect(headAngle(h)).toBeGreaterThan(0.05);
+      return (['head', 'neck', 'eye.L', 'eye.R'] as const).map((slot) => {
+        const bone = h.profile.bones[slot];
+        if (!bone) throw new Error(`synthetic rig has no ${slot}`);
+        const rest = h.rig.rest.get(bone);
+        if (!rest) throw new Error(`synthetic rig has no rest for ${slot}`);
+        const delta = rest.clone().invert().multiply(bone.quaternion);
+        expect(delta.angleTo(new THREE.Quaternion())).toBeGreaterThan(0.02);
+        return delta;
+      });
+    });
+    for (const turned of deltas.slice(1)) {
+      for (const [i, q] of turned.entries()) {
+        expect(q.angleTo(deltas[0][i])).toBeLessThan(1e-7);
+      }
+    }
+  });
+
   it('turns the head toward and away from the camera without a step', () => {
     const h = harness();
     // Off to one side and up, so tracking has something to turn toward.
