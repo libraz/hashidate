@@ -514,6 +514,24 @@ describe('Session.replaceQueue', () => {
     expect(session.takeEvents()).toEqual([{ type: 'queue.replaced', queued: 3 }]);
   });
 
+  it('reports the lines the new list dropped, and not the ones it rewrote', () => {
+    const { session } = build();
+    session.say({ id: 'kept', text: 'のこる' });
+    session.say({ id: 'edited', text: 'まえ' });
+    session.say({ id: 'gone', text: 'きえる' });
+    session.takeEvents();
+
+    session.replaceQueue([
+      { id: 'kept', text: 'のこる' },
+      { id: 'edited', text: 'あと' },
+    ]);
+
+    expect(session.takeEvents()).toEqual([
+      { type: 'queue.dropped', turns: ['gone'] },
+      { type: 'queue.replaced', queued: 2 },
+    ]);
+  });
+
   it('empties the queue when given nothing', () => {
     const { session } = build();
     session.say({ id: 'a' });

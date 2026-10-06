@@ -3,14 +3,19 @@ import type { VoiceDsp } from '@/protocol';
 import { BrowserAudioOutput } from '@/viewer/audio-output';
 import { buildImpulse } from '@/viewer/rooms';
 import { BrowserVoice, buildEnvelope, envelopeAt, startContext } from '@/viewer/voice';
-import { loadBase, mergeDsp } from '@/viewer/voice-chain';
+import { loadBase, measure, mergeDsp, processTake } from '@/viewer/voice-chain';
 
 // The browser graph below is real (in-memory Web Audio nodes), while the
 // optional WASM preset resolver is kept out of these deterministic tests. The
 // bypass path is the documented fallback when the processor is unavailable.
 vi.mock('@/viewer/voice-chain', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/viewer/voice-chain')>();
-  return { ...actual, loadBase: vi.fn(async () => ({})) };
+  return {
+    ...actual,
+    loadBase: vi.fn(async () => ({})),
+    processTake: vi.fn(actual.processTake),
+    measure: vi.fn(actual.measure),
+  };
 });
 
 vi.mock('@/viewer/rooms', async (importOriginal) => {
@@ -360,6 +365,104 @@ describe('BrowserVoice with an in-memory Web Audio graph', () => {
     now.mockReturnValue(21_001);
     expect(await fake.voice.prepare('after backoff')).not.toBeNull();
     expect(fake.send).toHaveBeenCalledTimes(2);
+
+    fake.voice.dispose();
+    fake.output.dispose();
+  });
+
+  it('clears the blocked warning the moment the output unlocks, without another line', async () => {
+    const fake = webAudioEnvironment({ blocked: true });
+    expect(await fake.voice.prepare('not yet')).toBeNull();
+    expect(fake.voice.report().blocked).toBe(true);
+
+    // A gesture, or anything else that gets the shared context running.
+    fake.context.state = 'running';
+    await fake.output.ensureRunning();
+    expect(fake.voice.report().blocked).toBe(false);
+    expect(fake.send).not.toHaveBeenCalled();
+
+    fake.voice.dispose();
+    fake.output.dispose();
+  });
+
+  it('meters the take that last started playing, and nothing once bypassed', async () => {
+    const fake = webAudioEnvironment();
+    fake.voice.setChain({ preset: 'default' });
+    await vi.waitFor(() => expect(fake.voice.report().dsp).not.toBeNull());
+    vi.mocked(processTake).mockImplementation((samples) => Float32Array.from(samples));
+    vi.mocked(measure)
+      .mockReturnValueOnce({ lufs: -20, truePeakDb: -2 })
+      .mockReturnValueOnce({ lufs: -10, truePeakDb: -1 });
+
+    const first = await fake.voice.prepare('one');
+    const second = await fake.voice.prepare('two');
+    // Both are made; neither has been heard.
+    expect(fake.voice.report().lufs).toBeNull();
+    first?.play();
+    expect(fake.voice.report()).toMatchObject({ lufs: -20, truePeakDb: -2 });
+    second?.play();
+    expect(fake.voice.report()).toMatchObject({ lufs: -10, truePeakDb: -1 });
+
+    fake.voice.setChain({ preset: null });
+    expect(fake.voice.report()).toMatchObject({ lufs: null, truePeakDb: null });
+    vi.mocked(processTake).mockReset();
+    vi.mocked(measure).mockReset();
+    fake.voice.dispose();
+    fake.output.dispose();
+  });
+
+  it('still asks for the lines queued before a failure, and backs off only later ones', async () => {
+    const fake = webAudioEnvironment();
+    fake.send.mockRejectedValueOnce(new Error('connection refused'));
+    // A batch: all three are asked for before the first answers.
+    const takes = [fake.voice.prepare('a'), fake.voice.prepare('b'), fake.voice.prepare('c')];
+    const [a, b, c] = await Promise.all(takes);
+
+    expect(a).toBeNull();
+    expect(b).not.toBeNull();
+    expect(c).not.toBeNull();
+    expect(fake.send).toHaveBeenCalledTimes(3);
+
+    fake.voice.dispose();
+    fake.output.dispose();
+  });
+
+  it('skips a dropped line without the sidecar, and cuts one in flight without backing off', async () => {
+    const fake = webAudioEnvironment();
+    const before = new AbortController();
+    before.abort();
+    expect(await fake.voice.prepare('dropped', undefined, before.signal)).toBeNull();
+    expect(fake.send).not.toHaveBeenCalled();
+
+    const during = new AbortController();
+    fake.send.mockImplementationOnce(async () => {
+      during.abort();
+      throw new DOMException('aborted', 'AbortError');
+    });
+    expect(await fake.voice.prepare('cut', undefined, during.signal)).toBeNull();
+    // The next line is asked for: a cut request says nothing about the sidecar.
+    expect(await fake.voice.prepare('next')).not.toBeNull();
+    expect(fake.send).toHaveBeenCalledTimes(2);
+
+    fake.voice.dispose();
+    fake.output.dispose();
+  });
+
+  it('runs a take on the wall clock once the audio clock stalls, so the line still ends', async () => {
+    const fake = webAudioEnvironment();
+    let wall = 1_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => wall);
+    const take = await fake.voice.prepare('hello');
+    take?.play();
+    fake.context.currentTime = 10.1;
+    wall += 100;
+    expect(take?.elapsed).toBeCloseTo(0.1);
+
+    // The device stops: currentTime never moves again.
+    wall += 100;
+    expect(take?.elapsed).toBeCloseTo(0.1);
+    wall += 2_000;
+    expect(take?.elapsed).toBeGreaterThan(take?.seconds ?? Number.POSITIVE_INFINITY);
 
     fake.voice.dispose();
     fake.output.dispose();

@@ -1,6 +1,7 @@
 import type { InlineCueAction } from '../../protocol/cues';
 import { parseLine } from '../cues';
 import type { Director } from '../director';
+import { textToVisemes } from '../face/lipsync';
 import { PERFORMANCE_TABLE } from '../performance';
 import type { Cue, Turn, TurnRequest, Voice } from '../types';
 import type { SessionEvents } from './events';
@@ -23,15 +24,21 @@ const TURN_GAP = 0.28;
 
 /**
  * How long a turn may sit at the head of the queue waiting to be synthesised
- * before it is played silently.
+ * before it is played silently, on top of the line's own spoken length.
  *
  * The sidecar answers in about a second, and synthesis starts when the line is
  * queued rather than when it is played, so the wait is normally already over by
  * the time a turn reaches the front. Five seconds means the sidecar is wedged
  * or gone, and a stream that stops dead is worse than one that mouths a line:
- * the queue has to keep moving whatever the voice is doing.
+ * the queue has to keep moving whatever the voice is doing. A long line takes
+ * about as long to make as to say, so its own length is added rather than
+ * having a healthy take discarded for arriving after a short line's deadline.
  */
 const VOICE_WAIT = 5;
+
+/** The wait `VOICE_WAIT` allows one turn. */
+const voiceWait = (turn: Turn): number =>
+  VOICE_WAIT + textToVisemes(turn.reading ?? turn.text).duration;
 
 function cueAction(cue: Cue): InlineCueAction | null {
   if (cue.action !== undefined) return cue.action;
@@ -65,8 +72,17 @@ export class TurnQueue {
   paused = false;
 
   private _gap = 0;
-  /** The queue head currently waiting on its voice, and how long it has waited. */
-  private _waiting: { turn: Turn; seconds: number } | null = null;
+  /** The queue head currently waiting on its voice, how long it has waited, and may. */
+  private _waiting: { turn: Turn; seconds: number; limit: number } | null = null;
+  /**
+   * Queued turns the voice answered with no take, which are asked again once
+   * it hands one back — a sidecar that came back mid-run is a voice for the
+   * lines still to come. Each is asked again once.
+   */
+  private readonly _silenced = new Set<Turn>();
+  /** Per-turn abort for a synthesis still in flight; released on removal. */
+  private readonly _pending = new Map<Turn, AbortController>();
+  private readonly _retried = new WeakSet<Turn>();
   /**
    * The running turn's cues, in order, resolved to seconds and shortened from
    * the front as they fire.
@@ -246,10 +262,15 @@ export class TurnQueue {
     // even though it never played: a take still being synthesised arrives a
     // second later and would start talking over the line that replaced it,
     // which is the same failure `clear` during synthesis has.
-    for (const dropped of held.values()) dropped.take?.stop();
+    this.discard(held.values());
 
     this.queue.length = 0;
     this.queue.push(...next);
+    // Reported like any other drop, so no line leaves this queue unsaid and
+    // unannounced. An id the new list still names was edited, not dropped.
+    const named = new Set(next.map((turn) => turn.id));
+    const dropped = [...held.keys()].filter((id) => !named.has(id));
+    if (dropped.length) this.events.emit('queue.dropped', { turns: dropped });
     this.events.emit('queue.replaced', { queued: this.queue.length });
   }
 
@@ -266,10 +287,13 @@ export class TurnQueue {
    * that starts talking a second later over whatever came next.
    */
   private synthesise(turn: Turn, voice: Voice): void {
+    const controller = new AbortController();
+    this._pending.set(turn, controller);
     voice
-      .prepare(turn.text, turn.reading)
+      .prepare(turn.text, turn.reading, controller.signal)
       .catch(() => null)
       .then((take) => {
+        if (this._pending.get(turn) === controller) this._pending.delete(turn);
         if (this.turn === turn) {
           // VOICE_WAIT may have started this line silently. A late take must
           // not be assigned after the line opened: it has never been played,
@@ -279,12 +303,40 @@ export class TurnQueue {
           turn.take = null;
         } else if (this.queue.includes(turn)) {
           turn.take = take;
+          if (take === null) this._silenced.add(turn);
+          else this.retrySilenced(voice);
         } else {
           // The turn was removed while synthesis was in flight. Do not let a
           // late answer resurrect audio for a line the queue no longer owns.
           take?.stop();
         }
       });
+  }
+
+  /** Ask again, once, for every queued line the voice had no take for. */
+  private retrySilenced(voice: Voice): void {
+    for (const turn of this._silenced) {
+      this._silenced.delete(turn);
+      if (this._retried.has(turn) || !this.queue.includes(turn)) continue;
+      this._retried.add(turn);
+      delete turn.take;
+      this.synthesise(turn, voice);
+    }
+  }
+
+  /**
+   * Let go of turns that have left the queue without being said.
+   *
+   * The one path every removal takes — `clear`, `interrupt`, a replacement and
+   * teardown — so what leaving the queue costs a line's voice is decided once.
+   */
+  private discard(turns: Iterable<Turn>): void {
+    for (const turn of turns) {
+      turn.take?.stop();
+      this._silenced.delete(turn);
+      this._pending.get(turn)?.abort();
+      this._pending.delete(turn);
+    }
   }
 
   /**
@@ -305,6 +357,7 @@ export class TurnQueue {
   interrupt(): void {
     if (this._disposed) return;
     const dropped = this.queue.map((t) => t.id);
+    this.discard(this.queue);
     this.queue.length = 0;
     this.d.mouth.stop();
     this.d.body.stopGesture();
@@ -322,6 +375,7 @@ export class TurnQueue {
   clear(): void {
     if (this._disposed) return;
     const dropped = this.queue.map((t) => t.id);
+    this.discard(this.queue);
     this.queue.length = 0;
     if (dropped.length) this.events.emit('queue.dropped', { turns: dropped });
   }
@@ -354,7 +408,7 @@ export class TurnQueue {
     this._disposed = true;
 
     const active = this.turn;
-    for (const pending of this.queue) pending.take?.stop();
+    this.discard(this.queue);
     this.queue.length = 0;
     this._waiting = null;
     this._cues.length = 0;
@@ -412,20 +466,24 @@ export class TurnQueue {
       // for a take and the beat between turns overlap instead of adding up.
       const head = this.queue[0];
       let waited = 0;
+      let limit = 0;
       if (head.take === undefined) {
         let waiting = this._waiting;
         if (waiting?.turn !== head) {
-          waiting = { turn: head, seconds: 0 };
+          waiting = { turn: head, seconds: 0, limit: voiceWait(head) };
           this._waiting = waiting;
         }
         waiting.seconds += dt;
         waited = waiting.seconds;
+        limit = waiting.limit;
       } else {
         this._waiting = null;
       }
-      if (this._gap <= 0 && (head.take !== undefined || waited > VOICE_WAIT)) {
+      if (this._gap <= 0 && (head.take !== undefined || waited > limit)) {
         this._waiting = null;
-        this.start(this.queue.shift() as Turn);
+        const next = this.queue.shift() as Turn;
+        this._silenced.delete(next);
+        this.start(next);
       }
     }
   }
@@ -463,8 +521,9 @@ export class TurnQueue {
     // would inherit whatever the last take's envelope stopped on — a mouth a
     // third open for a whole turn, with nothing near the cause to explain it.
     if (!turn.take) d.mouth.setAmplitude(1);
-    // A turn with no text is a pose change. It has no mouth to wait on, so the
-    // end check finds the mouth idle and closes it on the next frame.
+    // A turn with no text has no mouth to wait on, so the end check finds the
+    // mouth idle and closes it on the next frame — and releases what it put up
+    // like any other turn, so a pose meant to stay needs `hold`.
     const seconds = turn.text ? d.speak(turn.text, turn.reading, turn.take?.seconds) : 0;
     // The cues arrived as fractions of the line and become seconds here,
     // against the length the mouth actually reported — which is the reading's
@@ -488,6 +547,11 @@ export class TurnQueue {
    *
    * `<=` and not `<`, so a cue written at the very start of a line fires at
    * time zero rather than one frame into it.
+   *
+   * A cue whose effect outlives the line — a performance's mood, a shot, a
+   * page — is reported as well as applied, so the server can hand it to a
+   * renderer that attaches later. BGM is reported and not applied: the server
+   * owns that transport.
    */
   private fireCues(t: number): void {
     while (this._cues.length > 0 && this._cues[0].t <= t) {
@@ -498,6 +562,7 @@ export class TurnQueue {
         case 'perform':
           this.d.perform(action.id);
           this._performing = action.id;
+          this.reportCue(action, scheduled.ordinal);
           break;
         case 'expression':
           this.d.setExpression(action.id);
@@ -511,19 +576,26 @@ export class TurnQueue {
           break;
         case 'camera':
           this.stage.setCamera({ frame: action.frame });
+          this.reportCue(action, scheduled.ordinal);
           break;
         case 'slide':
           this.stage.setSlide(action.page);
+          this.reportCue(action, scheduled.ordinal);
           break;
         case 'bgm':
-          this.events.emit('cue.fire', {
-            turn: this.turn?.id,
-            cueId: `${this.turn?.id}:cue:${scheduled.ordinal}`,
-            cue: action,
-          });
+          this.reportCue(action, scheduled.ordinal);
           break;
       }
     }
+  }
+
+  /** One fired cue, under an id every renderer playing this line agrees on. */
+  private reportCue(cue: InlineCueAction, ordinal: number): void {
+    this.events.emit('cue.fire', {
+      turn: this.turn?.id,
+      cueId: `${this.turn?.id}:cue:${ordinal}`,
+      cue,
+    });
   }
 
   private release(turn: Turn): void {

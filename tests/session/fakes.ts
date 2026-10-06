@@ -60,6 +60,8 @@ export class FakeTake implements Take {
 /** A voice that answers immediately with a take of a stated length. */
 export class FakeVoice implements Voice {
   readonly asked: string[] = [];
+  /** The abort signal each request carried. */
+  readonly signals: Array<AbortSignal | undefined> = [];
   readonly takes: FakeTake[] = [];
   /** Resolvers for every outstanding request, when `defer` is on. */
   private readonly pending: Array<(take: Take | null) => void> = [];
@@ -76,8 +78,9 @@ export class FakeVoice implements Voice {
     } = {},
   ) {}
 
-  prepare(text: string): Promise<Take | null> {
+  prepare(text: string, _reading?: string, signal?: AbortSignal): Promise<Take | null> {
     this.asked.push(text);
+    this.signals.push(signal);
     if (this.opts.fail) return Promise.reject(new Error('no voice'));
     if (this.opts.nullAfter !== undefined && this.asked.length > this.opts.nullAfter) {
       return Promise.resolve(null);

@@ -9,7 +9,88 @@ import { build, DT, settle, VOICE_WAIT } from './harness';
  * chain it goes out through.
  */
 
+/** How long a line may wait for its voice: the base, plus its own length. */
+const wait = (text: string): number => VOICE_WAIT + textToVisemes(text).duration;
+
 describe('a turn with a voice', () => {
+  it('waits for a long line as long as it takes to say, and plays it with its take', async () => {
+    let voice: FakeVoice | null = null;
+    const { session, step } = build({
+      voice: (now) => {
+        voice = new FakeVoice(now, { defer: true });
+        return voice;
+      },
+    });
+    const long = 'あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほ'.repeat(3);
+    session.say({ id: 'long', text: long });
+    // Past the old fixed deadline, inside one that scales with the line.
+    step(Math.ceil((VOICE_WAIT + 1) / DT));
+    expect(textToVisemes(long).duration).toBeGreaterThan(1);
+    expect(session.turn).toBeNull();
+
+    await (voice as unknown as FakeVoice).answer();
+    step(1);
+    expect(session.turn?.id).toBe('long');
+    expect(session.turn?.take).not.toBeNull();
+    expect(session.turn?.take).toBeDefined();
+  });
+
+  it('aborts the pending synthesis of every turn that leaves the queue unsaid', async () => {
+    let voice: FakeVoice | null = null;
+    const { session } = build({
+      voice: (now) => {
+        voice = new FakeVoice(now, { defer: true });
+        return voice;
+      },
+    });
+    const fake = () => voice as unknown as FakeVoice;
+    session.paused = true;
+    session.say({ id: 'a', text: 'あ' });
+    session.say({ id: 'b', text: 'い' });
+    session.say({ id: 'c', text: 'う' });
+    session.say({ id: 'd', text: 'え' });
+    expect(fake().signals.map((s) => s?.aborted)).toEqual([false, false, false, false]);
+
+    session.replaceQueue([{ id: 'b', text: 'い' }]);
+    expect(fake().signals.map((s) => s?.aborted)).toEqual([true, false, true, true]);
+
+    session.clearQueue();
+    expect(fake().signals[1]?.aborted).toBe(true);
+
+    session.say({ id: 'e', text: 'お' });
+    session.interrupt();
+    expect(fake().signals[4]?.aborted).toBe(true);
+  });
+
+  it('asks again, once, for queued lines the voice had no take for when it comes back', async () => {
+    let up = false;
+    let voice: FakeVoice | null = null;
+    const { session } = build({
+      voice: (now) => {
+        voice = new (class extends FakeVoice {
+          override prepare(text: string) {
+            if (up) return super.prepare(text);
+            this.asked.push(text);
+            return Promise.resolve(null);
+          }
+        })(now);
+        return voice;
+      },
+    });
+    session.paused = true;
+    session.say({ id: 'a', text: 'あ' });
+    session.say({ id: 'b', text: 'い' });
+    await settle();
+    expect(session.queue.map((turn) => turn.take)).toEqual([null, null]);
+
+    up = true;
+    session.say({ id: 'c', text: 'う' });
+    await settle();
+    await settle();
+    expect(session.queue.every((turn) => turn.take)).toBe(true);
+    expect((voice as unknown as FakeVoice).asked).toEqual(['あ', 'い', 'う', 'あ', 'い']);
+  });
+
   it('holds the turn back until the line has been synthesised', async () => {
     let voice: FakeVoice | null = null;
     const { session, step } = build({
@@ -177,7 +258,7 @@ describe('a turn with a voice', () => {
       },
     });
     session.say({ text: 'あいうえお' });
-    step(Math.ceil((VOICE_WAIT + 0.2) / DT));
+    step(Math.ceil((wait('あいうえお') + 0.2) / DT));
     // A wedged sidecar must cost the line its sound and nothing else. A stream
     // that stops dead is the worse failure.
     expect(session.turn?.text).toBe('あいうえお');
@@ -241,7 +322,7 @@ describe('a turn with a voice', () => {
       if (event.type === 'turn.end' && event.turn) ended.push(event.turn);
     });
     session.say({ id: 'late', text: 'あいうえお' });
-    step(Math.ceil((VOICE_WAIT + 0.2) / DT));
+    step(Math.ceil((wait('あいうえお') + 0.2) / DT));
     expect(session.turn?.id).toBe('late');
     expect(session.turn?.take).toBeUndefined();
 

@@ -92,6 +92,26 @@ const ENVELOPE_REFERENCE = 0.95;
 const RETRY_AFTER_MS = 20_000;
 
 /**
+ * How long the audio clock may stand still mid-line before the wall clock takes
+ * over. A context that stops after `play` — a device change, an OS interruption
+ * — would otherwise hold the mouth on one mora and the turn open for good.
+ * Several of the coarsest `currentTime` updates browsers make, and short enough
+ * that a hold this long reads as a pause rather than a freeze.
+ */
+const CLOCK_STALL_SECONDS = 0.25;
+
+/** Loudness of one take, or nulls when nothing measured it. */
+interface Measured {
+  lufs: number | null;
+  truePeakDb: number | null;
+}
+
+const UNMEASURED: Measured = { lufs: null, truePeakDb: null };
+
+/** Wall-clock seconds, for the stalled-clock fallback. */
+const wallSeconds = (): number => performance.now() / 1000;
+
+/**
  * Turn one channel of audio into a loudness curve, 0..1.
  *
  * RMS rather than peak per window, because the mouth is following how much
@@ -135,15 +155,26 @@ class BufferTake implements Take {
   private readonly output: AudioNode;
   private readonly buffer: AudioBuffer;
   private readonly envelope: Float32Array;
+  private readonly onPlay: () => void;
   private source: AudioBufferSourceNode | null = null;
   private startedAt: number | null = null;
   private stoppedAt: number | null = null;
+  /** The furthest the clock has read, and the wall time it last moved. */
+  private reached = 0;
+  private movedAt = 0;
 
-  constructor(ctx: AudioContext, output: AudioNode, buffer: AudioBuffer, envelope: Float32Array) {
+  constructor(
+    ctx: AudioContext,
+    output: AudioNode,
+    buffer: AudioBuffer,
+    envelope: Float32Array,
+    onPlay: () => void,
+  ) {
     this.ctx = ctx;
     this.output = output;
     this.buffer = buffer;
     this.envelope = envelope;
+    this.onPlay = onPlay;
     this.seconds = buffer.duration;
   }
 
@@ -155,6 +186,8 @@ class BufferTake implements Take {
     source.start();
     this.source = source;
     this.startedAt = this.ctx.currentTime;
+    this.movedAt = wallSeconds();
+    this.onPlay();
   }
 
   stop(): void {
@@ -180,7 +213,17 @@ class BufferTake implements Take {
     // Not clamped to `seconds`. The mouth ends its track by this clock passing
     // the end of it, so a clock that stopped at the last mora would hold the
     // line open until something interrupted it.
-    return this.ctx.currentTime - this.startedAt;
+    const audio = this.ctx.currentTime - this.startedAt;
+    const wall = wallSeconds();
+    if (audio > this.reached) {
+      this.reached = audio;
+      this.movedAt = wall;
+      return audio;
+    }
+    // Stalled: carry on from where it stopped on the wall clock. See
+    // `CLOCK_STALL_SECONDS`.
+    const still = wall - this.movedAt;
+    return still > CLOCK_STALL_SECONDS ? this.reached + still : this.reached;
   }
 
   get amplitude(): number {
@@ -234,8 +277,9 @@ export class BrowserVoice implements Voice {
   private ctx: AudioContext | null = null;
   private chainNodes: Chain | null = null;
   private silentUntil = 0;
-  /** See `isBlocked`. Set by `device`, which is the only thing that can know. */
-  private blocked = false;
+  /** How many lines have been asked for, and the first one the back-off covers. */
+  private issued = 0;
+  private backOffFrom = 0;
   /** Requests are run through this one at a time. See `prepare`. */
   private chain: Promise<unknown> = Promise.resolve();
 
@@ -257,10 +301,8 @@ export class BrowserVoice implements Voice {
   private dsp: ResolvedDsp | null = null;
   /** See `roomEpoch` — the same race, for the same reason. */
   private chainEpoch = 0;
-  private lastMeasured: { lufs: number | null; truePeakDb: number | null } = {
-    lufs: null,
-    truePeakDb: null,
-  };
+  /** What the take that last started playing measured. See `report`. */
+  private lastMeasured: Measured = UNMEASURED;
 
   private room: RoomId | null = null;
   /**
@@ -349,6 +391,7 @@ export class BrowserVoice implements Voice {
       this.preset = null;
       this.overrides = {};
       this.dsp = null;
+      this.lastMeasured = UNMEASURED;
       this.chainEpoch += 1;
       return;
     }
@@ -382,6 +425,12 @@ export class BrowserVoice implements Voice {
     this.dsp = mergeDsp(base, this.overrides);
   }
 
+  /**
+   * The loudness is the last take *played*, not the last one made: synthesis
+   * runs a line or more ahead, and a meter reading the newest synthesis would
+   * describe something nobody has heard yet. Null when the chain is bypassed,
+   * which measures nothing, or when the measurement failed.
+   */
   report(): VoiceReport {
     return {
       preset: this.preset,
@@ -401,10 +450,11 @@ export class BrowserVoice implements Voice {
    * a warning in front of every operator who opened the viewer early.
    *
    * Reported rather than only logged because nothing in this program can clear
-   * it. It is the one failure here whose fix is a person touching the page.
+   * it. It is the one failure here whose fix is a person touching the page —
+   * and read straight off the output, so it clears the moment that touch does.
    */
   get isBlocked(): boolean {
-    return this.blocked || (this.outputOrNull?.isBlocked ?? false);
+    return this.outputOrNull?.isBlocked ?? false;
   }
 
   /**
@@ -543,7 +593,6 @@ export class BrowserVoice implements Voice {
       if (this.room !== null) void this.applyRoom(this.roomEpoch);
     }
     const started = await output.ensureRunning();
-    this.blocked = !started;
     return started ? this.ctx : null;
   }
 
@@ -560,12 +609,17 @@ export class BrowserVoice implements Voice {
    * Nothing is lost by waiting. A line takes about a second to make and several
    * to say, so the next one is ready long before it is wanted, and serialising
    * also hands them back in the order the queue will play them.
+   *
+   * `signal` is the line leaving the queue. Aborted before its turn in the
+   * chain, the request answers null without touching the sidecar; aborted in
+   * flight, the fetch is cut. Either way a dropped line stops holding up the
+   * lines still queued behind it.
    */
-  prepare(text: string, reading?: string): Promise<Take | null> {
-    const next = this.chain.then(
-      () => this.synthesise(text, reading),
-      () => this.synthesise(text, reading),
-    );
+  prepare(text: string, reading?: string, signal?: AbortSignal): Promise<Take | null> {
+    this.issued += 1;
+    const seq = this.issued;
+    const run = () => this.synthesise(text, reading, seq, signal);
+    const next = this.chain.then(run, run);
     // The chain waits on completion, not on success: a line that failed must
     // not wedge every line behind it.
     this.chain = next.catch(() => null);
@@ -584,24 +638,40 @@ export class BrowserVoice implements Voice {
    * loses its voice because a limiter refused a buffer is a far worse outcome
    * than one that sounds raw for a line.
    */
-  private processed(ctx: AudioContext, decoded: AudioBuffer): AudioBuffer {
+  private processed(
+    ctx: AudioContext,
+    decoded: AudioBuffer,
+  ): { buffer: AudioBuffer; measured: Measured } {
     const dsp = this.dsp;
-    if (!dsp) return decoded;
+    if (!dsp) return { buffer: decoded, measured: UNMEASURED };
     try {
       const samples = decoded.getChannelData(0);
       const out = processTake(samples, decoded.sampleRate, dsp);
-      this.lastMeasured = measure(out, decoded.sampleRate);
+      const measured = measure(out, decoded.sampleRate);
       const buffer = ctx.createBuffer(1, out.length, decoded.sampleRate);
       buffer.getChannelData(0).set(out);
-      return buffer;
+      return { buffer, measured };
     } catch {
-      this.lastMeasured = { lufs: null, truePeakDb: null };
-      return decoded;
+      return { buffer: decoded, measured: UNMEASURED };
     }
   }
 
-  private async synthesise(text: string, reading?: string): Promise<Take | null> {
-    if (Date.now() < this.silentUntil) return null;
+  /** Back off, from now, after the sidecar turned out not to be there. */
+  private backOff(): void {
+    this.backOffFrom = this.issued + 1;
+    this.silentUntil = Date.now() + RETRY_AFTER_MS;
+  }
+
+  private async synthesise(
+    text: string,
+    reading: string | undefined,
+    seq: number,
+    signal: AbortSignal | undefined,
+  ): Promise<Take | null> {
+    if (signal?.aborted) return null;
+    // Only a line asked for after the failure is skipped: one already queued
+    // behind it is still owed its attempt.
+    if (seq >= this.backOffFrom && Date.now() < this.silentUntil) return null;
     const ctx = await this.device();
     if (!ctx) return null;
 
@@ -611,22 +681,24 @@ export class BrowserVoice implements Voice {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(reading === undefined ? { text } : { text, reading }),
+        signal,
       });
       if (!res.ok) {
         // 503 is the sidecar not being there, which is a state rather than an
         // event: back off instead of asking again on the next line.
-        if (res.status === 503) this.silentUntil = Date.now() + RETRY_AFTER_MS;
+        if (res.status === 503) this.backOff();
         return null;
       }
       encoded = await res.arrayBuffer();
     } catch {
-      this.silentUntil = Date.now() + RETRY_AFTER_MS;
+      // A line dropped mid-request says nothing about the sidecar.
+      if (!signal?.aborted) this.backOff();
       return null;
     }
 
     try {
       const decoded = await ctx.decodeAudioData(encoded);
-      const buffer = this.processed(ctx, decoded);
+      const { buffer, measured } = this.processed(ctx, decoded);
       return new BufferTake(
         ctx,
         this.chainFor(ctx).input,
@@ -636,6 +708,9 @@ export class BrowserVoice implements Voice {
         // loud parts of a line are, and a mouth following the take as
         // synthesised would be following a signal nobody can hear.
         buildEnvelope(buffer.getChannelData(0), buffer.sampleRate),
+        () => {
+          this.lastMeasured = measured;
+        },
       );
     } catch {
       // Audio that arrived but will not decode. Nothing to retry — the same

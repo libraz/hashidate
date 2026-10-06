@@ -135,12 +135,21 @@ describe('cues in a line', () => {
     expect(director.performance).toBeNull();
   });
 
-  it('is a pose change when the line is nothing but cues', () => {
+  it('ends a line of nothing but cues on the next frame, releasing its pose unless held', () => {
     const { session, director, step } = build();
     session.say({ text: '[happy]' });
     step(1);
     expect(director.performance).toBe('happy');
     expect(session.turn?.text).toBe('');
+    step(1);
+    expect(session.turn).toBeNull();
+    expect(director.performance).toBeNull();
+
+    session.say({ text: '[happy]', hold: true });
+    // Past the beat between turns, the line and the frame after it.
+    step(Math.ceil(0.5 / DT));
+    expect(session.turn).toBeNull();
+    expect(director.performance).toBe('happy');
   });
 
   it('runs typed visual cues on the same mouth clock as performances', () => {
@@ -202,6 +211,27 @@ describe('cues in a line', () => {
         cueId: 'bgm-line:cue:3',
         cue: { kind: 'bgm', action: 'stop' },
       },
+    ]);
+  });
+
+  it('reports the cues whose effect outlives the line, and not the momentary ones', () => {
+    const { session, step } = build();
+    session.say({
+      id: 'staged',
+      text: '[hello][@camera face][@slide 3][@gesture nod][@expression F_JITO]あ',
+    });
+    step(1);
+
+    // The server folds these into the setup a later renderer is handed.
+    expect(
+      session
+        .takeEvents()
+        .filter((event) => event.type === 'cue.fire')
+        .map((event) => [event.cueId, event.cue]),
+    ).toEqual([
+      ['staged:cue:0', { kind: 'perform', id: 'hello' }],
+      ['staged:cue:1', { kind: 'camera', frame: 'face' }],
+      ['staged:cue:2', { kind: 'slide', page: 3 }],
     ]);
   });
 

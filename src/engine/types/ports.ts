@@ -125,8 +125,12 @@ export interface Voice {
    * not let us start yet. Null is a normal answer and means "play it silently",
    * not an error: the renderer has to work on a machine that does not have the
    * voice.
+   *
+   * `signal` is aborted when the turn leaves the queue unsaid; the voice then
+   * answers null without contacting the sidecar, so a dropped line never holds
+   * up the lines behind it.
    */
-  prepare(text: string, reading?: string): Promise<Take | null>;
+  prepare(text: string, reading?: string, signal?: AbortSignal): Promise<Take | null>;
   /**
    * The acoustic spaces this voice can be heard in, for the vocabulary.
    *

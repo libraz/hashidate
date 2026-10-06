@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { textToVisemes } from '@/engine/face';
 import type { Take, Voice, VoiceReport } from '@/engine/types';
 import { FakeTake } from './fakes';
 import { build, DT, settle, VOICE_WAIT } from './harness';
@@ -80,7 +81,8 @@ describe('session teardown', () => {
 
     session.say({ id: 'active', text: 'あ', expression: 'F_JITO', gesture: 'peace' });
     session.say({ id: 'prepared', text: 'い' });
-    step(Math.ceil((VOICE_WAIT + 0.1) / DT));
+    // The voice wait scales with the line, so past it by the line's length.
+    step(Math.ceil((VOICE_WAIT + textToVisemes('あ').duration + 0.1) / DT));
     expect(session.turn?.id).toBe('active');
     expect(director.mouth.speaking).toBe(true);
 
