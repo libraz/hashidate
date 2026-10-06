@@ -82,6 +82,14 @@ describe('direct control between turns', () => {
     expect(harness.session.wear({})).toBe(false);
   });
 
+  it('wear() with a slot and no item leaves the slot as it is; only null takes it off', () => {
+    harness.session.wear({ slot: 'top', item: 'shirt' });
+    expect(harness.session.wear({ slot: 'top' })).toBe(false);
+    expect(harness.session.state().wardrobe).toEqual({ top: 'shirt' });
+    expect(harness.session.wear({ slot: 'top', item: null })).toBe(true);
+    expect(harness.session.state().wardrobe).toEqual({ top: null });
+  });
+
   it('wear() returns false for a session with no wardrobe at all', () => {
     const bare = build();
     expect(bare.session.wear({ slot: 'top', item: 'shirt' })).toBe(false);

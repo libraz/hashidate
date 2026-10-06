@@ -39,7 +39,8 @@ export const debugCommandSchema = z.object({
 /**
  * Dress the avatar: one `slot` to an `item`, or a whole `preset` at once.
  *
- * `item: null` takes the slot's garment off. Slot and item names are avatar
+ * `item: null` takes the slot's garment off; a `slot` with no `item` changes
+ * nothing, so a forgotten item never undresses anyone. Slot and item names are avatar
  * data — they come back in the vocabulary — so they stay plain strings here.
  * Neither field given is a no-op rather than an error, which is also what a
  * `wear` sent to an avatar with no wardrobe at all does.

@@ -385,8 +385,9 @@ export class Session {
       this.wardrobe.applyPreset(preset);
       return true;
     }
-    if (slot) {
-      this.wardrobe.set(slot, item ?? null);
+    // Absent and null differ: only `item: null` takes the garment off.
+    if (slot && item !== undefined) {
+      this.wardrobe.set(slot, item);
       return true;
     }
     return false;
