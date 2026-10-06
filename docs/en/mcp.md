@@ -15,10 +15,10 @@
 | Tool | What it does |
 |---|---|
 | `speak` | Queue lines. A run of them travels in one call, and each `text` can carry inline performance, shot, slide, or BGM cues. |
-| `status` | What to branch on: speaking, queue depth, the face and movement that are up, strain. |
-| `interrupt` | Stop mid-line and drop the queue. |
+| `status` | What to branch on: speaking, queue depth, the expression, performance and gesture that are up, strain per arm. |
+| `interrupt` | Drop the queue. `now` also cuts the line being said mid-word; `after_line` lets it finish. |
 | `react` | The immediate half of everything else — a performance, a gesture, a glance. |
-| `stage` | The persistent half — the camera, the set, the acoustic, the document. |
+| `stage` | The persistent half — the avatar, the camera, the set, the acoustic, the outfit, the idle. |
 | `revise` | Edit what is already queued. |
 | `deck` | Read a document, so a script can be written about it. |
 | `bgm` | List and play local MP3/FLAC tracks; set their level, loop, crossfade durations and BGM-only libsonare effects. |
@@ -43,7 +43,7 @@ Every tool is one of the endpoints in [The control API](control-api.md), and the
 
 ## Where the lines go
 
-Lines go on the server's queue rather than out as a `say`, so they survive a viewer reload, they appear in the panel where they can be reordered and rewritten, and they carry `source: mcp` to distinguish them from a comment or from something typed by hand.
+Lines go on the server's queue, so they survive a viewer reload and appear in the panel where they can be reordered and rewritten, and each carries `source: mcp` to distinguish it from a comment or from something typed by hand.
 
 ## Cue notation in `speak`
 

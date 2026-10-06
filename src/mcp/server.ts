@@ -298,13 +298,10 @@ export function createServer(control: Control): Server {
   }
 
   /**
-   * Lines go on the server's queue, never out as a `say`.
-   *
-   * A `say` reaches the renderer directly, which is right for one line typed by
-   * hand and wrong for everything a model produces: it does not survive a
-   * viewer reload, it never appears in the panel, so it cannot be reordered or
-   * rewritten, and it carries no `source` for the operator to tell it apart
-   * from a comment. The queue is the copy that counts — see `src/server/queue.ts`.
+   * Lines go on the server's queue through the queue route rather than as a
+   * `say`, because only that route stamps a `source`: the operator tells a
+   * model's line from a comment by it. The queue is the copy that counts — see
+   * `src/server/queue.ts`.
    */
   async function speak(args: unknown): Promise<CallToolResult> {
     const parsed = tools.speak.safeParse(args);
@@ -406,7 +403,8 @@ export function createServer(control: Control): Server {
   /**
    * Two verbs under one tool, because the choice between them is the whole
    * decision: `interrupt` cuts the current line off where it is, `clear` lets it
-   * finish and drops what is behind it.
+   * finish and drops what is behind it. Either empties the server's queue on
+   * arrival, as `revise` with `clear` does.
    */
   async function interrupt(args: unknown): Promise<CallToolResult> {
     const parsed = tools.interrupt.safeParse(args);

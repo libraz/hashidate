@@ -12,14 +12,17 @@ import type {
  * What comes back out of the control API, cut down to what a model branches on.
  *
  * The snapshot is built for a panel: it carries the voice chain, the tuning of
- * the set-once layer, the joint strain from the last solve, the wardrobe and
- * every overlay that is up. All of that is drawn on a screen and none of it
- * changes what the next line should be. Handing it over anyway is not
- * generosity — the reader has a token budget, and a field it will never act on
- * is one it has to skip past on every single call.
+ * the set-once layer, the wardrobe and every overlay that is up. All of that is
+ * drawn on a screen and none of it changes what the next line should be.
+ * Handing it over anyway is not generosity — the reader has a token budget, and
+ * a field it will never act on is one it has to skip past on every single call.
  *
  * So the projection is deliberately narrow, and widening it is a decision about
  * what an orchestrator decides with rather than about what happens to be known.
+ * The face and movement that are up are in, because `react` changes them and a
+ * caller has to see what it changed; so is the strain, because it is the only
+ * way to tell an aim `react` asked for that was met from one the arm could only
+ * approximate.
  */
 
 /** Enough of a queued line to recognise it by; the whole script is not the point. */
@@ -55,6 +58,14 @@ export interface Status {
   queued: number;
   idle: boolean;
   emotion: SessionState['emotion'];
+  /** The drawn expression showing, or null for none. */
+  expression: string | null;
+  /** The performance that is up, or null for none. */
+  performance: string | null;
+  /** The gesture playing, or null for none. */
+  gesture: string | null;
+  /** What the last fingertip solve cost each arm. Empty before a renderer reports. */
+  strain: Partial<SessionState['strain']>;
   /** Feed back as `since` on the next call. */
   seq: number;
   events: SessionEvent[];
@@ -89,6 +100,10 @@ export function projectStatus(snapshot: Snapshot, since?: number, depth?: number
     queued: state.queued ?? snapshot.queue.length,
     idle: state.idle ?? false,
     emotion: state.emotion ?? {},
+    expression: state.expression ?? null,
+    performance: state.performance ?? null,
+    gesture: state.gesture ?? null,
+    strain: state.strain ?? {},
     seq: snapshot.seq,
     events: since === undefined ? snapshot.events : snapshot.events.filter(newer(since)),
     queue: projectQueue(snapshot.queue, depth),

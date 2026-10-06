@@ -333,12 +333,16 @@ describe('status', () => {
         'connected',
         'emotion',
         'events',
+        'expression',
+        'gesture',
         'idle',
+        'performance',
         'queue',
         'queued',
         'seq',
         'slides',
         'speaking',
+        'strain',
         'turn',
         'viewers',
       ].sort(),
@@ -370,10 +374,9 @@ describe('status', () => {
     const payload = payloadOf(await client.callTool({ name: 'status', arguments: {} }));
 
     // The reader pays for every one of these by the token and cannot act on any
-    // of them: a DSP chain, a fader position and a joint load are for the panel.
+    // of them: a DSP chain and a fader position are for the panel.
     expect(payload).not.toHaveProperty('voice');
     expect(payload).not.toHaveProperty('tuning');
-    expect(payload).not.toHaveProperty('strain');
     expect(payload).not.toHaveProperty('wardrobe');
     expect(payload).not.toHaveProperty('overlays');
     expect(payload).not.toHaveProperty('vocabulary');

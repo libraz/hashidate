@@ -34,3 +34,27 @@ describe('projectStatus BGM projection', () => {
     expect(status.bgm).toBeNull();
   });
 });
+
+describe('projectStatus face, movement and strain', () => {
+  it('carries every field the status docs promise, from the snapshot state', () => {
+    const status = projectStatus(snapshot());
+
+    expect(status).toMatchObject({
+      expression: 'F_DOYA',
+      performance: 'hello',
+      gesture: 'wave',
+      strain: { L: 0.2, R: 0.1 },
+    });
+  });
+
+  it('reports them as empty, not missing, before a renderer has reported', () => {
+    const status = projectStatus(snapshot({ state: {} }));
+
+    expect(status).toMatchObject({
+      expression: null,
+      performance: null,
+      gesture: null,
+      strain: {},
+    });
+  });
+});

@@ -96,6 +96,7 @@ const SPEAK_NOTE = [
 
 const STATUS_NOTE = [
   'What is happening right now, in one round trip. Only the values to branch on; no vocabulary.',
+  'Speaking, queue depth, the expression, performance and gesture that are up, and strain per arm — how much the last point cost, the only sign an aim was approximated rather than met.',
   'The document being presented, its page and its page count come back too. Read the vocabulary at hashidate://vocabulary.',
 ].join('\n');
 
