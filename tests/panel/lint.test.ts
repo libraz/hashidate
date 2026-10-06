@@ -46,6 +46,23 @@ const vocabulary: Partial<Vocabulary> = {
 const messages = (turn: Parameters<typeof checkLine>[0]): string[] =>
   checkLine(turn, vocabulary).findings.map((f) => f.message);
 
+describe('checkLine, on an empty reported vocabulary', () => {
+  const empty: Partial<Vocabulary> = { performances: [], gestures: [], expressions: [] };
+  const warn = (turn: Parameters<typeof checkLine>[0], v: Partial<Vocabulary>) =>
+    checkLine(turn, v).findings.filter((f) => f.severity === 'warn').length;
+
+  it('warns once for a turn field and once for an inline cue', () => {
+    expect(warn({ text: 'あ', gesture: 'wave' }, empty)).toBe(1);
+    expect(warn({ text: '[@gesture wave]あ' }, empty)).toBe(1);
+    expect(warn({ text: 'あ', expression: 'F_DOYA' }, empty)).toBe(1);
+    expect(warn({ text: '[@expression F_DOYA]あ' }, empty)).toBe(1);
+  });
+
+  it('stays quiet while the vocabulary is unreported', () => {
+    expect(warn({ text: 'あ', gesture: 'wave', expression: 'F_DOYA' }, {})).toBe(0);
+  });
+});
+
 describe('checkLine, on cues', () => {
   it('resolves a well-formed cue and marks it known', () => {
     const check = checkLine({ text: '[hello]こんばんは。[explain]今日は' }, vocabulary);

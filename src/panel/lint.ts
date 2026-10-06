@@ -206,21 +206,17 @@ export function checkLine(turn: TurnRequest, vocabulary: Partial<Vocabulary>): L
       message: say('panel.lint.unknownPerform', { id: turn.perform }),
     });
   }
-  if (turn.gesture && (vocabulary.gestures ?? []).length > 0) {
-    if (!(vocabulary.gestures ?? []).some((g) => g.id === turn.gesture)) {
-      findings.push({
-        severity: 'warn',
-        message: say('panel.lint.unknownGesture', { id: turn.gesture }),
-      });
-    }
+  if (turn.gesture && !knownDynamicId(vocabulary.gestures, turn.gesture)) {
+    findings.push({
+      severity: 'warn',
+      message: say('panel.lint.unknownGesture', { id: turn.gesture }),
+    });
   }
-  if (turn.expression && (vocabulary.expressions ?? []).length > 0) {
-    if (!(vocabulary.expressions ?? []).some((e) => e.id === turn.expression)) {
-      findings.push({
-        severity: 'warn',
-        message: say('panel.lint.unknownExpression', { id: turn.expression }),
-      });
-    }
+  if (turn.expression && !knownDynamicId(vocabulary.expressions, turn.expression)) {
+    findings.push({
+      severity: 'warn',
+      message: say('panel.lint.unknownExpression', { id: turn.expression }),
+    });
   }
 
   if (
