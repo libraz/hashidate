@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { AvatarDescriptor, MaterialRules, PbrScalarOverride } from '../types';
+import { installTransparentShadowMaterials } from './shadows';
 
 /**
  * Material fixup for a VRChat-authored avatar rendered outside Unity.
@@ -71,6 +72,7 @@ type ResolvedRules = Omit<Required<MaterialRules>, 'preservedPbrOverrides'> & {
  */
 type SourceMaterial = THREE.Material & {
   map?: THREE.Texture | null;
+  alphaMap?: THREE.Texture | null;
   color?: THREE.Color;
 };
 
@@ -88,6 +90,7 @@ function toToon(src: SourceMaterial, rules: ResolvedRules): THREE.MeshToonMateri
   const name = src.name || '';
   const m = new THREE.MeshToonMaterial({
     map: src.map,
+    alphaMap: src.alphaMap,
     color: src.color,
     ...(rules.blendTransparent.test(name) ? { opacity: src.opacity } : {}),
     side: rules.doubleSided.test(name) ? THREE.DoubleSide : THREE.FrontSide,
@@ -241,6 +244,8 @@ export function setupMaterials(
     );
   }
 
+  const shadows = installTransparentShadowMaterials(root, rules.blendTransparent);
+
   const apply = (useToon: boolean): void => {
     for (const [mesh, mats] of toon) {
       const orig = original.get(mesh);
@@ -259,9 +264,9 @@ export function setupMaterials(
    * Both sets have to be walked. The toon variants are on screen and the
    * imported originals are held for the toggle, and only the originals carry
    * the secondary maps — normal, emissive, occlusion — because the toon variant
-   * copies the base colour and nothing else. Disposing only what is currently
-   * assigned leaks exactly those, which is invisible per swap and unbounded
-   * over a session.
+   * copies the base colour and alpha mask but not those shading maps. Disposing
+   * only what is currently assigned leaks exactly those, which is invisible per
+   * swap and unbounded over a session.
    *
    * Texture slots are found by walking the material rather than by listing
    * `map`, `normalMap`, … : the list depends on which glTF extensions the
@@ -269,6 +274,7 @@ export function setupMaterials(
    * reports.
    */
   const dispose = (): void => {
+    shadows.dispose();
     const seen = new Set<THREE.Material>();
     const seenTextures = new Set<THREE.Texture>();
     const release = (m: THREE.Material | null | undefined): void => {

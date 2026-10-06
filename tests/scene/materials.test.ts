@@ -420,8 +420,10 @@ describe('avatar material conversion', () => {
   it('blends fractional V054 cloth while preserving alpha-one legacy handling', () => {
     const alpha = 0.58;
     const map = new THREE.Texture();
+    const alphaMap = new THREE.Texture();
     const sleeve = new THREE.MeshStandardMaterial({
       map,
+      alphaMap,
       opacity: alpha,
       side: THREE.DoubleSide,
       transparent: true,
@@ -468,6 +470,7 @@ describe('avatar material conversion', () => {
     expect(rightToon).toBeInstanceOf(THREE.MeshToonMaterial);
     for (const toon of [leftToon, rightToon]) {
       expect(toon.opacity).toBe(alpha);
+      expect(toon.alphaMap).toBe(alphaMap);
       expect(toon.transparent).toBe(true);
       expect(toon.alphaTest).toBe(0);
       expect(toon.depthWrite).toBe(false);
@@ -490,12 +493,14 @@ describe('avatar material conversion', () => {
 
     const sleeveDispose = vi.spyOn(sleeve, 'dispose');
     const mapDispose = vi.spyOn(map, 'dispose');
+    const alphaMapDispose = vi.spyOn(alphaMap, 'dispose');
     const leftToonDispose = vi.spyOn(leftToon, 'dispose');
     const rightToonDispose = vi.spyOn(rightToon, 'dispose');
     materials.dispose();
 
     expect(sleeveDispose).toHaveBeenCalledOnce();
     expect(mapDispose).toHaveBeenCalledOnce();
+    expect(alphaMapDispose).toHaveBeenCalledOnce();
     expect(leftToonDispose).toHaveBeenCalledOnce();
     expect(rightToonDispose).toHaveBeenCalledOnce();
   });
