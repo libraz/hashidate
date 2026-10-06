@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { same } from '@/i18n/locale';
+import { cameraFrameSchema } from '@/protocol';
 import { build, EFFECTS, FACES } from './harness';
 
 /**
@@ -103,7 +104,7 @@ describe('Session.vocabulary', () => {
       id: 'synthetic',
       label: { en: 'Synthetic rig', ja: '合成リグ' },
     });
-    expect(vocabulary.cameras).toEqual(['bust', 'upper', 'face', 'full']);
+    expect(vocabulary.cameras).toEqual(cameraFrameSchema.options);
     expect(vocabulary.pointing).toMatchObject({
       side: ['L', 'R'],
       azimuth: [-120, 120],

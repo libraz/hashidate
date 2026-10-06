@@ -1,3 +1,4 @@
+import { cameraFrameSchema } from '../../protocol/cues';
 import type { Director } from '../director';
 import { EMOTION_LABELS, EMOTIONS } from '../face';
 import { gestureEntries, HOP_IDS, HOPS } from '../motion';
@@ -83,7 +84,8 @@ export function describe(d: Director, { wardrobe, voice, scenery }: VocabularyCo
         ja: 'say の text にキューを直接書く。書いた位置で実行し、角括弧の中身は読み上げない。従来の [performanceId] は演技を開始し、[@...] 形式では演技、表情、ジェスチャ、ジャンプ、カメラ、スライド、BGM の再生・一時停止・停止を切り替えられる。BGM の曲名は .mp3 / .flac のファイル名で、空白も使える。',
       },
     },
-    cameras: ['bust', 'upper', 'face', 'full'],
+    // Derived, so the vocabulary cannot drift from what the wire accepts.
+    cameras: [...cameraFrameSchema.options],
     // Continuous, so it is stated as ranges rather than as a list of ids.
     // The bounds are the anatomical ones: past them the arm still goes as far
     // as it can, but the pose is a strained one and reads that way.
