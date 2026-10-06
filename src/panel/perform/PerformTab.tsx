@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { GESTURE_GROUPS } from '@/engine/motion';
 import { PERFORMANCE_GROUPS } from '@/engine/performance';
 import { type Localized, type MessageKey, type Translator, useT } from '@/i18n';
@@ -28,6 +28,8 @@ import {
   setLook,
   setOverlay,
 } from '../api';
+import { ChainSlider } from '../voice/ChainSlider';
+import { blend, type HeldBlend, settleBlend } from './blend';
 
 /**
  * The live surface: face, movement, pointing.
@@ -132,12 +134,11 @@ export function PerformTab({ snapshot, refresh }: Props) {
   const pointing = vocabulary.pointing;
   const strain = state.strain?.[aim.side] ?? 0;
 
+  const held = useRef<HeldBlend>({});
+  settleBlend(held.current, emotion);
+
   const mix = (name: string, value: number): void => {
-    const next: EmotionVector = { ...emotion, [name as EmotionName]: value };
-    for (const key of Object.keys(next) as EmotionName[]) {
-      if (!next[key]) delete next[key];
-    }
-    run(setEmotion(Object.keys(next).length ? next : { neutral: 1 }));
+    run(setEmotion(blend(emotion, held.current, name as EmotionName, value)));
   };
 
   /** Point with one field overridden, so changing the hand re-aims with it. */
@@ -162,7 +163,7 @@ export function PerformTab({ snapshot, refresh }: Props) {
               label={item.sustain ? `${tx(item.label)} *` : tx(item.label)}
               title={`${item.id}  ${[item.gesture, item.hop].filter(Boolean).join(' + ') || t('panel.perform.faceOnly')}`}
               state={state.performance === item.id ? 'on' : 'off'}
-              onClick={() => run(state.performance === item.id ? resetFace() : perform(item.id))}
+              onClick={() => run(perform(state.performance === item.id ? null : item.id))}
             />
           )}
         />
@@ -186,7 +187,10 @@ export function PerformTab({ snapshot, refresh }: Props) {
               label={tx(mood.label)}
               title={mood.id}
               state={(emotion[mood.id as EmotionName] ?? 0) > 0.5 ? 'auto' : 'off'}
-              onClick={() => run(setEmotion({ [mood.id as EmotionName]: 1 }))}
+              onClick={() => {
+                held.current = {};
+                run(setEmotion({ [mood.id as EmotionName]: 1 }));
+              }}
             />
           ))}
         </ChipRow>
@@ -215,11 +219,13 @@ export function PerformTab({ snapshot, refresh }: Props) {
         </ChipRow>
         {mixing
           ? moods.map((mood) => (
-              <Slider
+              <ChainSlider
                 key={mood.id}
                 label={`${tx(mood.label)}  ${mood.id}`}
-                value={emotion[mood.id as EmotionName] ?? 0}
-                onChange={(v) => mix(mood.id, v)}
+                reported={emotion[mood.id as EmotionName] ?? 0}
+                min={0}
+                max={1}
+                onCommit={(v) => mix(mood.id, v)}
               />
             ))
           : null}
@@ -393,10 +399,12 @@ export function PerformTab({ snapshot, refresh }: Props) {
       ) : null}
 
       <Section title={t('panel.perform.lookAt')} note={[t('panel.perform.lookAt.note')]}>
-        <Slider
+        <ChainSlider
           label={t('panel.perform.lookAt')}
-          value={state.lookAt ?? 1}
-          onChange={(amount) => run(setLook(amount))}
+          reported={state.lookAt ?? 1}
+          min={0}
+          max={1}
+          onCommit={(amount) => run(setLook(amount))}
         />
       </Section>
     </>

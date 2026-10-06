@@ -57,14 +57,14 @@ export function ChainSlider({
   title,
 }: Props) {
   const [local, setLocal] = useState<number | null>(null);
-  /** The last value this slider sent, so a report echoing it is not a change. */
-  const sent = useRef<number | null>(null);
+  /** Every value sent since the last adoption: a report echoing any of them is a drag catching up. */
+  const sent = useRef<number[]>([]);
   const lastReported = useRef(reported);
 
   if (!Object.is(lastReported.current, reported)) {
     lastReported.current = reported;
     if (shouldAdopt(reported, sent.current, step)) {
-      sent.current = null;
+      sent.current = [];
       if (local !== null) setLocal(null);
     }
   }
@@ -81,7 +81,7 @@ export function ChainSlider({
       title={title}
       onChange={(value) => {
         setLocal(value);
-        sent.current = value;
+        sent.current.push(value);
         onCommit(value);
       }}
     />
@@ -92,20 +92,20 @@ export function ChainSlider({
  * Whether a newly reported value should take over from what is being dragged.
  *
  * Yes when nothing has been sent — the slider is only following. Yes when the
- * report says something other than what was sent, which is a preset load or a
+ * report says something other than anything sent, which is a preset load or a
  * clamp the panel does not know the rule for. No when it is merely the echo of
- * the drag arriving back, which is the common case and the one that must not
- * drop the pointer.
+ * the drag arriving back — of any value in it, since a poll can land on an
+ * intermediate one — which is the common case and must not drop the pointer.
  *
  * The echo is matched against the step rather than exactly, because the value
  * makes a round trip through JSON and a 32-bit float in the processor: 0.7 sent
  * comes back as 0.699999988079071. An exact comparison would read every echo as
  * a change and pull the handle out from under the finger on the next poll.
  */
-export function shouldAdopt(reported: number, sent: number | null, step: number): boolean {
-  if (sent === null) return true;
+export function shouldAdopt(reported: number, sent: readonly number[], step: number): boolean {
+  if (sent.length === 0) return true;
   // A step of zero would make every echo a mismatch. Not reachable from the
   // sliders below, but it is the sort of thing a later parameter arrives with.
   const tolerance = step > 0 ? step / 2 : Number.EPSILON;
-  return Math.abs(reported - sent) >= tolerance;
+  return !sent.some((value) => Math.abs(reported - value) < tolerance);
 }
