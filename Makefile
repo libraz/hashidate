@@ -21,8 +21,15 @@ TTS      = tools/tts
 # its only caller is the control server on this machine, so it answers on a
 # socket that no other user can reach. Mirrors `SOCKET_DIR`/`SOCKET_NAME` in
 # src/speech/sidecar.ts and tools/tts/server.py, and HASHIDATE_TTS_SOCKET moves
-# all three together.
-TTS_SOCK = $(if $(HASHIDATE_TTS_SOCKET),$(HASHIDATE_TTS_SOCKET),$(TTS)/.run/speech.sock)
+# all three together. An override is made absolute against the repository root
+# here and exported back, so the sidecar (which runs from $(TTS)) and the control
+# server do not read one relative path as two places.
+ifneq ($(HASHIDATE_TTS_SOCKET),)
+TTS_SOCK = $(abspath $(HASHIDATE_TTS_SOCKET))
+export HASHIDATE_TTS_SOCKET := $(TTS_SOCK)
+else
+TTS_SOCK = $(TTS)/.run/speech.sock
+endif
 # Where a voice is made from: clips in, latents out. Ships empty and keeps its
 # own .gitignore, and matches `config.VOICE` on the Python side —
 # HASHIDATE_VOICE_DIR moves both together.
@@ -202,14 +209,26 @@ resize:
 	done
 	@du -sh $(RES)/yoka/tex $(RES)/yoka/tex_web
 
+# Run the export script and show only its markers and errors. The filter must not
+# hide the exit status, so Blender writes to a log first: the target fails on a
+# non-zero exit, on a missing EXPORTED marker, or on an absent output file.
+define blender-export
+log=$$(mktemp); \
+$(BLENDER) -b --python-exit-code 1 -P $(TOOLS)/export_glb.py $(2) >"$$log" 2>&1; rc=$$?; \
+grep -E '^@@@|Error' "$$log" || true; \
+if [ $$rc -ne 0 ] || ! grep -q '^@@@ EXPORTED' "$$log" || [ ! -s $(1) ]; then \
+	echo "glb export failed (blender exit $$rc): $(1)" >&2; rm -f "$$log"; exit 1; \
+fi; \
+rm -f "$$log"
+endef
+
 # Extra outfits carry their own physics bones, so they are merged together with a
 # graft of those bones onto the main skeleton
 glb:
 	mkdir -p $(OUT)
-	$(BLENDER) -b -P $(TOOLS)/export_glb.py -- \
+	@$(call blender-export,$(OUT)/yoka.glb,-- \
 		$(RES)/yoka/fbx/TabimakuraYoka.fbx $(OUT)/yoka.glb $(RES)/yoka/tex_web \
-		$(RES)/yoka/fbx/Bottoms_long.fbx $(RES)/yoka/fbx/Pillow.fbx \
-		2>&1 | grep -E '^@@@|Error'
+		$(RES)/yoka/fbx/Bottoms_long.fbx $(RES)/yoka/fbx/Pillow.fbx)
 
 # ------------------------------------------------------------------ Manuka
 #
@@ -239,9 +258,8 @@ manuka-textures:
 # material name. Which shape groups to keep is in export_glb.py's manuka profile
 manuka-glb:
 	mkdir -p $(OUT)
-	$(BLENDER) -b -P $(TOOLS)/export_glb.py -- --profile manuka \
-		$(RES)/manuka/MANUKA_ver1.02/MANUKA.fbx $(OUT)/manuka.glb $(RES)/manuka/tex_web \
-		2>&1 | grep -E '^@@@|Error'
+	@$(call blender-export,$(OUT)/manuka.glb,-- --profile manuka \
+		$(RES)/manuka/MANUKA_ver1.02/MANUKA.fbx $(OUT)/manuka.glb $(RES)/manuka/tex_web)
 
 # -------------------------------------------------------------------- Speech
 

@@ -74,3 +74,17 @@ describe('make stop speech socket boundary', () => {
     await expect(lstat(socket)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
+
+describe('make speech socket path', () => {
+  it('hands every recipe the same absolute path for a relative override', async () => {
+    const { spawnSync } = await import('node:child_process');
+    const run = spawnSync('make', ['--no-print-directory', '-f', 'Makefile', '-f', '-', 'probe'], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      env: { ...process.env, HASHIDATE_TTS_SOCKET: 'run/x.sock' },
+      input: 'probe:\n\t@echo "$$HASHIDATE_TTS_SOCKET|$(TTS_SOCK)"\n',
+    });
+    const expected = join(ROOT.replace(/\/$/, ''), 'run/x.sock');
+    expect(run.stdout.trim()).toBe(`${expected}|${expected}`);
+  });
+});
