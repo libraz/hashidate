@@ -298,10 +298,12 @@ async function ask(): Promise<'ready' | 'loading' | null> {
   try {
     const res = await askSidecar(ENDPOINT, '/health', { timeoutMs: HEALTH_TIMEOUT_MS });
     if (res.status < 200 || res.status > 299) return null;
-    const body = JSON.parse(res.body.toString('utf8')) as { ready?: unknown };
+    const body = JSON.parse(res.body.toString('utf8')) as { ready?: unknown } | null;
     // `ready` is false for the sixteen seconds the model takes to load, which
     // is a real state and not a failure: a line sent during it comes back 503.
-    return body.ready === true ? 'ready' : 'loading';
+    // A body without the boolean is not `/health`'s, and so is no answer.
+    if (typeof body?.ready !== 'boolean') return null;
+    return body.ready ? 'ready' : 'loading';
   } catch {
     return null;
   }

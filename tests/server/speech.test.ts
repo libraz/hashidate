@@ -73,6 +73,17 @@ describe('what the watch makes of an answer', () => {
     expect(await watch.start()).toBe('loading');
   });
 
+  it('takes a 2xx reply without a boolean ready as no answer, not as loading', async () => {
+    for (const body of [{}, { ready: 'yes' }, null, []]) {
+      asked.mockResolvedValue({
+        status: 200,
+        contentType: 'application/json',
+        body: Buffer.from(JSON.stringify(body), 'utf8'),
+      });
+      expect(await new SpeechWatch().check()).toBe('absent');
+    }
+  });
+
   it('is absent when nothing has ever answered', async () => {
     asked.mockImplementation(refused);
     expect(await watch.start()).toBe('absent');
