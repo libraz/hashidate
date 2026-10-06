@@ -18,7 +18,7 @@ That silence is also what decides which page records. A take is what the room he
 
 Above the tabs is the one address OBS needs, composed rather than typed: size, set, document, where the character stands in the frame, and whether the background is transparent. What comes out is a `/?size=…` URL to paste into a browser source. None of it is application state — OBS owns that setting the moment it is pasted there.
 
-Queue additions and edits keep the draft open if saving fails, with the error shown beside the form. Correct the draft or restore the connection, then save again. Cancelling a drag leaves the queue order unchanged.
+Queue additions and edits keep the draft open if saving fails, with the error shown beside the form. Correct the draft or restore the connection, then save again. If the line being edited goes on air or is dropped meanwhile, the draft stays open with a notice and saves as a new line at the end. Cancelling a drag leaves the queue order unchanged.
 
 ## The renderer, on `/`
 

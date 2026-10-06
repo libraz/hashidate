@@ -17,6 +17,14 @@ What the model can be asked for is resolved from what it actually ships: bones, 
 
 `GET /api/vocabulary` is therefore a report on the model rather than a constant. Two models by different authors, one implementing the ARKit 52 blendshape set and one implementing none of it, are driven by the same engine over the same command vocabulary, which is the claim this repository tests.
 
+## What a descriptor can declare
+
+Beyond names and shapes, a descriptor can carry what one model's garments need:
+
+- `armRest` — resting arm directions in character space, for a garment such as a full skirt that needs the arms held clear of the body. Slots left out keep the standing pose, and gestures blend from the declared one.
+- `anchor` on a spring group — attaches the group's root to a point weighted across bones that are already simulated, so a part of a garment follows the skin it sits on.
+- `reflection` on a preserved PBR material — how strongly it reflects the runtime's own studio environment. Without it the material sees only the scene environment, which is empty without a backdrop, and a metal draws dark.
+
 ## Wardrobe
 
 Slots, presets and the hide-shapes that go with them, read from the model's meshes:

@@ -98,6 +98,8 @@ $ yarn ctl motions
   broken           group: invalid option
 ```
 
+A file whose name is not a usable id (over 64 characters, or containing control characters) is listed the same way, under its filename. One malformed motion does not hide the others.
+
 A loop whose first and last keyframes differ snaps once per cycle. Nothing checks for it, because how close is close enough is a judgement about a render.
 
 ## Next

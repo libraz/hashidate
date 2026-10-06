@@ -26,6 +26,8 @@ yarn ctl deck none           # down
 
 While a document is up it takes the place of the set: both go behind the character, and the renderer puts the room away for the duration and brings it back unchanged when the document comes down. They remain two commands, so a segment that goes to slides and back is one command each way and neither has to restate the other.
 
+A page command that arrives while a document is still opening is kept and applied once the page count is known, clamped to it, so a script that raises a deck and turns a page in the same breath lands on that page.
+
 The character moves out of the way with `place`, which shrinks the picture rather than the shot. See [The stage](stage.md#where-the-character-stands-in-the-frame).
 
 In the panel’s Slides tab, Left and Right Arrow turn pages when focus is outside an input or a control that handles those keys. When the Fit selector has focus, its arrows change the fit without turning the page.

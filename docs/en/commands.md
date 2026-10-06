@@ -20,7 +20,7 @@ Every command goes to `POST /api/command`, one at a time or several under `batch
 | `deck` | The document the character is presenting from, by filename. No id takes it down. It occupies the same place as a backdrop, so the set is put away while one is up and restored when it comes down. |
 | `slide` | Turn a page. `page` is absolute, `by` is relative, and a bare `slide` is next. Past either end is clamped rather than refused. |
 | `place` | Where the character stands in the output frame and where the document sits behind, each as a rectangle of it. Not the camera: the shot is untouched and the picture of it is moved, so the gestures still play as authored. Also rides on a line under `stage.place`, which is how a script moves the character aside for a deck and back. |
-| `wear` | One slot to an item, or a whole preset at once. |
+| `wear` | One slot to an item, or a whole preset at once. `item: null` takes the slot's garment off; a slot with no `item` is left alone. |
 | `avatar` | Load a different character. The only command that replaces the session every other one talks to, so the renderer holds what arrives behind it until the model is standing: swap and dress in one batch behaves as written. |
 | `tune` | The set-once layer: breath, sway, jump, tail, shading. Every field optional and merged onto what is running, so one fader is one small message. Bounded, unlike `point`. |
 | `voice` | Set the persistent voice-processing chain. `preset` selects a base preset and `null` bypasses it; `dsp` partially overrides the chain with `inputGainDb`, `outputGainDb`, `wetMix`, and optional `retune`, `formant`, `eq`, `gate`, `compressor`, `deesser`, `reverb` and `limiter` groups. `yarn ctl voice` accepts one preset name or `--bypass`; detailed DSP fields are sent through the API. |
@@ -36,13 +36,15 @@ Every command goes to `POST /api/command`, one at a time or several under `batch
 
 | `yarn ctl …` | What it is |
 |---|---|
-| `vocab` | `GET /api/vocabulary` — what this avatar can be asked for. The object to paste into a system prompt |
+| `vocab` | `GET /api/vocabulary` — what this avatar can be asked for, including backdrops, voice presets and wear presets. The object to paste into a system prompt |
 | `state` | `GET /api/state` — the snapshot, printed. Reports when no renderer is attached |
 | `watch` | The event tail, followed until Ctrl-C. Shows the order turns actually happen in |
 | `decks` | The documents on disk, with their page counts. See [Slides](slides.md) |
 | `motions` | The gestures in `show/motions/`, with any file that would not parse and why. See [Motions](motions.md) |
 | `play` | Run a script. `--check` validates it with no server running. See [Scripts](scripts.md) |
 | `hold` / `resume` | The two halves of the `pause` command, spelled apart. See [Recording](recording.md) |
+
+`wear` takes its item as a positional argument or as `--item`, and needs `--slot` with it; `none` takes the garment off. A malformed number is refused rather than truncated or read as zero, and `--page` and `--slide` take whole numbers.
 
 `yarn ctl` with no arguments prints the whole list with worked examples.
 

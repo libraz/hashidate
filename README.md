@@ -86,7 +86,7 @@ yarn ctl watch                                  # follow the turn events
 
 ![hashidate architecture](docs/images/architecture.svg)
 
-Three processes and a page. A caller posts commands to the control server; the server streams them to the renderer over SSE and the renderer reports back. OBS points at the renderer's page. The viewer and control API bind to `127.0.0.1`. See [Architecture](docs/en/architecture.md).
+Three processes and a page. A caller posts commands to the control server; the server streams them to the renderer over SSE and the renderer reports back. OBS points at the renderer's page. The viewer and control API bind to `127.0.0.1`, and the control server refuses any request whose `Host` or `Origin` is not loopback, so a page open in the operator's own browser cannot reach it either. See [Architecture](docs/en/architecture.md).
 
 ## Documentation
 

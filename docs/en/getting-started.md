@@ -11,7 +11,7 @@ A clone of this repository is the runtime and nothing else. Read this section be
 | Node 22 and Yarn 4 | Pinned in `mise.toml`. `mise install` installs both. |
 | **An avatar** | Required, and **not included.** The descriptors in `src/avatars` point at `public/models/<id>.glb`, which is git-ignored. With no GLB there, the renderer comes up with nothing to draw. |
 
-The two avatars this project was built against are purchased VRChat models and cannot be redistributed here, so supply your own: convert a rigged humanoid model with `blender -b -P tools/blender/export_glb.py -- [--profile NAME] <in.fbx> <out.glb> [texdir]` and add a descriptor file to `src/avatars`, then import it and add it to the `AVATARS` array in `src/avatars/index.ts`. The `make glb` targets build only the two purchased models, and a model whose shape keys follow neither profile in `PROFILES` (in that script) needs its own entry there first. See [Avatars](avatars.md).
+None of the avatars this project was built against can be redistributed here, so supply your own: convert a rigged humanoid model with `blender -b -P tools/blender/export_glb.py -- [--profile NAME] <in.fbx> <out.glb> [texdir]` and add a descriptor file to `src/avatars`, then import it and add it to the `AVATARS` array in `src/avatars/index.ts`. The `make glb` targets build only the two purchased models, and a model whose shape keys follow neither profile in `PROFILES` (in that script) needs its own entry there first. See [Avatars](avatars.md).
 
 ### To produce audio
 
@@ -98,13 +98,14 @@ The control server takes seven flags, all of them paths except the first:
 | `--bgm` | `show/bgm` | The music library. See [Background music](bgm.md) |
 | `--recordings` | `show/recordings` | Where a take is written. See [Recording](recording.md) |
 
-Five environment variables, read by whichever process needs them:
+Six environment variables, read by whichever process needs them:
 
 | Variable | Read by | What it does |
 |---|---|---|
 | `HASHIDATE_CONTROL_PORT` | the native shell, `make dev`, `make stop` | The control port, where `--port` is not available |
 | `HASHIDATE_VOICE_DIR` | `make voice`, the sidecar | Moves the reference clips and their encoded latents, including out of the repository |
-| `HASHIDATE_TTS_SOCKET` | the control server, the native shell, the sidecar | Where the voice answers. Each resolves it independently |
+| `HASHIDATE_TTS_SOCKET` | the control server, the native shell, the sidecar | Where the voice answers. `make` makes a relative path absolute against the repository root; outside `make`, give an absolute path, because each process resolves a relative one from its own working directory |
+| `HASHIDATE_TTS_MODEL` | the sidecar | Which checkpoint the voice runs: `small` (default), `large` or `mf`. See [Speech](speech.md) |
 | `HASHIDATE_TTS_PORT` | the control server, the native shell | Points the proxy at `127.0.0.1` on a port instead of a socket, for a stand-in written as an ordinary HTTP service. See [Speech](speech.md#using-a-different-voice) |
 | `HASHIDATE_LOCALE` | Node processes, including the CLI and control server | Selects `en` or `ja`. Browser pages use their saved language selection or browser language instead |
 

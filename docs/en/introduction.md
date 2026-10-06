@@ -47,7 +47,7 @@ Nothing in it names a model, a voice or an avatar. The same turn plays on a diff
 
 ## Avatar data lives in a descriptor
 
-Everything that is a property of one particular model — what its author named things, how its garments are built, how far its eyes turn, which of its shapes are drawn artwork rather than muscle-level parts — lives in a descriptor, and the runtime reads it through a profile. Swapping the avatar swaps that object and nothing else.
+Everything that is a property of one particular model — what its author named things, how its garments are built, how far its eyes turn, which of its shapes are drawn artwork rather than muscle-level parts, where its arms rest when a garment needs them held clear — lives in a descriptor, and the runtime reads it through a profile. Swapping the avatar swaps that object and nothing else.
 
 That claim is what this repository tests: two models by different authors, one implementing the ARKit 52 blendshape set and one implementing none of it, driven by the same engine over the same command vocabulary. See [Avatars](avatars.md).
 

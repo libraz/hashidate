@@ -79,6 +79,8 @@ Lines are queued rather than sent as `say` commands, which is what `play` provid
 
 The queue lives in the control server. It survives a viewer reload, it is editable from the panel while it plays, and it is deep enough for the renderer to prepare the next line's audio during the current one. A caller sending a line at a time and waiting for each pays about 1.2 s of silence between every pair of them; handing the whole run over at once reduces that to 0.3 s, and that only works because the staging travels on the lines.
 
+With no renderer attached the server keeps the setup and applies it when one attaches; `play` reports only a setup command the server could not keep. The lines queue either way.
+
 Every entry is stamped with the script's own name, so a queue holding a scripted segment, an answer to a comment and a line typed by hand stays legible. See [The surfaces](surfaces.md).
 
 ## Holding a run
@@ -92,6 +94,8 @@ That is what a recorded segment needs, and the panel builds the whole sequence o
 ## Validating with `--check`
 
 `--check` reads the file, validates every line against the same schema the wire uses, and prints what would be sent. It needs no server and no renderer, which makes it the check to run between edits.
+
+A validation error names its position as a dotted path with array positions counted from 1, as the outline numbers lines: `lines.3.stage.camera` is the third line.
 
 A script is run against a live stream, so validating at the moment each line is sent would mean a run that stops on line nine has already put eight lines on air.
 

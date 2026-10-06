@@ -27,7 +27,7 @@ Three processes, in this order.
 2. **The speech sidecar**, only when `tools/tts/.venv/bin/python` exists and nothing is already answering on the socket. It is started and never waited on, because loading the model takes the better part of a minute and the viewer and the control API work without a voice. A TCP replacement selected by `HASHIDATE_TTS_PORT` must be started separately.
 3. **The two windows**, on `/panel/` and `/monitor/`.
 
-A control server **already running on this checkout is used rather than replaced**, so a `yarn dev` left up in a terminal is not taken down, and it is not stopped on quit either: the shell only stops a child it started itself.
+A control server **already running on this checkout is used rather than replaced**, so a `yarn dev` left up in a terminal is not taken down, and it is not stopped on quit either: the shell only stops a child it started itself. A child it started that answers only after the startup wait has given up stays its own and is stopped on quit.
 
 A server running on a *different* checkout is refused by name rather than adopted:
 
@@ -45,7 +45,7 @@ A second `yarn shell` does not start a second application. It raises the windows
 
 | Menu | Item | What it does |
 |---|---|---|
-| File | Run Script… (`⌘⇧O` / `Ctrl+Shift+O`) | Pick a `.yaml`, `.yml` or `.json` script from anywhere on disk and queue it, the same way `yarn ctl play` does |
+| File | Run Script… (`⌘⇧O` / `Ctrl+Shift+O`) | Pick a `.yaml`, `.yml` or `.json` script from anywhere on disk and queue it, the same way `yarn ctl play` does. A setup entry that fails, or that no connected viewer received, is reported in a dialog; the lines are queued either way |
 | Edit | Undo, Redo, Cut, Copy, Paste, Select All | Present because macOS wires up those shortcuts only for a window whose menu carries the roles, and the panel is a page lines get written into |
 | Window | hashidate — Control | Raise the panel, or reopen it if it was closed |
 | Window | hashidate — Stage | Raise the stage, or reopen it |

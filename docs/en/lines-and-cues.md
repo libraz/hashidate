@@ -45,6 +45,8 @@ The guarantee is made twice. A line whose markup does not parse fails the schema
 
 A cue's position is a fraction of the utterance rather than a time. It rides the mouth's own clock, so it stays where it was written when the line turns out longer than the estimate: a supplied `reading` is a different length, and TTS audio is a different length again. Both rows in the figure above put `[explain]` at the same 35 % of the utterance and therefore at a different second.
 
+A camera, slide or performance cue also updates the standing state, so a renderer that attaches later is handed the shot, page and mood the line left behind.
+
 An id absent from the active avatar's vocabulary does nothing, so a typo mid-sentence leaves the current face or movement alone.
 
 ## Reading

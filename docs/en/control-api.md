@@ -45,7 +45,7 @@ An axis left out of `stage` keeps what it had; `null` empties it — dry for a r
 | `POST /api/queue/shift` | Remove and return the first pending turn. |
 | `POST /api/queue/pop` | Remove and return the last pending turn. |
 | `POST /api/queue/clear` | Remove all pending turns. |
-| `POST /api/queue/rewind` | Copy a history turn, or that turn and everything after it, back to the front with new ids. `mode` is `one` or `from`; `interrupt` controls the line on air. |
+| `POST /api/queue/rewind` | Copy a history turn, or that turn and everything after it, back to the front with new ids. `mode` is `one` or `from`; `interrupt` controls the line on air, and a `from` that cuts it puts that line back too, after the lines it followed. |
 | `GET /api/vocabulary` | What the loaded avatar can be asked for. |
 | `GET /api/decks` | The documents on disk, with their page counts. Re-read rather than cached, so a file added while the stream is running appears. |
 | `GET /api/decks/<id>/text` | What a document says, page by page, `?from=` and `?to=`. Extracted without drawing anything. |
@@ -62,7 +62,7 @@ An axis left out of `stage` keeps what it had; `null` empties it — dry for a r
 | `POST /api/report` | The viewer's up-channel, and its heartbeat. Not for callers. |
 | `POST /api/speech` | The viewer's route to the speech sidecar. Not for callers. 503 when there is no sidecar, which is a normal answer. |
 
-Every route answers loopback only. A request whose `Host` is not `127.0.0.1` or `localhost`, or whose `Origin` is not the address it was sent to, is refused with `403` before anything is applied or served, and no CORS header is ever sent. Callers with no browser behind them send no `Origin` and are unaffected. JSON bodies are capped at 4 MiB; a larger one is answered `413`.
+Every route answers loopback only. A request whose `Host` is not `127.0.0.1` or `localhost`, whose `Origin` is not the address it was sent to, or whose `Sec-Fetch-Site` is `cross-site` or `same-site`, is refused with `403` before anything is applied or served, and no CORS header is ever sent. Callers with no browser behind them send no `Origin` and are unaffected. JSON bodies are capped at 4 MiB; a larger one is answered `413`.
 
 Unknown command elements in a mixed `batch` are dropped while known elements are still delivered. If no element is known, the request returns `400` (`no command`). Unknown fields are stripped from ordinary command schemas. `tune` is strict at its command and group boundaries, so a misspelled group or field fails instead of becoming a successful no-op. The orchestrator and the renderer are separate processes with separate release cycles, so a newer caller talking to an older renderer degrades without breaking the stream.
 
@@ -97,7 +97,7 @@ The server's queue is the only one that counts. `say`, `clear`, `interrupt` and 
 
 A renderer that attaches while a line is on air is handed the queue held, and released when that line ends, so it joins in step rather than running a line ahead of the others. It is also handed the shot, the set, the page and the mood as the lines said so far left them, not only as commands set them.
 
-`POST /api/command` answers with `fates`, one per command: `delivered` to at least one viewer, `retained` by the server for whichever renderer attaches next — the setup, the queue verbs and the BGM transport — or `lost`. `ok` is false, with status 503, only when something was lost. `POST /api/scripts/run` reports its setup the same way, as `setupFates`.
+`POST /api/command` answers with `fates`, one per command: `delivered` to at least one viewer, `retained` by the server for whichever renderer attaches next — the setup, the queue verbs and the BGM transport — or `lost`. `ok` is false, with status 503, only when something was lost. `ids` holds the id each `say` was queued under: an `id` the caller chose is kept unless a turn already holds it, and a fresh one is minted otherwise. `POST /api/scripts/run` reports its setup the same way, as `setupFates`.
 
 ## Next
 

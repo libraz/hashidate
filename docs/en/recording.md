@@ -49,6 +49,8 @@ The record command reaches every renderer attached, and on an ordinary desk that
 
 That is the same rule the mute already draws rather than a second one: a monitor is a page that makes no sound, and a take is supposed to contain what the room heard. It follows that a stage muted because OBS *is* monitoring the browser source will not record, which is correct, because OBS is recording it.
 
+A page whose browser has not yet let it start audio still records: the capture track exists from the start and is silent until the audio context runs.
+
 The voice and the processed BGM meet before that mute and the recording tap. A take made by the audible renderer therefore contains both at the same levels heard from the page, including the BGM-only libsonare effects. See [Background music](bgm.md).
 
 ## Container and codec
@@ -63,7 +65,7 @@ Because the extension is not known in advance, the file has no name on disk unti
 
 `show/recordings/`, beside the slides, scripts and motions. It is git-ignored for a stronger reason than size: a take is minutes of video of a purchased avatar speaking in a cloned voice.
 
-The name is the script the queue came from, then the time it was started:
+The name is the script the queue came from, then the time it was started. Only a script listed in `show/scripts/` names a take: a line typed in the panel or queued by an orchestrator does not, and the take is then named `take`.
 
 ```
 show/recordings/opening-20260829-142530.mp4
@@ -75,7 +77,7 @@ show/recordings/opening-20260829-142530.mp4
 
 The take ends a moment after the last line, long enough for the mouth to close and the character to come back to rest, because a cut on the same frame as the last syllable reads as a dropped connection. A line queued inside that moment carries the recording on rather than ending it.
 
-Turning **Stop at the end of the script** off leaves it running until the Stop button.
+Turning **Stop at the end of the script** off leaves it running until the Stop button. A stop names the take it ends, so a late stop for an earlier take leaves a newer one running.
 
 Either way the file stays open for a second or so after the stop. The encoder is still holding frames when it is told to wind down, and closing on the command rather than on the last chunk would truncate every take by exactly that much. The panel's byte count reports when it has finished: it is what has landed on disk, which is the only figure that distinguishes a recorder that is still going from one that has quietly stopped.
 

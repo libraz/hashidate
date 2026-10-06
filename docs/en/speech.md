@@ -14,9 +14,11 @@ The clips are the one part that cannot be automated: they are recordings of whoe
 
 After adding or removing reference clips, run `make tts-refs` to replace the encoded set, then restart the sidecar. A failed rebuild leaves the previous complete set available; removed clips stop contributing after a successful rebuild and restart.
 
-The sidecar runs Irodori-TTS over the `Aratako/Semantic-DACVAE-Japanese-32dim` codec, installed from upstream at a pinned commit so that a voice comes out the same on a later run. `HASHIDATE_TTS_MODEL` picks the checkpoint: `small` (the default, `Aratako/Irodori-TTS-v4.1-Small`) `large` (`Aratako/Irodori-TTS-v4-Large`) or `mf` (`Aratako/Irodori-TTS-v4.1-Small-MF`, a MeanFlow distillation of small that samples at 4 steps rather than 16). Upstream measures large as closer to the reference speaker, and here it takes about twice as long per line, roughly the length of the line itself on an M5 Max; small is the default because a caller sending one turn at a time waits that long before every line, while a queued script mostly hides it by preparing the next line during the current one. Both share the codec, so the encoded reference set serves either without `make tts-refs`. Checkpoint and codec are fetched from Hugging Face the first time the sidecar starts, and `/health` reports which model is loaded and the step count it samples at. Nothing else is selectable, because the pinned upstream commit is known to run these three; a different model means a different sidecar — see [Using a different voice](#using-a-different-voice).
+The sidecar runs Irodori-TTS over the `Aratako/Semantic-DACVAE-Japanese-32dim` codec, installed from upstream at a pinned commit so that a voice comes out the same on a later run. `HASHIDATE_TTS_MODEL` picks the checkpoint: `small` (the default, `Aratako/Irodori-TTS-v4.1-Small`), `large` (`Aratako/Irodori-TTS-v4-Large`) or `mf` (`Aratako/Irodori-TTS-v4.1-Small-MF`, a MeanFlow distillation of small that samples at 4 steps rather than 16). Upstream measures large as closer to the reference speaker, and here it takes about twice as long per line, roughly the length of the line itself on an M5 Max; small is the default because a caller sending one turn at a time waits that long before every line, while a queued script mostly hides it by preparing the next line during the current one. All three share the codec, so the encoded reference set serves any of them without `make tts-refs`. Checkpoint and codec are fetched from Hugging Face the first time the sidecar starts, and `/health` reports which model is loaded and the step count it samples at. Nothing else is selectable, because the pinned upstream commit is known to run these three; a different model means a different sidecar — see [Using a different voice](#using-a-different-voice).
 
 The sidecar answers on a UNIX socket at `tools/tts/.run/speech.sock`, in a directory it creates with mode `0700`, and opens no port at all. Its only caller is the control server on this machine — see [Using a different voice](#using-a-different-voice) — so the voice is reachable by this user and nobody else, which is a stricter form of the rule the rest of the runtime follows by binding loopback.
+
+The model loads beside the socket, so `/health` answers `ready: false` for the whole load instead of leaving requests waiting, and turns `true` only once the watermark check below has passed on a real take. A sidecar whose model cannot load, or whose check fails, prints the error and exits rather than staying up without ever becoming ready.
 
 The control server prints what it found of the voice at startup and reports any change, and the panel carries the same warning. A sidecar that stops answering mid-broadcast is otherwise invisible, because the queue still drains and the mouth still moves.
 
@@ -39,9 +41,9 @@ Three things follow from having the finished take before playback starts, which 
 - **The mouth is put on the audio's clock rather than the frame's.** Frames drop and audio does not, so a mouth adding up frame deltas can only run ahead. Cues read the same clock and are corrected by the same call.
 - **Mouth travel is scaled by the take's own loudness.** It is measured off the decoded buffer once and normalised against that take's own level, so there is no gain to retune when the voice changes. That is what closes the mouth through a pause the text never predicted, and it hides most of what the stretch cannot fix.
 
-Synthesis starts when a line is *queued* rather than when it is played, so a batch of three is three requests in flight at once and only the first turn of a run waits. See [Send a whole answer at once](control-api.md#send-a-whole-answer-at-once).
+Synthesis starts when a line is *queued* rather than when it is played, so a batch of three is requested up front, one after another, and only the first turn of a run waits. See [Send a whole answer at once](control-api.md#send-a-whole-answer-at-once).
 
-A voice that fails or hangs costs the line its sound and nothing else: the turn plays silently rather than holding up the queue.
+A voice that fails or hangs costs the line its sound and nothing else: the turn plays silently rather than holding up the queue. The wait is five seconds plus the line's own spoken length, because a long line takes about as long to make as to say. A line that came back without a sound is asked for once more when a later line succeeds. A line that leaves the queue unsaid (interrupt, clear, replacement) has its synthesis cancelled, so it stops holding up the lines behind it.
 
 ## The watermark
 
@@ -75,7 +77,7 @@ The contract is two routes:
 | Route | What it takes, what it returns |
 |---|---|
 | `POST /speak` | A JSON body `{ "text": string }` → an `audio/*` response body. |
-| `GET /health` | A JSON body with the required boolean field `ready`; other fields are optional. |
+| `GET /health` | A JSON body with the required boolean field `ready`; other fields are optional. A reply without the boolean counts as no answer. |
 
 Anything that answers those can stand in. The `/speak` contract requires `text` only; `reading` is not part of it and is not sent. `HASHIDATE_TTS_SOCKET` moves the target, which is how to run a second sidecar beside the first while comparing voices, and `HASHIDATE_TTS_PORT` points the proxy at `127.0.0.1` on that port instead, which a stand-in written as an ordinary HTTP service will need. Nothing above the proxy depends on which of the two answered.
 
