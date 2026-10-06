@@ -1,5 +1,6 @@
 import { request } from 'node:http';
-import { dirname, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -80,7 +81,17 @@ function portOf(value: string | undefined): number | null {
  */
 export function speechEndpoint(env: NodeJS.ProcessEnv = process.env): SpeechEndpoint {
   const socket = env.HASHIDATE_TTS_SOCKET;
-  if (socket !== undefined && socket !== '') return { kind: 'socket', path: resolve(socket) };
+  if (socket !== undefined && socket !== '') {
+    // Python expands a quoted ~/ override too; both processes must reach the
+    // same socket even when the shell did not expand it before exporting it.
+    const path =
+      socket === '~'
+        ? homedir()
+        : socket.startsWith('~/')
+          ? resolve(join(homedir(), socket.slice(2)))
+          : resolve(socket);
+    return { kind: 'socket', path };
+  }
   const port = portOf(env.HASHIDATE_TTS_PORT);
   if (port !== null) return { kind: 'port', port };
   return { kind: 'socket', path: defaultSocketPath() };
@@ -103,6 +114,8 @@ export interface SidecarAsk {
   /** A JSON body, already serialised. Absent for a GET. */
   body?: string;
   timeoutMs: number;
+  /** Cancel this round trip when its caller no longer needs the answer. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -127,6 +140,8 @@ export function askSidecar(
       ? { socketPath: endpoint.path }
       : { host: '127.0.0.1', port: endpoint.port };
   const payload = ask.body === undefined ? null : Buffer.from(ask.body, 'utf8');
+  const timeout = AbortSignal.timeout(ask.timeoutMs);
+  const signal = ask.signal === undefined ? timeout : AbortSignal.any([ask.signal, timeout]);
 
   return new Promise((settle, fail) => {
     const req = request(
@@ -138,7 +153,7 @@ export function askSidecar(
           payload === null
             ? {}
             : { 'Content-Type': 'application/json', 'Content-Length': String(payload.length) },
-        signal: AbortSignal.timeout(ask.timeoutMs),
+        signal,
       },
       (res) => {
         const chunks: Buffer[] = [];

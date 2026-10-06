@@ -1,6 +1,15 @@
+import { EventEmitter } from 'node:events';
+import type { ServerResponse } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hub } from '@/server/hub';
-import { forgetTakes, SpeechWatch, speak, TAKE_MAX, TAKE_TTL_MS } from '@/server/speech';
+import {
+  forgetTakes,
+  handleSpeech,
+  SpeechWatch,
+  speak,
+  TAKE_MAX,
+  TAKE_TTL_MS,
+} from '@/server/speech';
 import { askSidecar, type SidecarReply } from '@/speech/sidecar';
 
 /**
@@ -194,6 +203,22 @@ const take = (size = 8): SidecarReply => ({
   body: Buffer.alloc(size),
 });
 
+class TestResponse extends EventEmitter {
+  destroyed = false;
+  writableEnded = false;
+  writableFinished = false;
+  readonly writeHead = vi.fn();
+  readonly end = vi.fn(() => {
+    this.writableEnded = true;
+  });
+}
+
+const response = (destroyed = false): ServerResponse => {
+  const res = new TestResponse();
+  res.destroyed = destroyed;
+  return res as unknown as ServerResponse;
+};
+
 describe('asking the sidecar for a line', () => {
   it('asks once for the renderers that all want it at the same moment', async () => {
     asked.mockResolvedValue(take());
@@ -211,6 +236,73 @@ describe('asking the sidecar for a line', () => {
     expect(answers[1]).toBe(answers[0]);
     expect(answers[2]).toBe(answers[0]);
     expect(answers[0].status).toBe(200);
+  });
+
+  it('lets one renderer leave while the remaining subscribers keep one upstream take', async () => {
+    let resolveTake!: (reply: SidecarReply) => void;
+    const pending = new Promise<SidecarReply>((resolve) => {
+      resolveTake = resolve;
+    });
+    let upstreamSignal: AbortSignal | undefined;
+    asked.mockImplementation(async (_endpoint, _path, request) => {
+      upstreamSignal = request.signal;
+      return pending;
+    });
+
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const thirdController = new AbortController();
+    const first = speak({ text: 'shared cancellation' }, firstController.signal);
+    const second = speak({ text: 'shared cancellation' }, secondController.signal);
+    const third = speak({ text: 'shared cancellation' }, thirdController.signal);
+    await vi.waitFor(() => expect(asked).toHaveBeenCalledTimes(1));
+
+    firstController.abort();
+    await expect(first).resolves.toMatchObject({ status: 499, ok: false });
+    expect(upstreamSignal?.aborted).toBe(false);
+
+    secondController.abort();
+    await expect(second).resolves.toMatchObject({ status: 499, ok: false });
+    expect(upstreamSignal?.aborted).toBe(false);
+
+    resolveTake(take(17));
+    const answer = await third;
+    expect(answer.status).toBe(200);
+    expect(answer.body.length).toBe(17);
+    expect(upstreamSignal?.aborted).toBe(false);
+  });
+
+  it('aborts the upstream work after the last subscriber and protects a replacement flight', async () => {
+    let resolveOld!: (reply: SidecarReply) => void;
+    const old = new Promise<SidecarReply>((resolve) => {
+      resolveOld = resolve;
+    });
+    let oldSignal: AbortSignal | undefined;
+    asked
+      .mockImplementationOnce(async (_endpoint, _path, request) => {
+        oldSignal = request.signal;
+        return old;
+      })
+      .mockResolvedValueOnce(take(23));
+
+    const controller = new AbortController();
+    const abandoned = speak({ text: 'replace me' }, controller.signal);
+    await vi.waitFor(() => expect(asked).toHaveBeenCalledTimes(1));
+    controller.abort();
+    await expect(abandoned).resolves.toMatchObject({ status: 499, ok: false });
+    expect(oldSignal?.aborted).toBe(true);
+
+    const replacement = await speak({ text: 'replace me' });
+    expect(replacement.status).toBe(200);
+    expect(replacement.body.length).toBe(23);
+
+    resolveOld(take(4));
+    await Promise.resolve();
+    await Promise.resolve();
+    const cached = await speak({ text: 'replace me' });
+    expect(cached).toBe(replacement);
+    expect(cached.body.length).toBe(23);
+    expect(asked).toHaveBeenCalledTimes(2);
   });
 
   it('hands the same one back to a renderer that asks a moment later', async () => {
@@ -278,6 +370,20 @@ describe('asking the sidecar for a line', () => {
 });
 
 describe('a sidecar that is not there', () => {
+  it('refuses empty audio and synthesises the same line again after recovery', async () => {
+    asked.mockResolvedValueOnce(take(0)).mockResolvedValueOnce(take());
+
+    const empty = await speak({ text: 'retry empty audio' });
+    expect(empty.status).toBe(502);
+    expect(empty.ok).toBe(false);
+
+    const recovered = await speak({ text: 'retry empty audio' });
+    expect(recovered.status).toBe(200);
+    expect(recovered.ok).toBe(true);
+    expect(recovered.body.length).toBeGreaterThan(0);
+    expect(asked).toHaveBeenCalledTimes(2);
+  });
+
   it('shares one refusal rather than one round trip each', async () => {
     asked.mockImplementation(refused);
 
@@ -325,5 +431,55 @@ describe('a sidecar that is not there', () => {
     expect(retriedTake.status).toBe(200);
     expect(retriedTake.ok).toBe(true);
     expect(asked).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('an HTTP renderer that goes away mid-synthesis', () => {
+  it('cancels its subscriber and does not write after the response closes', async () => {
+    let resolveTake!: (reply: SidecarReply) => void;
+    const pending = new Promise<SidecarReply>((resolve) => {
+      resolveTake = resolve;
+    });
+    let upstreamSignal: AbortSignal | undefined;
+    asked.mockImplementation(async (_endpoint, _path, request) => {
+      upstreamSignal = request.signal;
+      return pending;
+    });
+
+    const res = response();
+    const work = handleSpeech(res, { text: 'renderer left' });
+    await vi.waitFor(() => expect(asked).toHaveBeenCalledTimes(1));
+    res.emit('close');
+
+    await expect(work).resolves.toBeUndefined();
+    expect(upstreamSignal?.aborted).toBe(true);
+    expect(res.writeHead).not.toHaveBeenCalled();
+    expect(res.listenerCount('close')).toBe(0);
+    resolveTake(take());
+  });
+
+  it('does not cancel a completed response when its close event arrives', async () => {
+    asked.mockResolvedValue(take());
+    const res = response();
+
+    await handleSpeech(res, { text: 'renderer stayed' });
+    const upstreamSignal = asked.mock.calls[0]?.[2].signal;
+    expect(upstreamSignal?.aborted).toBe(false);
+    expect(res.writeHead).toHaveBeenCalledOnce();
+    expect(res.end).toHaveBeenCalledOnce();
+
+    res.emit('close');
+    expect(upstreamSignal?.aborted).toBe(false);
+    expect(res.listenerCount('close')).toBe(0);
+  });
+
+  it('does not start synthesis for a response already closed before the handler starts', async () => {
+    asked.mockResolvedValue(take());
+    const res = response(true);
+
+    await handleSpeech(res, { text: 'already closed' });
+
+    expect(asked).not.toHaveBeenCalled();
+    expect(res.listenerCount('close')).toBe(0);
   });
 });

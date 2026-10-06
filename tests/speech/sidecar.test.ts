@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -41,6 +41,21 @@ describe('which sidecar this process talks to', () => {
 
   it('takes a port, which is how a different synthesiser stands in', () => {
     expect(speechEndpoint({ HASHIDATE_TTS_PORT: '8770' })).toEqual({ kind: 'port', port: 8770 });
+  });
+
+  it('expands a home-relative socket path the same way as the Python sidecar', () => {
+    expect(speechEndpoint({ HASHIDATE_TTS_SOCKET: '~/hashidate/speech.sock' })).toEqual({
+      kind: 'socket',
+      path: join(homedir(), 'hashidate/speech.sock'),
+    });
+    expect(speechEndpoint({ HASHIDATE_TTS_SOCKET: '~' })).toEqual({
+      kind: 'socket',
+      path: homedir(),
+    });
+    expect(speechEndpoint({ HASHIDATE_TTS_SOCKET: '~//hashidate/speech.sock' })).toEqual({
+      kind: 'socket',
+      path: join(homedir(), 'hashidate/speech.sock'),
+    });
   });
 
   it('lets the socket win, because naming it is the more specific act', () => {
@@ -144,5 +159,36 @@ describe('one round trip, over either transport', () => {
       timeoutMs: 2_000,
     });
     expect(reply.body.toString('utf8')).toBe('GET /health ');
+  });
+
+  it('cuts a hanging socket request when the caller aborts it', async () => {
+    let sawRequest!: () => void;
+    const started = new Promise<void>((resolve) => {
+      sawRequest = resolve;
+    });
+    let sawClose!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      sawClose = resolve;
+    });
+    server = createServer((req) => {
+      sawRequest();
+      req.on('close', sawClose);
+    });
+    await new Promise((up) => server?.listen(0, '127.0.0.1', () => up(null)));
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('no port');
+
+    const controller = new AbortController();
+    const pending = askSidecar({ kind: 'port', port: address.port }, '/speak', {
+      method: 'POST',
+      body: JSON.stringify({ text: 'hang' }),
+      timeoutMs: 10_000,
+      signal: controller.signal,
+    });
+    await started;
+    controller.abort();
+
+    await expect(pending).rejects.toThrow();
+    await closed;
   });
 });

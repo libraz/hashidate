@@ -8,6 +8,7 @@ initialising the model.
 
 import ast
 import argparse
+import asyncio
 import contextlib
 import io
 import os
@@ -15,10 +16,12 @@ import socket
 import stat
 import tempfile
 import threading
+import time
 import types
 import traceback
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 def load_boundary_functions() -> types.SimpleNamespace:
@@ -58,32 +61,66 @@ class StubHttpError(Exception):
         self.status_code = status_code
 
 
+class StubResponse:
+    def __init__(self, content=b"", status_code=200, **kwargs):
+        self.content = content
+        self.status_code = status_code
+        self.headers = kwargs.get("headers", {})
+        self.media_type = kwargs.get("media_type")
+
+
+class FakeRequest:
+    def __init__(self, disconnected=False):
+        self.disconnected = disconnected
+
+    async def is_disconnected(self):
+        return self.disconnected
+
+
 def load_startup(latents_dir: Path, runtime, watermark) -> dict:
     """The startup and health functions, over stubs for the model and the mark."""
     source_path = Path(__file__).with_name("server.py")
     tree = ast.parse(source_path.read_text())
-    wanted = {"_load_model", "health", "speak"}
+    wanted = {
+        "_load_model",
+        "_acquire_gpu",
+        "_run_gpu",
+        "_run_locked",
+        "_cancelled_response",
+        "_repair_take",
+        "_encode_audio",
+        "health",
+        "speak",
+    }
     functions = []
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name in wanted:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in wanted:
             node.decorator_list = []
             functions.append(node)
     namespace = {
         "__doc__": "",
+        "asyncio": asyncio,
+        "time": time,
         "LATENTS": latents_dir,
         "InferenceRuntime": types.SimpleNamespace(from_key=lambda key: runtime),
         "runtime_key": lambda: None,
         "watermark": watermark,
         "SamplingRequest": lambda **kwargs: kwargs,
         "SpeakRequest": object,
-        "Response": object,
+        "Response": StubResponse,
         "HTTPException": StubHttpError,
+        "Request": object,
+        "threading": threading,
         "traceback": traceback,
         "DEFAULT_STEPS": 4,
         "DEFAULT_SEED": 1,
         "DEVICE": "mps",
         "MODEL": "small",
         "MAX_SECONDS": 30.0,
+        "REF_NORMALIZE_DB": -24.0,
+        "GPU_POLL_SECONDS": 0.01,
+        "_gpu": threading.Lock(),
+        "_gpu_workers": set(),
         "_runtime": None,
         "_latents": [],
         "_startup_error": None,
@@ -95,6 +132,15 @@ def load_startup(latents_dir: Path, runtime, watermark) -> dict:
 
 
 class ServerBoundaryTests(unittest.TestCase):
+    def test_socket_override_expands_current_user_home(self):
+        for value, expected in (
+            ("~/hashidate/speech.sock", Path.home() / "hashidate/speech.sock"),
+            ("~//hashidate/speech.sock", Path.home() / "hashidate/speech.sock"),
+            ("~", Path.home()),
+        ):
+            with self.subTest(value=value), patch.dict(os.environ, {"HASHIDATE_TTS_SOCKET": value}):
+                self.assertEqual(BOUNDARY.endpoint(argparse.Namespace(uds=None)), expected)
+
     def test_bundled_parser_rejects_tcp_port(self):
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
@@ -237,7 +283,7 @@ class StartupTests(unittest.TestCase):
                     loader.join(0.01)
                 self.assertFalse(ns["health"]()["ready"])
                 with self.assertRaises(StubHttpError) as refused:
-                    ns["speak"](types.SimpleNamespace())
+                    asyncio.run(ns["speak"](types.SimpleNamespace(), FakeRequest()))
                 self.assertEqual(refused.exception.status_code, 503)
             finally:
                 gate.set()
@@ -271,6 +317,140 @@ class StartupTests(unittest.TestCase):
                 ns["_load_model"]()
             self.assertEqual(ns["stopped"], [True])
             self.assertFalse(ns["health"]()["ready"])
+
+
+class SpeechCancellationTests(unittest.TestCase):
+    def test_connected_request_keeps_synthesis_repair_mark_and_encode_order(self):
+        async def scenario():
+            events = []
+
+            class Audio:
+                def squeeze(self):
+                    return self
+
+                def cpu(self):
+                    return self
+
+                def numpy(self):
+                    events.append("numpy")
+                    return "raw"
+
+            def synthesize(request):
+                events.append("synth")
+                return types.SimpleNamespace(audio=Audio(), sample_rate=24000)
+
+            runtime = types.SimpleNamespace(synthesize=synthesize)
+            mark = types.SimpleNamespace(
+                mark=lambda runtime, audio, rate: (events.append("mark"), "marked")[1]
+            )
+            ns = load_startup(Path("/tmp/missing-refs"), runtime, mark)
+            ns["_runtime"] = runtime
+            ns["_latents"] = ["ref.pt"]
+            ns["_repair_take"] = lambda audio, rate: (events.append("repair"), "repaired")[1]
+            ns["_encode_audio"] = lambda audio, rate: (events.append("encode"), b"wav")[1]
+
+            result = await ns["speak"](
+                types.SimpleNamespace(text="hello", caption=None, steps=4, seed=1),
+                FakeRequest(),
+            )
+
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.content, b"wav")
+            self.assertIn("X-Speech-Seconds", result.headers)
+            self.assertEqual(events, ["synth", "numpy", "repair", "mark", "encode"])
+            self.assertTrue(ns["_gpu"].acquire(blocking=False))
+            ns["_gpu"].release()
+
+        asyncio.run(scenario())
+
+    def test_disconnected_request_waiting_for_gpu_does_not_synthesize(self):
+        async def scenario():
+            calls = []
+
+            def synthesize(request):
+                calls.append(request)
+                raise AssertionError("a disconnected waiter must not reach the model")
+
+            runtime = types.SimpleNamespace(synthesize=synthesize)
+            mark = types.SimpleNamespace(mark=lambda runtime, audio, rate: audio)
+            ns = load_startup(Path("/tmp/missing-refs"), runtime, mark)
+            ns["_runtime"] = runtime
+            ns["_latents"] = ["ref.pt"]
+            ns["_gpu"].acquire()
+            waiting = FakeRequest()
+            task = asyncio.create_task(
+                ns["speak"](types.SimpleNamespace(text="wait"), waiting)
+            )
+            await asyncio.sleep(0.03)
+            self.assertEqual(calls, [])
+            self.assertTrue(ns["health"]()["ready"])
+            waiting.disconnected = True
+            result = await task
+            self.assertEqual(result.status_code, 499)
+            ns["_gpu"].release()
+
+        asyncio.run(scenario())
+
+    def test_surviving_request_can_take_the_gpu_after_a_disconnected_waiter(self):
+        async def scenario():
+            ns = load_startup(Path("/tmp/missing-refs"), None, None)
+            ns["_gpu"].acquire()
+            waiting = FakeRequest()
+            waiter = asyncio.create_task(ns["_acquire_gpu"](waiting))
+            await asyncio.sleep(0.02)
+            waiting.disconnected = True
+            self.assertFalse(await waiter)
+
+            survivor = FakeRequest()
+            ns["_gpu"].release()
+            self.assertTrue(await ns["_acquire_gpu"](survivor))
+            ns["_gpu"].release()
+
+        asyncio.run(scenario())
+
+    def test_cancelled_native_work_keeps_gpu_until_the_worker_finishes(self):
+        async def scenario():
+            started = threading.Event()
+            finish = threading.Event()
+
+            def synthesize():
+                started.set()
+                finish.wait(5)
+                return types.SimpleNamespace()
+
+            ns = load_startup(Path("/tmp/missing-refs"), types.SimpleNamespace(synthesize=synthesize), None)
+            ns["_runtime"] = types.SimpleNamespace(synthesize=synthesize)
+            ns["_latents"] = ["ref.pt"]
+            task = asyncio.create_task(ns["_run_gpu"](FakeRequest(), synthesize))
+            self.assertTrue(await asyncio.to_thread(started.wait, 1))
+
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            self.assertFalse(ns["_gpu"].acquire(blocking=False))
+
+            finish.set()
+            for _ in range(100):
+                if ns["_gpu"].acquire(blocking=False):
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                self.fail("native worker did not release the GPU lock")
+            ns["_gpu"].release()
+
+        asyncio.run(scenario())
+
+    def test_executor_submission_failure_releases_the_reserved_gpu(self):
+        async def scenario():
+            ns = load_startup(Path("/tmp/missing-refs"), None, None)
+            loop = asyncio.get_running_loop()
+            with patch.object(loop, "run_in_executor", side_effect=RuntimeError("executor down")):
+                with self.assertRaisesRegex(RuntimeError, "executor down"):
+                    await ns["_run_gpu"](FakeRequest(), lambda: None)
+            self.assertTrue(ns["_gpu"].acquire(blocking=False))
+            ns["_gpu"].release()
+
+        asyncio.run(scenario())
 
 
 if __name__ == "__main__":

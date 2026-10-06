@@ -104,7 +104,14 @@ interface HeldTake {
   at: number;
 }
 
-const inFlight = new Map<string, Promise<Take>>();
+interface Flight {
+  promise: Promise<Take>;
+  controller: AbortController;
+  subscribers: number;
+  settled: boolean;
+}
+
+const inFlight = new Map<string, Flight>();
 const held = new Map<string, HeldTake>();
 let heldBytes = 0;
 
@@ -119,6 +126,7 @@ const takeKey = (request: SpeechRequest): string => request.reading ?? request.t
 
 /** Drop everything held. For tests, and for nothing else. */
 export function forgetTakes(): void {
+  for (const flight of inFlight.values()) flight.controller.abort();
   inFlight.clear();
   held.clear();
   heldBytes = 0;
@@ -140,6 +148,49 @@ function keepTake(key: string, take: Take): void {
   }
 }
 
+const cancelled = (): Take => refusal(499, 'speech request cancelled');
+
+function abandon(key: string, flight: Flight): void {
+  if (flight.settled) return;
+  if (inFlight.get(key) === flight) inFlight.delete(key);
+  flight.controller.abort();
+}
+
+function subscribe(key: string, flight: Flight, signal: AbortSignal | undefined): Promise<Take> {
+  if (signal?.aborted) return Promise.resolve(cancelled());
+
+  flight.subscribers += 1;
+  return new Promise((resolve) => {
+    let done = false;
+
+    const release = (): void => {
+      if (done) return;
+      done = true;
+      signal?.removeEventListener('abort', onAbort);
+      flight.subscribers -= 1;
+      if (flight.subscribers === 0) abandon(key, flight);
+    };
+    const onAbort = (): void => {
+      release();
+      resolve(cancelled());
+    };
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+    flight.promise.then(
+      (take) => {
+        if (done) return;
+        release();
+        resolve(take);
+      },
+      () => {
+        if (done) return;
+        release();
+        resolve(refusal(503, 'speech sidecar not reachable'));
+      },
+    );
+  });
+}
+
 /**
  * Ask for a line, once, however many renderers want it.
  *
@@ -148,39 +199,45 @@ function keepTake(key: string, take: Take): void {
  * renderers are all reading the same queue and reach the same line within a
  * few hundred milliseconds of each other.
  */
-export async function speak(request: SpeechRequest): Promise<Take> {
+export function speak(request: SpeechRequest, signal?: AbortSignal): Promise<Take> {
   const key = takeKey(request);
+  if (signal?.aborted) return Promise.resolve(cancelled());
 
   const kept = held.get(key);
   if (kept !== undefined) {
-    if (Date.now() - kept.at < TAKE_TTL_MS) return kept.take;
+    if (Date.now() - kept.at < TAKE_TTL_MS) return Promise.resolve(kept.take);
     held.delete(key);
     heldBytes -= kept.take.body.length;
   }
 
   const flying = inFlight.get(key);
-  if (flying !== undefined) return flying;
+  if (flying !== undefined) return subscribe(key, flying, signal);
 
-  const attempt = synthesise(key)
+  const controller = new AbortController();
+  let flight: Flight;
+  const attempt = synthesise(key, controller.signal)
     .then((take) => {
-      if (take.ok) keepTake(key, take);
+      if (take.ok && inFlight.get(key) === flight) keepTake(key, take);
       return take;
     })
     .finally(() => {
-      inFlight.delete(key);
+      flight.settled = true;
+      if (inFlight.get(key) === flight) inFlight.delete(key);
     });
-  inFlight.set(key, attempt);
-  return attempt;
+  flight = { promise: attempt, controller, subscribers: 0, settled: false };
+  inFlight.set(key, flight);
+  return subscribe(key, flight, signal);
 }
 
 /** One round trip to the sidecar. Never rejects: a failure is a take too. */
-async function synthesise(line: string): Promise<Take> {
+async function synthesise(line: string, signal: AbortSignal): Promise<Take> {
   let upstream: SidecarReply;
   try {
     upstream = await askSidecar(ENDPOINT, '/speak', {
       method: 'POST',
       body: JSON.stringify({ text: line }),
       timeoutMs: TIMEOUT_MS,
+      signal,
     });
   } catch {
     // Not running, or wedged, or the socket is a file left behind by one that
@@ -199,6 +256,11 @@ async function synthesise(line: string): Promise<Take> {
   const mediaType = upstream.contentType.split(';', 1)[0]?.trim().toLowerCase();
   if (!mediaType?.startsWith('audio/')) {
     return refusal(502, 'speech sidecar returned non-audio content');
+  }
+  // A missing waveform cannot be decoded, and keeping it would silence every
+  // renderer repeating this line even after the sidecar recovered.
+  if (upstream.body.length === 0) {
+    return refusal(502, 'speech sidecar returned empty audio');
   }
 
   // The sidecar's `X-Speech-Seconds` is deliberately not forwarded. The viewer
@@ -252,17 +314,34 @@ export async function handleSpeech(res: ServerResponse, body: unknown): Promise<
   const request = parse(body);
   if (!request) return fail(res, 400, 'speech needs a non-empty text');
 
-  const take = await speak(request);
-  // `no-store` still, and on the audio most of all. What is shared is one
-  // answer between the renderers asking for it at the same moment, inside this
-  // process; a browser holding onto a line would be a browser that keeps
-  // saying it after the voice was retuned.
-  res.writeHead(take.status, {
-    'Content-Type': take.contentType,
-    'Content-Length': String(take.body.length),
-    'Cache-Control': 'no-store',
-  });
-  res.end(take.body);
+  const controller = new AbortController();
+  const onClose = (): void => {
+    if (!(res.writableEnded || res.writableFinished)) controller.abort();
+  };
+  res.once('close', onClose);
+  if (res.destroyed || res.writableEnded || res.writableFinished) {
+    controller.abort();
+    res.off('close', onClose);
+    return;
+  }
+  try {
+    const take = await speak(request, controller.signal);
+    if (controller.signal.aborted || res.destroyed || res.writableEnded || res.writableFinished) {
+      return;
+    }
+    // `no-store` still, and on the audio most of all. What is shared is one
+    // answer between the renderers asking for it at the same moment, inside this
+    // process; a browser holding onto a line would be a browser that keeps
+    // saying it after the voice was retuned.
+    res.writeHead(take.status, {
+      'Content-Type': take.contentType,
+      'Content-Length': String(take.body.length),
+      'Cache-Control': 'no-store',
+    });
+    res.end(take.body);
+  } finally {
+    res.off('close', onClose);
+  }
 }
 
 // --- watching ---------------------------------------------------------------

@@ -27,6 +27,7 @@ usage: .venv/bin/python server.py [--uds .run/speech.sock]
 """
 
 import argparse
+import asyncio
 import errno
 import io
 import os
@@ -41,7 +42,7 @@ from pathlib import Path
 
 import soundfile as sf
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
 from irodori_tts.inference_runtime import InferenceRuntime, SamplingRequest
 from pydantic import BaseModel, Field
@@ -79,8 +80,8 @@ SOCKET_PATH_MAX = 100
 
 # One line at a time through the model, whatever arrives.
 #
-# `speak` is a plain `def`, so FastAPI runs it in a threadpool and several
-# requests genuinely execute at once. The model does not survive that: two
+# `speak` is async, so requests genuinely execute at once while waiting for
+# the native worker. The model does not survive concurrent device calls: two
 # threads driving the same MPS context race on the Metal command queue and the
 # process dies on an assertion inside the driver —
 #
@@ -103,6 +104,11 @@ SOCKET_PATH_MAX = 100
 # and stays outside deliberately: it is the only part of a take that can be made
 # while another line is on the GPU.
 _gpu = threading.Lock()
+# A request can be cancelled while its native call is still running. Keep a
+# strong reference to those executor futures until their worker has released
+# the lock, otherwise the shielded future could be collected early.
+_gpu_workers: set[asyncio.Future] = set()
+GPU_POLL_SECONDS = 0.02
 
 _runtime: InferenceRuntime | None = None
 _latents: list[str] = []
@@ -185,6 +191,54 @@ async def lifespan(_: FastAPI):
     yield
 
 
+async def _acquire_gpu(request: Request) -> bool:
+    """Wait without blocking the loop, abandoning a disconnected request."""
+    while True:
+        if await request.is_disconnected():
+            return False
+        if _gpu.acquire(blocking=False):
+            try:
+                if await request.is_disconnected():
+                    _gpu.release()
+                    return False
+            except BaseException:
+                _gpu.release()
+                raise
+            return True
+        await asyncio.sleep(GPU_POLL_SECONDS)
+
+
+def _run_locked(work):
+    """Run one native operation and release its lock in that worker thread."""
+    try:
+        return work()
+    finally:
+        _gpu.release()
+
+
+async def _run_gpu(request: Request, work):
+    """Submit native work eagerly, then let cancellation leave it running."""
+    if not await _acquire_gpu(request):
+        return None
+
+    try:
+        future = asyncio.get_running_loop().run_in_executor(None, _run_locked, work)
+    except BaseException:
+        # No worker owns the lock when submission itself fails, so this is the
+        # one release that belongs on the event-loop side of the boundary.
+        _gpu.release()
+        raise
+    _gpu_workers.add(future)
+
+    def forget(done):
+        _gpu_workers.discard(done)
+        if not done.cancelled():
+            done.exception()
+
+    future.add_done_callback(forget)
+    return await asyncio.shield(future)
+
+
 app = FastAPI(title="hashidate speech", lifespan=lifespan)
 
 
@@ -200,14 +254,29 @@ def health() -> dict:
     }
 
 
+def _cancelled_response() -> Response:
+    return Response(content=b"", status_code=499)
+
+
+def _repair_take(audio, sample_rate):
+    return trim(close_tail(clean_take(audio, sample_rate), sample_rate), sample_rate)
+
+
+def _encode_audio(audio, sample_rate):
+    buffer = io.BytesIO()
+    sf.write(buffer, audio, sample_rate, format="WAV", subtype="PCM_16")
+    return buffer.getvalue()
+
+
 @app.post("/speak")
-def speak(req: SpeakRequest) -> Response:
-    if _runtime is None:
+async def speak(req: SpeakRequest, request: Request) -> Response:
+    runtime = _runtime
+    if runtime is None:
         raise HTTPException(status_code=503, detail="model still loading")
 
     started = time.perf_counter()
-    with _gpu:
-        result = _runtime.synthesize(
+    def synthesize():
+        result = runtime.synthesize(
             SamplingRequest(
                 text=req.text,
                 caption=req.caption,
@@ -218,7 +287,13 @@ def speak(req: SpeakRequest) -> Response:
                 max_seconds=MAX_SECONDS,
             )
         )
-        audio = result.audio.squeeze().cpu().numpy()
+        return result.audio.squeeze().cpu().numpy(), int(result.sample_rate)
+
+    generated = await _run_gpu(request, synthesize)
+    if generated is None or await request.is_disconnected():
+        return _cancelled_response()
+    audio, sample_rate = generated
+
     # Clean, close, trim, then mark, and the order is the whole design.
     #
     # Close after clean, because it decides whether the take was severed by
@@ -233,18 +308,24 @@ def speak(req: SpeakRequest) -> Response:
     # Mark after all three, because the mark lives about 50 dB under the speech
     # and a denoiser run over the top of it is a denoiser aimed straight at it.
     # See `repair.py` and `watermark.py`.
-    audio = trim(close_tail(clean_take(audio, result.sample_rate), result.sample_rate), result.sample_rate)
-    with _gpu:
-        audio = watermark.mark(_runtime, audio, result.sample_rate)
+    audio = await asyncio.to_thread(_repair_take, audio, sample_rate)
+    if await request.is_disconnected():
+        return _cancelled_response()
+
+    marked = await _run_gpu(
+        request,
+        lambda: watermark.mark(runtime, audio, sample_rate),
+    )
+    if marked is None or await request.is_disconnected():
+        return _cancelled_response()
+    audio = marked
     # Measured off the buffer that is actually returned, and last, so that a
     # step which quietly changed the length would change this number with it
     # rather than leaving it describing an earlier version of the take.
-    seconds = len(audio) / result.sample_rate
-
-    buffer = io.BytesIO()
-    sf.write(buffer, audio, result.sample_rate, format="WAV", subtype="PCM_16")
+    seconds = len(audio) / sample_rate
+    encoded = await asyncio.to_thread(_encode_audio, audio, sample_rate)
     return Response(
-        content=buffer.getvalue(),
+        content=encoded,
         media_type="audio/wav",
         headers={
             # The measured length of this take, which is the number the mouth
