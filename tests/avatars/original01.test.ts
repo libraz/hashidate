@@ -8,7 +8,6 @@ import original01, {
   createOriginal01MainCuffLaceGravity,
   createOriginal01MainOverskirtCharmGravity,
   createOriginal01MainOverskirtFrontSpring,
-  createOriginal01MainPoutSpeechCorrective,
   original01AllOutfits,
   original01AllOutfitsRootHinge,
 } from '@/avatars/original01';

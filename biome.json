@@ -106,6 +106,7 @@
       "!**/.yarn",
       "!**/.venv",
       "!backup",
+      "!src/backup",
       "!public",
       "!**/*.json"
     ]
