@@ -11,27 +11,32 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
  */
 export class StudioEnvironment {
   private readonly renderer: THREE.WebGLRenderer;
-  private map: THREE.Texture | null = null;
+  // PMREM's texture is attached to this target, which also owns its framebuffer
+  // and depth buffer. Keep the target until the shared environment is released.
+  private target: THREE.WebGLRenderTarget | null = null;
 
   constructor(renderer: THREE.WebGLRenderer) {
     this.renderer = renderer;
   }
 
   get texture(): THREE.Texture | null {
-    if (this.map) return this.map;
+    if (this.target) return this.target.texture;
     // `document` is the guard rather than a try/catch: this is reached only
     // from a browser, but the module is imported by tests that never mount.
     if (typeof document === 'undefined') return null;
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     const room = new RoomEnvironment();
-    this.map = pmrem.fromScene(room, 0.04).texture;
-    room.dispose();
-    pmrem.dispose();
-    return this.map;
+    try {
+      this.target = pmrem.fromScene(room, 0.04);
+      return this.target.texture;
+    } finally {
+      room.dispose();
+      pmrem.dispose();
+    }
   }
 
   dispose(): void {
-    this.map?.dispose();
-    this.map = null;
+    this.target?.dispose();
+    this.target = null;
   }
 }
