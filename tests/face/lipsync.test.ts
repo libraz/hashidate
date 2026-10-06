@@ -35,6 +35,7 @@ describe('textToVisemes / kana to vowel', () => {
     ['あ', 'a'],
     ['い', 'i'],
     ['う', 'u'],
+    ['ゔ', 'u'],
     ['え', 'e'],
     ['お', 'o'],
     ['か', 'a'],
@@ -113,6 +114,7 @@ describe('textToVisemes / katakana normalisation', () => {
     ['ヅ', 'u'],
     ['ポ', 'o'],
     ['ン', 'n'],
+    ['ヴ', 'u'],
   ] as const)('%s normalises to the same reading as its hiragana', (kana, expected) => {
     expect(vowels(kana)).toEqual([expected]);
   });
@@ -123,6 +125,22 @@ describe('textToVisemes / katakana normalisation', () => {
 });
 
 describe('textToVisemes / timing glyphs', () => {
+  it.each(['……', '⋯', '——'])('keeps %s as a pause without inventing vowels', (text) => {
+    const track = textToVisemes(text);
+    expect(track.events).toEqual([]);
+    expect(track.duration).toBeGreaterThan(0);
+    const surrounded = textToVisemes(`あ${text}あ`);
+    expect(surrounded.events.map((event) => event.v)).toEqual(['a', 'a']);
+    expect(surrounded.events[1].t).toBeGreaterThan(MORA);
+  });
+
+  it.each(['「」', '『』', '（）', '［］', '【】', '〈〉', '《》', '()', '[]', '“”'])(
+    'does not pronounce the delimiters in %s',
+    (pair) => {
+      expect(textToVisemes(`${pair[0]}あ${pair[1]}`)).toEqual(textToVisemes('あ'));
+    },
+  );
+
   it('advances time on っ without emitting an event', () => {
     const track = textToVisemes('あっあ');
     expect(vowels('あっあ')).toEqual(['a', 'a']);

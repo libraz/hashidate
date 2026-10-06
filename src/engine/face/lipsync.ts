@@ -50,6 +50,7 @@ const KANA_VOWEL: Record<string, VisemeName> = {
   あ: 'a',
   い: 'i',
   う: 'u',
+  ゔ: 'u',
   え: 'e',
   お: 'o',
   か: 'a',
@@ -166,10 +167,12 @@ export function textToVisemes(
       t += pause * 0.7;
       continue;
     }
-    if (/[。.!?！？\n]/.test(ch)) {
+    if (/[。.!?！？\n…⋯—–]/.test(ch)) {
       t += pause;
       continue;
     }
+    // Quotation marks and brackets frame the words; they are not spoken morae.
+    if (/[\p{Ps}\p{Pe}\p{Pi}\p{Pf}"']/u.test(ch)) continue;
     if (/\s/.test(ch)) {
       t += mora * 0.4;
       continue;
