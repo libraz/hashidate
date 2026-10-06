@@ -205,10 +205,9 @@ export interface CasementMaterials {
 /**
  * The window: reveal lining, sash, glazing bars, sill, glass and the view.
  *
- * The view is a plane 1.8 m behind the glass, not a texture on the glass. That
- * separation is doing real work — it parallaxes as the camera moves, and it
- * means the outside is genuinely outside rather than a picture hung in the
- * opening, which is visible the instant the shot changes from bust to full.
+ * The view fills the opening just behind the glass, but what it draws is looked
+ * up by direction (see `outlook.ts`), so it behaves as if it were at infinity:
+ * it slides with the camera's angle and the frame moves across it.
  */
 export function casement(m: CasementMaterials): THREE.Group {
   const group = new THREE.Group();
@@ -243,8 +242,8 @@ export function casement(m: CasementMaterials): THREE.Group {
   glass.position.set(WINDOW.centerX, centerY, z + 0.005);
   group.add(glass);
 
-  const view = new THREE.Mesh(new THREE.PlaneGeometry(WINDOW.width * 2.6, height * 2.6), m.view);
-  view.position.set(WINDOW.centerX, centerY + 0.15, z - 1.8);
+  const view = new THREE.Mesh(new THREE.PlaneGeometry(WINDOW.width, height), m.view);
+  view.position.set(WINDOW.centerX, centerY, z - 0.004);
   group.add(view);
 
   // The sill, projecting into the room. It is what the light landing on it
@@ -254,24 +253,6 @@ export function casement(m: CasementMaterials): THREE.Group {
   group.add(sill);
 
   return group;
-}
-
-/**
- * A rain-streaked pane, sitting just inside the glass.
- *
- * Its own plane rather than a map on the glass material so the streaks can be
- * scrolled without touching anything else, and so the dry pane stays specular
- * where the water is not.
- */
-export function wetPane(material: THREE.Material): THREE.Mesh {
-  const height = WINDOW.headY - WINDOW.sillY;
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(WINDOW.width, height), material);
-  mesh.position.set(
-    WINDOW.centerX,
-    (WINDOW.headY + WINDOW.sillY) / 2,
-    ROOM.backZ - ROOM.wallThickness / 2 + 0.012,
-  );
-  return mesh;
 }
 
 // --- cloth -------------------------------------------------------------------
@@ -671,9 +652,15 @@ export function garland(
   return group;
 }
 
-/** A rug. Floor-only, so it is seen at full framing and nowhere else. */
+/**
+ * An oval rug. Floor-only, so it is seen at full framing and nowhere else.
+ *
+ * Oval rather than rectangular: the room is all right angles already, and a
+ * round edge under the feet is what makes the floor read as somebody's.
+ */
 export function rug(material: THREE.Material, opts: { width: number; depth: number }): THREE.Mesh {
-  const mesh = slab(opts.width, 0.012, opts.depth, material, 20);
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.014, 72), material);
+  mesh.scale.set(opts.width, 1, opts.depth);
   mesh.receiveShadow = true;
   mesh.castShadow = false;
   return mesh;

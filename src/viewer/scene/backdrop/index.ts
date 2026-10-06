@@ -69,7 +69,7 @@ export class BackdropStage {
   /** The viewer's own rig, hidden while a backdrop is up. */
   private readonly defaultLights: THREE.Object3D[];
   private readonly baseline: Baseline;
-  private readonly scenery = new SceneryAssets();
+  private readonly scenery: SceneryAssets;
 
   private mounted: Mounted | null = null;
   /**
@@ -110,6 +110,10 @@ export class BackdropStage {
     this.renderer = renderer;
     this.defaultLights = defaultLights;
     this.environment = environment;
+    // Furniture can finish loading after construction. Keep this provider lazy
+    // so an unused backdrop does not build a PMREM map, while late callbacks
+    // still borrow the same runtime-owned texture as the room panes.
+    this.scenery = new SceneryAssets(() => this.environment.texture);
     this.baseline = {
       toneMapping: renderer.toneMapping,
       exposure: renderer.toneMappingExposure,
@@ -161,7 +165,7 @@ export class BackdropStage {
     if (!pattern) return;
 
     const textures: TextureBin = [];
-    const built = pattern.build(textures);
+    const built = pattern.build(textures, this.environment.texture);
 
     this.mounted = { pattern, built, textures };
     if (!this.suspended) this.raise();
@@ -170,6 +174,7 @@ export class BackdropStage {
   update(dt: number): void {
     if (this.suspended) return;
     this.mounted?.built.update?.(dt);
+    this.scenery.update(new Date());
   }
 
   /**

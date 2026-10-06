@@ -1,18 +1,10 @@
 import * as THREE from 'three';
 import type { Localized } from '@/i18n/locale';
-import {
-  casement,
-  curtains,
-  garland,
-  picture,
-  plant,
-  ROOM,
-  rug,
-  shell,
-  WINDOW,
-  wetPane,
-} from './parts';
-import { art, framedPrint, pbrMaps, rain, sky, type TextureBin, weave } from './textures';
+import { bedroomDetails } from './decor';
+import { linenMaterial } from './finishes';
+import { type OutlookOptions, outlook, VIEWS } from './outlook';
+import { casement, curtains, foldedPanel, garland, plant, ROOM, rug, shell, WINDOW } from './parts';
+import { pbrMaps, type TextureBin } from './textures';
 
 /**
  * The four rooms.
@@ -68,7 +60,12 @@ export interface Pattern {
   label: Localized;
   /** One line, shown under the picker. */
   note: Localized;
-  build: (bin: TextureBin) => BuiltBackdrop;
+  /**
+   * Build with the runtime's borrowed reflection map when one is available.
+   * Most room surfaces use the scene environment; only the deliberately glossy
+   * panes need a material-level map to keep their tuned strengths.
+   */
+  build: (bin: TextureBin, environment?: THREE.Texture | null) => BuiltBackdrop;
 }
 
 // --- material helpers --------------------------------------------------------
@@ -112,11 +109,12 @@ const unlit = (hex: number, map?: THREE.Texture | null): THREE.MeshBasicMaterial
  * layer with a low roughness gets the sheen and the reflection of the room's
  * light and nothing else, which is all a window at this distance shows.
  */
-const glazing = (): THREE.MeshStandardMaterial =>
+const glazing = (environment: THREE.Texture | null = null): THREE.MeshStandardMaterial =>
   new THREE.MeshStandardMaterial({
     color: 0xeaf2ff,
     roughness: 0.06,
     metalness: 0,
+    envMap: environment,
     transparent: true,
     opacity: 0.14,
     depthWrite: false,
@@ -124,6 +122,11 @@ const glazing = (): THREE.MeshStandardMaterial =>
   });
 
 // --- shared construction -----------------------------------------------------
+
+/** The glass every view is seen through, so drops are sized in metres. */
+const pane: Pick<OutlookOptions, 'pane'> = {
+  pane: { width: WINDOW.width, height: WINDOW.headY - WINDOW.sillY },
+};
 
 interface Finish {
   wallHex: number;
@@ -136,7 +139,12 @@ interface Finish {
 }
 
 /** Shell, window and sill, with the finishes a pattern chose. */
-function room(bin: TextureBin, finish: Finish, skyTexture: THREE.Texture | null): THREE.Group {
+function room(
+  bin: TextureBin,
+  finish: Finish,
+  view: THREE.Material,
+  environment: THREE.Texture | null = null,
+): THREE.Group {
   const group = new THREE.Group();
   // The maps are kept separate per plane because their scale is part of the
   // material: a wall needs a readable fine pattern while the ceiling should
@@ -144,22 +152,12 @@ function room(bin: TextureBin, finish: Finish, skyTexture: THREE.Texture | null)
   const wallpaper = pbrMaps(
     bin,
     {
-      color: '/textures/wallpaper-knit-base.jpg',
-      normal: '/textures/wallpaper-knit-normal.jpg',
-      roughness: '/textures/wallpaper-knit-roughness.jpg',
+      color: '/textures/wall-painted-base.jpg',
+      normal: '/textures/wall-painted-normal.jpg',
+      roughness: '/textures/wall-painted-roughness.jpg',
     },
     2.2,
     1.45,
-  );
-  const ceilingPaper = pbrMaps(
-    bin,
-    {
-      color: '/textures/wallpaper-knit-base.jpg',
-      normal: '/textures/wallpaper-knit-normal.jpg',
-      roughness: '/textures/wallpaper-knit-roughness.jpg',
-    },
-    2.8,
-    2.8,
   );
   const floorboards = pbrMaps(
     bin,
@@ -175,18 +173,14 @@ function room(bin: TextureBin, finish: Finish, skyTexture: THREE.Texture | null)
     shell({
       // The room is actually white.  Time of day comes from the light and the
       // view through the window, not from repainting every wall per preset.
-      // The pale knit-like wallpaper retains a white room while lending the
-      // broad surfaces a scale that plain paint cannot give them.
+      // The painted plaster scan adds fine mineral grain rather than a textile
+      // weave; the ceiling stays plain so that grain does not cover every surface.
       wall: surfaceOf(wallpaper.color, 0xf4f1ed, 0.82, {
         normalMap: wallpaper.normal,
-        normalScale: new THREE.Vector2(0.32, 0.32),
+        normalScale: new THREE.Vector2(0.12, 0.12),
         roughnessMap: wallpaper.roughness,
       }),
-      ceiling: surfaceOf(ceilingPaper.color, 0xfdfbf8, 0.88, {
-        normalMap: ceilingPaper.normal,
-        normalScale: new THREE.Vector2(0.2, 0.2),
-        roughnessMap: ceilingPaper.roughness,
-      }),
+      ceiling: paint(0xfdfbf8, 0.88),
       trim: paint(0xffffff, 0.62),
       floor: surfaceOf(
         // The downloaded board scan has joints, grain, and a non-uniform
@@ -206,8 +200,8 @@ function room(bin: TextureBin, finish: Finish, skyTexture: THREE.Texture | null)
     casement({
       frame: paint(0xffffff, 0.58),
       sill: paint(0xffffff, 0.58),
-      glass: glazing(),
-      view: unlit(0xffffff, skyTexture),
+      glass: glazing(environment),
+      view,
     }),
   );
 
@@ -229,30 +223,38 @@ function room(bin: TextureBin, finish: Finish, skyTexture: THREE.Texture | null)
 function furnishRoom(bin: TextureBin): THREE.Group {
   const group = new THREE.Group();
 
-  group.add(
-    curtains(
-      surfaceOf(weave(bin, 0xd6c0a6, 1201), 0xd6c0a6, 0.92, { side: THREE.DoubleSide }),
-      paint(0x6f5a45, 0.5),
-      { coverage: 0.3 },
-    ),
-  );
+  const curtainCloth = linenMaterial(bin, 0xd3a5af, { width: 0.5, height: 1.62 });
+  curtainCloth.side = THREE.DoubleSide;
+  const champagne = new THREE.MeshStandardMaterial({
+    color: 0xc3a16c,
+    metalness: 0.72,
+    roughness: 0.34,
+  });
+  group.add(curtains(curtainCloth, champagne, { coverage: 0.28, amplitude: 0.04 }));
 
-  const frames = new THREE.Group();
-  const frameMaterial = paint(0x6b5744, 0.6);
-  const profilePrint = framedPrint(bin, '/textures/harmilia-profile.png');
-  for (const [x, y, w, h, tilt, seed] of [
-    [-1.86, 1.9, 0.34, 0.44, 0.012, 3],
-    [-1.86, 1.36, 0.26, 0.2, -0.02, 9],
-  ] as const) {
-    const hung = picture(
-      frameMaterial,
-      unlit(0xffffff, seed === 3 ? profilePrint : art(bin, [0xf0e4d2, 0xd98f6a, 0x7d5a6b], seed)),
-      { width: w, height: h, tilt },
+  // A barely-there inner layer at the two outside edges softens the window
+  // opening while leaving the view and its rain shader unobstructed.
+  const sheer = new THREE.MeshStandardMaterial({
+    color: 0xf4e9eb,
+    roughness: 0.98,
+    transparent: true,
+    opacity: 0.2,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const sheerDrop = WINDOW.headY - WINDOW.sillY + 0.3;
+  const sheerTop = WINDOW.headY + 0.14;
+  const sheerGroup = new THREE.Group();
+  for (const side of [-1, 1]) {
+    const panel = foldedPanel(0.09, sheerDrop, sheer, 0.012, 4);
+    panel.position.set(
+      WINDOW.centerX + side * (WINDOW.width / 2 - 0.045),
+      sheerTop - sheerDrop / 2,
+      ROOM.backZ + 0.18,
     );
-    hung.position.set(x, y, ROOM.backZ + 0.018);
-    frames.add(hung);
+    sheerGroup.add(panel);
   }
-  group.add(frames);
+  group.add(sheerGroup, bedroomDetails(bin));
 
   const pot = plant(paint(0xd6c3ae, 0.9), foliage(0x6f8f5e), {
     leaves: 9,
@@ -262,18 +264,28 @@ function furnishRoom(bin: TextureBin): THREE.Group {
   pot.position.set(WINDOW.centerX - 0.3, WINDOW.sillY, ROOM.backZ + 0.07);
   group.add(pot);
 
-  const mat = rug(surfaceOf(weave(bin, 0xb5a08c, 88), 0xb5a08c, 1), { width: 2.2, depth: 1.5 });
-  mat.position.set(-0.2, 0.006, -0.5);
-  group.add(mat);
-
-  group.add(
-    garland(unlit(0xffcf8a), paint(0x2a2622, 0.8), {
-      from: new THREE.Vector3(-2.45, 2.12, ROOM.backZ + 0.08),
-      to: new THREE.Vector3(2.1, 2.18, ROOM.backZ + 0.08),
-      sag: 0.26,
-      bulbs: 26,
-    }),
+  // ambientCG `Carpet016`: quiet wool pile, cool enough to pick up the
+  // avatars' pale blues without introducing a second graphic pattern.
+  const pile = pbrMaps(
+    bin,
+    {
+      color: '/textures/carpet-wool-base.jpg',
+      normal: '/textures/carpet-wool-normal.jpg',
+      roughness: '/textures/carpet-wool-roughness.jpg',
+    },
+    2.3 / 1.7,
+    1,
   );
+  const mat = rug(
+    surfaceOf(pile.color, 0xe8eef2, 1, {
+      normalMap: pile.normal,
+      normalScale: new THREE.Vector2(0.3, 0.3),
+      roughnessMap: pile.roughness,
+    }),
+    { width: 2.3, depth: 1.7 },
+  );
+  mat.position.set(-0.1, 0.007, -0.3);
+  group.add(mat);
 
   return group;
 }
@@ -369,7 +381,7 @@ const dusk: Pattern = {
     en: 'Late sun through the window. It rims the silhouette from behind and leaves the middle dark.',
     ja: '西日が窓から入る。逆光でシルエットが縁取られ、中央は落ちる。',
   },
-  build(bin) {
+  build(bin, environment = null) {
     const root = new THREE.Group();
     // Darker than a real wall of this colour reads, and on purpose. The avatar
     // is a pale toon figure with almost no value range of its own, so the only
@@ -384,22 +396,15 @@ const dusk: Pattern = {
       floorGapHex: 0x4a3623,
       seed: 1201,
     };
-    root.add(
-      room(
-        bin,
-        finish,
-        sky(bin, {
-          // Four stops, not two. A sunset read as a linear ramp is the single
-          // most common tell of a generated sky; the band where orange turns to
-          // rose is narrow and sits low, and that asymmetry is the whole look.
-          stops: [0xf6c48a, 0xffa96a, 0xf3785f, 0xb4526d],
-          skylineHex: 0x4b3446,
-          lights: { hex: 0xffd9a0, count: 26 },
-          seed: 1201,
-        }),
-      ),
-      furnishRoom(bin),
-    );
+    const windowView = outlook(bin, VIEWS.dusk, {
+      ...pane,
+      intensity: 1.15,
+      saturation: 1.05,
+      haze: { hex: 0xf3a27a, amount: 0.18 },
+      defocus: 1.6,
+      rain: 0,
+    });
+    root.add(room(bin, finish, windowView.material, environment), furnishRoom(bin));
 
     // The key, and it does not come through the window that can be seen.
     //
@@ -411,8 +416,10 @@ const dusk: Pattern = {
     // So the key is a second window off the camera's left, which the side walls
     // are transparent to. High and well round, so the shelf prints on the wall
     // and the avatar's shadow falls back and to the right, out past the frame.
+    // Warm ivory keeps the subject's grey hair and pale clothing readable;
+    // the stronger orange belongs to the window and the sun behind it.
     const key = raking(
-      0xffc489,
+      0xffead6,
       15,
       new THREE.Vector3(-3.5, 2.7, 2.4),
       new THREE.Vector3(0.5, 0.9, -2.2),
@@ -423,7 +430,7 @@ const dusk: Pattern = {
     // its job is the rim down the far side of the hair and the shaft on the
     // floor, not to light anything.
     const sun = daylight(
-      0xff9548,
+      0xffd4ac,
       1.9,
       new THREE.Vector3(4.6, 3.0, -7.4),
       new THREE.Vector3(-0.5, 0.4, 0.9),
@@ -459,7 +466,7 @@ const night: Pattern = {
     en: 'The monitor is the key light. Cold on the face, with a warm desk bulb cutting across it.',
     ja: 'モニタの光が主光源。寒色のキーに、机の電球が暖色で差す。',
   },
-  build(bin) {
+  build(bin, environment = null) {
     const root = new THREE.Group();
     const finish: Finish = {
       wallHex: 0xbcb6ad,
@@ -470,19 +477,15 @@ const night: Pattern = {
       floorGapHex: 0x2e2117,
       seed: 903,
     };
-    root.add(
-      room(
-        bin,
-        finish,
-        sky(bin, {
-          stops: [0x0a1122, 0x121b30, 0x1d2740, 0x28324a],
-          skylineHex: 0x060a14,
-          lights: { hex: 0xffd79a, count: 120 },
-          seed: 903,
-        }),
-      ),
-      furnishRoom(bin),
-    );
+    const windowView = outlook(bin, VIEWS.night, {
+      ...pane,
+      intensity: 0.6,
+      saturation: 0.75,
+      haze: { hex: 0x1d2740, amount: 0.25 },
+      defocus: 1.9,
+      rain: 0,
+    });
+    root.add(room(bin, finish, windowView.material, environment), furnishRoom(bin));
 
     // The key, at the monitor and pointing back at the avatar. A spot rather
     // than a point light: the cone is what keeps the light off the ceiling, and
@@ -503,15 +506,15 @@ const night: Pattern = {
     root.add(monitor, monitor.target);
 
     // The lamp, as a light rather than as a mesh. Short range and quadratic
-    // falloff, so it pools on the desk and rims the near shoulder and does not
-    // quietly become a second key.
+    // falloff, so it pools on the shelf and rims the near shoulder and does
+    // not quietly become a second key.
     //
     // The intensity is the third of what it was. A point light with decay 2 has
     // no shoulder — it clips to white at its centre long before the pool has
     // spread — so what was on the wall was not a lamp but a hole in the image,
     // and the whole left of frame lost its texture to it.
-    const bulb = new THREE.PointLight(0xffb066, 2.1, 2.8, 2);
-    bulb.position.set(-1.68, 1.09, ROOM.backZ + 0.4);
+    const bulb = new THREE.PointLight(0xffb066, 1.6, 2.8, 2);
+    bulb.position.set(-1.4, 1.33, ROOM.backZ + 0.134);
     root.add(bulb);
 
     // The city, coming back through the glass. Cool, weak, and from behind —
@@ -543,10 +546,10 @@ const morning: Pattern = {
   id: 'morning',
   label: { en: 'Morning', ja: '朝' },
   note: {
-    en: 'A pale pink bedroom under flat overcast light. The soft toys and the lamp read gently.',
-    ja: '淡いピンクの寝室に曇天の拡散光。ぬいぐるみと灯りがやわらかく見える。',
+    en: 'A pale pink bedroom under flat overcast light. The books and lamp read gently.',
+    ja: '淡いピンクの寝室に曇天の拡散光。本と灯りがやわらかく見える。',
   },
-  build(bin) {
+  build(bin, environment = null) {
     const root = new THREE.Group();
     const finish: Finish = {
       // Not white. A wall painted the same value as the light falling on it has
@@ -561,19 +564,15 @@ const morning: Pattern = {
       floorGapHex: 0x7d6749,
       seed: 640,
     };
-    root.add(
-      room(
-        bin,
-        finish,
-        sky(bin, {
-          stops: [0xfdfefe, 0xf2f7fb, 0xe4edf4],
-          skylineHex: 0xc8d4de,
-          lights: null,
-          seed: 640,
-        }),
-      ),
-      furnishRoom(bin),
-    );
+    const windowView = outlook(bin, VIEWS.morning, {
+      ...pane,
+      intensity: 1.05,
+      saturation: 0.85,
+      haze: { hex: 0xe4edf4, amount: 0.3 },
+      defocus: 1.6,
+      rain: 0,
+    });
+    root.add(room(bin, finish, windowView.material, environment), furnishRoom(bin));
 
     // Soft, but still a direction.
     //
@@ -632,7 +631,7 @@ const rainy: Pattern = {
     en: 'A room sunk into cold light, broken by one warm bulb. The window runs with water.',
     ja: '寒色に沈んだ室内を、電球ひとつだけが暖色で割る。窓は流れる。',
   },
-  build(bin) {
+  build(bin, environment = null) {
     const root = new THREE.Group();
     const finish: Finish = {
       wallHex: 0xd6d5d0,
@@ -643,38 +642,15 @@ const rainy: Pattern = {
       floorGapHex: 0x2f231c,
       seed: 2088,
     };
-    root.add(
-      room(
-        bin,
-        finish,
-        sky(bin, {
-          stops: [0xa8b1b8, 0x99a2aa, 0x88919a, 0x79828b],
-          skylineHex: 0x6d767f,
-          lights: null,
-          seed: 2088,
-        }),
-      ),
-      furnishRoom(bin),
-    );
-
-    // A shower never draws the same tracks twice.  Its seed is local to this
-    // mounted room, so changing weather does not alter any of the furnishings.
-    const showerSeed = 2088 + Math.floor(Math.random() * 10_000);
-    const streaks = rain(bin, showerSeed);
-    const rainfall = 0.045 + Math.random() * 0.035;
-    const pane = wetPane(
-      new THREE.MeshStandardMaterial({
-        color: 0xdfe9f2,
-        roughness: 0.08,
-        metalness: 0,
-        transparent: true,
-        alphaMap: streaks,
-        opacity: 0.85,
-        depthWrite: false,
-        envMapIntensity: 2.4,
-      }),
-    );
-    root.add(pane);
+    const windowView = outlook(bin, VIEWS.rain, {
+      ...pane,
+      intensity: 1.25,
+      saturation: 0.6,
+      haze: { hex: 0x9aa3ab, amount: 0.3 },
+      defocus: 0.9,
+      rain: 1,
+    });
+    root.add(room(bin, finish, windowView.material, environment), furnishRoom(bin));
 
     // Cool, soft, and from the left like the others — rain has no sun, but it
     // still has a window, and light that arrives from nowhere in particular is
@@ -693,8 +669,8 @@ const rainy: Pattern = {
 
     // The one warm thing in the frame, and the reason this pattern works. Take
     // it out and the room is correctly lit and completely dead.
-    const bulb = new THREE.PointLight(0xffab5c, 2.4, 3.0, 2);
-    bulb.position.set(-1.72, 1.1, ROOM.backZ + 0.42);
+    const bulb = new THREE.PointLight(0xffab5c, 1.85, 3.0, 2);
+    bulb.position.set(-1.4, 1.33, ROOM.backZ + 0.134);
     root.add(bulb);
 
     const fill = new THREE.DirectionalLight(0xdfe8f2, 0.3);
@@ -707,18 +683,7 @@ const rainy: Pattern = {
       exposure: 0.94,
       environmentIntensity: 0.34,
       fog: new THREE.Fog(0x8e97a0, 4.0, 16),
-      /**
-       * The water runs. Slowly — 0.06 of the tile a second, which is far below
-       * what a real drop does and reads correctly anyway, because the streaks
-       * are a static pattern and speeding them up turns the pane into a
-       * conveyor belt.
-       */
-      update: (dt: number) => {
-        if (!streaks) return;
-        // Canvas textures have their V axis flipped for WebGL.  Increasing the
-        // offset is therefore the direction a drop travels down the pane.
-        streaks.offset.y = (streaks.offset.y + dt * rainfall) % 1;
-      },
+      update: windowView.update,
     };
   },
 };

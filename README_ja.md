@@ -126,4 +126,6 @@ yarn test          # vitest
 
 `public/models/` の中身は含みません。アバターは市販のモデルで、それぞれの作者の定めた条件の下にあります。チェックアウトして手に入るのはランタイムであって、それが動かしてきたキャラクターではありません。
 
-`public/textures/` の壁と床のテクスチャは ambientCG の CC0 1.0 です（`WoodFloor001`、`Fabric019`）。
+`public/textures/` の壁・床・布・棚・ラグのテクスチャは ambientCG の CC0 1.0 です（`WoodFloor001`、`Fabric019`、`Fabric036`、`Plaster001`、`Wood095`、`Carpet016`）。窓の外の景色（`view-*.jpg`）は Poly Haven の CC0 1.0 のパノラマから切り出しています（`sunset_jhbcentral`、`shanghai_bund`、`hotel_rooftop_balcony`、`urban_street_01`）。
+
+額装ポスターは、Poly Haven の CC0 [Standing Picture Frame 02](https://polyhaven.com/a/standing_picture_frame_02) に生成した絵を貼っています。

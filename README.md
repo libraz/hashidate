@@ -126,4 +126,6 @@ The constants in `src/engine` were arrived at by watching two real avatars, and 
 
 Nothing under `public/models/` is covered by it. The avatars are purchased commercial models under their authors' own terms: a checkout provides the runtime, not the characters it was built against.
 
-The wall and floor textures in `public/textures/` are CC0 1.0, from ambientCG (`WoodFloor001`, `Fabric019`).
+The wall, floor, fabric, shelf and rug textures in `public/textures/` are CC0 1.0, from ambientCG (`WoodFloor001`, `Fabric019`, `Fabric036`, `Plaster001`, `Wood095`, `Carpet016`). The views through the window (`view-*.jpg`) are crops of CC0 1.0 panoramas from Poly Haven (`sunset_jhbcentral`, `shanghai_bund`, `hotel_rooftop_balcony`, `urban_street_01`).
+
+The framed prints use generated artwork inside Poly Haven’s CC0 [Standing Picture Frame 02](https://polyhaven.com/a/standing_picture_frame_02).
