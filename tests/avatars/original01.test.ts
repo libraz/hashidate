@@ -4,6 +4,11 @@ import original01, {
   createOriginal01AllOutfitsRootHingeMainCuffs,
   createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector,
   createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidFrill,
+  createOriginal01MainCuffCharmGravity,
+  createOriginal01MainCuffLaceGravity,
+  createOriginal01MainOverskirtCharmGravity,
+  createOriginal01MainOverskirtFrontSpring,
+  createOriginal01MainPoutSpeechCorrective,
   original01AllOutfits,
   original01AllOutfitsRootHinge,
 } from '@/avatars/original01';
@@ -315,13 +320,95 @@ describe('original01 root-hinge integration descriptor', () => {
 describe('neru registration', () => {
   it('registers the latest main-dress profile under the character name', () => {
     const neru = getAvatar('neru');
-    const profile =
-      createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidFrill('/models/neru.glb');
+    const profile = createOriginal01MainCuffLaceGravity('/models/neru.glb');
     expect(neru).not.toBeNull();
     expect(neru?.label).toEqual({ en: 'Yonagi Neru', ja: '夜凪ねる' });
     expect(neru?.url).toBe('/models/neru.glb');
     expect(neru?.wardrobe).toEqual(profile.wardrobe);
     expect(neru?.sway).toEqual(profile.sway);
+    expect(neru?.presets).toEqual(profile.presets);
+    expect(neru?.presets?.exclude).toContain('V02_SpeechNeutralizer_Pout');
+    expect(neru?.presets?.composition?.V02_06_Pout).toEqual({
+      speechNeutralizer: 'V02_SpeechNeutralizer_Pout',
+    });
     expect(AVATARS[0]?.id).toBe('yoka');
+  });
+});
+
+describe('Main overskirt front spring candidate', () => {
+  it('adds one independent chain while preserving the existing spring groups', () => {
+    const base = createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidFrill('/base.glb');
+    const candidate = createOriginal01MainOverskirtFrontSpring('/candidate.glb');
+    expect(candidate.sway?.groups.slice(0, -1)).toEqual(base.sway?.groups);
+    expect(candidate.sway?.colliders).toEqual(base.sway?.colliders);
+    expect(candidate.sway?.groups.at(-1)).toEqual({
+      id: 'mainOverskirtFrontL',
+      label: { en: 'Main overskirt front left', ja: '上掛けの左前角' },
+      roots: ['V02_OverskirtFront_L_001'],
+      stiffness: 3,
+      drag: 0.93,
+      gravity: 0,
+      radius: 0.003,
+      colliders: ['hips', 'upperLegL'],
+    });
+    expect(candidate.wardrobe).toEqual(base.wardrobe);
+    expect(candidate.url).toBe('/candidate.glb');
+    expect(base.sway?.groups.some((group) => group.id === 'mainOverskirtFrontL')).toBe(false);
+  });
+});
+
+describe('Main ornament gravity candidate', () => {
+  it('adds cuff pendulums without changing the accepted overskirt or wardrobe', () => {
+    const base = createOriginal01MainOverskirtCharmGravity('/base.glb', true);
+    const candidate = createOriginal01MainCuffCharmGravity('/candidate.glb');
+    expect(candidate.sway?.groups.slice(0, -2)).toEqual(base.sway?.groups);
+    expect(candidate.sway?.colliders).toEqual(base.sway?.colliders);
+    expect(candidate.wardrobe).toEqual(base.wardrobe);
+    expect(candidate.materials).toEqual(base.materials);
+    expect(candidate.sway?.groups.slice(-2).map((group) => group.roots)).toEqual([
+      ['V02_CuffCharm_L_001'],
+      ['V02_CuffCharm_R_001'],
+    ]);
+    expect(candidate.sway?.groups.slice(-2).every((group) => !group.anchor)).toBe(true);
+    expect(candidate.url).toBe('/candidate.glb');
+  });
+  it('removes only the belt crescent from the explicit candidate wardrobe', () => {
+    const base = createOriginal01MainOverskirtCharmGravity('/base.glb');
+    const candidate = createOriginal01MainOverskirtCharmGravity('/candidate.glb', true);
+    expect(mainDress(base).meshes).toContain('V02WaistPreview_Front_Moon');
+    expect(mainDress(candidate).meshes).toEqual(
+      mainDress(base).meshes.filter((name) => name !== 'V02WaistPreview_Front_Moon'),
+    );
+    expect(mainDress(candidate).meshes).toContain('V02_Main_Waist_Belt');
+    expect(mainDress(candidate).meshes).toContain('V02WaistPreview_Front_Knot');
+    expect(candidate.sway).toEqual(base.sway);
+    expect(candidate.materials).toEqual(base.materials);
+  });
+  it('appends four metadata attachments without changing the existing descriptor', () => {
+    const base = createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidFrill('/base.glb');
+    const candidate = createOriginal01MainOverskirtCharmGravity('/candidate.glb');
+    expect(candidate.sway?.groups.slice(0, -4)).toEqual(base.sway?.groups);
+    expect(candidate.sway?.colliders).toEqual(base.sway?.colliders);
+    expect(candidate.wardrobe).toEqual(base.wardrobe);
+    expect(candidate.url).toBe('/candidate.glb');
+    expect(
+      candidate.sway?.groups.slice(-4).map((group) => ({
+        id: group.id,
+        roots: group.roots,
+        anchor: group.anchor,
+        stiffness: group.stiffness,
+        gravity: group.gravity,
+        gravityDir: group.gravityDir,
+      })),
+    ).toEqual(
+      ['LF', 'LB', 'RB', 'RF'].map((side) => ({
+        id: `mainOverskirtCharm${side}`,
+        roots: [`V02_OverskirtCharm_${side}_001`],
+        anchor: { source: 'bone-metadata' },
+        stiffness: 0,
+        gravity: 0.16,
+        gravityDir: [0, -1, 0],
+      })),
+    );
   });
 });

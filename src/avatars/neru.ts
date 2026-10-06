@@ -7,10 +7,10 @@
  */
 
 import type { AvatarDescriptor } from '../engine/types';
-import { createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidFrill } from './original01';
+import { createOriginal01MainCuffLaceGravity } from './original01';
 
 export default {
-  ...createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidFrill('/models/neru.glb'),
+  ...createOriginal01MainCuffLaceGravity('/models/neru.glb'),
   id: 'neru',
   label: { en: 'Yonagi Neru', ja: '夜凪ねる' },
 } satisfies AvatarDescriptor;

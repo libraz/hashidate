@@ -742,6 +742,171 @@ export function createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidF
   );
 }
 
+/** Build the Main descriptor for an exported independent front overskirt chain. */
+export function createOriginal01MainOverskirtFrontSpring(url: string): AvatarDescriptor {
+  const base = createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidFrill(url);
+  if (!base.sway) throw new Error('Main overskirt requires spring data');
+  return {
+    ...base,
+    id: 'original-01-main-overskirt-front-v508',
+    sway: {
+      ...base.sway,
+      groups: [
+        ...base.sway.groups,
+        {
+          id: 'mainOverskirtFrontL',
+          label: { en: 'Main overskirt front left', ja: '上掛けの左前角' },
+          roots: ['V02_OverskirtFront_L_001'],
+          stiffness: 3,
+          drag: 0.93,
+          gravity: 0,
+          radius: 0.003,
+          colliders: ['hips', 'upperLegL'],
+        },
+      ],
+    },
+  };
+}
+
+/** Build the Main gravity candidate with anchors carried by its exported bones. */
+export function createOriginal01MainOverskirtCharmGravity(
+  url: string,
+  withoutWaistMoon = false,
+): AvatarDescriptor {
+  const base = createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnectorMidFrill(url);
+  if (!base.sway) throw new Error('Main ornaments require spring data');
+  const outfit = base.wardrobe?.slots.outfit;
+  if (withoutWaistMoon && !outfit) throw new Error('Belt crescent removal requires Main wardrobe');
+  return {
+    ...base,
+    ...(withoutWaistMoon && base.wardrobe && outfit
+      ? {
+          wardrobe: {
+            ...base.wardrobe,
+            slots: {
+              ...base.wardrobe.slots,
+              outfit: {
+                ...outfit,
+                items: outfit.items.map((item) => ({
+                  ...item,
+                  meshes: item.meshes.filter((name) => name !== 'V02WaistPreview_Front_Moon'),
+                })),
+              },
+            },
+          },
+        }
+      : {}),
+    id: 'original-01-main-overskirt-charm-gravity-v509',
+    sway: {
+      ...base.sway,
+      groups: [
+        ...base.sway.groups,
+        ...(['LF', 'LB', 'RB', 'RF'] as const).map((side) => ({
+          id: `mainOverskirtCharm${side}`,
+          label: { en: `Main hanging ornament ${side}`, ja: `上掛けの垂れ飾り ${side}` },
+          roots: [`V02_OverskirtCharm_${side}_001`],
+          anchor: { source: 'bone-metadata' as const },
+          stiffness: 0,
+          drag: 0.45,
+          gravity: 0.16,
+          gravityDir: [0, -1, 0] as [number, number, number],
+          radius: 0.0015,
+          colliders: [],
+        })),
+      ],
+    },
+  };
+}
+
+/** Add independent rigid pendulums for the short cuff ornaments. */
+export function createOriginal01MainCuffCharmGravity(url: string): AvatarDescriptor {
+  const base = createOriginal01MainOverskirtCharmGravity(url, true);
+  if (!base.sway) throw new Error('Main cuff ornaments require spring data');
+  return {
+    ...base,
+    id: 'original-01-main-cuff-charm-gravity-v510',
+    sway: {
+      ...base.sway,
+      groups: [
+        ...base.sway.groups,
+        ...(['L', 'R'] as const).map((side) => ({
+          id: `mainCuffCharm${side}`,
+          label: { en: `Main cuff ornament ${side}`, ja: `袖口の垂れ飾り ${side}` },
+          roots: [`V02_CuffCharm_${side}_001`],
+          stiffness: 0,
+          drag: 0.45,
+          gravity: 0.16,
+          gravityDir: [0, -1, 0] as [number, number, number],
+          radius: 0.0015,
+          colliders: [],
+        })),
+      ],
+    },
+  };
+}
+
+/** Add the authored Pout-only speech neutralizer contract to the V510 cuff profile. */
+export function createOriginal01MainPoutSpeechCorrective(url: string): AvatarDescriptor {
+  const base = createOriginal01MainCuffCharmGravity(url);
+  const presets = base.presets;
+  if (!presets) throw new Error('Pout speech candidate requires preset data');
+
+  return {
+    ...base,
+    id: 'original-01-main-pout-speech-corrective-v512',
+    presets: {
+      ...presets,
+      exclude: [...(presets.exclude ?? []), 'V02_SpeechNeutralizer_Pout'],
+      composition: {
+        ...(presets.composition ?? {}),
+        // biome-ignore lint/style/useNamingConvention: Authored morph target name.
+        V02_06_Pout: {
+          ...(presets.composition?.V02_06_Pout ?? {}),
+          speechNeutralizer: 'V02_SpeechNeutralizer_Pout',
+        },
+      },
+    },
+  };
+}
+
+/** Resolve the V519 cuff lace chains without changing the registered Main profile. */
+export function createOriginal01MainCuffLaceGravity(url: string): AvatarDescriptor {
+  const base = createOriginal01MainPoutSpeechCorrective(url);
+  if (!base.sway) throw new Error('Main cuff lace requires spring data');
+  return {
+    ...base,
+    id: 'original-01-main-cuff-lace-gravity-v519',
+    sway: {
+      ...base.sway,
+      colliders: {
+        ...base.sway.colliders,
+        ...Object.fromEntries(
+          (['L', 'R'] as const).map((side) => [
+            `mainCuffHand${side}`,
+            [{ bone: `Hand_${side}`, offset: [0, 0.012, 0], tail: [0, 0.055, 0], radius: 0.016 }],
+          ]),
+        ),
+      },
+      groups: [
+        ...base.sway.groups,
+        ...(['L', 'R'] as const).flatMap((side) =>
+          (['F', 'U', 'B', 'D'] as const).map((sector) => ({
+            id: `mainCuffLace${side}${sector}`,
+            label: { en: `Main cuff lace ${side} ${sector}`, ja: `袖口レース ${side} ${sector}` },
+            roots: [`V02_CuffLace_${side}_${sector}_001`],
+            stiffness: 0.8,
+            drag: 0.75,
+            gravity: 0.08,
+            gravityDir: [0, -1, 0] as [number, number, number],
+            radius: 0.001,
+            colliders: [`mainCuffHand${side}`],
+          })),
+        ),
+      ],
+    },
+  };
+}
+
 /** Add one Main-only mesh to the main dress item of `base`. */
 function withMainDressMesh(
   base: AvatarDescriptor,
