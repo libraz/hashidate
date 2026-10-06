@@ -161,6 +161,21 @@ describe('motionsResponseSchema', () => {
     expect(parsed.data?.errors[0].id).toBe('broken');
   });
 
+  it('keeps every motion that parses and reports the one that does not', () => {
+    const parsed = motionsResponseSchema.safeParse({
+      motions: [
+        { ...body(), id: 'myWave' },
+        { ...body(), id: 'skewed', frames: [] },
+        { ...body(), id: 'myNod' },
+      ],
+      errors: [],
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.motions.map((m) => m.id)).toEqual(['myWave', 'myNod']);
+    expect(parsed.data?.errors.map((e) => e.id)).toEqual(['skewed']);
+    expect(parsed.data?.errors[0].error).toMatch(/frames/);
+  });
+
   it('wants both lists, so an empty directory is still an answer', () => {
     expect(motionsResponseSchema.safeParse({ motions: [] }).success).toBe(false);
     expect(motionsResponseSchema.safeParse({ motions: [], errors: [] }).success).toBe(true);

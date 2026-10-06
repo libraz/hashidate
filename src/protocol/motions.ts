@@ -141,12 +141,38 @@ export type Motion = z.infer<typeof motionSchema>;
  * reads as a filename typed wrong, which is the one thing it is not — the same
  * reason a document that will not open is still listed. See `Decks.scan`.
  */
-export const motionsResponseSchema = z.object({
-  motions: z.array(motionSchema),
-  errors: z.array(z.object({ id: z.string(), error: z.string() })),
-});
+export const motionsResponseSchema = z
+  .object({
+    // Checked one entry at a time below, so a malformed motion joins `errors`
+    // instead of taking every other motion down with it.
+    motions: z.array(z.unknown()),
+    errors: z.array(z.object({ id: z.string(), error: z.string() })),
+  })
+  .transform(({ motions, errors }) => {
+    const kept: Motion[] = [];
+    const failed = [...errors];
+    for (const entry of motions) {
+      const parsed = motionSchema.safeParse(entry);
+      if (parsed.success) kept.push(parsed.data);
+      else failed.push({ id: entryId(entry), error: describeIssues(parsed.error) });
+    }
+    return { motions: kept, errors: failed };
+  });
 
 export type MotionsResponse = z.infer<typeof motionsResponseSchema>;
+
+/** The id a rejected entry is reported under: its own, when it has a usable one. */
+function entryId(entry: unknown): string {
+  const id = (entry as { id?: unknown } | null)?.id;
+  return typeof id === 'string' && id.length > 0 ? id : '(no id)';
+}
+
+/** A parse failure as one line: each issue's path and message. */
+function describeIssues(error: z.ZodError): string {
+  return error.issues
+    .map((issue) => `${issue.path.map(String).join('.') || 'motion'}: ${issue.message}`)
+    .join(', ');
+}
 
 /**
  * Parse one motion file's contents, returning the reason rather than throwing.
@@ -158,11 +184,6 @@ export type MotionsResponse = z.infer<typeof motionsResponseSchema>;
  */
 export function parseMotion(id: string, value: unknown): { motion: Motion } | { error: string } {
   const parsed = motionBodySchema.safeParse(value);
-  if (!parsed.success) {
-    const detail = parsed.error.issues
-      .map((issue) => `${issue.path.map(String).join('.') || 'motion'}: ${issue.message}`)
-      .join(', ');
-    return { error: detail };
-  }
+  if (!parsed.success) return { error: describeIssues(parsed.error) };
   return { motion: { ...parsed.data, id } };
 }

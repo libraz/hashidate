@@ -70,7 +70,13 @@ export class Motions {
       // character in it is decomposed on this filesystem and composed
       // everywhere else, and the two are one name except in a comparison.
       const id = basename(name, extname(name)).normalize('NFC');
-      if (!isId(id)) continue;
+      if (!isId(id)) {
+        errors.push({
+          id: name,
+          error: 'not a usable motion id (at most 64 characters, no control characters)',
+        });
+        continue;
+      }
       candidates.set(id, [...(candidates.get(id) ?? []), name]);
     }
     for (const [id, matching] of candidates) {

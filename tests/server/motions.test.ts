@@ -54,6 +54,19 @@ afterEach(async () => {
 });
 
 describe('Motions', () => {
+  it('reports a file whose name is not a usable id instead of skipping it', async () => {
+    const name = `${'a'.repeat(65)}.yaml`;
+    await writeFile(join(root, name), GOOD);
+    const listed = await motions.list();
+    expect(listed.motions).toEqual([]);
+    expect(listed.errors).toEqual([
+      {
+        id: name,
+        error: 'not a usable motion id (at most 64 characters, no control characters)',
+      },
+    ]);
+  });
+
   it('is empty for a directory that is not there', async () => {
     expect(await new Motions(join(root, 'nowhere')).list()).toEqual({ motions: [], errors: [] });
   });
