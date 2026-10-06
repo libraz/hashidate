@@ -196,7 +196,7 @@ export async function createBgmDspPlan(dsp: BgmDsp): Promise<BgmDspPlan> {
       for (const paramName of spec.params) {
         const found = info.find((entry) => entry.name === paramName);
         if (!found) throw new Error(`BGM parameter not found: ${spec.processor}.${paramName}`);
-        if (!found.rtSafe)
+        if (!found.rtSafe || found.id === null)
           throw new Error(`BGM parameter is not realtime-safe: ${spec.processor}.${paramName}`);
         targets.push({ insertIndex, processor: spec.processor, paramName, paramId: found.id });
       }

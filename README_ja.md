@@ -7,7 +7,7 @@ AITuber のためのアバターランタイムです。ブラウザで描いた
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![three.js](https://img.shields.io/badge/three.js-r185-000000?logo=three.js&logoColor=white)](https://threejs.org/)
+[![three.js](https://img.shields.io/badge/three.js-r186-000000?logo=three.js&logoColor=white)](https://threejs.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
 [![MCP](https://img.shields.io/badge/MCP-8%20tools-1a6873)](docs/ja/mcp.md)
 [![docs](https://img.shields.io/badge/docs-guides-b5892e)](docs/ja/introduction.md)

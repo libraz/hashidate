@@ -19,7 +19,7 @@
     "noEmit": true,
     "paths": {
       "@libraz/libsonare/emscripten-factory": [
-        "./node_modules/@libraz/libsonare/src/sonare.js.d.ts"
+        "./node_modules/@libraz/libsonare/dist/sonare.d.ts"
       ],
       "@/*": ["./src/*"]
     }
