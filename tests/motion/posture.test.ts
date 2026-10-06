@@ -4,6 +4,7 @@ import { DROOP_RATE } from '@/engine/face/blink';
 import { Body } from '@/engine/motion/body';
 import { ScalarFollower } from '@/engine/motion/follow';
 import { breathCurve, INHALE, settle } from '@/engine/motion/idle';
+import { planJump, sampleJump } from '@/engine/motion/jump';
 import { IdlePosture, type PostureInput } from '@/engine/motion/posture';
 import { minJerk } from '@/engine/motion/timing';
 import { buildProfile } from '@/engine/profile';
@@ -98,6 +99,30 @@ function worldHips(profile: ReturnType<typeof buildProfile>): THREE.Vector3 {
   if (!hips) throw new Error('synthetic rig has no hips');
   hips.updateWorldMatrix(true, false);
   return hips.getWorldPosition(new THREE.Vector3());
+}
+
+function dynamicBody(withBodyFrame: boolean, armatureScale = 1) {
+  const scene = buildRig({ armatureScale });
+  const profile = buildProfile(scene.root, scene.descriptor);
+  if (!withBodyFrame) profile.body = null;
+  const rig = new Rig(profile);
+  const body = new Body(rig, profile);
+  body.idleAmount = 0;
+  body.gazeAmount = 0;
+  return { ...scene, body, profile, rig };
+}
+
+function turnAndScaleAfterBodyConstruction(scene: ReturnType<typeof buildRig>): void {
+  const scale = scene.root.scale.x;
+  scene.root.rotation.set(0.22, 0.55, 0.18);
+  scene.root.scale.set(1.25 * scale, 0.85 * scale, 1.1 * scale);
+  scene.root.updateMatrixWorld(true);
+}
+
+function currentParentLinear(profile: ReturnType<typeof buildProfile>): THREE.Matrix3 {
+  const hips = profile.bones.hips;
+  if (!hips?.parent) throw new Error('test profile is missing the hips parent');
+  return new THREE.Matrix3().setFromMatrix4(hips.parent.matrixWorld);
 }
 
 describe('IdlePosture speech breath bridge', () => {
@@ -372,4 +397,155 @@ describe('IdlePosture world-space hips translation', () => {
     const worldUpFromFallback = h.body.hipsUp.clone().applyMatrix3(parentLinear).normalize();
     expect(worldUpFromFallback.dot(new THREE.Vector3(0, 1, 0))).toBeCloseTo(1, 12);
   });
+
+  it.each([true, false])(
+    'refreshes world-up breath vectors after the root turns and scales (%s)',
+    (withBodyFrame) => {
+      const h = dynamicBody(withBodyFrame, 0.01);
+      h.body.breathDepth = 1;
+      h.body.weightShift = 0;
+      turnAndScaleAfterBodyConstruction(h);
+
+      for (let i = 0; i < 3; i++) {
+        const hips = h.profile.bones.hips;
+        if (!hips) throw new Error('synthetic rig has no hips');
+        hips.position.copy(h.body.hipsRest);
+        h.root.updateMatrixWorld(true);
+        const rest = worldHips(h.profile);
+        h.rig.reset();
+        h.body.update(0.5);
+        const delta = worldHips(h.profile).sub(rest);
+        const br = (h.body.breath - 0.5) * 2;
+        expect(delta.x).toBeCloseTo(0, 12);
+        expect(delta.y).toBeCloseTo(0.0035 * br, 12);
+        expect(delta.z).toBeCloseTo(0, 12);
+
+        // Turn and scale the live parent again. The next frame must use this
+        // frame's metric rather than accumulating the previous local vector.
+        h.root.rotation.y += 0.17;
+        h.root.scale.multiply(new THREE.Vector3(0.91, 1.13, 0.97));
+        h.root.updateMatrixWorld(true);
+      }
+    },
+  );
+
+  it.each([true, false])(
+    'keeps weight shift at its metre amplitude after live parent changes (%s)',
+    (withBodyFrame) => {
+      const h = dynamicBody(withBodyFrame, 0.01);
+      h.body.breathDepth = 0;
+      h.body.weightShift = 1;
+      turnAndScaleAfterBodyConstruction(h);
+
+      for (let i = 0; i < 3; i++) {
+        const hips = h.profile.bones.hips;
+        if (!hips) throw new Error('synthetic rig has no hips');
+        hips.position.copy(h.body.hipsRest);
+        h.root.updateMatrixWorld(true);
+        const rest = worldHips(h.profile);
+        h.rig.reset();
+        h.body.update(0.5);
+        const delta = worldHips(h.profile).sub(rest);
+        const expected = 0.012 * settle(Math.sin(h.body.t * 0.31));
+        const parentLinear = currentParentLinear(h.profile);
+        const expectedDirection = new THREE.Vector3(1, 0, 0).applyMatrix3(parentLinear);
+        if (withBodyFrame) expectedDirection.y = 0;
+        expectedDirection.normalize();
+
+        expect(delta.length()).toBeCloseTo(expected, 12);
+        expect(delta.dot(expectedDirection)).toBeCloseTo(expected, 12);
+        if (withBodyFrame) expect(Math.abs(delta.y)).toBeLessThan(1e-12);
+        else {
+          expect(delta.y).toBeCloseTo(expectedDirection.y * expected, 12);
+        }
+
+        h.root.rotation.x -= 0.11;
+        h.root.scale.multiply(new THREE.Vector3(1.07, 0.93, 1.02));
+        h.root.updateMatrixWorld(true);
+      }
+    },
+  );
+
+  it('keeps the floor-projected rest sign when both torso right and hips X are tilted', () => {
+    const scene = buildRig();
+    const leftShoulder = scene.bones.get('Shoulder_L');
+    const rightShoulder = scene.bones.get('Shoulder_R');
+    const hips = scene.bones.get('Hips');
+    if (!(leftShoulder && rightShoulder && hips))
+      throw new Error('synthetic rig lacks shoulders or hips');
+    rightShoulder.position.y += 0.2;
+    hips.rotation.z = -Math.PI / 3;
+    scene.root.updateMatrixWorld(true);
+    const profile = buildProfile(scene.root, scene.descriptor);
+    const rig = new Rig(profile);
+    const body = new Body(rig, profile);
+    body.breathDepth = 0;
+    body.idleAmount = 0;
+    body.gazeAmount = 0;
+    body.weightShift = 1;
+
+    const rest = worldHips(profile);
+    rig.reset();
+    body.update(0.5);
+    const delta = worldHips(profile).sub(rest);
+    // The floor-projected anatomical right is +X. A full 3D dot against the
+    // tilted hips X would have the opposite sign for this deliberately stressed
+    // fixture, so this catches the phase-gauge regression directly.
+    expect(delta.x).toBeGreaterThan(0);
+    expect(Math.abs(delta.y)).toBeLessThan(1e-12);
+  });
+
+  it('refreshes through an external ancestor changed without a manual matrix walk', () => {
+    const h = dynamicBody(true, 0.01);
+    const wrapper = new THREE.Group();
+    wrapper.add(h.root);
+    wrapper.rotation.set(0.17, -0.31, 0.23);
+    wrapper.scale.set(1.2, 0.8, 1.1);
+    h.body.breathDepth = 1;
+    h.body.weightShift = 0;
+    const hips = h.profile.bones.hips;
+    if (!hips) throw new Error('synthetic rig has no hips');
+    hips.position.copy(h.body.hipsRest);
+    h.rig.reset();
+    wrapper.rotation.y += 0.41;
+    wrapper.scale.multiply(new THREE.Vector3(0.93, 1.08, 1.04));
+    h.body.update(0.5);
+    const localDelta = hips.position.clone().sub(h.body.hipsRest);
+    // The wrapper's matrixWorld is intentionally left stale here. Body must
+    // update the external ancestor chain before it derives parent-local metres.
+    hips.updateWorldMatrix(true, false);
+    const delta = localDelta.applyMatrix3(currentParentLinear(h.profile));
+    const br = (h.body.breath - 0.5) * 2;
+    expect(delta.x).toBeCloseTo(0, 12);
+    expect(delta.y).toBeCloseTo(0.0035 * br, 12);
+    expect(delta.z).toBeCloseTo(0, 12);
+  });
+
+  it.each([true, false])(
+    'keeps hop rise on world Y after construction-time frame changes (%s)',
+    (withBodyFrame) => {
+      const h = dynamicBody(withBodyFrame, 0.01);
+      h.body.breathDepth = 0;
+      h.body.weightShift = 0;
+      turnAndScaleAfterBodyConstruction(h);
+      const rest = worldHips(h.profile);
+      const dt = 1 / 60;
+      const arc = planJump(0.08, h.body.gravity, 1);
+      h.body.hop({ height: 0.08 });
+
+      let elapsed = 0;
+      for (let i = 0; i < 180; i++) {
+        elapsed += dt;
+        const expected = sampleJump(arc, elapsed);
+        h.rig.reset();
+        h.body.update(dt);
+        const delta = worldHips(h.profile).sub(rest);
+        expect(delta.x).toBeCloseTo(0, 10);
+        expect(delta.y).toBeCloseTo(expected.rise, 10);
+        expect(delta.z).toBeCloseTo(0, 10);
+        if (expected.done) break;
+      }
+      expect(h.body.jumping).toBe(false);
+    },
+  );
 });
