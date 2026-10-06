@@ -110,6 +110,8 @@ export class Tail {
 
   t = 0;
   _phase = 0;
+  /** The slower wave term's own phase, so it never restarts when `_phase` wraps. */
+  _phase2 = 0;
 
   joints: Joint[] = [];
   swingAxis = new THREE.Vector3();
@@ -222,7 +224,9 @@ export class Tail {
     let swing = 0;
     let lift = 0;
     let total = 0;
-    for (const [name, w] of Object.entries(emotion) as [EmotionName, number][]) {
+    for (const key in emotion) {
+      const name = key as EmotionName;
+      const w = emotion[name] ?? 0;
       const m = MOOD[name];
       if (!(m && w > 0)) continue;
       rate += m.rate * w;
@@ -244,12 +248,13 @@ export class Tail {
     // Phase is accumulated rather than taken from absolute time, so a change of
     // rate eases instead of teleporting the tail to the other side of its arc.
     this._phase = (this._phase + dt * rate * TAU) % TAU;
+    this._phase2 = (this._phase2 + dt * rate * TAU * 0.37) % TAU;
 
     // Two incommensurable terms and a slow amplitude wander, for the reason the
     // head micro-motion has them: a single sine at a constant amplitude is read
     // as machine-driven within a few cycles, and a tail is a large, high
     // contrast shape that gives the viewer plenty of chances to notice.
-    const wave = 0.85 * Math.sin(this._phase) + 0.15 * Math.sin(this._phase * 0.37 + 1.1);
+    const wave = 0.85 * Math.sin(this._phase) + 0.15 * Math.sin(this._phase2 + 1.1);
     const wander = 0.78 + 0.22 * Math.sin(this.t * 0.23 + 0.7);
 
     // Clamped, not because the table exceeds the range but because the resting

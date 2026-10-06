@@ -221,3 +221,27 @@ describe('Tail', () => {
     expect(spring.drivenJoints).toHaveLength(0);
   });
 });
+
+describe('tail wag phase', () => {
+  it('keeps the drive continuous across the wrap of the wag cycle', () => {
+    const fixture = makeFixture({ passive: false });
+    const root = fixture.tail.joints[0];
+    if (!root) throw new Error('fixture has no tail root');
+    const seen: THREE.Quaternion[] = [];
+    let wrapped = 0;
+    let last = fixture.tail._phase;
+    // Several whole cycles at the neutral rate, so the first term wraps many times.
+    for (let i = 0; i < 1200; i++) {
+      fixture.tail.update(STEP, { neutral: 1 });
+      if (fixture.tail._phase < last) wrapped++;
+      last = fixture.tail._phase;
+      seen.push(root.drive.clone());
+    }
+    expect(wrapped).toBeGreaterThan(2);
+    const steps = seen.slice(1).map((q, i) => q.angleTo(seen[i] ?? q));
+    const sorted = [...steps].sort((a, b) => a - b);
+    const typical = sorted[Math.floor(sorted.length / 2)] ?? 0;
+    // A reset of the slow term shows as one frame many times the usual step.
+    expect(Math.max(...steps)).toBeLessThan(typical * 3);
+  });
+});
