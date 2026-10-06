@@ -16,30 +16,51 @@ MAX=${1:-1048576}   # 1 MiB. Nothing this repo legitimately tracks comes close.
 
 cd "$(git rev-parse --show-toplevel)"
 
-# Both the index and the working tree copies of tracked files: a file staged but
-# not yet committed is already a problem, and is the moment it is still cheap to
-# fix. Keep this list separate from untracked files so the diagnosis says what
-# git actually knows about each path.
-mapfile -t tracked < <(git ls-files -c --deduplicate)
-mapfile -t untracked < <(git ls-files -o --exclude-standard --deduplicate)
-
+# Both the index blobs and the working tree copies of tracked files: a file
+# staged but not yet committed is already a problem even if it was since shrunk
+# or deleted on disk, and a tracked file grown on disk is the next commit's
+# problem. Kept separate from untracked files so the diagnosis says what git
+# actually knows about each path. Written for bash 3.2 (macOS /bin/bash): no
+# mapfile, NUL-delimited reads so unusual paths survive.
 tracked_over=()
-for f in "${tracked[@]}"; do
-  [ -f "$f" ] || continue
-  size=$(wc -c < "$f")
+tracked_count=0
+previous=
+while IFS= read -r -d '' record; do
+  meta=${record%%$'\t'*}
+  f=${record#*$'\t'}
+  set -- $meta
+  mode=$1
+  sha=$2
+  [ "$mode" = 160000 ] && continue
+  [ "$f" = "$previous" ] && continue
+  previous=$f
+  tracked_count=$((tracked_count + 1))
+  size=$(git cat-file -s "$sha")
   if [ "$size" -gt "$MAX" ]; then
     tracked_over+=("$(printf '%10d  %s' "$size" "$f")")
   fi
-done
+  if [ -f "$f" ]; then
+    size=$(( $(wc -c < "$f") ))
+    if [ "$size" -gt "$MAX" ]; then
+      line=$(printf '%10d  %s' "$size" "$f")
+      case " ${tracked_over[*]-} " in
+        *"$line"*) ;;
+        *) tracked_over+=("$line") ;;
+      esac
+    fi
+  fi
+done < <(git ls-files -s -z)
 
 untracked_over=()
-for f in "${untracked[@]}"; do
+untracked_count=0
+while IFS= read -r -d '' f; do
   [ -f "$f" ] || continue
-  size=$(wc -c < "$f")
+  untracked_count=$((untracked_count + 1))
+  size=$(( $(wc -c < "$f") ))
   if [ "$size" -gt "$MAX" ]; then
     untracked_over+=("$(printf '%10d  %s' "$size" "$f")")
   fi
-done
+done < <(git ls-files -o --exclude-standard -z)
 
 failed=0
 if [ ${#tracked_over[@]} -gt 0 ]; then
@@ -63,5 +84,5 @@ if [ "$failed" -ne 0 ]; then
   exit 1
 fi
 
-echo "no tracked file over $((MAX / 1024)) KiB (${#tracked[@]} checked)"
-echo "no untracked non-ignored file over $((MAX / 1024)) KiB (${#untracked[@]} checked)"
+echo "no tracked file over $((MAX / 1024)) KiB ($tracked_count checked)"
+echo "no untracked non-ignored file over $((MAX / 1024)) KiB ($untracked_count checked)"

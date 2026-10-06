@@ -23,7 +23,7 @@ function runGit(root: string, ...args: string[]) {
 }
 
 function runCheck(root: string): CheckResult {
-  const result = spawnSync('bash', [SCRIPT, String(MAX_BYTES)], {
+  const result = spawnSync('/bin/bash', [SCRIPT, String(MAX_BYTES)], {
     cwd: root,
     encoding: 'utf8',
   });
@@ -70,6 +70,47 @@ describe('check-assets.sh', () => {
       expect(ignoredOnly.stdout).toContain('no tracked file over 2 KiB');
       expect(ignoredOnly.stdout).toContain('no untracked non-ignored file over 2 KiB');
       expect(ignoredOnly.stdout).not.toContain('ignored-large.bin');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a staged blob after it was deleted or shrunk on disk', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hashidate-check-assets-'));
+
+    try {
+      runGit(root, 'init', '-q');
+      await writeFile(join(root, 'gone.bin'), Buffer.alloc(LARGE_BYTES, 0x78));
+      await writeFile(join(root, 'shrunk.bin'), Buffer.alloc(LARGE_BYTES, 0x79));
+      runGit(root, 'add', 'gone.bin', 'shrunk.bin');
+      await rm(join(root, 'gone.bin'));
+      await writeFile(join(root, 'shrunk.bin'), 'tiny');
+
+      const result = runCheck(root);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/^\s*4096\s+gone\.bin$/m);
+      expect(result.stderr).toMatch(/^\s*4096\s+shrunk\.bin$/m);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a tracked file that grew on disk and handles unusual paths', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hashidate-check-assets-'));
+
+    try {
+      runGit(root, 'init', '-q');
+      await writeFile(join(root, 'grown.bin'), 'tiny');
+      await writeFile(join(root, 'with space.bin'), 'tiny');
+      runGit(root, 'add', 'grown.bin', 'with space.bin');
+      await writeFile(join(root, 'grown.bin'), Buffer.alloc(LARGE_BYTES, 0x78));
+      await writeFile(join(root, 'odd name.bin'), Buffer.alloc(LARGE_BYTES, 0x79));
+
+      const result = runCheck(root);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/^\s*4096\s+grown\.bin$/m);
+      expect(result.stderr).toMatch(/^\s*4096\s+odd name\.bin$/m);
+      expect(result.stderr).not.toContain('with space.bin');
     } finally {
       await rm(root, { recursive: true, force: true });
     }
