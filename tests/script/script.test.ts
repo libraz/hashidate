@@ -62,7 +62,7 @@ lines:
 
   it('refuses an empty reading on the same path used by play --check', () => {
     expect(() => script('lines:\n  - { text: "x", reading: "" }')).toThrow(
-      /test\.yaml.*lines\.0\.reading/s,
+      /test\.yaml.*lines\.1\.reading/s,
     );
   });
 
@@ -72,7 +72,7 @@ lines:
 
   it('reports the path and the field that was wrong', () => {
     expect(() => script('lines:\n  - { text: "x", stage: { camera: wide } }')).toThrow(
-      /test\.yaml.*lines\.0\.stage\.camera/s,
+      /test\.yaml.*lines\.1\.stage\.camera/s,
     );
   });
 });
@@ -104,6 +104,22 @@ lines:
 
   it('refuses a verb that is not a command at all', () => {
     expect(() => script('setup:\n  - { cmd: sing }\nlines:\n  - text: x')).toThrow(ScriptError);
+  });
+});
+
+describe('error positions', () => {
+  const message = (source: string): string => {
+    try {
+      script(source);
+    } catch (error) {
+      return (error as Error).message;
+    }
+    return '';
+  };
+
+  it('count lines and setup entries from 1, as outline does', () => {
+    expect(message('lines:\n  - text: ok\n  - text: 5')).toMatch(/\n {2}lines\.2\.text:/);
+    expect(message('setup:\n  - { cmd: sing }\nlines:\n  - text: x')).toMatch(/\n {2}setup\.1[.:]/);
   });
 });
 

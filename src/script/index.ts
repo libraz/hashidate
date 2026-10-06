@@ -161,6 +161,11 @@ function scriptId(path: string): string {
   return (extension ? name.slice(0, -extension.length) : name).normalize('NFC');
 }
 
+/** An issue path with array positions counted from 1, as `outline` numbers lines. */
+function where(path: ReadonlyArray<PropertyKey>): string {
+  return path.map((key) => (typeof key === 'number' ? key + 1 : String(key))).join('.') || 'script';
+}
+
 /** Parse and validate the text of a script. Separate so a test needs no file. */
 export function parseScript(path: string, raw: string): Script {
   let value: unknown;
@@ -172,7 +177,7 @@ export function parseScript(path: string, raw: string): Script {
   const parsed = scriptSchema.safeParse(value);
   if (!parsed.success) {
     const detail = parsed.error.issues
-      .map((issue) => `\n  ${issue.path.map(String).join('.') || 'script'}: ${issue.message}`)
+      .map((issue) => `\n  ${where(issue.path)}: ${issue.message}`)
       .join('');
     throw new ScriptError(`${path} is not a script:${detail}`);
   }
