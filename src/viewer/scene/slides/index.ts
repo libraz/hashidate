@@ -100,11 +100,13 @@ export class SlideStage implements Slides {
   private drawn: StageSize = { width: 0, height: 0 };
 
   /**
-   * At most the page before, the page showing and the page after.
+   * The showing page and its neighbors, plus a different page currently wanted.
    *
    * A whole deck of decoded pages is tens of megabytes of GPU-backed images for
    * slides nobody is going to look at again — and the two that are worth having
-   * are the two an arrow key reaches.
+   * are the two an arrow key reaches. A distant wanted page can add a fourth
+   * image while its render settles; once it is showing, the cache returns to
+   * the showing page and its neighbors.
    */
   private readonly cache = new Map<number, ImageBitmap>();
   private readonly inflight = new Map<number, Promise<ImageBitmap | null>>();
@@ -373,9 +375,17 @@ export class SlideStage implements Slides {
     if (page === 0 || !this.source) return;
     const bitmap = this.cache.get(page) ?? (await this.rasterise(page, gen));
     // A page that arrived after the operator moved on, or after the deck did.
-    if (!bitmap || gen !== this.generation || this.want !== page) return;
+    if (
+      !bitmap ||
+      gen !== this.generation ||
+      this.want !== page ||
+      this.cache.get(page) !== bitmap
+    ) {
+      return;
+    }
     this.paint(bitmap);
     this.shown = page;
+    this.error = null;
     this.trim();
     this.prefetch();
   }
@@ -402,11 +412,12 @@ export class SlideStage implements Slides {
           return null;
         }
         this.cache.set(page, bitmap);
-        return bitmap;
+        this.trim();
+        return this.cache.get(page) ?? null;
       },
       (e: unknown) => {
         this.forget(page, pending);
-        if (gen === this.generation) {
+        if (gen === this.generation && page === this.want) {
           this.error = translate('console.slides.drawFailed', getLocale(), {
             page,
             reason: String(e instanceof Error ? e.message : e),
@@ -477,7 +488,7 @@ export class SlideStage implements Slides {
 
   private trim(): void {
     for (const [page, bitmap] of this.cache) {
-      if (Math.abs(page - this.shown) <= 1) continue;
+      if (page === this.want || Math.abs(page - this.shown) <= 1) continue;
       bitmap.close();
       this.cache.delete(page);
     }
