@@ -60,7 +60,13 @@ export async function openDeck(url: string): Promise<DeckSource> {
     cMapPacked: true,
     standardFontDataUrl: '/pdfjs/standard_fonts/',
   });
-  const doc = await task.promise;
+  const doc = await task.promise.catch(async (error: unknown) => {
+    // A failed open returns no DeckSource to own the worker and its requests.
+    await task.destroy().catch(() => {
+      // Keep the loading error even if releasing its resources also fails.
+    });
+    throw error;
+  });
   return {
     pages: doc.numPages,
     async render(page: number, pixelWidth: number): Promise<ImageBitmap> {
