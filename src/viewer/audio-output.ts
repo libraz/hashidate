@@ -19,10 +19,17 @@ export async function startContext(
 ): Promise<boolean> {
   if (context.state === 'closed') return false;
   if (context.state !== 'running') {
-    await Promise.race([
-      context.resume().catch(() => {}),
-      new Promise<void>((resolve) => setTimeout(resolve, waitMs)),
-    ]);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        context.resume().catch(() => {}),
+        new Promise<void>((resolve) => {
+          timeout = setTimeout(resolve, waitMs);
+        }),
+      ]);
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+    }
   }
   return context.state === 'running';
 }
@@ -119,6 +126,7 @@ export class BrowserAudioOutput {
   async ensureRunning(): Promise<AudioContext | null> {
     if (this.disposed) return null;
     const started = await startContext(this.context, this.resumeWaitMs);
+    if (this.disposed) return null;
     if (started) {
       this.notifyUnlocked();
     } else {
@@ -144,6 +152,7 @@ export class BrowserAudioOutput {
     this.disposed = true;
     this.disarm?.();
     this.disarm = null;
+    this.unlockListeners.clear();
     safeDisconnect(this.voiceBus);
     safeDisconnect(this.bgmBus);
     safeDisconnect(this.master);
@@ -151,6 +160,7 @@ export class BrowserAudioOutput {
   }
 
   private notifyUnlocked(force = false): void {
+    if (this.disposed) return;
     const wasBlocked = this.blocked;
     this.blocked = false;
     // A media element can reject play even while the shared context is already
