@@ -271,6 +271,7 @@ export class ControlProcess {
 
   async start(): Promise<void> {
     if (this.starting) return this.starting;
+    if (this.stopped || this.running) return;
     this.starting = this.startOnce();
     try {
       await this.starting;
@@ -455,6 +456,7 @@ export class TtsProcess {
   private child: ChildProcess | null = null;
   private owned = false;
   private exited = false;
+  private starting: Promise<void> | null = null;
   /** See `ControlProcess.stopped`. This one is started without being waited on. */
   private stopped = false;
 
@@ -477,6 +479,17 @@ export class TtsProcess {
 
   /** Start only when the checkout has the private Python environment. */
   async start(): Promise<void> {
+    if (this.starting !== null) return this.starting;
+    if (this.stopped || this.available) return;
+    this.starting = this.startOnce();
+    try {
+      await this.starting;
+    } finally {
+      this.starting = null;
+    }
+  }
+
+  private async startOnce(): Promise<void> {
     // A port endpoint is an external synthesiser supplied by the operator.
     // The bundled cloned voice is UNIX-only and must never be started with a
     // TCP listener just because the proxy points at one.
