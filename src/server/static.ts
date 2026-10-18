@@ -99,8 +99,11 @@ async function send(
     // A relative import inside index.html resolves against the directory, so
     // the trailing slash has to be there before the page loads.
     if (!pathname.endsWith('/')) {
+      // The filesystem path is decoded; reserved characters in a directory
+      // name must not become a query or fragment in the redirect URL.
+      const location = `${prefix}${pathname}`.split('/').map(encodeURIComponent).join('/');
       res.writeHead(301, {
-        Location: `${prefix}${pathname}/${url.search}`,
+        Location: `${location}/${url.search}`,
         'Cache-Control': 'no-store',
       });
       res.end();
