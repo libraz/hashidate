@@ -413,6 +413,8 @@ export class SpeechWatch implements SpeechSource {
   /** Whether anything ever answered. What separates `absent` from `down`. */
   private seen = false;
   private timer: ReturnType<typeof setInterval> | null = null;
+  /** Invalidates probes whose answers arrive after this watch was stopped. */
+  private generation = 0;
 
   get current(): SpeechState {
     return this.state;
@@ -427,7 +429,10 @@ export class SpeechWatch implements SpeechSource {
    * has already said so.
    */
   async start(): Promise<SpeechState> {
-    this.state = await this.look();
+    const generation = this.generation;
+    const answer = await ask();
+    if (generation !== this.generation) return this.state;
+    this.state = this.observe(answer);
     if (this.timer === null) {
       this.timer = setInterval(() => void this.check(), HEALTH_INTERVAL_MS);
       // Nothing here should hold the process open: a server whose last socket
@@ -438,13 +443,17 @@ export class SpeechWatch implements SpeechSource {
   }
 
   stop(): void {
+    this.generation++;
     if (this.timer !== null) clearInterval(this.timer);
     this.timer = null;
   }
 
   /** One probe, folded in, announcing a change and only a change. */
   async check(): Promise<SpeechState> {
-    const next = await this.look();
+    const generation = this.generation;
+    const answer = await ask();
+    if (generation !== this.generation) return this.state;
+    const next = this.observe(answer);
     if (next !== this.state) {
       this.state = next;
       const line = `${new Date().toISOString()} ${ANNOUNCE[next]}`;
@@ -454,8 +463,7 @@ export class SpeechWatch implements SpeechSource {
     return next;
   }
 
-  private async look(): Promise<SpeechState> {
-    const answer = await ask();
+  private observe(answer: Awaited<ReturnType<typeof ask>>): SpeechState {
     if (answer !== null) this.seen = true;
     return answer ?? (this.seen ? 'down' : 'absent');
   }
