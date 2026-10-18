@@ -95,6 +95,7 @@ export class ControlClient {
   async request(path: string, payload?: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
     const body = payload === undefined ? undefined : JSON.stringify(payload);
     let response: Response;
+    let text: string;
     try {
       response = await fetch(`${this.base}${path}`, {
         method: body === undefined ? 'GET' : 'POST',
@@ -102,12 +103,14 @@ export class ControlClient {
         body,
         signal: AbortSignal.timeout(timeoutMs),
       });
+      // Fetch resolves at the headers; receiving the body can still time out
+      // or lose its connection and belongs to the same transport boundary.
+      text = await response.text();
     } catch (error) {
       throw new ControlError(
         `Cannot reach the control server (${this.base}): ${reason(error)}\n  start it with yarn dev`,
       );
     }
-    const text = await response.text();
     try {
       return JSON.parse(text) as unknown;
     } catch {
