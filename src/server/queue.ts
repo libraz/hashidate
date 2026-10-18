@@ -88,8 +88,19 @@ export class TurnQueue {
   private spoken: HistoryEntry[] = [];
   private seq = 0;
 
+  /** Snapshot the ids still in use by pending, on-air or history entries. */
+  private occupiedIds(): Set<string> {
+    const ids = new Set<string>();
+    for (const entry of this.entries) ids.add(entry.id);
+    for (const entry of this.onAir) ids.add(entry.id);
+    for (const entry of this.spoken) ids.add(entry.id);
+    return ids;
+  }
+
   /**
-   * Ids are minted here rather than accepted from the caller.
+   * Mint an id not already used by an entry or earlier allocation in this
+   * operation. `add` always mints; `say` and `replace` accept an unused caller
+   * id.
    *
    * The id is what `turn.start` and `turn.end` come back under and what every
    * edit addresses, so two entries sharing one would make both unaddressable.
@@ -100,9 +111,14 @@ export class TurnQueue {
    * several ids inside the same millisecond, which is exactly the collision the
    * renderer's own `nextId` exists to avoid.
    */
-  private mint(): string {
-    this.seq += 1;
-    return `q${Date.now().toString(36)}-${this.seq.toString(36)}`;
+  private mint(reserved: Set<string>): string {
+    let id: string;
+    do {
+      this.seq += 1;
+      id = `q${Date.now().toString(36)}-${this.seq.toString(36)}`;
+    } while (reserved.has(id));
+    reserved.add(id);
+    return id;
   }
 
   /** The pending turns, oldest first. A copy: callers serialise it. */
@@ -141,9 +157,10 @@ export class TurnQueue {
     { at = 'push', source, note }: { at?: Placement; source?: string; note?: string } = {},
   ): QueueEntry[] {
     const stamp = now();
+    const reserved = this.occupiedIds();
     const added = turns.map((turn) => ({
       ...turn,
-      id: this.mint(),
+      id: this.mint(reserved),
       ...(source === undefined ? {} : { source }),
       ...(note === undefined ? {} : { note }),
       at: stamp,
@@ -161,7 +178,8 @@ export class TurnQueue {
    * to stand for two turns. The returned entry carries the id the events will.
    */
   say(turn: TurnRequest): QueueEntry {
-    const entry = { ...turn, id: this.claim(turn.id, new Set()), at: now() };
+    const reserved = this.occupiedIds();
+    const entry = { ...turn, id: this.claim(turn.id, reserved), at: now() };
     this.entries.push(entry);
     return entry;
   }
@@ -175,6 +193,7 @@ export class TurnQueue {
   replace(turns: TurnRequest[]): void {
     const pending = new Map(this.entries.map((entry) => [entry.id, entry]));
     const taken = new Set<string>();
+    const reserved = this.occupiedIds();
     const stamp = now();
     const next: QueueEntry[] = [];
     for (const turn of turns) {
@@ -191,7 +210,7 @@ export class TurnQueue {
         });
         continue;
       }
-      const id = this.claim(turn.id, taken);
+      const id = this.claim(turn.id, reserved);
       taken.add(id);
       next.push({ ...turn, id, at: stamp });
     }
@@ -199,12 +218,9 @@ export class TurnQueue {
   }
 
   /** A caller's id when no turn here uses it, otherwise a minted one. */
-  private claim(id: string | undefined, taken: Set<string>): string {
-    if (id === undefined || id === '' || taken.has(id)) return this.mint();
-    const used = (entry: QueueEntry) => entry.id === id;
-    if (this.entries.some(used) || this.onAir.some(used) || this.spoken.some(used)) {
-      return this.mint();
-    }
+  private claim(id: string | undefined, reserved: Set<string>): string {
+    if (id === undefined || id === '' || reserved.has(id)) return this.mint(reserved);
+    reserved.add(id);
     return id;
   }
 
@@ -359,9 +375,10 @@ export class TurnQueue {
   rewind(id: string, mode: RewindMode = 'from', { cut = false } = {}): QueueEntry[] | null {
     const index = this.spoken.findIndex((entry) => entry.id === id);
     if (index === -1) return null;
+    const reserved = this.occupiedIds();
     const taken: QueueEntry[] = mode === 'one' ? [this.spoken[index]] : this.spoken.splice(index);
     if (cut && mode === 'from') taken.push(...this.onAir);
-    const added = taken.map((entry) => this.requeue(entry));
+    const added = taken.map((entry) => this.requeue(entry, reserved));
     this.entries.unshift(...added);
     return added;
   }
@@ -369,9 +386,10 @@ export class TurnQueue {
   /** One spoken or airing entry, as a pending one again. See `rewind`. */
   private requeue(
     entry: QueueEntry & Partial<Pick<HistoryEntry, 'saidAt' | 'interrupted'>>,
+    reserved: Set<string>,
   ): QueueEntry {
     const { id: _id, at: _at, saidAt: _saidAt, interrupted: _interrupted, ...turn } = entry;
-    return { ...turn, id: this.mint(), at: now() };
+    return { ...turn, id: this.mint(reserved), at: now() };
   }
 
   /**
