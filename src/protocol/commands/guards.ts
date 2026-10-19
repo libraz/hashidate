@@ -23,3 +23,9 @@ export type Expect<T extends true> = T;
  * members are interchangeable but not identical.
  */
 export type Assert<A extends B, B = A> = A;
+
+/**
+ * Flattens an intersection into one object type, so `Equals` can compare it with
+ * the flat object a schema infers.
+ */
+export type Simplify<T> = { [K in keyof T]: T[K] } & {};

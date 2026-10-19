@@ -8,6 +8,14 @@
  */
 
 export {
+  type AvatarFile,
+  type AvatarsResponse,
+  type AvatarsWire,
+  avatarFileSchema,
+  avatarsResponseSchema,
+  parseAvatar,
+} from './avatars';
+export {
   type Anchor,
   avatarCommandSchema,
   BGM_DEFAULT_LOOP,

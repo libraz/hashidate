@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { MotionArm, MotionDef, MotionFrame } from '../engine/motion';
 import type { GestureGroup, SpineSlot } from '../engine/types';
 import { type Equals, type Expect, fingerNameSchema, sideSchema } from './commands';
-import { localizedSchema } from './messages/primitives';
+import { localizedSchema, vec3Schema } from './messages/primitives';
 import { gestureGroupSchema } from './messages/session';
 
 /**
@@ -20,9 +20,7 @@ import { gestureGroupSchema } from './messages/session';
  * `src/engine/motion/custom.ts`. This file only says what is well formed.
  */
 
-/** Character space: x outward from the midline, y up, z forward. */
-const vec3 = z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]);
-const direction = vec3.refine((value) => value.some((component) => component !== 0), {
+const direction = vec3Schema.refine((value) => value.some((component) => component !== 0), {
   message: 'a direction must have a nonzero component',
 });
 
@@ -58,7 +56,7 @@ export const motionFrameSchema = z.object({
   at: z.number().finite().min(0),
   arms: z.partialRecord(sideSchema, motionArmSchema).optional(),
   fingers: z.partialRecord(sideSchema, fingerCurlSchema).optional(),
-  spine: z.partialRecord(spineSlotSchema, vec3).optional(),
+  spine: z.partialRecord(spineSlotSchema, vec3Schema).optional(),
 });
 
 type _MotionFrameMatchesEngine = Expect<Equals<z.infer<typeof motionFrameSchema>, MotionFrame>>;
@@ -167,10 +165,10 @@ function entryId(entry: unknown): string {
   return typeof id === 'string' && id.length > 0 ? id : '(no id)';
 }
 
-/** A parse failure as one line: each issue's path and message. */
-function describeIssues(error: z.ZodError): string {
+/** A parse failure as one line: each issue's path and message, `root` naming the top level. */
+export function describeIssues(error: z.ZodError, root = 'motion'): string {
   return error.issues
-    .map((issue) => `${issue.path.map(String).join('.') || 'motion'}: ${issue.message}`)
+    .map((issue) => `${issue.path.map(String).join('.') || root}: ${issue.message}`)
     .join(', ');
 }
 
