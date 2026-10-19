@@ -9,9 +9,9 @@ A clone of this repository is the runtime and nothing else. Read this section be
 | Requirement | Notes |
 |---|---|
 | Node 22 and Yarn 4 | Pinned in `mise.toml`. `mise install` installs both. |
-| **An avatar** | Required, and **not included.** The descriptors in `src/avatars` point at `public/models/<id>.glb`, which is git-ignored. With no GLB there, the renderer comes up with nothing to draw. |
+| **An avatar** | Required, and **not included.** A file in `avatars/<id>.json` describes each avatar and points at `public/models/<id>.glb`; both directories are git-ignored. With nothing there, the renderer comes up with nothing to draw. |
 
-None of the avatars this project was built against can be redistributed here, so supply your own: convert a rigged humanoid model with `blender -b -P tools/blender/export_glb.py -- [--profile NAME] <in.fbx> <out.glb> [texdir]` and add a descriptor file to `src/avatars`, then import it and add it to the `AVATARS` array in `src/avatars/index.ts`. The `make glb` targets build only the two purchased models, and a model whose shape keys follow neither profile in `PROFILES` (in that script) needs its own entry there first. See [Avatars](avatars.md).
+None of the avatars this project was built against can be redistributed here, so supply your own. Write an export profile at `avatars/export/<id>.json`, convert a rigged humanoid model with `make glb AVATAR=<id>`, and describe it in `avatars/<id>.json`. The control server finds the file on its own; nothing is registered. See [Avatars](avatars.md).
 
 ### To produce audio
 
@@ -86,7 +86,7 @@ Background music is optional and needs no import step. Put `.mp3` or `.flac` fil
 
 There is very little of it. **Nothing here sets an address.** There is no `--host`, no CORS header and no tunnel, because the avatars used for validation may not be republished — see [Avatars](avatars.md#licensing-is-why-the-runtime-is-loopback-only).
 
-The control server takes seven flags, all of them paths except the first:
+The control server takes eight flags, all of them paths except the first:
 
 | Flag | Default | What it moves |
 |---|---|---|
@@ -95,6 +95,7 @@ The control server takes seven flags, all of them paths except the first:
 | `--slides` | `show/slides` | The documents. See [Slides](slides.md) |
 | `--scripts` | `show/scripts` | The scripts the panel and `ctl play` both read. See [Scripts](scripts.md) |
 | `--motions` | `show/motions` | Gestures loaded off disk. See [Motions](motions.md) |
+| `--avatars` | `avatars` | The avatar files. See [Avatars](avatars.md) |
 | `--bgm` | `show/bgm` | The music library. See [Background music](bgm.md) |
 | `--recordings` | `show/recordings` | Where a take is written. See [Recording](recording.md) |
 

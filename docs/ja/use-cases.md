@@ -92,7 +92,7 @@ yarn ctl bgm play opening.mp3 --volume 0.16 --loop on
 そのアバターに何を頼めるかは、モデル自身のシェイプとメッシュから発見します。つまり vocabulary はモデルについての報告書です。
 
 ```sh
-yarn ctl avatar manuka
+yarn ctl avatar <id>
 yarn ctl vocab
 yarn ctl point 40 25 --extent 0.9 --finger little
 yarn ctl watch

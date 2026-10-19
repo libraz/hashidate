@@ -92,7 +92,7 @@ The panel on `/panel/` is a full operating surface: the script and its history, 
 What the avatar can be asked for is discovered from its own shapes and meshes, so the vocabulary endpoint is a report on the model.
 
 ```sh
-yarn ctl avatar manuka
+yarn ctl avatar <id>
 yarn ctl vocab
 yarn ctl point 40 25 --extent 0.9 --finger little
 yarn ctl watch

@@ -21,10 +21,10 @@ import { SkinPointAnchor, type SkinPointAnchorDiagnostics } from './skin-point-a
  * this layer exists at all: the chains are in the model, and only the numbers
  * describing how they move have to be restated.
  *
- * The numbers themselves are avatar data and live in the avatar descriptor. See
- * `avatars/manuka.ts`, whose figures are the ones its author set, and
- * `avatars/yoka.ts`, whose are not — the difference between the two is the whole
- * story of this layer and is written up there.
+ * The numbers themselves are avatar data and live in the avatar descriptor. They
+ * were tuned against two avatars: manuka, whose figures are the ones its author
+ * set, and yoka, whose were tuned here by eye. The difference between the two is
+ * the whole story of this layer; see `docs/en/avatars.md` (Sway tuning).
  *
  * ## The solver
  *

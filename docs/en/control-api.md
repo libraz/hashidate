@@ -51,6 +51,7 @@ An axis left out of `stage` keeps what it had; `null` empties it — dry for a r
 | `GET /api/decks/<id>/text` | What a document says, page by page, `?from=` and `?to=`. Extracted without drawing anything. |
 | `GET /slides/<id>.pdf` | The bytes, for the renderer. Not under `/api/` because it is file serving rather than an API call. |
 | `GET /api/motions` | The gestures written into `show/motions/`, parsed and checked, with any file that would not parse listed beside them. Read by the renderer when it connects. |
+| `GET /api/avatars` | The avatar files in `avatars/`, validated, with any file that would not parse listed beside them. Re-read on every request. Read by the renderer when it connects; `yarn ctl avatars` prints it. |
 | `GET /api/bgm` | The MP3 and FLAC files directly under the configured BGM directory. Re-scanned on every request. |
 | `GET /bgm/<id>` | One BGM file for a renderer, with byte-range requests. `HEAD` is accepted too. |
 | `GET /api/scripts` | The scripts in `show/scripts/`, summarised — title, how many lines, when it was saved — with any file that would not parse listed beside them. Re-read rather than cached, because a script is edited in a text editor beside the panel. |

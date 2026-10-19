@@ -50,7 +50,7 @@ A second `yarn shell` does not start a second application. It raises the windows
 | Window | hashidate — Control | Raise the panel, or reopen it if it was closed |
 | Window | hashidate — Stage | Raise the stage, or reopen it |
 | Window | Mute Stage | Whether the stage window opens silent. Remembered between runs |
-| Window | Open Slides / Scripts / Motions / BGM / Recordings Folder | Open a show directory in the file manager |
+| Window | Open Slides / Scripts / Motions / Avatars / BGM / Recordings Folder | Open one of those directories in the file manager |
 | Window | Three status lines | Read-only. See below |
 
 The three status lines at the foot of the Window menu are refreshed every two seconds from `GET /api/state`:

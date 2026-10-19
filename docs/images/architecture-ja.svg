@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 404" width="960" height="404" role="img" aria-labelledby="ttl dsc">
   <title id="ttl">hashidate の構成</title>
-  <desc id="dsc">台本でもアプリでも LLM のループでも、呼び出し側はローカルの制御サーバにコマンドを投げ、状態を読みます。経路は HTTP と MCP ツールの 2 つです。サーバは SSE でビューアへコマンドを流し、ビューアは結果を報告します。ビューアはエンジンを動かし、エンジンはアバター記述子を読みます。音声サイドカーへはサーバ経由で届きます。OBS はビューアのページを写します。境界の内側にモデルも SDK も提供元もなく、bind するのは 127.0.0.1 までです。音声サイドカーはそれすらせず、UNIX ソケットで答えます。</desc>
+  <desc id="dsc">台本でもアプリでも LLM のループでも、呼び出し側はローカルの制御サーバにコマンドを投げ、状態を読みます。経路は HTTP と MCP ツールの 2 つです。サーバは SSE でビューアへコマンドを流し、ビューアは結果を報告します。ビューアはエンジンを動かし、エンジンはアバターファイルを読みます。音声サイドカーへはサーバ経由で届きます。OBS はビューアのページを写します。境界の内側にモデルも SDK も提供元もなく、bind するのは 127.0.0.1 までです。音声サイドカーはそれすらせず、UNIX ソケットで答えます。</desc>
 
   <style>
     .bg    { fill:#f7f5f1 }
@@ -97,8 +97,8 @@
   <text class="xs mono" x="550" y="350" text-anchor="middle">tools/tts · 任意</text>
 
   <rect class="box2" x="750" y="310" width="166" height="56" rx="8"/>
-  <text class="h2" x="833" y="334" text-anchor="middle">アバター記述子</text>
-  <text class="xs mono" x="833" y="350" text-anchor="middle">src/avatars</text>
+  <text class="h2" x="833" y="334" text-anchor="middle">アバターファイル</text>
+  <text class="xs mono" x="833" y="350" text-anchor="middle">avatars/</text>
 
   <path class="ln"  d="M833,104 L833,42" marker-end="url(#a)"/>
   <path class="ln"  d="M166,174 L188,174" marker-end="url(#a)"/>

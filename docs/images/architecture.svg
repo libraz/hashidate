@@ -99,8 +99,8 @@
   <text class="xs mono" x="550" y="350" text-anchor="middle">tools/tts · optional</text>
 
   <rect class="box2" x="750" y="310" width="166" height="56" rx="8"/>
-  <text class="h2" x="833" y="334" text-anchor="middle">avatar descriptors</text>
-  <text class="xs mono" x="833" y="350" text-anchor="middle">src/avatars</text>
+  <text class="h2" x="833" y="334" text-anchor="middle">avatar files</text>
+  <text class="xs mono" x="833" y="350" text-anchor="middle">avatars/</text>
 
   <!-- edges -->
   <path class="ln"  d="M833,104 L833,42" marker-end="url(#a)"/>

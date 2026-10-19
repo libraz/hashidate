@@ -1,29 +1,127 @@
 # Avatars
 
-The engine holds no avatar data. Everything that is a property of one particular model lives in a descriptor under `src/avatars`, and the runtime reads it through a profile. Add a descriptor file and register it in `src/avatars/index.ts`.
+The engine holds no avatar data. Everything that is a property of one particular model lives in a file under `avatars/`, and the runtime reads it through a profile. The control server validates the file and serves it, and the renderer builds the avatar from what it receives. Adding an avatar is adding a file; no code changes and nothing is registered.
 
-**A fresh clone has no avatar in it.** The descriptors here point at `public/models/<id>.glb`, which is git-ignored, so the first step with a checkout is to supply a model. See [Building your own](#building-your-own).
+**A fresh clone has no avatar in it.** `avatars/` and `public/models/` ship empty and git-ignored, so the first step with a checkout is to supply a model and describe it. See [Building your own](#building-your-own).
+
+The reference for the format is `src/protocol/avatars.ts`: the schema that both the server and the renderer parse with. This page says what the fields are for; that file says what is well formed.
+
+## Where the files go
+
+```
+avatars/<id>.json             what the runtime reads (.yaml and .yml are accepted too)
+avatars/export/<id>.json      how the model is converted to a GLB; used by `make`, not by the runtime
+public/models/<id>.glb        the model the viewer loads
+```
+
+The id is the filename without its extension. It is at most 64 characters, has no leading dot and contains no path separator or control character. Two filenames that differ only in Unicode normalisation are both rejected as ambiguous. A file larger than 256 KiB is rejected.
+
+`--avatars <dir>` moves the directory, on the same footing as `--motions`. The files are not tracked by git. The native shell has `Window → Open Avatars Folder`.
+
+## A minimal file
+
+`avatars/example.json`, with its model at `public/models/example.glb`:
+
+```json
+{
+  "label": { "en": "Example", "ja": "サンプル" },
+  "separator": { "pattern": "^_{2,}(.+?)_{2,}$" },
+  "presets": {
+    "group": "Faces",
+    "label": { "stripPrefix": "F_", "underscoresToSpaces": true }
+  },
+  "sway": {
+    "groups": [{ "id": "hair", "label": { "en": "Hair", "ja": "髪" }, "stiffness": 0.4, "drag": 0.2, "childrenOf": ["Hair"] }]
+  }
+}
+```
+
+Only `label` is required. An avatar that states nothing else still loads, and whatever the engine cannot resolve on its own is reported in the vocabulary rather than failing.
 
 ```sh
-yarn ctl avatar manuka
+yarn ctl avatars
+yarn ctl avatar example
 yarn ctl vocab
 ```
 
 `avatar` is the only command that replaces the session every other one talks to, so the renderer holds what arrives behind it until the model is standing: swap and dress in one batch behaves as written.
+
+## Fields
+
+Every object in a file is strict: an unknown key is an error naming its path, and so is a value of the wrong kind. `id` is such a key, because the filename is the id. Numbers must be finite.
+
+| Field | What it states |
+|---|---|
+| `label` | The name shown in the pickers, as `{ "en", "ja" }`. Required. |
+| `author` | Credit for the model, as `{ "en", "ja" }`. |
+| `url` | Where the viewer fetches the GLB from. Defaults to `/models/<id>.glb`. See [url](#url). |
+| `separator` | A [pattern](#patterns) matching the dummy shapes an author puts between shape groups, with the group name in its one capture group. |
+| `gaze` | Measured eye, head and neck limits (`eyeYaw`, `eyePitch`, `headYaw`, `headPitch`, `neckYaw`, `neckPitch`). Any left out keep the engine's conservative defaults. |
+| `shapes` | Names for blink (`blink.both`, `blink.L`, `blink.R`) and viseme slots that the engine's own candidate lists do not resolve. |
+| `presets` | Finished whole-face drawings: `group` names the shape group, `exclude` lists fitting shapes that are not expressions, `emotion` maps canonical emotions to a drawing, `composition` says how a drawing shares the face with blink and speech, `hideGroup` names the group of parking shapes, `idleExclude` keeps faces away from the idle autopilot, and `label` is a [label rule](#labels). |
+| `emotionShapes` | Emotion composition in the avatar's own shape names, for a model without ARKit shapes. |
+| `mouthShapePattern` | A pattern for the shapes the mouth layer owns while speaking. |
+| `overlays` | A drawn-shape group of effects over the face, with the same `group`, `exclude` and `label` as `presets`. |
+| `materials` | `doubleSided`, `faceDecal`, `blendTransparent` and `preserveImported` as [patterns](#patterns) over material names, and `preservedPbrOverrides`, which sets `metalness`, `roughness` and optionally `reflection` for a named preserved material. |
+| `wardrobe` | `slots`, each with `items` (`id`, `label`, `meshes`, `hide`), plus `presets` that set a slot to an item or to `null`, and a `note` shown above the slots. |
+| `sway` | Secondary motion: `groups` with their figures and roots, and `colliders` sets that groups refer to by name. See [Sway tuning](#sway-tuning). |
+| `drive` | `tail`: which sway group is posed rather than only simulated, with `swing`, `lift` and `rest`. |
+| `script` | Demo turns, played by the viewer's script button. Each is a turn as the control API takes it. |
+| `anatomy` | Joint table for an avatar that is deliberately not human. |
+| `armRest` | Resting arm directions in character space, for a garment such as a full skirt that needs the arms held clear of the body. Slots left out keep the standing pose, and gestures blend from the declared one. |
+
+`gaze`, `presets`, `emotionShapes`, `mouthShapePattern` and `overlays` accept `null`, which means the same as leaving them out. Writing it records that the model was looked at.
+
+Two details sit inside sway groups and materials:
+
+- `anchor` on a sway group attaches the group's root to a point weighted across bones that are already simulated, so a part of a garment follows the skin it sits on.
+- `reflection` on a preserved PBR material sets how strongly it reflects the runtime's own studio environment. Without it the material sees only the scene environment, which is empty without a backdrop, and a metal draws dark.
+
+### Patterns
+
+Wherever a field matches names, it takes an object rather than a string:
+
+```json
+{ "pattern": "^(Hair|Lash)", "ignoreCase": true }
+```
+
+`pattern` is a JavaScript regular expression source and `ignoreCase` is the only flag. A pattern may not be empty, may not be longer than 1024 characters and must compile. `separator` additionally needs exactly one capturing group; that group is the name of the shape group the separator opens.
+
+### Labels
+
+A label rule tidies a shape name for display:
+
+```json
+{ "stripPrefix": "F_", "underscoresToSpaces": true }
+```
+
+`stripPrefix` is removed once, and only from the start of the name. `underscoresToSpaces` then turns every `_` into a space. Both are optional, and no other key is accepted. The result is the author's own name for a drawing, so it reads the same in either language.
+
+### url
+
+`url` is fetched from the viewer's own origin, so it has to be a root-relative path such as `/models/name.glb`. It may not start with `//`, contain `..`, `\`, `?` or `#`, or carry a scheme. A remote model is not expressible, which is deliberate: see [Licensing](#licensing-is-why-the-runtime-is-loopback-only).
+
+### YAML
+
+The same fields can be written as `.yaml` or `.yml`. A YAML file can carry comments, which is the reason to choose it: a note on why a figure has the value it has stays beside the figure. JSON is the form the examples use.
+
+## Errors
+
+A file that does not parse is dropped on its own; the other avatars stay available. The server reads the directory on every request, so a file saved while the stream is running appears at the next stream open. An avatar already loaded is not reloaded when its file changes.
+
+```sh
+yarn ctl avatars
+```
+
+lists each avatar found with its label and `url`, and the files that were rejected beside them, each with the reason and the path of the offending key. The renderer writes the same reasons to the browser console as warnings when it fetches the list.
+
+With no avatar in the directory the stage stays empty, and the console shows a note in place of the picker.
 
 ## The vocabulary is discovered from the model
 
 What the model can be asked for is resolved from what it actually ships: bones, finger families, visemes, blink shapes, drawn-expression groups, wardrobe meshes. ARKit support is detected, not assumed.
 
 `GET /api/vocabulary` is therefore a report on the model rather than a constant. Two models by different authors, one implementing the ARKit 52 blendshape set and one implementing none of it, are driven by the same engine over the same command vocabulary, which is the claim this repository tests.
-
-## What a descriptor can declare
-
-Beyond names and shapes, a descriptor can carry what one model's garments need:
-
-- `armRest` — resting arm directions in character space, for a garment such as a full skirt that needs the arms held clear of the body. Slots left out keep the standing pose, and gestures blend from the declared one.
-- `anchor` on a spring group — attaches the group's root to a point weighted across bones that are already simulated, so a part of a garment follows the skin it sits on.
-- `reflection` on a preserved PBR material — how strongly it reflects the runtime's own studio environment. Without it the material sees only the scene environment, which is empty without a backdrop, and a metal draws dark.
 
 ## Standing legs
 
@@ -40,35 +138,74 @@ yarn ctl wear --slot outer none
 yarn ctl wear --preset casual
 ```
 
-## Assets
+## Sway tuning
 
-The two validation avatars are purchased VRChat models. Their source packages, the extracted meshes and textures, and the GLB the viewer loads are all git-ignored: they are 1.5 GB together, and they cannot be redistributed here.
+Hair, a skirt hem, a ribbon and a tail are bones with no animation of their own. Their configuration lives in the authoring tool and does not survive export, so the bones arrive in the GLB and the numbers describing how they move have to be restated in `sway`.
 
-The third avatar, Yonagi Neru (`neru`), is exported by a separate production workspace rather than by this pipeline and placed at `public/models/neru.glb`. It is git-ignored and not redistributable either.
+Where the package exposes the author's own physics settings, carry those figures over. Someone chose them while watching the model move, so they are the better starting point, but they were chosen for another solver and are still checked against a render here. Where there are none, tune by eye: one group at a time, against a render, until the motion reads as cloth or hair and not as a rod.
 
-The pipeline turns a purchased package into a GLB:
+Either way the result is judged on screen. The engine's own constants were arrived at the same way, which is why a value is not changed to satisfy a test.
+
+## Building your own
+
+The engine is a runtime, not an editor. Rigging, weighting and garment authoring happen in Blender, and `tools/blender` is the interface between the two. A model that comes out of that pipeline needs one file in `avatars/`, as above.
+
+### Converting a model to a GLB
+
+The conversion is described by an export profile at `avatars/export/<id>.json`, and two make targets read it:
 
 ```sh
-make            # what each target does
-make extract    # unpack a purchased archive
-make textures   # unitypackage   → PNG
-make resize     # 4K             → web-sized
-make glb        # FBX            → public/models/*.glb
+make glb AVATAR=example        # FBX or blend → public/models/example.glb
+make textures AVATAR=example   # original PNGs → web-sized PNGs
 ```
+
+`make` with no target lists what is available. `BLENDER=<path>` points `make glb` at another Blender binary. Both targets stop with a usage message when `AVATAR` is missing or when the profile does not exist.
+
+The profile is a JSON object. Paths in it are relative to the repository root, where `make` runs.
+
+| Key | What it states |
+|---|---|
+| `source` | The FBX or `.blend` to export. A `.blend` is preferred when the vendor ships one, because its materials arrive already wired to their textures. |
+| `extras` | Further FBX files, such as an outfit, merged onto the main skeleton. Optional. |
+| `textures` | The directory the export reads textures from. |
+| `textures_src` | The directory of original PNGs that `make textures` copies from. Optional. |
+| `resize` | A list of `{ "match": "<glob>", "px": <n> }`. The first entry whose glob fits the file name sets its longest side; other files get 1024. Optional. |
+| `separator` | A regular expression, as a plain string, matching the author's group-delimiter shape and capturing the group name. |
+| `keep_groups` | The shape groups to keep. |
+| `keep_groups_by_mesh` | Groups to keep on one mesh only: an object of lists keyed by mesh name. Optional. |
+| `keep_names` | A pattern for loose shapes to keep that sit above no separator. Without it, a name containing `Hide` is kept. Optional. |
+| `texture_by_material` | A material name mapped to the texture file in `textures` it should use. Optional. |
+
+`make textures` resizes with `sips`, so it runs on macOS.
+
+### Why shape groups are kept or dropped
+
+Commercial avatars ship many shape keys, a large share of them fitting and utility shapes for the author's own tooling. Exporting all of them makes a heavy GLB and a vocabulary full of names that mean nothing on stage. The export therefore keeps by group.
+
+Shape keys come in labelled groups, each opened by a dummy separator shape. The profile's `separator` finds those, and `keep_groups` names the groups worth having: the standard blendshape sets, the author's own expression drawings, and the group of parking shapes an outfit raises to keep the body from poking through it. The separators are kept as well, so the runtime can rediscover the grouping from the GLB alone, which is why the descriptor's `separator` and `presets.group` can be stated in the same names.
+
+Filtering by group, instead of by name, is what lets an avatar's own expression vocabulary through: an authored face has no naming convention that identifies it from outside. A mesh with a few loose keys above no separator falls back to the standard names, plus `keep_names`.
+
+Drop a group when nothing would ask for its shapes by name: fittings for other bodies, and variants of garments that are not exported. Keep a group when anything in `presets`, `wardrobe.hide` or `shapes` refers to its shapes, because a name that is not in the GLB is reported as missing.
+
+### Unpacking a purchased package
+
+Unpacking is not automated, because packages differ in shape. The steps are the same in outline:
+
+1. Unzip the archive into a directory outside git. Everything under `backup/` and `public/models/` is ignored.
+2. Find the FBX files and, if there is one, the `.blend`. Put their paths in the profile's `source` and `extras`.
+3. For a `.unitypackage`, which is a gzip-compressed tar, pull the textures out with `python3 tools/blender/extract_textures.py <package> <outdir> [path substring]`. The substring filters the paths inside the Unity project and defaults to `/Texture_1K/`. Point `textures_src` at the result.
+4. Run `make textures AVATAR=<id>` and then `make glb AVATAR=<id>`.
 
 `make check-assets` fails if anything over 1 MB has found its way into git. It runs against what git is actually tracking rather than against a list of paths, because a `.gitignore` only covers the paths someone thought of and a single half-gigabyte blob in the history is permanent.
 
 ## Licensing is why the runtime is loopback-only
 
-The avatars used for validation are commercial models that may not be republished. The viewer and the control API bind to `127.0.0.1` and send no CORS header **because of that**, not out of caution. The speech sidecar goes further and binds no port at all — a UNIX socket in a directory only its own user can enter — for a second and stronger reason: the voice is cloned from recordings of a real person. It can do that because its only caller is the control server proxying for the renderer.
+Commercial models are typically not licensed for republishing. The viewer and the control API bind to `127.0.0.1` and send no CORS header **because of that**, not out of caution. The speech sidecar goes further and binds no port at all — a UNIX socket in a directory only its own user can enter — for a second and stronger reason: the voice is cloned from recordings of a real person. It can do that because its only caller is the control server proxying for the renderer.
 
 There is no `--host` flag, no CORS header and no tunnel. If exposing the renderer ever becomes necessary, it is a licensing decision first and a code change second.
 
-Nothing under `public/models/` is covered by this repository's licence. A checkout provides the runtime, not the characters it was built against.
-
-## Building your own
-
-The engine is a runtime, not an editor. Rigging, weighting and garment authoring happen in Blender, and `tools/blender` is the interface between the two. A model that comes out of that pipeline needs a descriptor in `src/avatars`. Import it in `src/avatars/index.ts` and add it to the `AVATARS` array so the runtime can select it.
+Nothing under `avatars/` or `public/models/` is covered by this repository's licence. A checkout provides the runtime, not the characters it runs.
 
 Tests build a synthetic avatar in code rather than loading a GLB, because a suite that needs a purchased 16 MB model can only run on a machine that has bought it. Extend `tests/helpers/scene.ts` rather than adding a fixture.
 

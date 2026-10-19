@@ -9,7 +9,6 @@ Three processes and a page. A caller posts commands to the control server; the s
 | Path | What it holds |
 |---|---|
 | `src/engine` | The runtime. Profile, rig, anatomy, motion, face, secondary motion, director, session. Depends on three.js and on nothing in a browser. |
-| `src/avatars` | One descriptor per model, registered in `src/avatars/index.ts`. |
 | `src/protocol` | The wire format, as zod schemas. The viewer, the server and the CLI all import it, so the command vocabulary cannot drift between them. |
 | `src/viewer` | The renderer: a three.js stage, with a development console beside it. This is the page OBS points at. |
 | `src/panel` | The broadcast panel, on `/panel/`. Everything it does goes through the control API, so what it can do is what an orchestrator can do. |
@@ -22,6 +21,7 @@ Three processes and a page. A caller posts commands to the control server; the s
 | `src/script` | Reads a script: a run of turns written out in advance. It invents no vocabulary — a line is a turn, a setup entry is a command. |
 | `tools/blender` | The model pipeline. Python, because it runs inside Blender. |
 | `tools/tts` | The speech sidecar. Python, because the speech model is a PyTorch codebase. Reached over HTTP, never imported. |
+| `avatars/` | One file per model the operator brings, found by the control server and described in [Avatars](avatars.md). Not tracked; `--avatars` moves it. |
 | `show/` | What an operator brings to a broadcast: `slides/`, `scripts/`, `motions/`, `bgm/`. Not tracked and not part of the build; `--slides`, `--scripts`, `--motions` and `--bgm` move those libraries elsewhere. |
 
 ## Design boundaries
