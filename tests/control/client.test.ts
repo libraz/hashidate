@@ -114,3 +114,30 @@ describe('ControlClient avatars', () => {
     expect(result).toEqual({ avatars: [], errors: [{ id: 'broken', error: 'not an object' }] });
   });
 });
+
+describe('ControlClient queueAdd refusals', () => {
+  it('keeps the error a refused add comes back with', async () => {
+    const reason = 'speech sidecar is loading its model; playback cannot start until it is ready';
+    server = createServer((_req, res) => {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ queue: [], viewers: 1, error: reason }));
+    });
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('server did not bind');
+
+    const client = new ControlClient(`http://127.0.0.1:${address.port}/api`);
+
+    expect(await client.queueAdd([{ text: 'あ' }])).toEqual({
+      queue: [],
+      viewers: 1,
+      error: reason,
+    });
+  });
+
+  it('leaves error off an applied add', async () => {
+    const client = new ControlClient(await listen());
+
+    expect(await client.queueAdd([{ text: 'あ' }])).not.toHaveProperty('error');
+  });
+});

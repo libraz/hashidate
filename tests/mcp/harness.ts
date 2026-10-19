@@ -396,7 +396,7 @@ export function harness(): Harness {
       async (
         turns: TurnRequest[],
         opts: { at?: 'push' | 'unshift'; source?: string; note?: string } = {},
-      ): Promise<QueueResponse> => {
+      ): Promise<QueueOutcome> => {
         gate('queueAdd');
         const added = turns.map((turn) => {
           minted += 1;

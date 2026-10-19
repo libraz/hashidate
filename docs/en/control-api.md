@@ -61,13 +61,15 @@ An axis left out of `stage` keeps what it had; `null` empties it — dry for a r
 | `POST /api/record/chunk` | The renderer's encoded video, a second at a time. Not for callers, and the one route here whose body is not JSON. |
 | `GET /api/stream` | The viewer's SSE down-channel. |
 | `POST /api/report` | The viewer's up-channel, and its heartbeat. Not for callers. |
-| `POST /api/speech` | The viewer's route to the speech sidecar. Not for callers. 503 when there is no sidecar, which is a normal answer. |
+| `POST /api/speech` | The viewer's route to the speech sidecar. Not for callers. 503 when there is no sidecar, which is a normal answer, and also while the sidecar is still loading its model. |
 
 Every route answers loopback only. A request whose `Host` is not `127.0.0.1` or `localhost`, whose `Origin` is not the address it was sent to, or whose `Sec-Fetch-Site` is `cross-site` or `same-site`, is refused with `403` before anything is applied or served, and no CORS header is ever sent. Callers with no browser behind them send no `Origin` and are unaffected. JSON bodies are capped at 4 MiB; a larger one is answered `413`.
 
 Unknown command elements in a mixed `batch` are dropped while known elements are still delivered. If no element is known, the request returns `400` (`no command`). Unknown fields are stripped from ordinary command schemas. `tune` is strict at its command and group boundaries, so a misspelled group or field fails instead of becoming a successful no-op. The orchestrator and the renderer are separate processes with separate release cycles, so a newer caller talking to an older renderer degrades without breaking the stream.
 
 Queue edits preserve omitted fields. To clear an existing reading override, send `{"id":"<turn-id>","reading":null}` to `POST /api/queue/update`; the renderer then derives speech from `text` again. Use `perform: null` to clear the performance and `hold: false` to release it at the end of the turn. These edits preserve the queue position, id and unrelated fields.
+
+While the speech sidecar is loading its model or not answering, a request that would start a stopped queue is refused with `409` and an `error` saying why; nothing is applied. That covers releasing a hold (`pause` with `on: false`, or `release: true` on `POST /api/record/start`), and adding lines to a queue that is empty, not held and has nothing on air (`say`, `queue`, `POST /api/queue`, `/api/queue/push`, `/api/queue/unshift`, `POST /api/scripts/run` with `pause: false`). A held queue still accepts lines, and so does a running one: additions to a queue that is already moving pass. Re-sending the same list through `queue` counts as an addition. `POST /api/queue/rewind` on an unheld queue is refused, so the order is hold, then rewind, then play. `POST /api/command`, `/api/scripts/run` and `/api/record/start` answer exactly `{ "error": "..." }`; the queue routes answer `{ "queue": [...], "viewers": n, "error": "..." }`. The `absent` state, no sidecar at all, is not refused.
 
 ## What comes back
 

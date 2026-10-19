@@ -143,6 +143,9 @@ export function RecordTab({ snapshot, refresh }: Props) {
 
   const recording = snapshot.recording;
   const paused = snapshot.paused;
+  // Releasing a held queue is refused while the sidecar cannot speak.
+  const noVoice =
+    recording === null && paused && (snapshot.speech === 'loading' || snapshot.speech === 'down');
   const selectedFrame = recordingFrameValue(recording, frame);
   const selectedRate = recordingRateValue(recording, fps);
   const frameOptions = [
@@ -233,11 +236,17 @@ export function RecordTab({ snapshot, refresh }: Props) {
         <button
           type="button"
           className={`${styles.roll} ${recording !== null ? styles.rolling : ''}`}
-          disabled={busy}
+          disabled={busy || noVoice}
           onClick={() => void (recording === null ? roll() : halt())}
-          title={t(
-            recording === null ? 'panel.record.take.start.title' : 'panel.record.take.stop.title',
-          )}
+          title={
+            noVoice
+              ? t(snapshot.speech === 'loading' ? 'panel.speech.loading' : 'panel.speech.down')
+              : t(
+                  recording === null
+                    ? 'panel.record.take.start.title'
+                    : 'panel.record.take.stop.title',
+                )
+          }
         >
           <span className={styles.dot} aria-hidden="true" />
           {t(recording === null ? 'panel.record.take.start' : 'panel.record.take.stop')}

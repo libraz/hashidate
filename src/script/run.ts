@@ -1,3 +1,4 @@
+import { ControlError, type QueueOutcome } from '../control/client';
 import {
   type CommandRequest,
   commandResponseSchema,
@@ -10,22 +11,23 @@ import type { LoadedScript } from './index';
 export interface ScriptControl {
   queueClear(): Promise<unknown>;
   command(command: CommandRequest): Promise<unknown>;
-  queueAdd(turns: TurnRequest[], options?: { source?: string }): Promise<QueueResponse>;
+  queueAdd(turns: TurnRequest[], options?: { source?: string }): Promise<QueueOutcome>;
 }
 
 /** The two responses from a script run, kept separate because they have different fates. */
 export interface ScriptRunResult {
-  /** The live setup response, or undefined when the script has no setup. */
+  /** The batch response carrying the setup, or undefined when the script has no setup. */
   setup: unknown | undefined;
   /** The queue after the script's lines were added. */
   queue: QueueResponse;
 }
 
 /**
- * Apply a script in the order its two halves require: clear, setup, then queue.
+ * Apply a script in the order its two halves require: setup and hold, then
+ * clear, then queue.
  *
  * Setup is a live command and can be refused when no viewer is attached; the
- * lines still belong to the server's queue. The raw setup response is returned
+ * lines still belong to the server's queue. The raw batch response is returned
  * so each caller can explain that distinction without making this shared layer
  * choose its presentation.
  *
@@ -33,23 +35,34 @@ export interface ScriptRunResult {
  * queue held for an earlier take is still held now — a run that said nothing
  * about it would load its lines into a queue that never starts, and look
  * exactly like a run that failed silently.
+ *
+ * Setup and hold travel as one batch so the server judges them together, and a
+ * refusal (the speech sidecar cannot speak yet) throws `ControlError` before
+ * `replace` has cleared anything or a line has been queued.
  */
 export async function runScript(
   control: ScriptControl,
   loaded: LoadedScript,
   { replace = false, hold = false }: { replace?: boolean; hold?: boolean } = {},
 ): Promise<ScriptRunResult> {
-  if (replace) await control.queueClear();
-
-  const setup = loaded.script.setup?.length
-    ? await control.command({ batch: loaded.script.setup })
-    : undefined;
+  const setupCommands = loaded.script.setup ?? [];
   // Before the lines, so there is no moment in which a renderer holds a full
   // queue with nothing yet telling it whether to start on it.
-  await control.command({ cmd: 'pause', on: hold });
-  const queue = await control.queueAdd(loaded.script.lines, { source: loaded.id });
+  const batch = await control.command({ batch: [...setupCommands, { cmd: 'pause', on: hold }] });
+  // A refusal carries no per-command fates; a viewer-less delivery does.
+  if (isRefusal(batch)) throw new ControlError(batch.error);
 
-  return { setup, queue };
+  if (replace) await control.queueClear();
+  const queue = await control.queueAdd(loaded.script.lines, { source: loaded.id });
+  if (queue.error !== undefined) throw new ControlError(queue.error);
+
+  return { setup: setupCommands.length > 0 ? batch : undefined, queue };
+}
+
+function isRefusal(response: unknown): response is { error: string } {
+  if (typeof response !== 'object' || response === null) return false;
+  const { error, fates } = response as { error?: unknown; fates?: unknown };
+  return typeof error === 'string' && fates === undefined;
 }
 
 /** What an operator needs to hear about a setup response. */

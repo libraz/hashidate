@@ -5,13 +5,14 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EMPTY } from '@/panel/hooks';
 import { QueueTab } from '@/panel/queue/QueueTab';
-import type { QueueEntry } from '@/protocol';
+import type { QueueEntry, Snapshot } from '@/protocol';
 
 const api = vi.hoisted(() => ({
   queueMove: vi.fn(),
   queueAdd: vi.fn(),
   queueUpdate: vi.fn(),
   readScripts: vi.fn(),
+  setPaused: vi.fn(),
 }));
 
 vi.mock('@/panel/api', async (importOriginal) => {
@@ -42,7 +43,7 @@ describe('QueueTab drag and edit boundaries', () => {
     vi.clearAllMocks();
   });
 
-  const renderQueue = async (queue: QueueEntry[]) => {
+  const renderQueue = async (queue: QueueEntry[], over: Partial<Snapshot> = {}) => {
     if (host === null) {
       host = document.createElement('div');
       document.body.append(host);
@@ -51,7 +52,7 @@ describe('QueueTab drag and edit boundaries', () => {
     await act(async () => {
       root?.render(
         createElement(QueueTab, {
-          snapshot: { ...EMPTY, queue },
+          snapshot: { ...EMPTY, queue, ...over },
           refresh: () => {},
         }),
       );
@@ -134,5 +135,43 @@ describe('QueueTab drag and edit boundaries', () => {
     expect(api.queueUpdate).not.toHaveBeenCalled();
     expect(api.queueAdd).toHaveBeenCalledOnce();
     expect(host?.querySelector('textarea')).toBeNull();
+  });
+
+  describe('starting a held queue without a voice', () => {
+    const play = (): HTMLButtonElement => {
+      const button = [...(host?.querySelectorAll('button') ?? [])].find(
+        (b) => b.textContent === 'Start',
+      );
+      if (!button) throw new Error('play button missing');
+      return button;
+    };
+
+    it.each([
+      ['loading', 'loading its model'],
+      ['down', 'not answering'],
+    ] as const)('disables play while the sidecar is %s', async (speech, title) => {
+      await renderQueue([entry('q1', 'first')], { paused: true, speech });
+
+      expect(play().disabled).toBe(true);
+      expect(play().title).toContain(title);
+    });
+
+    it('leaves play enabled when the sidecar is ready', async () => {
+      await renderQueue([entry('q1', 'first')], { paused: true, speech: 'ready' });
+
+      expect(play().disabled).toBe(false);
+    });
+
+    it('shows the reason when the server refuses the release', async () => {
+      api.setPaused.mockResolvedValue({ error: 'speech sidecar is not answering' });
+      await renderQueue([entry('q1', 'first')], { paused: true, speech: 'ready' });
+
+      await act(async () => {
+        play().click();
+        await Promise.resolve();
+      });
+
+      expect(host?.textContent).toContain('speech sidecar is not answering');
+    });
   });
 });

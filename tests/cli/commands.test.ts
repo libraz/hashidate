@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ControlClient } from '@/cli/client';
+import { type ControlClient, ControlError } from '@/cli/client';
 import { point } from '@/cli/commands/body';
 import { vocab } from '@/cli/commands/inspect';
 import { tune } from '@/cli/commands/renderer';
@@ -183,7 +183,7 @@ describe('play setup with no viewer connected', () => {
 
     await play(client, ['demo']);
 
-    expect(commands).toEqual([{ batch: expect.any(Array) }, { cmd: 'pause', on: false }]);
+    expect(commands).toEqual([{ batch: expect.any(Array) }]);
     expect(client.queueAdd).toHaveBeenCalledOnce();
     expect(error).not.toHaveBeenCalled();
     expect(exit).not.toHaveBeenCalled();
@@ -204,16 +204,29 @@ describe('play setup with no viewer connected', () => {
     expect(exit).not.toHaveBeenCalled();
   });
 
-  it('fails when the setup response is a bare error with no fates', async () => {
+  it('fails with the server reason when the batch is refused', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.spyOn(process, 'exit').mockImplementation(() => {
-      throw new Error('process exited');
-    });
     const { client } = fake(() => 'retained');
-    vi.mocked(client.command).mockImplementationOnce(async () => ({ error: 'HTTP 400' }));
+    vi.mocked(client.command).mockImplementationOnce(async () => ({
+      error: 'speech sidecar is loading its model; playback cannot start until it is ready',
+    }));
 
-    await expect(play(client, ['demo'])).rejects.toThrow('process exited');
+    // `main` prints a thrown ControlError's message and exits non-zero.
+    await expect(play(client, ['demo'])).rejects.toThrow(ControlError);
+    await expect(play(client, ['demo'])).resolves.toBeUndefined();
+    expect(client.queueAdd).toHaveBeenCalledOnce();
+  });
+
+  it('fails with the server reason when the queue add is refused', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { client } = fake(() => 'retained');
+    vi.mocked(client.queueAdd).mockResolvedValueOnce({
+      queue: [],
+      viewers: 0,
+      error: 'speech sidecar is not answering; playback cannot start until it is back',
+    });
+
+    await expect(play(client, ['demo'])).rejects.toThrow(/not answering/);
   });
 });
 

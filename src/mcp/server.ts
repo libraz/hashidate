@@ -17,7 +17,6 @@ import type {
   DecksResponse,
   DeckTextResponse,
   HistoryResponse,
-  QueueResponse,
   QueueUpdate,
   Snapshot,
   TurnRequest,
@@ -116,7 +115,7 @@ export interface Control {
   queueAdd(
     turns: TurnRequest[],
     opts?: { at?: 'push' | 'unshift'; source?: string; note?: string },
-  ): Promise<QueueResponse>;
+  ): Promise<QueueOutcome>;
   command(command: CommandRequest, wait?: string): Promise<unknown>;
   queueUpdate(id: string, patch: Omit<QueueUpdate, 'id'>): Promise<QueueOutcome>;
   queueRemove(id: string): Promise<QueueOutcome>;
@@ -309,6 +308,9 @@ export function createServer(control: Control): Server {
     const { lines, at, note } = parsed.data;
     try {
       const response = await control.queueAdd(lines, { at, source: SOURCE, note });
+      if (response.error !== undefined) {
+        return refuse(`speak could not queue the lines: ${response.error}.`);
+      }
       return report({
         ok: true,
         ids: queuedIds(response, lines.length, at ?? 'push'),

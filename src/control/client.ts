@@ -163,13 +163,16 @@ export class ControlClient {
    * `source` is stamped on every turn in the batch and is never spoken. It is
    * what keeps a queue legible when a script, a comment and something typed by
    * hand are all landing in it at once.
+   *
+   * A refusal (409 while the speech sidecar cannot speak, 404 elsewhere) comes
+   * back as an `error` on the outcome, like the edits below.
    */
   async queueAdd(
     turns: TurnRequest[],
     { at, source, note }: { at?: 'push' | 'unshift'; source?: string; note?: string } = {},
-  ): Promise<QueueResponse> {
+  ): Promise<QueueOutcome> {
     const body = await this.request('/queue', { turns, at, source, note });
-    return expect(queueResponseSchema, body);
+    return expect(queueOutcomeSchema, body);
   }
 
   /**

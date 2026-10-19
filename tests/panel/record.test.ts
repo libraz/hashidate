@@ -28,7 +28,10 @@ function recording(over: Partial<NonNullable<Snapshot['recording']>> = {}) {
   } satisfies NonNullable<Snapshot['recording']>;
 }
 
-function snapshot(recordingState: Snapshot['recording'] = null): Snapshot {
+function snapshot(
+  recordingState: Snapshot['recording'] = null,
+  over: Partial<Snapshot> = {},
+): Snapshot {
   return {
     connected: false,
     viewers: 0,
@@ -47,6 +50,7 @@ function snapshot(recordingState: Snapshot['recording'] = null): Snapshot {
     airing: [],
     paused: false,
     recording: recordingState,
+    ...over,
   };
 }
 
@@ -147,5 +151,49 @@ describe('RecordTab rendering', () => {
     });
 
     expect(host.querySelector('[role="alert"]')?.textContent).toBe('Recording failed: disk full');
+  });
+});
+
+describe('RecordTab without a voice', () => {
+  let root: Root | null = null;
+  let host: HTMLDivElement | null = null;
+
+  afterEach(() => {
+    if (root !== null) {
+      act(() => root?.unmount());
+      root = null;
+    }
+    host?.remove();
+    host = null;
+  });
+
+  const rollButton = async (over: Partial<Snapshot>): Promise<HTMLButtonElement> => {
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root?.render(createElement(RecordTab, { snapshot: snapshot(null, over), refresh: () => {} }));
+    });
+    const button = host.querySelector<HTMLButtonElement>('button[class*="roll"]');
+    if (!button) throw new Error('record button missing');
+    return button;
+  };
+
+  it.each([
+    ['loading', 'loading its model'],
+    ['down', 'not answering'],
+  ] as const)('disables a release while the sidecar is %s', async (speech, title) => {
+    const button = await rollButton({ paused: true, speech });
+
+    expect(button.disabled).toBe(true);
+    expect(button.title).toContain(title);
+  });
+
+  it('still records a queue that is not held', async () => {
+    expect((await rollButton({ paused: false, speech: 'loading' })).disabled).toBe(false);
+  });
+
+  it('still releases when the sidecar is ready', async () => {
+    expect((await rollButton({ paused: true, speech: 'ready' })).disabled).toBe(false);
   });
 });

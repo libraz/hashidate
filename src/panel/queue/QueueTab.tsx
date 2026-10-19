@@ -71,6 +71,7 @@ export function QueueTab({ snapshot, refresh }: Props) {
   const [composing, setComposing] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const { t } = useT();
 
   const entries = snapshot.queue;
@@ -84,9 +85,13 @@ export function QueueTab({ snapshot, refresh }: Props) {
   const { checks, seconds, warnings } = checkQueue(entries, snapshot.vocabulary);
   const running = snapshot.state.turn ?? null;
 
-  /** Every mutation ends the same way: apply, then re-read rather than assume. */
+  /**
+   * Every mutation ends the same way: apply, then re-read rather than assume.
+   * A refusal is shown, as the script picker shows its own.
+   */
   const run = async (work: Promise<unknown>): Promise<void> => {
-    await work;
+    const result = await work;
+    setNotice(isFailure(result) ? result.error : null);
     refresh();
   };
 
@@ -140,9 +145,12 @@ export function QueueTab({ snapshot, refresh }: Props) {
         running={running}
         speaking={snapshot.state.speaking ?? false}
         paused={snapshot.paused}
+        speech={snapshot.speech}
         pending={entries.length}
         onToggleHold={() => void run(setPaused(!snapshot.paused))}
       />
+
+      {notice !== null ? <p className={styles.warnings}>{notice}</p> : null}
 
       <div className={styles.summary}>
         <span className={styles.count}>
@@ -259,16 +267,20 @@ function OnAir({
   running,
   speaking,
   paused,
+  speech,
   pending,
   onToggleHold,
 }: {
   running: string | null;
   speaking: boolean;
   paused: boolean;
+  speech: Snapshot['speech'];
   pending: number;
   onToggleHold: () => void;
 }) {
   const { t } = useT();
+  // Pressing play now would only be refused; the server says the same.
+  const noVoice = paused && (speech === 'loading' || speech === 'down');
   // No colour of its own for the held state. `--live` is the only tint this
   // block is allowed, per the token file, and a second one beside it would cost
   // the first the thing it is for. What says "held" is the label and the armed
@@ -290,9 +302,13 @@ function OnAir({
       <button
         type="button"
         className={`${styles.hold} ${paused ? styles.armed : ''}`}
-        disabled={paused && pending === 0}
+        disabled={(paused && pending === 0) || noVoice}
         onClick={onToggleHold}
-        title={t(paused ? 'panel.queue.play.title' : 'panel.queue.hold.title')}
+        title={
+          noVoice
+            ? t(speech === 'loading' ? 'panel.speech.loading' : 'panel.speech.down')
+            : t(paused ? 'panel.queue.play.title' : 'panel.queue.hold.title')
+        }
       >
         {t(paused ? 'panel.queue.play' : 'panel.queue.hold')}
       </button>

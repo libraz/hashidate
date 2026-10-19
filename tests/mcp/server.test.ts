@@ -179,6 +179,24 @@ describe('speak', () => {
     expect(h.control.command).not.toHaveBeenCalled();
   });
 
+  it('returns a refusal as an error when the server will not start the queue', async () => {
+    h = harness();
+    const client = await connect(h.control);
+    h.control.queueAdd.mockResolvedValueOnce({
+      queue: [],
+      viewers: 1,
+      error: 'speech sidecar is loading its model; playback cannot start until it is ready',
+    });
+
+    const result = await client.callTool({
+      name: 'speak',
+      arguments: { lines: [{ text: 'こんばんは。' }] },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('loading its model');
+  });
+
   it('stamps every line with the adapter as its producer', async () => {
     h = harness();
     const client = await connect(h.control);

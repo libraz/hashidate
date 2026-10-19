@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { CommandRequest, QueueResponse, TurnRequest } from '@/protocol';
+import { ControlError, type QueueOutcome } from '@/control/client';
+import type { CommandRequest, TurnRequest } from '@/protocol';
 import type { LoadedScript } from '@/script';
 import { runScript, type ScriptControl, setupOutcome } from '@/script/run';
 
@@ -12,10 +13,11 @@ const loaded = (setup?: LoadedScript['script']['setup']): LoadedScript => ({
   },
 });
 
-const queue: QueueResponse = { queue: [], viewers: 1 };
+const queue: QueueOutcome = { queue: [], viewers: 1 };
 
 function control(
-  setupResponse: unknown = { ok: true, viewers: 1, ids: ['setup'] },
+  setupResponse: unknown = { ok: true, viewers: 1, ids: ['setup'], fates: ['delivered'] },
+  added: QueueOutcome = queue,
 ): ScriptControl & {
   calls: string[];
   clear: ReturnType<typeof vi.fn>;
@@ -28,14 +30,13 @@ function control(
     return { queue: [], viewers: 1 };
   });
   const commandCall = vi.fn(async (command: CommandRequest) => {
-    // The hold is a command too, and is always stated. Recorded separately so
-    // the order the two halves go out in stays legible.
-    calls.push('cmd' in command && command.cmd === 'pause' ? `hold ${command.on}` : 'setup');
+    // Setup and the hold travel as one batch, the hold last.
+    calls.push('batch' in command ? 'batch' : 'single');
     return setupResponse;
   });
   const queueAddCall = vi.fn(async (_turns: TurnRequest[], _options?: { source?: string }) => {
     calls.push('queue');
-    return queue;
+    return added;
   });
   return {
     queueClear: clear,
@@ -49,20 +50,25 @@ function control(
 }
 
 describe('runScript', () => {
-  it('runs replacement, setup, and queue in that order', async () => {
+  it('sends setup and the hold as one batch, then clears, then queues', async () => {
     const client = control();
     const script = loaded([{ cmd: 'camera', frame: 'bust' }]);
 
     const result = await runScript(client, script, { replace: true });
 
-    expect(client.calls).toEqual(['clear', 'setup', 'hold false', 'queue']);
+    expect(client.calls).toEqual(['batch', 'clear', 'queue']);
     expect(client.clear).toHaveBeenCalledOnce();
-    expect(client.commandCall).toHaveBeenCalledWith({ batch: script.script.setup });
+    expect(client.commandCall).toHaveBeenCalledWith({
+      batch: [...(script.script.setup ?? []), { cmd: 'pause', on: false }],
+    });
     expect(client.queueAddCall).toHaveBeenCalledWith(script.script.lines, { source: 'opening' });
-    expect(result).toEqual({ setup: { ok: true, viewers: 1, ids: ['setup'] }, queue });
+    expect(result).toEqual({
+      setup: { ok: true, viewers: 1, ids: ['setup'], fates: ['delivered'] },
+      queue,
+    });
   });
 
-  it('does not clear or send an empty setup when not replacing', async () => {
+  it('does not clear when not replacing, and reports no setup', async () => {
     const client = control();
 
     const result = await runScript(client, loaded([]));
@@ -70,30 +76,54 @@ describe('runScript', () => {
     // The hold is the one command a run always sends. It is a standing setting,
     // so a run that said nothing about it would load its lines into a queue
     // held for an earlier take and never start.
-    expect(client.calls).toEqual(['hold false', 'queue']);
+    expect(client.commandCall).toHaveBeenCalledWith({ batch: [{ cmd: 'pause', on: false }] });
+    expect(client.calls).toEqual(['batch', 'queue']);
     expect(client.clear).not.toHaveBeenCalled();
     expect(result.setup).toBeUndefined();
   });
 
-  it('keeps a refused setup response while still queueing the lines', async () => {
-    const refused = { ok: false, viewers: 0, ids: [], error: 'no viewer connected' };
+  it('keeps a viewer-less setup response while still queueing the lines', async () => {
+    const refused = {
+      ok: false,
+      viewers: 0,
+      ids: [],
+      fates: ['lost', 'retained'],
+      error: 'no viewer connected',
+    };
     const client = control(refused);
     const script = loaded([{ cmd: 'camera', frame: 'bust' }]);
 
     const result = await runScript(client, script);
 
     expect(result.setup).toBe(refused);
-    expect(result.setup).toMatchObject({ ok: false });
     expect(client.queueAddCall).toHaveBeenCalledOnce();
-    expect(client.calls).toEqual(['setup', 'hold false', 'queue']);
   });
 
-  it('holds the queue when asked, before the lines land in it', async () => {
-    // There is no arrangement of these in which a renderer holds a full queue
-    // with nothing yet telling it whether to start on it.
+  it('holds the queue when asked, in the same batch', async () => {
     const client = control();
     await runScript(client, loaded(), { hold: true });
-    expect(client.calls).toEqual(['hold true', 'queue']);
+    expect(client.commandCall).toHaveBeenCalledWith({ batch: [{ cmd: 'pause', on: true }] });
+  });
+
+  it('throws the server reason on a refusal, before clearing or queueing anything', async () => {
+    const client = control({
+      error: 'speech sidecar is loading its model; playback cannot start until it is ready',
+    });
+
+    await expect(
+      runScript(client, loaded([{ cmd: 'camera', frame: 'bust' }]), { replace: true }),
+    ).rejects.toThrow(ControlError);
+    await expect(runScript(client, loaded(), { replace: true })).rejects.toThrow(
+      /loading its model/,
+    );
+    expect(client.clear).not.toHaveBeenCalled();
+    expect(client.queueAddCall).not.toHaveBeenCalled();
+  });
+
+  it('throws when the queue add is refused', async () => {
+    const client = control(undefined, { queue: [], viewers: 1, error: 'sidecar not answering' });
+
+    await expect(runScript(client, loaded())).rejects.toThrow('sidecar not answering');
   });
 });
 
