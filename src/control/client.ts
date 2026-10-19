@@ -1,5 +1,7 @@
 import { type ZodType, z } from 'zod';
 import {
+  type AvatarsResponse,
+  avatarsResponseSchema,
   type BgmResponse,
   type BgmTrack,
   bgmResponseSchema,
@@ -238,6 +240,14 @@ export class ControlClient {
    */
   async motions(): Promise<MotionsResponse> {
     return expect(motionsResponseSchema, await this.request('/motions'));
+  }
+
+  /**
+   * The avatars the control server can see, and the files that were meant to be
+   * some. A directory listing like `motions`, and for the same reason.
+   */
+  async avatars(): Promise<AvatarsResponse> {
+    return expect(avatarsResponseSchema, await this.request('/avatars'));
   }
 
   /**

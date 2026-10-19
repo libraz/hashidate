@@ -3,7 +3,7 @@ import type { ControlClient } from '@/cli/client';
 import { point } from '@/cli/commands/body';
 import { vocab } from '@/cli/commands/inspect';
 import { tune } from '@/cli/commands/renderer';
-import { play } from '@/cli/commands/show';
+import { avatars, play } from '@/cli/commands/show';
 import { parseVoiceArgs, voice } from '@/cli/commands/voice';
 import { show } from '@/cli/output';
 import type { QueueResponse } from '@/protocol';
@@ -244,5 +244,35 @@ describe('ctl vocab', () => {
     expect(text).toContain('backdrops: (none)');
     expect(text).toContain('voice presets: (none)');
     expect(text).toContain('wear presets: (none)');
+  });
+});
+
+describe('ctl avatars', () => {
+  it('prints the accepted avatars and the rejected files beside them', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: string) => {
+      lines.push(line);
+    });
+    const fake = {
+      avatars: vi.fn(async () => ({
+        avatars: [{ id: 'one', label: { en: 'One', ja: '一' }, url: '/models/one.glb' }],
+        errors: [{ id: 'two', error: 'not an object' }],
+      })),
+    };
+
+    await avatars(fake as unknown as ControlClient, []);
+
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^\s+one\s+One\s+\/models\/one\.glb$/);
+    expect(lines[1]).toMatch(/^\s+two\s+not an object$/);
+  });
+
+  it('says so when there is nothing to list', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const fake = { avatars: vi.fn(async () => ({ avatars: [], errors: [] })) };
+
+    await avatars(fake as unknown as ControlClient, []);
+
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('no avatars'));
   });
 });

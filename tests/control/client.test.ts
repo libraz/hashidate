@@ -95,3 +95,22 @@ describe('command wait timeout', () => {
     expect(timeout).toBe(expected);
   });
 });
+
+describe('ControlClient avatars', () => {
+  it('requests /avatars and parses the listing', async () => {
+    const paths: string[] = [];
+    server = createServer((req, res) => {
+      paths.push(req.url ?? '');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ avatars: [], errors: [{ id: 'broken', error: 'not an object' }] }));
+    });
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('server did not bind');
+
+    const result = await new ControlClient(`http://127.0.0.1:${address.port}/api`).avatars();
+
+    expect(paths).toEqual(['/api/avatars']);
+    expect(result).toEqual({ avatars: [], errors: [{ id: 'broken', error: 'not an object' }] });
+  });
+});

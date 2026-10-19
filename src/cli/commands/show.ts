@@ -107,3 +107,20 @@ export const motions: Handler = async (client) => {
   // not parse has to be visible, or it reads as a filename typed wrong.
   for (const { id, error } of errors) console.log(`  ${id.padEnd(16)} ${error}`);
 };
+
+/**
+ * The avatars the server can see. A directory, like `motions`: only the process
+ * with a filesystem can say which files are there and which of them were rejected.
+ */
+export const avatars: Handler = async (client) => {
+  const { avatars: found, errors } = await client.avatars();
+  if (found.length === 0 && errors.length === 0) {
+    console.log('no avatars (put a JSON file in avatars/)');
+    return;
+  }
+  for (const item of found) {
+    console.log(`  ${item.id.padEnd(16)} ${localized(item.label).padEnd(16)} ${item.url}`);
+  }
+  // Beside the ones that worked rather than instead of them, as with motions.
+  for (const { id, error } of errors) console.log(`  ${id.padEnd(16)} ${error}`);
+};

@@ -5,7 +5,7 @@ import { gesture, hop, idle, look, perform, point } from './commands/body';
 import { emotion, expression, overlay } from './commands/face';
 import { state, vocab, watch } from './commands/inspect';
 import { avatar, debug, tune, wear } from './commands/renderer';
-import { motions, play } from './commands/show';
+import { avatars, motions, play } from './commands/show';
 import { backdrop, camera, deck, decks, place, room, slide } from './commands/staging';
 import { bare, hold, resume, say } from './commands/turn';
 import { voice } from './commands/voice';
@@ -72,6 +72,7 @@ const HANDLERS: Record<string, Handler> = {
   bgm,
   play,
   motions,
+  avatars,
   wear,
   voice,
   avatar,
@@ -103,7 +104,8 @@ function usage(): never {
       '  yarn ctl point 40 25 --extent 0.9',
       '  yarn ctl idle on',
       '  yarn ctl debug        # overlay the measurements on every viewer (off clears them)',
-      '  yarn ctl avatar manuka',
+      '  yarn ctl avatars          # list the avatars the server found, and the files it rejected',
+      '  yarn ctl avatar <id>',
       '  yarn ctl tune sway.stiffness=2 idle.breathDepth=1.2',
       '  yarn ctl voice bright-idol # choose a voice preset',
       '  yarn ctl voice --bypass   # play the synthesiser output unprocessed',
