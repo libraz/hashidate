@@ -66,7 +66,17 @@ describe('Scripts.list', () => {
     // The lines themselves are not on the roster: a run of turns reaches the
     // runtime by being queued, never by being sent to a picker.
     expect(found[0]).not.toHaveProperty('lines.0');
-    expect(Object.keys(found[0]).sort()).toEqual(['at', 'bytes', 'id', 'lines', 'setup', 'title']);
+    expect(Object.keys(found[0]).sort()).toEqual([
+      'at',
+      'bytes',
+      'id',
+      'lines',
+      'pages',
+      'setup',
+      'title',
+    ]);
+    // Where a run can start part-way: the deck setup opens is up from line one.
+    expect(found[0]?.pages).toEqual([{ line: 0, deck: 'intro', page: 1 }]);
   });
 
   it('takes .yml and .json as well as .yaml, since JSON parses as YAML', async () => {

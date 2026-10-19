@@ -1,7 +1,7 @@
 import { basename, extname, resolve } from 'node:path';
 import { readSafeDirectory, readSafePath, resolveSafeFile } from '../files';
 import type { ScriptSummary, ScriptsResponse } from '../protocol';
-import { type LoadedScript, parseScript, ScriptError } from '../script';
+import { type LoadedScript, pageStarts, parseScript, ScriptError } from '../script';
 
 /**
  * The scripts on disk, as the control server finds them.
@@ -174,6 +174,7 @@ export class Scripts {
           setup: script.setup?.length ?? 0,
           bytes: info.size,
           at: info.mtimeMs / 1000,
+          pages: pageStarts(script),
         },
       };
     } catch (error) {

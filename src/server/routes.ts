@@ -22,7 +22,7 @@ import {
   type ScriptsResponse,
   scriptRunSchema,
 } from '../protocol';
-import { ScriptError } from '../script';
+import { linesFrom, ScriptError } from '../script';
 import type { Avatars } from './avatars';
 import { type BgmLibrary, listBgm } from './bgm';
 import type { Decks } from './decks';
@@ -486,17 +486,22 @@ async function runScript(
   }
   if (loaded === null) return json(res, { error: 'no such script' }, 404);
 
+  const { from } = parsed.data;
+  if (from !== undefined && from >= loaded.script.lines.length) {
+    return json(res, { error: `the script has ${loaded.script.lines.length} lines` }, 400);
+  }
+  const lines = from === undefined ? loaded.script.lines : linesFrom(loaded.script, from);
   const setup = loaded.script.setup ?? [];
   const paused = parsed.data.pause ?? true;
   const refused = hub.refuseStart([
     ...setup,
     { cmd: 'pause', on: paused },
-    { cmd: 'queue', turns: loaded.script.lines },
+    { cmd: 'queue', turns: lines },
   ]);
   if (refused !== null) return json(res, { error: refused }, 409);
 
   if (parsed.data.replace) hub.queue.clear();
-  hub.queue.add(loaded.script.lines, { source: loaded.id });
+  hub.queue.add(lines, { source: loaded.id });
   // One frame, in the order `Hub.subscribe` uses and for the same reason: a
   // script whose setup swaps the avatar makes the renderer hold everything
   // behind the load, and a queue sent as a second frame would arrive after that

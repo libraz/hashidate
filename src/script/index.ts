@@ -1,6 +1,7 @@
 import { extname, isAbsolute, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
+import { parseLine } from '../engine/cues';
 import { readExactFile, readSafeFile } from '../files';
 import { type Command, commandSchema, type TurnRequest, turnSchema } from '../protocol';
 
@@ -226,4 +227,145 @@ function axis(value: unknown): string {
 function describe(line: TurnRequest): string {
   if (line.text === undefined || line.text === '') return '(no line)';
   return line.text;
+}
+
+type Stage = NonNullable<TurnRequest['stage']>;
+
+/** Where a page of a document starts being talked about. See `pageStarts`. */
+export interface ScriptPage {
+  /** The line, 0 based, during which the page goes up. */
+  line: number;
+  deck: string;
+  page: number;
+}
+
+/**
+ * The staging a script has reached, and which of it its lines set.
+ *
+ * Setup is replayed by every run, so only what the lines set is worth carrying
+ * into a run that starts part-way: a document setup opened, named again, would
+ * be opened again, and the layer is empty while it loads.
+ */
+interface Reached {
+  deck: string | null;
+  page: number;
+  /** The axes the lines have set, folded in order. `slide` is kept in `page`. */
+  lines: Stage;
+}
+
+/** Two halves of a layout folded field by field, as `Standing` folds `place`. */
+function foldPlace(base: Stage['place'], next: Stage['place']): Stage['place'] {
+  if (next === undefined) return base;
+  return {
+    ...base,
+    ...(next.avatar === undefined ? {} : { avatar: { ...base?.avatar, ...next.avatar } }),
+    ...(next.slide === undefined ? {} : { slide: { ...base?.slide, ...next.slide } }),
+  };
+}
+
+function afterSetup(setup: readonly Command[] | undefined): Reached {
+  const at: Reached = { deck: null, page: 1, lines: {} };
+  for (const command of setup ?? []) {
+    if (command.cmd === 'deck') {
+      at.deck = command.id ?? null;
+      at.page = command.page ?? 1;
+    } else if (command.cmd === 'slide' && command.page !== undefined) {
+      at.page = command.page;
+    }
+  }
+  return at;
+}
+
+function applyStage(at: Reached, stage: Stage | undefined): void {
+  if (stage === undefined) return;
+  const { slide, place, ...axes } = stage;
+  Object.assign(at.lines, axes);
+  at.lines.place = foldPlace(at.lines.place, place);
+  if (at.lines.place === undefined) delete at.lines.place;
+  // A document named on a line opens at the page given, or at its first.
+  if (stage.deck !== undefined) {
+    at.deck = stage.deck;
+    at.page = slide ?? 1;
+  } else if (slide !== undefined) {
+    at.page = slide;
+  }
+}
+
+/**
+ * Walk a script line by line. `visit` is given each line with the staging it
+ * starts on and the staging it reaches, and again for every page a cue in it
+ * turns to; returning true stops the walk.
+ */
+function walk(
+  script: Script,
+  visit: (line: number, before: Readonly<Reached>, now: Readonly<Reached>) => boolean,
+): void {
+  const at = afterSetup(script.setup);
+  for (const [index, line] of script.lines.entries()) {
+    const before: Reached = { ...at, lines: { ...at.lines } };
+    applyStage(at, line.stage);
+    if (visit(index, before, at)) return;
+    // A cue turns the page or moves the camera part-way through the line, and
+    // what it leaves is what the next line starts on.
+    for (const cue of parseLine(line.text ?? '').cues) {
+      if (cue.action?.kind === 'slide') {
+        at.page = cue.action.page;
+        if (visit(index, before, at)) return;
+      } else if (cue.action?.kind === 'camera') {
+        at.lines.camera = cue.action.frame;
+      }
+    }
+  }
+}
+
+/**
+ * Every place a page of a document goes up, in the order they are reached.
+ *
+ * A page a line names in its `stage` starts at that line; one an inline cue
+ * turns to starts at the line the cue is in. Lines with no document up are not
+ * a page of anything and are left out.
+ */
+export function pageStarts(script: Script): ScriptPage[] {
+  const found: ScriptPage[] = [];
+  let shown: { deck: string | null; page: number } = { deck: null, page: 0 };
+  walk(script, (line, _before, now) => {
+    if (now.deck !== null && (now.deck !== shown.deck || now.page !== shown.page)) {
+      found.push({ line, deck: now.deck, page: now.page });
+    }
+    shown = { deck: now.deck, page: now.page };
+    return false;
+  });
+  return found;
+}
+
+/**
+ * The lines from `from` to the end, staged as they would be had the run begun
+ * at the top.
+ *
+ * What the earlier lines set is folded into the first one, under its own
+ * stage, and the page it starts on is stated outright. Moods are not carried:
+ * they are a line's performance rather than the shot, and a line names its own.
+ */
+export function linesFrom(script: Script, from: number): TurnRequest[] {
+  const [first, ...after] = script.lines.slice(from);
+  if (first === undefined) return [];
+  let reached: Reached | null = null;
+  walk(script, (line, before) => {
+    if (line !== from) return false;
+    reached = { ...before, lines: { ...before.lines } };
+    return true;
+  });
+  const start = reached as Reached | null;
+  if (start === null) return [first, ...after];
+
+  const own = first.stage ?? {};
+  const stage: Stage = { ...start.lines };
+  // The page is stated unless this line opens a document of its own, which
+  // starts at the page it names or at its first.
+  if (start.deck !== null && own.deck === undefined) stage.slide = start.page;
+  const place = foldPlace(stage.place, own.place);
+  const { place: _ownPlace, ...ownAxes } = own;
+  Object.assign(stage, ownAxes);
+  if (place !== undefined) stage.place = place;
+  return [{ ...first, stage }, ...after];
 }

@@ -32,6 +32,13 @@ export const scriptSummarySchema = z.object({
   bytes: z.number(),
   /** Epoch seconds of the file's last modification, as a document's is. */
   at: z.number(),
+  /**
+   * Where each page of a document goes up, so a run can be started from one.
+   * See `pageStarts`. Optional because an adopted older server does not say.
+   */
+  pages: z
+    .array(z.object({ line: z.number().int().min(0), deck: z.string(), page: z.number() }))
+    .optional(),
 });
 
 export type ScriptSummary = z.infer<typeof scriptSummarySchema>;
@@ -76,6 +83,11 @@ export const scriptRunSchema = z.object({
   replace: z.boolean().optional(),
   /** Hold the queue rather than letting it start. Absent holds. */
   pause: z.boolean().optional(),
+  /**
+   * Start at this line, 0 based, staged as if the run had begun at the top —
+   * see `linesFrom`. A line from `pages` is what a caller passes.
+   */
+  from: z.number().int().min(0).optional(),
 });
 
 export type ScriptRun = z.infer<typeof scriptRunSchema>;
