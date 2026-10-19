@@ -27,7 +27,15 @@ from unittest.mock import patch
 def load_boundary_functions() -> types.SimpleNamespace:
     source_path = Path(__file__).with_name("server.py")
     tree = ast.parse(source_path.read_text())
-    wanted = {"_socket_parent", "clear_stale", "listen", "endpoint", "argument_parser"}
+    wanted = {
+        "_socket_parent",
+        "clear_stale",
+        "listen",
+        "endpoint",
+        "argument_parser",
+        "_raise_terminated",
+        "_watch_parent",
+    }
     functions = [
         node
         for node in tree.body
@@ -43,12 +51,20 @@ def load_boundary_functions() -> types.SimpleNamespace:
         "socket": socket,
         "stat": stat,
         "SystemExit": SystemExit,
+        "time": time,
+        "PARENT_POLL_SECONDS": 2.0,
         "SOCKET_DIR": Path("/default/.run"),
         "SOCKET_NAME": "speech.sock",
         "SOCKET_PATH_MAX": 100,
     }
-    module = ast.Module(body=functions, type_ignores=[])
+    classes = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "Terminated"
+    ]
+    module = ast.Module(body=classes + functions, type_ignores=[])
     exec(compile(module, str(source_path), "exec"), namespace)
+    wanted |= {"Terminated"}
     return types.SimpleNamespace(**{name: namespace[name] for name in wanted})
 
 
@@ -317,6 +333,28 @@ class StartupTests(unittest.TestCase):
                 ns["_load_model"]()
             self.assertEqual(ns["stopped"], [True])
             self.assertFalse(ns["health"]()["ready"])
+
+
+class ShutdownTests(unittest.TestCase):
+    def test_the_sigterm_handler_raises_the_dedicated_exception(self):
+        with self.assertRaises(BOUNDARY.Terminated):
+            BOUNDARY._raise_terminated(15, None)
+
+    def test_the_parent_watch_stops_serving_once_the_parent_is_gone(self):
+        stopped = []
+        gone = ProcessLookupError()
+        with patch("os.kill", side_effect=[None, gone]) as kill:
+            BOUNDARY._watch_parent(4242, lambda: stopped.append(True), 0)
+        self.assertEqual(kill.call_count, 2)
+        kill.assert_called_with(4242, 0)
+        self.assertEqual(stopped, [True])
+
+    def test_a_parent_that_cannot_be_signalled_still_counts_as_alive(self):
+        stopped = []
+        outcomes = [PermissionError(), ProcessLookupError()]
+        with patch("os.kill", side_effect=outcomes):
+            BOUNDARY._watch_parent(4242, lambda: stopped.append(True), 0)
+        self.assertEqual(stopped, [True])
 
 
 class SpeechCancellationTests(unittest.TestCase):

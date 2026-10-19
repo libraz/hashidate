@@ -44,6 +44,7 @@ import { serveStatic } from './static';
 const BIND = '127.0.0.1'; // do not change; see the module docstring
 const DEFAULT_PORT = 8765;
 const DEFAULT_ROOT = 'dist';
+const SHELL_POLL_MS = 2_000;
 
 /**
  * Where the documents are, and the URL they are reached at.
@@ -177,7 +178,7 @@ function main(): void {
   const bgm = new BgmLibrary(bgmRoot);
   const bgmCoordinator = new BgmCoordinator();
   const recordings = new Recordings(recordingsRoot);
-  const speech = new SpeechWatch();
+  const speech = new SpeechWatch({ expected: process.env.HASHIDATE_SPEECH_EXPECTED === '1' });
   // The roots ride on the snapshot so that a launcher which finds this server
   // already running can tell whether it is the one for its own checkout. See
   // `serverRootsSchema`.
@@ -246,11 +247,28 @@ function main(): void {
   // A take is a file with a header that is only complete once it is closed, so
   // a server killed mid-recording leaves one that will not open. This is the
   // only thing here worth interrupting a shutdown for.
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    process.once(signal, () => {
-      hub.dispose();
-      void hub.closeRecording().finally(() => process.exit(0));
-    });
+  const shutDown = () => {
+    hub.dispose();
+    void hub.closeRecording().finally(() => process.exit(0));
+  };
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, shutDown);
+
+  // A shell that died without stopping its children would leave this holding
+  // the port, so one that named itself is watched. Without the variable, this
+  // was started by hand and nothing is waited for.
+  const shellPid = Number.parseInt(process.env.HASHIDATE_SHELL_PID ?? '', 10);
+  if (Number.isInteger(shellPid) && shellPid > 0) {
+    const watch = setInterval(() => {
+      try {
+        process.kill(shellPid, 0);
+      } catch (error) {
+        // EPERM means it is there and not ours to signal.
+        if ((error as NodeJS.ErrnoException).code === 'EPERM') return;
+        clearInterval(watch);
+        shutDown();
+      }
+    }, SHELL_POLL_MS);
+    watch.unref();
   }
 
   server.listen(port, BIND, () => {

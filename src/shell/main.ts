@@ -512,7 +512,9 @@ app
     }
     app.dock?.setIcon(appIcon);
     installPermissionPolicy();
-    await control.start();
+    // Decided before the server starts, so that it reports a voice as loading
+    // rather than absent from its first answer.
+    await control.start({ speechExpected: await tts.expected() });
     // Model loading is intentionally not on the critical path. The viewer and
     // control API work without a voice, and SpeechWatch reports loading/absence.
     void tts.start();

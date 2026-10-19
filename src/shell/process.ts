@@ -9,6 +9,9 @@ const DEFAULT_READY_TIMEOUT_MS = 20_000;
 const DEFAULT_PROBE_TIMEOUT_MS = 1_000;
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_STOP_TIMEOUT_MS = 4_000;
+const DEFAULT_RESTART_DELAY_MS = 2_000;
+const RESTART_WINDOW_MS = 5 * 60_000;
+const MAX_EXITS_IN_WINDOW = 3;
 
 type FetchLike = typeof fetch;
 type SpawnLike = (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
@@ -37,6 +40,8 @@ export interface TtsProcessOptions {
   spawn?: SpawnLike;
   probeTimeoutMs?: number;
   stopTimeoutMs?: number;
+  /** How long after an unrequested exit the sidecar is started again. */
+  restartDelayMs?: number;
 }
 
 /**
@@ -185,7 +190,9 @@ export async function waitForControlAPI(
  */
 function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const { NODE_OPTIONS: _dropped, ...rest } = process.env;
-  return { ...rest, ...extra };
+  // Told to every child so that it stops when this process dies without
+  // getting to stop it.
+  return { ...rest, HASHIDATE_SHELL_PID: String(process.pid), ...extra };
 }
 
 /**
@@ -236,6 +243,8 @@ export class ControlProcess {
   private owned = false;
   private exited = false;
   private starting: Promise<void> | null = null;
+  /** Whether a voice is on its way, which the server reports as loading rather than absent. */
+  private speechExpected = false;
   /**
    * Set by `stop`, and never unset.
    *
@@ -270,9 +279,10 @@ export class ControlProcess {
     return this.child !== null && !this.exited;
   }
 
-  async start(): Promise<void> {
+  async start({ speechExpected = false }: { speechExpected?: boolean } = {}): Promise<void> {
     if (this.starting) return this.starting;
     if (this.stopped || this.running) return;
+    this.speechExpected = speechExpected;
     this.starting = this.startOnce();
     try {
       await this.starting;
@@ -335,7 +345,10 @@ export class ControlProcess {
         // Electron's executable can run as its bundled Node when this is set.
         // It keeps the checkout runnable without assuming a second system Node
         // path, while remaining harmless if nodePath is `node`.
-        env: childEnv({ ELECTRON_RUN_AS_NODE: '1' }),
+        env: childEnv({
+          ELECTRON_RUN_AS_NODE: '1',
+          ...(this.speechExpected ? { HASHIDATE_SPEECH_EXPECTED: '1' } : {}),
+        }),
         stdio: log.stdio,
         windowsHide: true,
       });
@@ -456,12 +469,16 @@ export class TtsProcess {
   private readonly spawn: SpawnLike;
   private readonly probeTimeoutMs: number;
   private readonly stopTimeoutMs: number;
+  private readonly restartDelayMs: number;
   private child: ChildProcess | null = null;
   private owned = false;
   private exited = false;
   private starting: Promise<void> | null = null;
   /** See `ControlProcess.stopped`. This one is started without being waited on. */
   private stopped = false;
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
+  /** When the children it started exited without being asked to. */
+  private exits: number[] = [];
 
   constructor(options: TtsProcessOptions) {
     this.paths = options.paths;
@@ -470,6 +487,7 @@ export class TtsProcess {
     this.spawn = options.spawn ?? spawnProcess;
     this.probeTimeoutMs = options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
     this.stopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
+    this.restartDelayMs = options.restartDelayMs ?? DEFAULT_RESTART_DELAY_MS;
   }
 
   get available(): boolean {
@@ -492,12 +510,20 @@ export class TtsProcess {
     }
   }
 
+  /**
+   * Whether `start` would launch the bundled sidecar, were nothing answering.
+   *
+   * A port endpoint is an external synthesiser supplied by the operator.
+   * The bundled cloned voice is UNIX-only and must never be started with a
+   * TCP listener just because the proxy points at one.
+   */
+  async expected(): Promise<boolean> {
+    if (this.endpoint.kind === 'port') return false;
+    return executable(this.paths.ttsPython);
+  }
+
   private async startOnce(): Promise<void> {
-    // A port endpoint is an external synthesiser supplied by the operator.
-    // The bundled cloned voice is UNIX-only and must never be started with a
-    // TCP listener just because the proxy points at one.
-    if (this.endpoint.kind === 'port') return;
-    if (!(await executable(this.paths.ttsPython))) return;
+    if (!(await this.expected())) return;
     if (await ttsAPIReady(this.endpoint, this.probeTimeoutMs)) return;
     // Model loading takes the better part of a minute, so this one is started
     // and never awaited — which leaves a longer gap than the control server's
@@ -529,6 +555,7 @@ export class TtsProcess {
     this.exited = false;
     child.once('exit', () => {
       this.exited = true;
+      if (!this.stopped) this.scheduleRestart();
     });
     child.once('error', (error) => {
       console.error(`speech sidecar child failed: ${reason(error)}`);
@@ -538,8 +565,30 @@ export class TtsProcess {
     if (this.stopped) await this.stop();
   }
 
+  /** A crash is recovered from; a loop of them is reported and left alone. */
+  private scheduleRestart(): void {
+    const now = Date.now();
+    this.exits = [...this.exits.filter((at) => now - at < RESTART_WINDOW_MS), now];
+    if (this.exits.length >= MAX_EXITS_IN_WINDOW) {
+      console.error(
+        `speech sidecar exited ${this.exits.length} times within ${RESTART_WINDOW_MS / 60_000} minutes; not restarting it`,
+      );
+      return;
+    }
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+      this.start().catch((error: unknown) => {
+        console.error(`could not restart speech sidecar: ${reason(error)}`);
+      });
+    }, this.restartDelayMs);
+  }
+
   async stop(): Promise<void> {
     this.stopped = true;
+    if (this.restartTimer !== null) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
     const child = this.child;
     if (!this.owned || child === null) return;
     this.owned = false;

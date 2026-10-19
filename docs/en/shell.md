@@ -41,6 +41,13 @@ That check exists because two checkouts answer `/api/state` identically, so adop
 
 A second `yarn shell` does not start a second application. It raises the windows of the one already running, stage first and panel last, so the panel is the one with focus.
 
+## Closing and crashing
+
+- **Closing the windows leaves the shell running** on macOS, as it does for any application there; the control server and the sidecar stay up and the dock icon reopens both windows. `⌘Q` stops everything the shell started.
+- **A child stops if the shell dies.** Both are told the shell's process id and check every two seconds that it is still there, so a shell that was killed outright does not leave a server holding the port. A server or sidecar started by hand has no such id and is left alone.
+- **A sidecar the shell started is restarted if it crashes**, two seconds later. If it has exited three times within five minutes the shell gives up and says why in the console. A restart looks for an answering sidecar first, like the first start does.
+- **A sidecar the shell starts reads as `loading` until it answers**, rather than `absent`, so a line cannot be set going in the gap before the model begins to load. If nothing has answered after three minutes it reads `down`.
+
 ## The menu
 
 | Menu | Item | What it does |

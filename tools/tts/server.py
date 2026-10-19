@@ -109,6 +109,7 @@ _gpu = threading.Lock()
 # the lock, otherwise the shielded future could be collected early.
 _gpu_workers: set[asyncio.Future] = set()
 GPU_POLL_SECONDS = 0.02
+PARENT_POLL_SECONDS = 2.0
 
 _runtime: InferenceRuntime | None = None
 _latents: list[str] = []
@@ -133,6 +134,28 @@ class SpeakRequest(BaseModel):
 def _stop_serving() -> None:
     """Ask this process to shut down the way a terminal interrupt would."""
     os.kill(os.getpid(), signal.SIGTERM)
+
+
+class Terminated(Exception):
+    """Raised by the SIGTERM handler so that `main` unwinds through its `finally`."""
+
+
+def _raise_terminated(signum, frame) -> None:
+    raise Terminated()
+
+
+def _watch_parent(pid: int, stop, interval: float = PARENT_POLL_SECONDS) -> None:
+    """Call `stop` once the process `pid` is gone. Runs on its own thread."""
+    while True:
+        time.sleep(interval)
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            stop()
+            return
+        except OSError:
+            # Alive but not ours to signal.
+            pass
 
 
 def _load_model() -> None:
@@ -495,8 +518,19 @@ def main() -> None:
 
     sock = listen(where)
     print(f"speech listening at {where}", flush=True)
+    # uvicorn swaps its own handler in while serving and re-raises the signal it
+    # caught once it has shut down, so this is what that re-raise reaches.
+    signal.signal(signal.SIGTERM, _raise_terminated)
+    # Only a launcher that wants the sidecar gone with it sets this.
+    shell_pid = os.environ.get("HASHIDATE_SHELL_PID")
+    if shell_pid:
+        threading.Thread(
+            target=_watch_parent, args=(int(shell_pid), _stop_serving), daemon=True
+        ).start()
     try:
         uvicorn.run(app, fd=sock.fileno(), log_level="warning")
+    except Terminated:
+        pass
     finally:
         # uvicorn removes a socket it bound itself; this one it was handed, and
         # it works on a duplicate of the descriptor — so both ends are closed
