@@ -1203,9 +1203,7 @@ export class Body {
        * home is already in the solve, hand and all — see `ArmResolver.retreat`.
        */
       const back =
-        this._exiting && g
-          ? this._arm.retreat(cArm, side, this._exitU, this._rest, frameReady)
-          : null;
+        this._exiting && g ? this._arm.retreat(cArm, side, this._exitU, this._rest) : null;
       const travelling = this._arm.travelling(side);
 
       for (const slot of ARM_SLOTS) {
@@ -1281,7 +1279,7 @@ export class Body {
         palmWorld,
         palmW,
       );
-      this._arm.note(side, dirs.lowerArm, dirs.hand);
+      this._arm.note(side, dirs.upperArm, dirs.lowerArm, dirs.hand);
 
       const cf = g?.fingers?.[side];
       const cfSpread = g?.fingerSpread?.[side];

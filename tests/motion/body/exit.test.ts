@@ -57,4 +57,29 @@ describe('gesture exit', () => {
       expect(fold ?? 0).toBeGreaterThanOrEqual(heldFold * 0.75);
     },
   );
+
+  // Lowering a wave by swinging the wrist out past the side put the elbow
+  // behind the body with the folded forearm pointing outward.
+  it.each<Side>(['L', 'R'])(
+    'keeps the upper arm in front of the trunk on the way down (%s)',
+    (side) => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.5);
+      const h = harness();
+      frame(h);
+      const rest = links(h, side).upper;
+
+      h.body.playDef(GESTURES.wave, 'wave', side);
+      for (let i = 0; i < 60; i++) frame(h);
+      const held = links(h, side).upper;
+      const floor = Math.min(held.z, rest.z) - 0.05;
+
+      let lowest = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < 60 * 5; i++) {
+        frame(h);
+        lowest = Math.min(lowest, links(h, side).upper.z);
+      }
+      expect(links(h, side).upper.angleTo(rest)).toBeLessThan(0.05);
+      expect(lowest).toBeGreaterThanOrEqual(floor);
+    },
+  );
 });

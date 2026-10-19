@@ -91,19 +91,17 @@ export function mkReachScratch(): Record<Side, ArmSolution> {
   return { L: mk(), R: mk() };
 }
 
-/** Where one arm stood: wrist and elbow in world space, forearm and hand in character space. */
+/** Where one arm stood: its three link directions, in character space. */
 interface ArmStance {
   known: boolean;
-  wrist: THREE.Vector3;
-  elbow: THREE.Vector3;
+  upperArm: THREE.Vector3;
   lowerArm: THREE.Vector3;
   hand: THREE.Vector3;
 }
 
 const mkStance = (): ArmStance => ({
   known: false,
-  wrist: new THREE.Vector3(),
-  elbow: new THREE.Vector3(),
+  upperArm: new THREE.Vector3(),
   lowerArm: new THREE.Vector3(),
   hand: new THREE.Vector3(),
 });
@@ -146,15 +144,21 @@ export class ArmResolver {
   private readonly _seen: Record<Side, ArmStance> = { L: mkStance(), R: mkStance() };
   /** The same, frozen on the frame the current gesture's exit began. */
   private readonly _exitFrom: Record<Side, ArmStance> = { L: mkStance(), R: mkStance() };
-  /** The retreat's own solver output and held elbow angle, apart from any gesture slot's. */
-  private readonly _retreat = mkReachScratch();
+  /** The retreat's output, apart from any gesture slot's. */
   private readonly _retreatArm: Record<Side, ResolvedArm> = { L: {}, R: {} };
-  private readonly _restS = new THREE.Vector3();
-  private readonly _restU = new THREE.Vector3();
-  private readonly _restF = new THREE.Vector3();
-  private readonly _restWrist = new THREE.Vector3();
-  private readonly _restElbow = new THREE.Vector3();
-  private readonly _retreatPole = new THREE.Vector3();
+  private readonly _retreatDirs: Record<
+    Side,
+    Record<'upperArm' | 'lowerArm' | 'hand', THREE.Vector3>
+  > = {
+    L: { upperArm: new THREE.Vector3(), lowerArm: new THREE.Vector3(), hand: new THREE.Vector3() },
+    R: { upperArm: new THREE.Vector3(), lowerArm: new THREE.Vector3(), hand: new THREE.Vector3() },
+  };
+  private readonly _swing = new THREE.Quaternion();
+  private readonly _swingE = new THREE.Quaternion();
+  private readonly _swingR = new THREE.Quaternion();
+  private readonly _bendFrom = new THREE.Vector3();
+  private readonly _bendRest = new THREE.Vector3();
+  private readonly _bendX = new THREE.Vector3();
 
   constructor(
     private readonly p: Profile,
@@ -164,22 +168,14 @@ export class ArmResolver {
   ) {}
 
   /**
-   * Record where an arm has just been posed: the departure point for an exit
-   * that starts before the next frame does. Read off the bones after the aim,
-   * for the reason `mark` gives; the director resets the rig before the next
-   * update, so this is the last moment the pose can be read.
+   * Record where an arm has just been sent: the departure point for an exit
+   * that starts before the next frame does. The follower's output rather than
+   * the posed bones, so the first frame of the exit asks for exactly what the
+   * follower already holds and nothing steps.
    */
-  note(side: Side, lowerArm: Vec3Tuple, hand: Vec3Tuple): void {
+  note(side: Side, upperArm: Vec3Tuple, lowerArm: Vec3Tuple, hand: Vec3Tuple): void {
     const seen = this._seen[side];
-    const wrist = this.p.bones[`hand.${side}`];
-    const elbow = this.p.bones[`lowerArm.${side}`];
-    if (!(wrist && elbow)) {
-      seen.known = false;
-      return;
-    }
-    wrist.updateWorldMatrix(true, false);
-    wrist.getWorldPosition(seen.wrist);
-    elbow.getWorldPosition(seen.elbow);
+    seen.upperArm.fromArray(upperArm);
     seen.lowerArm.fromArray(lowerArm);
     seen.hand.fromArray(hand);
     seen.known = true;
@@ -191,65 +187,72 @@ export class ArmResolver {
       const from = this._exitFrom[side];
       const seen = this._seen[side];
       from.known = seen.known;
-      from.wrist.copy(seen.wrist);
-      from.elbow.copy(seen.elbow);
+      from.upperArm.copy(seen.upperArm);
       from.lowerArm.copy(seen.lowerArm);
       from.hand.copy(seen.hand);
-      this._retreat[side].poleA = undefined;
     }
   }
 
   /**
    * The arm on its way back to rest, `u` of the way through the exit, or null
-   * when this rig or this exit cannot be solved and the blend should take it.
+   * when no departure stance was noted and the blend should take it.
    *
-   * Solved rather than blended, for the same reason a reach's entrance is: four
-   * link directions eased back independently trace a path nobody chose, and a
-   * raised forearm eased toward a hanging one unfolds first and swings the
-   * straight arm in from the side. Here the wrist swings home about the
-   * shoulder while the elbow stays folded, and opens late — see
-   * `EXTEND_ONSET`. The elbow is drawn from where it was held to where it
-   * hangs, so the first frame reproduces the held arm and the last the resting
-   * one. The palm and twist are the pose's own and ride the exit envelope.
+   * Taken in joint terms rather than as four link directions eased back
+   * independently: those unfold a raised forearm first and swing the straight
+   * arm in from the side. Here the upper arm swings home, the elbow keeps its
+   * fold and opens late — see `EXTEND_ONSET` — and the direction it bends in
+   * turns about the upper arm to the resting one along the shorter way.
+   *
+   * Solving the wrist home along an arc about the shoulder instead swung the
+   * hand out past the side, and the elbow it needed there left the upper arm
+   * behind the body with the folded forearm pointing outward: a humerus turned
+   * out a quarter turn, which reads as an elbow bent the wrong way. Turning the
+   * bend directly brings the forearm down in front, as a lowered hand does.
    */
   retreat(
     resolved: ResolvedArm | null,
     side: Side,
     u: number,
     rest: Record<ArmSlot, THREE.Vector3>,
-    frameReady?: boolean,
   ): ResolvedArm | null {
     const from = this._exitFrom[side];
-    const upper = this.p.bones[`upperArm.${side}`];
-    const La = this.p.limb?.[`upper.${side}`];
-    const Lf = this.p.limb?.[`lower.${side}`];
-    if (!(from.known && upper && La && Lf)) return null;
-
-    // The resting wrist is recomputed every frame, so it follows a lean the
-    // way every anchor does.
-    upper.updateWorldMatrix(true, false);
-    const S = upper.getWorldPosition(this._restS);
-    const U = this.axes.toWorld(this._restU, rest.upperArm, side, undefined, frameReady);
-    const F = this.axes.toWorld(this._restF, rest.lowerArm, side, undefined, frameReady);
-    const elbow = this._restElbow.copy(S).addScaledVector(U, La);
-    const target = this._restWrist.copy(elbow).addScaledVector(F, Lf);
+    if (!from.known) return null;
 
     const e = minJerk(u);
-    this.anchors.travel(target, from.wrist, side, e, minJerk(onset(u, EXTEND_ONSET)));
+    const out = this._retreatDirs[side];
 
-    const out = this._retreat[side];
-    const pole = this._retreatPole.lerpVectors(from.elbow, elbow, e);
-    const poleA = this.rig.poleAngle(side, target, pole);
-    if (poleA !== null) out.poleA = poleA;
-    const solved =
-      out.poleA !== undefined
-        ? this.rig.solveReach(side, target, out.poleA, out)
-        : this.rig.solveReachNatural(side, target, null, out);
-    if (!solved) return null;
+    // The upper arm along the shortest swing, and both bends carried with it.
+    const swing = this._swing.setFromUnitVectors(from.upperArm, rest.upperArm);
+    const swingE = this._swingE.identity().slerp(swing, e);
+    const U = out.upperArm.copy(from.upperArm).applyQuaternion(swingE);
+    const bendFrom = this.bendOf(this._bendFrom, from.upperArm, from.lowerArm);
+    const bendRest = this.bendOf(this._bendRest, rest.upperArm, rest.lowerArm);
+    if (bendFrom && bendRest) {
+      bendFrom.applyQuaternion(swingE);
+      // From the resting upper arm to the current one: swingE · swing⁻¹.
+      bendRest.applyQuaternion(this._swingR.copy(swing).invert().premultiply(swingE));
+    }
+    const bend = bendFrom ?? bendRest;
+
+    const foldFrom = from.upperArm.angleTo(from.lowerArm);
+    const foldRest = rest.upperArm.angleTo(rest.lowerArm);
+    const fold = foldFrom + (foldRest - foldFrom) * minJerk(onset(u, EXTEND_ONSET));
+
+    if (bend) {
+      if (bendFrom && bendRest) {
+        const x = this._bendX.crossVectors(bendFrom, bendRest);
+        bend.applyAxisAngle(U, Math.atan2(x.dot(U), bendFrom.dot(bendRest)) * e);
+      }
+      bend.addScaledVector(U, -bend.dot(U)).normalize();
+      out.lowerArm.copy(U).multiplyScalar(Math.cos(fold)).addScaledVector(bend, Math.sin(fold));
+    } else {
+      out.lowerArm.copy(U);
+    }
+    out.lowerArm.normalize();
 
     const arm = this._retreatArm[side];
-    arm.upperArm = this.axes.toCharacter(out.upperArm, out.upperArm, side, frameReady);
-    arm.lowerArm = this.axes.toCharacter(out.lowerArm, out.lowerArm, side, frameReady);
+    arm.upperArm = U;
+    arm.lowerArm = out.lowerArm;
     // The wrist's bend relative to the forearm eases home; the hand never
     // points where the forearm no longer is.
     arm.hand = out.hand
@@ -258,11 +261,21 @@ export class ArmResolver {
       .multiplyScalar(1 - e)
       .addScaledVector(rest.hand, e)
       .addScaledVector(rest.lowerArm, -e)
-      .add(arm.lowerArm)
+      .add(out.lowerArm)
       .normalize();
     arm.palm = resolved?.palm;
     arm.twist = resolved?.twist;
     return arm;
+  }
+
+  /** The direction a forearm bends off its upper arm, or null for a straight arm. */
+  private bendOf(
+    out: THREE.Vector3,
+    upper: THREE.Vector3,
+    lower: THREE.Vector3,
+  ): THREE.Vector3 | null {
+    out.copy(lower).addScaledVector(upper, -lower.dot(upper));
+    return out.lengthSq() < 1e-8 ? null : out.normalize();
   }
 
   /** Whether a travelling reach is deciding where this side's hand goes. */
