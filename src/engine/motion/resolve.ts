@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import type { ArmSolution, Rig } from '../rig';
-import type { FingerName, Pose, Profile, Side } from '../types';
+import type { ArmSlot, FingerName, Pose, Profile, Side, Vec3Tuple } from '../types';
 import type { ReachAnchors } from './anchors';
 import type { CharacterFrame } from './frame';
 import { BASE_PALM } from './gestures';
+import { EXTEND_ONSET, minJerk, onset } from './timing';
 
 /**
  * What one arm of a gesture pose actually asks for, in the frame the blend
@@ -90,6 +91,23 @@ export function mkReachScratch(): Record<Side, ArmSolution> {
   return { L: mk(), R: mk() };
 }
 
+/** Where one arm stood: wrist and elbow in world space, forearm and hand in character space. */
+interface ArmStance {
+  known: boolean;
+  wrist: THREE.Vector3;
+  elbow: THREE.Vector3;
+  lowerArm: THREE.Vector3;
+  hand: THREE.Vector3;
+}
+
+const mkStance = (): ArmStance => ({
+  known: false,
+  wrist: new THREE.Vector3(),
+  elbow: new THREE.Vector3(),
+  lowerArm: new THREE.Vector3(),
+  hand: new THREE.Vector3(),
+});
+
 export class ArmResolver {
   /** Joint strain from the last fingertip solve, per arm. */
   readonly pointStrain: Record<Side, number> = { L: 0, R: 0 };
@@ -124,12 +142,128 @@ export class ArmResolver {
   private readonly _pointDir = new THREE.Vector3();
   private readonly _pointPalm = new THREE.Vector3();
 
+  /** Where each arm was last posed, refreshed by `note` every frame. */
+  private readonly _seen: Record<Side, ArmStance> = { L: mkStance(), R: mkStance() };
+  /** The same, frozen on the frame the current gesture's exit began. */
+  private readonly _exitFrom: Record<Side, ArmStance> = { L: mkStance(), R: mkStance() };
+  /** The retreat's own solver output and held elbow angle, apart from any gesture slot's. */
+  private readonly _retreat = mkReachScratch();
+  private readonly _retreatArm: Record<Side, ResolvedArm> = { L: {}, R: {} };
+  private readonly _restS = new THREE.Vector3();
+  private readonly _restU = new THREE.Vector3();
+  private readonly _restF = new THREE.Vector3();
+  private readonly _restWrist = new THREE.Vector3();
+  private readonly _restElbow = new THREE.Vector3();
+  private readonly _retreatPole = new THREE.Vector3();
+
   constructor(
     private readonly p: Profile,
     private readonly rig: Rig,
     private readonly axes: CharacterFrame,
     private readonly anchors: ReachAnchors,
   ) {}
+
+  /**
+   * Record where an arm has just been posed: the departure point for an exit
+   * that starts before the next frame does. Read off the bones after the aim,
+   * for the reason `mark` gives; the director resets the rig before the next
+   * update, so this is the last moment the pose can be read.
+   */
+  note(side: Side, lowerArm: Vec3Tuple, hand: Vec3Tuple): void {
+    const seen = this._seen[side];
+    const wrist = this.p.bones[`hand.${side}`];
+    const elbow = this.p.bones[`lowerArm.${side}`];
+    if (!(wrist && elbow)) {
+      seen.known = false;
+      return;
+    }
+    wrist.updateWorldMatrix(true, false);
+    wrist.getWorldPosition(seen.wrist);
+    elbow.getWorldPosition(seen.elbow);
+    seen.lowerArm.fromArray(lowerArm);
+    seen.hand.fromArray(hand);
+    seen.known = true;
+  }
+
+  /** Freeze the last noted stance of both arms as where the exit leaves from. */
+  beginExit(): void {
+    for (const side of ['L', 'R'] as const) {
+      const from = this._exitFrom[side];
+      const seen = this._seen[side];
+      from.known = seen.known;
+      from.wrist.copy(seen.wrist);
+      from.elbow.copy(seen.elbow);
+      from.lowerArm.copy(seen.lowerArm);
+      from.hand.copy(seen.hand);
+      this._retreat[side].poleA = undefined;
+    }
+  }
+
+  /**
+   * The arm on its way back to rest, `u` of the way through the exit, or null
+   * when this rig or this exit cannot be solved and the blend should take it.
+   *
+   * Solved rather than blended, for the same reason a reach's entrance is: four
+   * link directions eased back independently trace a path nobody chose, and a
+   * raised forearm eased toward a hanging one unfolds first and swings the
+   * straight arm in from the side. Here the wrist swings home about the
+   * shoulder while the elbow stays folded, and opens late — see
+   * `EXTEND_ONSET`. The elbow is drawn from where it was held to where it
+   * hangs, so the first frame reproduces the held arm and the last the resting
+   * one. The palm and twist are the pose's own and ride the exit envelope.
+   */
+  retreat(
+    resolved: ResolvedArm | null,
+    side: Side,
+    u: number,
+    rest: Record<ArmSlot, THREE.Vector3>,
+    frameReady?: boolean,
+  ): ResolvedArm | null {
+    const from = this._exitFrom[side];
+    const upper = this.p.bones[`upperArm.${side}`];
+    const La = this.p.limb?.[`upper.${side}`];
+    const Lf = this.p.limb?.[`lower.${side}`];
+    if (!(from.known && upper && La && Lf)) return null;
+
+    // The resting wrist is recomputed every frame, so it follows a lean the
+    // way every anchor does.
+    upper.updateWorldMatrix(true, false);
+    const S = upper.getWorldPosition(this._restS);
+    const U = this.axes.toWorld(this._restU, rest.upperArm, side, undefined, frameReady);
+    const F = this.axes.toWorld(this._restF, rest.lowerArm, side, undefined, frameReady);
+    const elbow = this._restElbow.copy(S).addScaledVector(U, La);
+    const target = this._restWrist.copy(elbow).addScaledVector(F, Lf);
+
+    const e = minJerk(u);
+    this.anchors.travel(target, from.wrist, side, e, minJerk(onset(u, EXTEND_ONSET)));
+
+    const out = this._retreat[side];
+    const pole = this._retreatPole.lerpVectors(from.elbow, elbow, e);
+    const poleA = this.rig.poleAngle(side, target, pole);
+    if (poleA !== null) out.poleA = poleA;
+    const solved =
+      out.poleA !== undefined
+        ? this.rig.solveReach(side, target, out.poleA, out)
+        : this.rig.solveReachNatural(side, target, null, out);
+    if (!solved) return null;
+
+    const arm = this._retreatArm[side];
+    arm.upperArm = this.axes.toCharacter(out.upperArm, out.upperArm, side, frameReady);
+    arm.lowerArm = this.axes.toCharacter(out.lowerArm, out.lowerArm, side, frameReady);
+    // The wrist's bend relative to the forearm eases home; the hand never
+    // points where the forearm no longer is.
+    arm.hand = out.hand
+      .copy(from.hand)
+      .sub(from.lowerArm)
+      .multiplyScalar(1 - e)
+      .addScaledVector(rest.hand, e)
+      .addScaledVector(rest.lowerArm, -e)
+      .add(arm.lowerArm)
+      .normalize();
+    arm.palm = resolved?.palm;
+    arm.twist = resolved?.twist;
+    return arm;
+  }
 
   /** Whether a travelling reach is deciding where this side's hand goes. */
   travelling(side: Side): boolean {
@@ -264,9 +398,8 @@ export class ArmResolver {
     // started, so this composes with whatever the arm was doing rather than
     // starting from a rest pose it may be nowhere near.
     //
-    // On the entrance only. Coming off a pose the arm blends back the old way,
-    // because a retreat has nowhere in particular to be and the release ramp
-    // already governs it.
+    // On the entrance only. The way back to rest is `retreat`'s, which every
+    // kind of pose takes.
     if (timed && this._wristKnown[side]) {
       const e = handEntrance;
       if (e < 1) this.anchors.travel(target, this._wristFrom[side], side, e);

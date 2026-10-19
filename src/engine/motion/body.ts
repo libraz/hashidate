@@ -331,6 +331,9 @@ export class Body {
   private _hopQueued: HopSpec | null;
   private _rise: number;
   private _load: number;
+  /** Whether the current gesture's exit has begun, and how far through it is. */
+  private _exiting = false;
+  private _exitU = 0;
 
   private _gaze: Gaze;
   /** The tracking share actually applied; chases `lookAt`. */
@@ -810,6 +813,7 @@ export class Body {
     this._fingerEnv.entrance = 0;
     this._fingerEnv.exit = 1;
     this._arm.mark();
+    this._exiting = false;
   }
 
   /** Largest angle any arm has to cover to reach the gesture's opening pose. */
@@ -989,6 +993,11 @@ export class Body {
       const xOut = held || t < exitAt ? 1 : Math.max(0, 1 - (t - exitAt) / out);
       this._env.entrance = minJerk(xIn);
       this._env.exit = minJerk(xOut);
+      this._exitU = 1 - xOut;
+      if (xOut < 1 && !this._exiting) {
+        this._exiting = true;
+        this._arm.beginExit();
+      }
 
       // Per link, staggered outward along the limb and allowed to overshoot.
       for (const slot of ARM_SLOTS) {
@@ -1189,18 +1198,25 @@ export class Body {
        * departs from where the wrist actually was, which already includes
        * whatever the outgoing pose was contributing. Crossfading it back in on
        * top would count it twice.
+       *
+       * An exit carries every link, the hand included, at full weight: the way
+       * home is already in the solve, hand and all — see `ArmResolver.retreat`.
        */
+      const back =
+        this._exiting && g
+          ? this._arm.retreat(cArm, side, this._exitU, this._rest, frameReady)
+          : null;
       const travelling = this._arm.travelling(side);
 
       for (const slot of ARM_SLOTS) {
         if (slot === 'shoulder') continue;
-        const carried = travelling && slot !== 'hand';
+        const carried = back !== null || (travelling && slot !== 'hand');
         const v = this.composeArmTarget(
           slot,
           side,
           env,
-          cArm?.[slot],
-          carried ? this._armEnv[slot].exit : plain(this._armEnv[slot]),
+          (back ?? cArm)?.[slot],
+          back ? 1 : carried ? this._armEnv[slot].exit : plain(this._armEnv[slot]),
           !carried,
         );
         this.followArm(slot, side, v, dt, carried ? TRAVEL_FOLLOW : ARM_FOLLOW);
@@ -1265,6 +1281,7 @@ export class Body {
         palmWorld,
         palmW,
       );
+      this._arm.note(side, dirs.lowerArm, dirs.hand);
 
       const cf = g?.fingers?.[side];
       const cfSpread = g?.fingerSpread?.[side];

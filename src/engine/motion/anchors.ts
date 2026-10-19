@@ -157,11 +157,14 @@ export class ReachAnchors {
    * than through. The result is still a straight line wherever the two ends sit
    * at a similar distance from the shoulder, which is the case the minimum-jerk
    * model was measured on.
+   *
+   * `reach` eases the distance on its own phase when given one — an exit keeps
+   * the arm folded while the bearing swings and straightens it late.
    */
-  travel(target: THREE.Vector3, from: THREE.Vector3, side: Side, e: number): void {
+  travel(target: THREE.Vector3, from: THREE.Vector3, side: Side, e: number, reach = e): void {
     const upper = this.p.bones[`upperArm.${side}`];
     if (!upper) {
-      target.lerpVectors(from, target, e);
+      target.lerpVectors(from, target, reach);
       return;
     }
     upper.updateWorldMatrix(true, false);
@@ -171,7 +174,7 @@ export class ReachAnchors {
     const ra = a.length();
     const rb = b.length();
     if (ra < 1e-6 || rb < 1e-6) {
-      target.lerpVectors(from, target, e);
+      target.lerpVectors(from, target, reach);
       return;
     }
     a.divideScalar(ra);
@@ -189,6 +192,6 @@ export class ReachAnchors {
       );
       a.normalize();
     }
-    target.copy(S).addScaledVector(a, ra + (rb - ra) * e);
+    target.copy(S).addScaledVector(a, ra + (rb - ra) * reach);
   }
 }

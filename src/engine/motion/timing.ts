@@ -100,6 +100,16 @@ export const LINK_ONSET: Record<ArmSlot, number> = {
 };
 
 /**
+ * Fraction of an exit the elbow waits before it straightens.
+ *
+ * Someone lowering a raised hand brings the upper arm down with the elbow still
+ * bent and opens it on the way in. Opening it in step with the swing puts a
+ * straight arm out at the side half way down, which is the swing a hinge with
+ * nothing holding it makes, not one a person does.
+ */
+export const EXTEND_ONSET = 0.5;
+
+/**
  * Fingers trail the hand that carries them. Slightly further out than the hand
  * itself, because a hand changing shape while it travels reads as one motion
  * and a hand that arrives already shaped reads as two.
