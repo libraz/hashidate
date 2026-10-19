@@ -336,6 +336,7 @@ describe('a turn with a voice', () => {
     step(1);
     const mouth = director.mouth;
     const take = session.turn?.take as FakeTake;
+    expect(mouth.weights.a).toBeGreaterThan(0);
     step(30);
     expect(mouth.amplitude).toBe(1);
 
@@ -365,6 +366,27 @@ describe('a turn with a voice', () => {
     // no reason visible anywhere near the cause.
     runUntil(() => session.turn?.id === 'silent');
     step(1);
+    expect(director.mouth.amplitude).toBe(1);
+  });
+
+  it('starts a quiet Take closed and restores travel on the following text-only line', async () => {
+    let voice!: FakeVoice;
+    const { session, director, step, runUntil } = build({
+      voice: (now) => {
+        voice = new FakeVoice(now, { seconds: 1, nullAfter: 1 });
+        return voice;
+      },
+    });
+    session.say({ id: 'quiet', text: 'あいうえお' });
+    session.say({ id: 'silent', text: 'かきくけこ' });
+    await settle();
+    voice.takes[0].amplitude = 0;
+    step(1);
+    expect(session.turn?.id).toBe('quiet');
+    expect(director.mouth.amplitude).toBe(0);
+    expect(Object.values(director.mouth.weights).every((w) => w < 0.001)).toBe(true);
+
+    runUntil(() => session.turn?.id === 'silent');
     expect(director.mouth.amplitude).toBe(1);
   });
 

@@ -555,6 +555,10 @@ export class TurnQueue {
     // mouth idle and closes it on the next frame — and releases what it put up
     // like any other turn, so a pose meant to stay needs `hold`.
     const seconds = turn.text ? d.speak(turn.text, turn.reading, turn.take?.seconds) : 0;
+    if (turn.take) {
+      d.mouth.sync(turn.take.elapsed);
+      d.mouth.setAmplitude(turn.take.amplitude);
+    }
     // The cues arrived as fractions of the line and become seconds here,
     // against the length the mouth actually reported — which is the reading's
     // length when one was given, and will be the audio's once there is any.
