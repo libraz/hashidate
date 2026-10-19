@@ -2,7 +2,7 @@ import type { GestureDef } from '../../types';
 import { V } from './base';
 import type { ArmPose } from './builders';
 import { both, one } from './builders';
-import { OPEN_HAND, POINT_HAND, SOFT_HAND } from './hands';
+import { mixHand, OPEN_HAND, POINT_HAND, SOFT_HAND } from './hands';
 
 /**
  * Explaining — presenting, offering, and pointing something out.
@@ -23,15 +23,23 @@ export const EXPLAIN = {
       const w = t * 2.6 * v.rate;
       const a = Math.sin(w),
         b = Math.sin(w + Math.PI * 0.7);
+      // The hand rides the beat with the arm: the palm turned up toward the
+      // listener and the fingers opening as it lifts. Left to the aim, the palm
+      // faces the floor and a curl that never changes reads as arms swung from
+      // the shoulder with dead hands on the end.
       const mk = (p: number): ArmPose => ({
         upperArm: V(0.4, -0.78 + p * 0.1, 0.44),
         lowerArm: V(0.3 + p * 0.1, -0.24 + p * 0.2, 0.9),
         hand: V(0.26, -0.1 + p * 0.16, 0.94),
+        palm: V(-0.5, 0.82 + p * 0.1, 0.1),
         twist: -0.35,
       });
       return {
         arms: { L: mk(a), R: mk(b) },
-        fingers: { L: SOFT_HAND, R: SOFT_HAND },
+        fingers: {
+          L: mixHand(SOFT_HAND, OPEN_HAND, 0.7 + 0.3 * a),
+          R: mixHand(SOFT_HAND, OPEN_HAND, 0.7 + 0.3 * b),
+        },
         spine: { chest: [0, a * 0.045, 0], head: [0, a * 0.05, b * 0.02] },
       };
     },
