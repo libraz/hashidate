@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import {
   type ClientRequest,
   createServer,
@@ -12,9 +12,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Avatars } from '@/server/avatars';
 import { Hub } from '@/server/hub';
 import { Recordings } from '@/server/recordings';
-import { handleApi, JSON_BODY_MAX_BYTES } from '@/server/routes';
+import { handleApi, JSON_BODY_MAX_BYTES, type Stores } from '@/server/routes';
 
 let server: Server | null = null;
 let streamRequest: ClientRequest | null = null;
@@ -49,6 +50,7 @@ afterEach(async () => {
 
 async function listenApi(
   providedHub?: Hub,
+  stores?: Stores,
 ): Promise<{ origin: string; hub: Hub; eventsStarted: Promise<void> }> {
   const hub = providedHub ?? new Hub();
   eventsWriteAfterDestroy = 0;
@@ -70,7 +72,7 @@ async function listenApi(
       resolveEventsStarted?.();
       resolveEventsStarted = null;
     }
-    if (handleApi(req, res, hub)) return;
+    if (handleApi(req, res, hub, stores)) return;
     res.writeHead(404);
     res.end();
   });
@@ -406,5 +408,33 @@ describe('command validation and stamping', () => {
       mime: null,
       error: 'route sink offline',
     });
+  });
+});
+
+const MINIMAL_AVATAR = { label: { en: 'Example', ja: '例' } };
+
+describe('GET /api/avatars', () => {
+  it('answers empty when the server has no avatar store', async () => {
+    const { origin } = await listenApi();
+    const res = await fetch(`${origin}/api/avatars`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ avatars: [], errors: [] });
+  });
+
+  it('answers what the store finds, errors beside the avatars', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hashidate-route-avatars-'));
+    try {
+      await writeFile(join(dir, 'ok.json'), JSON.stringify(MINIMAL_AVATAR));
+      await writeFile(join(dir, 'bad.json'), '[]');
+      const { origin } = await listenApi(undefined, { avatars: new Avatars(dir) });
+      const body = (await (await fetch(`${origin}/api/avatars`)).json()) as {
+        avatars: { id: string }[];
+        errors: { id: string }[];
+      };
+      expect(body.avatars.map((a) => a.id)).toEqual(['ok']);
+      expect(body.errors.map((e) => e.id)).toEqual(['bad']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
+  type AvatarsWire,
   type BgmResponse,
   type Command,
   type CommandResponse,
@@ -22,6 +23,7 @@ import {
   scriptRunSchema,
 } from '../protocol';
 import { ScriptError } from '../script';
+import type { Avatars } from './avatars';
 import { type BgmLibrary, listBgm } from './bgm';
 import type { Decks } from './decks';
 import type { Hub } from './hub';
@@ -93,6 +95,7 @@ let stampCounter = 0;
 export interface Stores {
   decks?: Decks | null;
   motions?: Motions | null;
+  avatars?: Avatars | null;
   scripts?: Scripts | null;
   bgm?: BgmLibrary | null;
 }
@@ -287,7 +290,7 @@ function get(
   pathname: string,
   params: URLSearchParams,
 ): void {
-  const { decks = null, motions = null, scripts = null, bgm = null } = stores;
+  const { decks = null, motions = null, avatars = null, scripts = null, bgm = null } = stores;
   switch (pathname) {
     case '/api/stream':
       stream(res, hub, rendererIdentity(params));
@@ -319,6 +322,10 @@ function get(
     // save and one stale read would be a motion edited and apparently ignored.
     case '/api/motions':
       launch(res, listMotions(res, motions));
+      return;
+    // Read fresh, like the motions: edit a descriptor, reload the page.
+    case '/api/avatars':
+      launch(res, listAvatars(res, avatars));
       return;
     // Read fresh for the reason the motion roster is, and one more: a script is
     // edited in a text editor beside the panel, and the loop an operator runs
@@ -354,6 +361,12 @@ async function listDecks(res: ServerResponse, decks: Decks | null): Promise<void
 async function listMotions(res: ServerResponse, motions: Motions | null): Promise<void> {
   const listed = motions === null ? { motions: [], errors: [] } : await motions.list();
   json(res, listed satisfies MotionsResponse);
+}
+
+/** The avatar descriptors, and the files that were meant to be some. */
+async function listAvatars(res: ServerResponse, avatars: Avatars | null): Promise<void> {
+  const listed = avatars === null ? { avatars: [], errors: [] } : await avatars.list();
+  json(res, listed satisfies AvatarsWire);
 }
 
 /** The runs of turns written down, and the files that were meant to be some. */

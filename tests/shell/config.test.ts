@@ -141,6 +141,7 @@ describe('the checkout', () => {
     expect(paths.slides).toBe('/work/hashidate/show/slides');
     expect(paths.scripts).toBe('/work/hashidate/show/scripts');
     expect(paths.motions).toBe('/work/hashidate/show/motions');
+    expect(paths.avatars).toBe('/work/hashidate/avatars');
     expect(paths.bgm).toBe('/work/hashidate/show/bgm');
   });
 
@@ -152,6 +153,7 @@ describe('the checkout', () => {
       slides: '/work/hashidate/show/slides',
       scripts: '/work/hashidate/show/scripts',
       motions: '/work/hashidate/show/motions',
+      avatars: '/work/hashidate/avatars',
       bgm: '/work/hashidate/show/bgm',
       recordings: '/work/hashidate/show/recordings',
     });

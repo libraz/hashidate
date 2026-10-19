@@ -28,6 +28,7 @@ export interface ShellPaths {
   slides: string;
   scripts: string;
   motions: string;
+  avatars: string;
   bgm: string;
   recordings: string;
   tts: string;
@@ -57,6 +58,7 @@ export function checkoutPaths(sourceFile = fileURLToPath(import.meta.url)): Shel
     slides: resolve(root, 'show/slides'),
     scripts: resolve(root, 'show/scripts'),
     motions: resolve(root, 'show/motions'),
+    avatars: resolve(root, 'avatars'),
     bgm: resolve(root, 'show/bgm'),
     recordings: resolve(root, 'show/recordings'),
     tts,
@@ -90,6 +92,7 @@ export function expectedRoots(paths: ShellPaths): ServerRoots {
     slides: paths.slides,
     scripts: paths.scripts,
     motions: paths.motions,
+    avatars: paths.avatars,
     bgm: paths.bgm,
     recordings: paths.recordings,
   };

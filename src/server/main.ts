@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { SpeechState } from '../protocol';
+import { Avatars } from './avatars';
 import { BgmLibrary, handleBgm } from './bgm';
 import { BgmCoordinator } from './bgm-state';
 import { Decks } from './decks';
@@ -37,7 +38,7 @@ import { serveStatic } from './static';
  *
  * usage: yarn start [--port 8765] [--root dist] [--slides show/slides]
  *                   [--scripts show/scripts] [--motions show/motions]
- *                   [--bgm show/bgm] [--recordings show/recordings]
+ *                   [--avatars avatars] [--bgm show/bgm] [--recordings show/recordings]
  */
 
 const BIND = '127.0.0.1'; // do not change; see the module docstring
@@ -70,6 +71,15 @@ const SLIDES_PREFIX = '/slides';
  * stays on the machine it was written on. See `src/server/motions.ts`.
  */
 const DEFAULT_MOTIONS = 'show/motions';
+
+/**
+ * Where the avatar descriptors are.
+ *
+ * Top level rather than under `show/`: a descriptor belongs to a model and not
+ * to a broadcast. Served as validated JSON on `/api/avatars`; see
+ * `src/server/avatars.ts`.
+ */
+const DEFAULT_AVATARS = 'avatars';
 
 /**
  * Where the runs of turns written down in advance are.
@@ -141,6 +151,7 @@ function main(): void {
       slides: { type: 'string' },
       scripts: { type: 'string' },
       motions: { type: 'string' },
+      avatars: { type: 'string' },
       bgm: { type: 'string' },
       recordings: { type: 'string' },
     },
@@ -155,12 +166,14 @@ function main(): void {
   const slides = resolve(values.slides ?? DEFAULT_SLIDES);
   const scriptsRoot = resolve(values.scripts ?? DEFAULT_SCRIPTS);
   const motionsRoot = resolve(values.motions ?? DEFAULT_MOTIONS);
+  const avatarsRoot = resolve(values.avatars ?? DEFAULT_AVATARS);
   const bgmRoot = resolve(values.bgm ?? DEFAULT_BGM);
   const recordingsRoot = resolve(values.recordings ?? DEFAULT_RECORDINGS);
 
   const decks = new Decks(slides);
   const scripts = new Scripts(scriptsRoot);
   const motions = new Motions(motionsRoot);
+  const avatars = new Avatars(avatarsRoot);
   const bgm = new BgmLibrary(bgmRoot);
   const bgmCoordinator = new BgmCoordinator();
   const recordings = new Recordings(recordingsRoot);
@@ -176,6 +189,7 @@ function main(): void {
       slides,
       scripts: scriptsRoot,
       motions: motionsRoot,
+      avatars: avatarsRoot,
       recordings: recordingsRoot,
       bgm: bgmRoot,
     },
@@ -191,7 +205,7 @@ function main(): void {
     // Before every route, file and stream alike. See `guard.ts`.
     if (refuseForeign(req, res)) return;
     if (handleBgm(req, res, bgm)) return;
-    if (handleApi(req, res, hub, { decks, motions, scripts, bgm })) return;
+    if (handleApi(req, res, hub, { decks, motions, avatars, scripts, bgm })) return;
     if (req.method === 'GET' || req.method === 'HEAD') {
       // Same guard, same refusal to cache — the only difference is which root
       // the path is resolved against. See `serveStatic`.
@@ -249,6 +263,7 @@ function main(): void {
     // the line is worth most before the directory has anything in it.
     console.log(`scripts  ${scriptsRoot}`);
     console.log(`motions  ${motionsRoot}`);
+    console.log(`avatars  ${avatarsRoot}`);
     console.log(`bgm      ${bgmRoot}`);
     // This one is where a take will be written rather than where anything is
     // read from, which is worth saying before the first one is recorded into a

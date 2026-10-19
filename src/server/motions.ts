@@ -1,7 +1,7 @@
-import { basename, extname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { isBuiltInGestureName } from '../engine/motion';
-import { readSafeDirectory, readSafeFile } from '../files';
+import { listSafeIds, readSafeFile } from '../files';
 import { type Motion, type MotionsResponse, parseMotion } from '../protocol';
 
 /**
@@ -24,9 +24,6 @@ const EXTENSIONS = ['.yaml', '.yml', '.json'];
 /** Long enough for a sentence of a filename, short enough not to be an attack. */
 const MAX_ID_LENGTH = 64;
 
-/** The separators and the control characters. See `FORBIDDEN_IN_ID` in decks.ts. */
-const FORBIDDEN_IN_ID = /[/\\]|\p{Cc}/u;
-
 /**
  * A cap on what will be read, because this reads whole files into memory.
  *
@@ -35,12 +32,6 @@ const FORBIDDEN_IN_ID = /[/\\]|\p{Cc}/u;
  * a parse error three hundred lines in.
  */
 const MAX_BYTES = 256 * 1024;
-
-function isId(raw: string): boolean {
-  if (raw.length === 0 || raw.length > MAX_ID_LENGTH) return false;
-  if (raw.startsWith('.')) return false;
-  return !FORBIDDEN_IN_ID.test(raw);
-}
 
 export class Motions {
   private readonly root: string;
@@ -59,44 +50,22 @@ export class Motions {
    * than one that is simply alphabetical.
    */
   async list(): Promise<MotionsResponse> {
-    const names = (await readSafeDirectory(this.root)) ?? [];
+    const listed = await listSafeIds(this.root, {
+      extensions: EXTENSIONS,
+      maxIdLength: MAX_ID_LENGTH,
+      noun: 'motion',
+    });
     const motions: Motion[] = [];
-    const errors: MotionsResponse['errors'] = [];
-    const candidates = new Map<string, string[]>();
-    for (const name of names) {
-      const extension = extname(name).toLowerCase();
-      if (!EXTENSIONS.includes(extension)) continue;
-      // Composed, for the same reason a document id is: a name with a Japanese
-      // character in it is decomposed on this filesystem and composed
-      // everywhere else, and the two are one name except in a comparison.
-      const id = basename(name, extname(name)).normalize('NFC');
-      if (!isId(id)) {
-        errors.push({
-          id: name,
-          error: 'not a usable motion id (at most 64 characters, no control characters)',
-        });
-        continue;
-      }
-      candidates.set(id, [...(candidates.get(id) ?? []), name]);
-    }
-    for (const [id, matching] of candidates) {
-      if (matching.length > 1) {
-        errors.push({
-          id,
-          error: `ambiguous normalization-equivalent files: ${matching.join(', ')}`,
-        });
-        continue;
-      }
-      const name = matching[0];
+    const errors: MotionsResponse['errors'] = [...listed.errors];
+    for (const { id, file } of listed.entries) {
       if (isBuiltInGestureName(id)) {
         errors.push({ id, error: 'reserved built-in gesture name' });
         continue;
       }
-      const found = await this.read(id, name);
+      const found = await this.read(id, file);
       if ('error' in found) errors.push({ id, error: found.error });
       else motions.push(found.motion);
     }
-    motions.sort((a, b) => a.id.localeCompare(b.id));
     errors.sort((a, b) => a.id.localeCompare(b.id));
     return { motions, errors };
   }

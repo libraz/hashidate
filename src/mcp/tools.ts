@@ -694,7 +694,7 @@ export function buildTools(vocabulary: Partial<Vocabulary>): Tools {
  * `avatar` is not narrowed at all. The roster is on the snapshot rather than in
  * the vocabulary (`Snapshot.avatars`), and reading it would mean a second
  * request against the control server on every tool call to enumerate something
- * that is fixed for the life of the renderer. An id it does not have is ignored
+ * the renderer already reports with each roster it fetches. An id it does not have is ignored
  * rather than blanking the stream — see `avatarCommandSchema`.
  */
 function wearField(vocabulary: Partial<Vocabulary>) {

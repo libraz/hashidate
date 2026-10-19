@@ -117,6 +117,7 @@ describe('the directories on the snapshot', () => {
     slides: '/work/hashidate/show/slides',
     scripts: '/work/hashidate/show/scripts',
     motions: '/work/hashidate/show/motions',
+    avatars: '/work/hashidate/avatars',
     recordings: '/work/hashidate/show/recordings',
   };
 

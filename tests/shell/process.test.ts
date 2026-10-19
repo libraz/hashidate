@@ -30,6 +30,7 @@ const OURS: ServerRoots = {
   slides: '/work/hashidate/show/slides',
   scripts: '/work/hashidate/show/scripts',
   motions: '/work/hashidate/show/motions',
+  avatars: '/work/hashidate/avatars',
   bgm: '/work/hashidate/show/bgm',
   recordings: '/work/hashidate/show/recordings',
 };
@@ -39,6 +40,7 @@ const THEIRS: ServerRoots = {
   slides: '/elsewhere/hashidate/show/slides',
   scripts: '/elsewhere/hashidate/show/scripts',
   motions: '/elsewhere/hashidate/show/motions',
+  avatars: '/elsewhere/hashidate/avatars',
   bgm: '/elsewhere/hashidate/show/bgm',
   recordings: '/elsewhere/hashidate/show/recordings',
 };
@@ -49,6 +51,7 @@ const PATHS: ShellPaths = {
   slides: OURS.slides,
   scripts: OURS.scripts,
   motions: OURS.motions,
+  avatars: OURS.avatars,
   bgm: '/work/hashidate/show/bgm',
   recordings: OURS.recordings,
   tts: '/work/hashidate/tools/tts',
@@ -227,7 +230,14 @@ describe('what is on the control port', () => {
   });
 
   it('is foreign when one of the compared directories differs', async () => {
-    const changed: (keyof ServerRoots)[] = ['slides', 'scripts', 'motions', 'recordings', 'bgm'];
+    const changed: (keyof ServerRoots)[] = [
+      'slides',
+      'scripts',
+      'motions',
+      'avatars',
+      'recordings',
+      'bgm',
+    ];
     for (const key of changed) {
       const fetcher = answering(snapshot({ ...OURS, [key]: `/elsewhere/show/${key}` }));
       expect((await probeControlAPI(8765, { fetch: fetcher, roots: OURS })).kind).toBe('foreign');
@@ -388,6 +398,8 @@ describe('starting the control server', () => {
       PATHS.scripts,
       '--motions',
       PATHS.motions,
+      '--avatars',
+      PATHS.avatars,
       '--bgm',
       PATHS.bgm,
       '--recordings',

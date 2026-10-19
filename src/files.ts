@@ -91,6 +91,69 @@ export async function readSafeDirectory(root: string): Promise<string[] | null> 
   }
 }
 
+export interface ListSafeIdsOptions {
+  /** Extensions that make a file an entry, including the leading dot. */
+  readonly extensions: readonly string[];
+  /** Longest stem accepted as an id. */
+  readonly maxIdLength: number;
+  /** What an entry is called in the error for an unusable name. */
+  readonly noun?: string;
+}
+
+/**
+ * The files in a root whose stems are usable ids, and those that are not.
+ *
+ * The id is the NFC-composed stem. Two names that compose to one id are an
+ * error for that id rather than a choice. Both lists are sorted by id; a
+ * missing root is empty.
+ */
+export async function listSafeIds(
+  root: string,
+  options: ListSafeIdsOptions,
+): Promise<{
+  entries: { id: string; file: string }[];
+  errors: { id: string; error: string }[];
+}> {
+  const extensions = options.extensions.map(normaliseExtension);
+  const noun = options.noun ?? 'file';
+  const names = (await readSafeDirectory(root)) ?? [];
+  const entries: { id: string; file: string }[] = [];
+  const errors: { id: string; error: string }[] = [];
+  const candidates = new Map<string, string[]>();
+  for (const name of names) {
+    const extension = normaliseExtension(extname(name));
+    if (!extensions.includes(extension)) continue;
+    // Composed, for the same reason a document id is: a name with a Japanese
+    // character in it is decomposed on this filesystem and composed
+    // everywhere else, and the two are one name except in a comparison.
+    const id = basename(name, extname(name)).normalize('NFC');
+    if (!isUsableId(id, options.maxIdLength)) {
+      errors.push({
+        id: name,
+        error: `not a usable ${noun} id (at most ${options.maxIdLength} characters, no control characters)`,
+      });
+      continue;
+    }
+    candidates.set(id, [...(candidates.get(id) ?? []), name]);
+  }
+  for (const [id, matching] of candidates) {
+    if (matching.length > 1) {
+      errors.push({ id, error: ambiguousMessage(matching) });
+      continue;
+    }
+    entries.push({ id, file: matching[0] });
+  }
+  entries.sort((a, b) => a.id.localeCompare(b.id));
+  errors.sort((a, b) => a.id.localeCompare(b.id));
+  return { entries, errors };
+}
+
+function isUsableId(id: string, maxIdLength: number): boolean {
+  if (id.length === 0 || id.length > maxIdLength) return false;
+  if (id.startsWith('.')) return false;
+  return !CONTROL_OR_SEPARATOR.test(id);
+}
+
 /**
  * Resolve one file below a trusted root.
  *

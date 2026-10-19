@@ -60,6 +60,7 @@ export const serverRootsSchema = z.object({
   slides: z.string(),
   scripts: z.string(),
   motions: z.string(),
+  avatars: z.string(),
   recordings: z.string(),
   /** The direct BGM asset directory, when this server was started with one. */
   bgm: z.string().optional(),

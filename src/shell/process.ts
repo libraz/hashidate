@@ -63,6 +63,7 @@ function sameRoots(found: ServerRoots | undefined, expected: ServerRoots): boole
     'slides',
     'scripts',
     'motions',
+    'avatars',
     'recordings',
     'bgm',
   ];
@@ -437,6 +438,8 @@ export class ControlProcess {
       this.paths.scripts,
       '--motions',
       this.paths.motions,
+      '--avatars',
+      this.paths.avatars,
       '--bgm',
       this.paths.bgm,
       '--recordings',

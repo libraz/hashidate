@@ -103,6 +103,7 @@ function rootsFor(root: string): ServerRoots {
     slides: join(root, 'show', 'slides'),
     scripts: join(root, 'show', 'scripts'),
     motions: join(root, 'show', 'motions'),
+    avatars: join(root, 'avatars'),
     bgm: join(root, 'show', 'bgm'),
     recordings: join(root, 'show', 'recordings'),
   };
@@ -117,6 +118,7 @@ async function makeControlFixture() {
     slides: roots.slides,
     scripts: roots.scripts,
     motions: roots.motions,
+    avatars: roots.avatars,
     bgm: roots.bgm ?? join(root, 'show', 'bgm'),
     recordings: roots.recordings,
     tts: join(root, 'tts'),
@@ -153,6 +155,7 @@ async function makeTtsFixture() {
     slides: join(root, 'show', 'slides'),
     scripts: join(root, 'show', 'scripts'),
     motions: join(root, 'show', 'motions'),
+    avatars: join(root, 'avatars'),
     bgm: join(root, 'show', 'bgm'),
     recordings: join(root, 'show', 'recordings'),
     tts: root,

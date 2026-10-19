@@ -321,8 +321,9 @@ function buildMenu(): Menu {
     { label: 'Open Slides Folder', click: () => void openDirectory(paths.slides) },
     { label: 'Open Scripts Folder', click: () => void openDirectory(paths.scripts) },
     { label: 'Open Motions Folder', click: () => void openDirectory(paths.motions) },
+    { label: 'Open Avatars Folder', click: () => void openDirectory(paths.avatars) },
     { label: 'Open BGM Folder', click: () => void openDirectory(paths.bgm) },
-    // The one of the four that is an output rather than something brought to
+    // The one that is an output rather than something brought to
     // the broadcast, and the one an operator goes looking for straight after a
     // take rather than before one.
     { label: 'Open Recordings Folder', click: () => void openDirectory(paths.recordings) },

@@ -1026,8 +1026,9 @@ export class Hub {
     if (body.tuning !== undefined) this.tuning = body.tuning;
     if (body.slides !== undefined) this.slides = body.slides;
     if (body.placement !== undefined) this.placement = body.placement;
-    // Fixed for the life of a renderer, so it rides with the vocabulary rather
-    // than on the timer. Not cleared by a report that omits it.
+    // Rides with the vocabulary rather than on the timer. Replaced by each
+    // report that carries one, since a renderer refetches it on every stream
+    // open; not cleared by a report that omits it.
     if (body.avatars) this.avatars = body.avatars;
     const bgmTransition = body.bgm === undefined ? null : this.bgmCoordinator.report(body.bgm);
     if (bgmTransition !== null) {
