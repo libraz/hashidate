@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { AVATARS, getAvatar } from '@/avatars';
+import type { AvatarDescriptor } from '@/engine/types';
 import { useT } from '@/i18n';
 import styles from './App.module.css';
-import { initialAvatar, rememberAvatar } from './avatar-selection';
+import { chooseAvatar, pinnedAvatar, rememberAvatar, rememberedAvatar } from './avatar-selection';
 import { Console } from './console/Console';
 import { ControlClient, type ControlStatus, type RendererControls } from './control-client';
 import { Hud } from './scene/Hud';
@@ -56,6 +56,8 @@ export function App() {
    * address bar. See `StageMode.debug`.
    */
   const [debug, setDebug] = useState(MODE.debug);
+  /** What the control server listed. Empty until the first stream open answers. */
+  const [roster, setRoster] = useState<AvatarDescriptor[]>([]);
 
   /**
    * The runtime again, reachable without a render.
@@ -65,6 +67,12 @@ export function App() {
    * be the one captured on the render the client happened to be built on.
    */
   const runtimeRef = useRef<AvatarRuntime | null>(null);
+  /** The roster again, for the same reason as `runtimeRef`. */
+  const rosterRef = useRef<AvatarDescriptor[]>([]);
+  /** An `avatar` command that arrived before there was a roster to look it up in. */
+  const pendingRef = useRef<string | null>(null);
+  /** Set by the first load, whoever asked for it; a later roster never reloads. */
+  const startedRef = useRef(false);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the useRef value is stable for the page lifetime
   useEffect(() => {
@@ -97,7 +105,6 @@ export function App() {
       }
     });
     client.start();
-    void rt.load(initialAvatar());
     return () => {
       off();
       client.stop();
@@ -116,8 +123,36 @@ export function App() {
    * remembered and pinned to the URL either way. See `avatar-selection.ts`.
    */
   const rendererControls = useRef<RendererControls>({
-    avatars: AVATARS.map((a) => ({ id: a.id, label: a.label })),
     setDebug,
+    /**
+     * The roster arrives after the page does, so the first avatar is chosen
+     * here. Once one is loading, a later roster only refreshes the picker.
+     */
+    setAvatars: (list) => {
+      rosterRef.current = list;
+      setRoster(list);
+      const rt = runtimeRef.current;
+      if (!rt || startedRef.current) return;
+      const pending = pendingRef.current;
+      const first = chooseAvatar(list, {
+        pending,
+        pinned: pinnedAvatar(),
+        remembered: rememberedAvatar(),
+      });
+      if (!first) {
+        // An empty roster cannot honour a pending avatar either.
+        if (pending !== null) controlRef.current?.discardHeld();
+        pendingRef.current = null;
+        return;
+      }
+      pendingRef.current = null;
+      startedRef.current = true;
+      // The channel is holding commands for a pending avatar the roster does
+      // not have; nothing will ever end that hold.
+      if (pending !== null && pending !== first.id) controlRef.current?.discardHeld();
+      if (pending === first.id) rememberAvatar(first.id);
+      void rt.load(first);
+    },
     /**
      * A `record` command reaches every renderer attached, and only one of them
      * is the one going to air. The mute is what tells them apart, and it is not
@@ -134,9 +169,17 @@ export function App() {
     },
     bgmReport: () => runtimeRef.current?.bgmReport ?? null,
     load: (id) => {
-      const next = getAvatar(id);
       const rt = runtimeRef.current;
-      if (!(next && rt)) return false;
+      if (!rt) return false;
+      // Setup is delivered the moment the stream opens, before the roster has
+      // been fetched. Honour it once the roster arrives rather than refuse it.
+      if (rosterRef.current.length === 0) {
+        if (startedRef.current) return false;
+        pendingRef.current = id;
+        return true;
+      }
+      const next = rosterRef.current.find((a) => a.id === id);
+      if (!next) return false;
       // Already there, on its way, or queued behind one that is: the swap would
       // do nothing, and saying otherwise leaves the channel holding commands
       // for a load that will never land. The setup a viewer is handed on
@@ -144,6 +187,7 @@ export function App() {
       // ordinary case rather than the odd one.
       if (rt.avatarId === id) return false;
       rememberAvatar(id);
+      startedRef.current = true;
       void rt.load(next);
       return true;
     },
@@ -233,6 +277,7 @@ export function App() {
         <div className={styles.console}>
           <Console
             runtime={runtime}
+            avatars={roster}
             status={status}
             control={control}
             rejected={rejected}

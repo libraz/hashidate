@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { AVATARS } from '@/avatars';
 import { hasCueMarkup, isWellFormed } from '@/engine/cues';
-import type { CameraFrame } from '@/engine/types';
+import type { AvatarDescriptor, CameraFrame } from '@/engine/types';
 import { useT } from '@/i18n';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { LocaleSwitch } from '@/ui/LocaleSwitch';
@@ -61,13 +60,15 @@ const NO_BACKDROP = '-';
 
 interface Props {
   runtime: AvatarRuntime | null;
+  /** What the control server found; empty until it has answered, or when nothing is there. */
+  avatars: AvatarDescriptor[];
   status: RuntimeStatus;
   control: ControlStatus;
   rejected: number;
   onSwitch: (id: string) => void;
 }
 
-export function Console({ runtime, status, control, rejected, onSwitch }: Props) {
+export function Console({ runtime, avatars, status, control, rejected, onSwitch }: Props) {
   const { t, tx } = useT();
   const [tab, setTab] = useState<TabId>('perform');
   const [text, setText] = useState('こんばんは。今日も配信を見に来てくれてありがとうございます。');
@@ -178,12 +179,16 @@ export function Console({ runtime, status, control, rejected, onSwitch }: Props)
               than among the controls reached for every minute. */}
           <LocaleSwitch />
         </div>
-        <Segmented
-          ariaLabel={t('console.avatar.aria')}
-          options={AVATARS.map((a) => ({ value: a.id, label: tx(a.label) }))}
-          value={loaded?.avatar.id ?? (status.phase === 'loading' ? status.avatar.id : null)}
-          onChange={onSwitch}
-        />
+        {avatars.length > 0 ? (
+          <Segmented
+            ariaLabel={t('console.avatar.aria')}
+            options={avatars.map((a) => ({ value: a.id, label: tx(a.label) }))}
+            value={loaded?.avatar.id ?? (status.phase === 'loading' ? status.avatar.id : null)}
+            onChange={onSwitch}
+          />
+        ) : (
+          <div className={styles.author}>{t('console.avatar.none')}</div>
+        )}
         {loaded ? (
           <div className={styles.author}>
             {loaded.avatar.author ? tx(loaded.avatar.author) : '—'} · ARKit{' '}

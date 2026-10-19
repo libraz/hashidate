@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Director } from '@/engine/director';
 import { buildProfile } from '@/engine/profile';
 import { Session } from '@/engine/session';
-import { same } from '@/i18n/locale';
+import type { AvatarDescriptor } from '@/engine/types';
 import type { BgmCommand, BgmReport, Command, SessionEvent } from '@/protocol';
 import { ControlClient, type RendererControls } from '@/viewer/control-client';
 import { buildRig } from '../helpers/scene';
@@ -29,6 +29,9 @@ function build() {
   const readout: boolean[] = [];
   /** Every recording instruction that reached the page, in order. */
   const takes: Array<{ on: boolean; session: string }> = [];
+  /** What the renderer was handed, so `load` can refuse an id it was never given. */
+  let known: string[] = ['a', 'b'];
+  const handed: AvatarDescriptor[][] = [];
   /** What the renderer is showing, so a redundant swap can answer false. */
   let standing = 'a';
   const bgm: BgmCommand[] = [];
@@ -44,10 +47,10 @@ function build() {
     dspDegraded: false,
   };
   const renderer: RendererControls = {
-    avatars: [
-      { id: 'a', label: same('あ') },
-      { id: 'b', label: same('い') },
-    ],
+    setAvatars: (list) => {
+      handed.push(list);
+      known = list.map((avatar) => avatar.id);
+    },
     setDebug: (on) => {
       readout.push(on);
     },
@@ -59,7 +62,7 @@ function build() {
     },
     bgmReport: () => bgmState,
     load: (id) => {
-      if (!renderer.avatars.some((avatar) => avatar.id === id)) return false;
+      if (!known.includes(id)) return false;
       if (id === standing) return false;
       standing = id;
       loads.push(id);
@@ -68,7 +71,7 @@ function build() {
   };
 
   const client = new ControlClient(session, { renderer });
-  return { client, session, renderer, loads, readout, takes, bgm, bgmState };
+  return { client, session, renderer, loads, handed, readout, takes, bgm, bgmState };
 }
 
 /**
@@ -657,7 +660,7 @@ describe('the control stream lifecycle', () => {
     client.start();
     const source = FakeEventSource.instances[0];
     source.open();
-    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(3));
     await vi.waitFor(() => expect(client.status).toBe('offline'));
 
     send.mockResolvedValue({ ok: true } as Response);
@@ -694,9 +697,9 @@ describe('the control stream lifecycle', () => {
     expect(source.url).toBe('/control/stream?renderer=renderer-test');
     source.open();
 
-    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
-    expect(send.mock.calls[1][0]).toBe('/control/report?renderer=renderer-test');
-    const body = JSON.parse(String(send.mock.calls[1][1]?.body)) as {
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(3));
+    expect(send.mock.calls[2][0]).toBe('/control/report?renderer=renderer-test');
+    const body = JSON.parse(String(send.mock.calls[2][1]?.body)) as {
       avatar?: { phase?: string; error?: string };
     };
     expect(body.avatar).toEqual({ phase: 'loading', error: 'x'.repeat(1024) });
@@ -792,5 +795,73 @@ describe('the control stream lifecycle', () => {
     expect(arrived.queue.map((turn) => turn.id)).toEqual(
       Array.from({ length: 200 }, (_, i) => `held-${i + 5}`),
     );
+  });
+});
+
+describe('the avatar roster', () => {
+  const wire = (id: string) => ({ id, label: { en: id, ja: id } });
+
+  /** Answers `/avatars` with `avatars` (or a failure); every other fetch is refused. */
+  function serve(avatars: unknown[] | null) {
+    return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/avatars') && avatars !== null) {
+        return { ok: true, json: async () => ({ avatars, errors: [] }) } as Response;
+      }
+      return { ok: url.includes('/report') } as Response;
+    });
+  }
+
+  const reports = (send: ReturnType<typeof serve>) =>
+    send.mock.calls
+      .filter(([url]) => String(url).includes('/report'))
+      .map(([, init]) => JSON.parse(String(init?.body)) as { avatars?: unknown });
+
+  it('is fetched on open and handed to the renderer', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const send = serve([wire('b'), wire('a')]);
+    const client = new ControlClient(null, { renderer: harness.renderer });
+    client.start();
+    FakeEventSource.instances[0].open();
+
+    await vi.waitFor(() => expect(harness.handed).toHaveLength(1));
+    expect(send.mock.calls.map(([url]) => String(url))).toContain('/api/avatars');
+    expect(harness.handed[0].map((avatar) => avatar.id)).toEqual(['b', 'a']);
+    client.stop();
+  });
+
+  it('reaches the vocabulary report only after both fetches have settled', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const send = serve([wire('b'), wire('a')]);
+    const client = new ControlClient(null, { renderer: harness.renderer });
+    client.start();
+    FakeEventSource.instances[0].open();
+
+    await vi.waitFor(() => expect(reports(send).length).toBeGreaterThan(0));
+    expect(reports(send)[0].avatars).toEqual([
+      { id: 'b', label: { en: 'b', ja: 'b' } },
+      { id: 'a', label: { en: 'a', ja: 'a' } },
+    ]);
+    client.stop();
+  });
+
+  it('keeps the previous roster when a later fetch fails', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('EventSource', FakeEventSource);
+    let send = serve([wire('a')]);
+    const client = new ControlClient(null, { renderer: harness.renderer });
+    client.start();
+    FakeEventSource.instances[0].open();
+    await vi.waitFor(() => expect(reports(send).length).toBeGreaterThan(0));
+
+    FakeEventSource.instances[0].error();
+    send = serve(null);
+    await vi.advanceTimersByTimeAsync(1500);
+    FakeEventSource.instances[1].open();
+    await vi.waitFor(() => expect(reports(send).length).toBeGreaterThan(0));
+
+    expect(harness.handed).toHaveLength(1);
+    expect(reports(send)[0].avatars).toEqual([{ id: 'a', label: { en: 'a', ja: 'a' } }]);
+    client.stop();
   });
 });

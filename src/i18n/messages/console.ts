@@ -21,6 +21,7 @@ export const consoleEn = {
   'console.link.rejected': 'rejected {count}',
 
   'console.avatar.aria': 'Avatar',
+  'console.avatar.none': 'No avatars found. Put a descriptor in avatars/.',
   'console.header.shapes': 'shapes',
 
   'console.camera.aria': 'Camera',
@@ -306,6 +307,7 @@ export const consoleJa: Record<keyof typeof consoleEn, string> = {
   'console.link.rejected': '不正 {count}',
 
   'console.avatar.aria': 'アバター',
+  'console.avatar.none': 'アバターがありません。avatars/ に定義ファイルを置いてください。',
   'console.header.shapes': 'シェイプ',
 
   'console.camera.aria': 'カメラ',

@@ -1,8 +1,9 @@
 import { loadMotions } from '@/engine/motion';
 import type { Session } from '@/engine/session';
-import type { LabelledId, SessionEvent } from '@/engine/types';
+import type { AvatarDescriptor, LabelledId, SessionEvent } from '@/engine/types';
 import {
   type AvatarStatus,
+  avatarsResponseSchema,
   type BgmCommand,
   type BgmReport,
   type Command,
@@ -70,8 +71,14 @@ export type ControlStatus = 'online' | 'offline';
  * is dropped.
  */
 export interface RendererControls {
-  /** Every avatar this renderer can load, including the one it has. */
-  readonly avatars: LabelledId[];
+  /**
+   * Hand over the avatars the control server found, each time it is asked.
+   *
+   * The renderer owns what to do with them: pick a first one if it has none
+   * yet, remember the list for `load`. A roster arriving later never replaces
+   * the avatar already on screen.
+   */
+  setAvatars(list: AvatarDescriptor[]): void;
   /** Print the measurements over the frame, or stop. */
   setDebug(on: boolean): void;
   /**
@@ -123,6 +130,8 @@ export class ControlClient {
   status: ControlStatus = 'offline';
 
   private pending: SessionEvent[] = [];
+  /** The avatars the server listed on the last fetch that worked. */
+  private roster: LabelledId[] = [];
   /** At most one report runs; more requests collapse into these two flags. */
   private reporting: Promise<void> | null = null;
   private reportQueued = false;
@@ -323,8 +332,8 @@ export class ControlClient {
       // it until a viewer has loaded one. Push it on every connect — but after
       // the motions, because they are part of what it lists and a vocabulary
       // sent before them would advertise a shorter gesture set than the one
-      // that is actually playable.
-      void this.motions().then(() => {
+      // that is actually playable. The same goes for the roster.
+      void Promise.all([this.motions(), this.avatars()]).then(() => {
         if (this.source === src && !this.stopped) void this.report(true);
       });
     };
@@ -398,6 +407,30 @@ export class ControlClient {
   }
 
   /**
+   * Read the avatars the operator put on disk and hand them to the renderer.
+   *
+   * On every connect, for the reason `motions` is: the directory is read afresh
+   * at the other end. Failures are quiet and keep the previous roster, so a
+   * server that is down for a restart does not empty the picker.
+   */
+  private async avatars(): Promise<void> {
+    try {
+      const response = await fetch(`${this.base}/avatars`);
+      if (!response.ok) return;
+      const parsed = avatarsResponseSchema.safeParse(await response.json());
+      if (!parsed.success) return;
+      for (const { id, error } of parsed.data.errors) {
+        console.warn(`avatar ${id}: ${error}`);
+      }
+      const list = parsed.data.avatars;
+      this.roster = list.map((a) => ({ id: a.id, label: a.label }));
+      this.renderer?.setAvatars(list);
+    } catch {
+      // Same as `motions`: the next connect asks again.
+    }
+  }
+
+  /**
    * Reports are serialised through one promise, while repeated heartbeats
    * collapse into one queued request. Firing them concurrently lets two POSTs
    * arrive at the server out of order; keeping a promise chain for every timer
@@ -450,9 +483,9 @@ export class ControlClient {
     };
     if (withVocabulary) {
       if (session !== null) body.vocabulary = session.vocabulary();
-      // Fixed for the life of the page, so it goes with the vocabulary rather
-      // than every 700 ms.
-      if (this.renderer) body.avatars = this.renderer.avatars;
+      // Replaced on each connect, so it goes with the vocabulary rather than
+      // every 700 ms.
+      if (this.renderer) body.avatars = this.roster;
     }
     // The chain the renderer is *actually* running, so a panel draws that rather
     // than what it last sent — see `VoiceReport`. On the report timer and not
