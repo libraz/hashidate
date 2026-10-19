@@ -11,9 +11,11 @@ import {
   avatarPlacement,
   clampPage,
   fitAspect,
+  SlidePeek,
   SlidesTab,
   settled,
 } from '@/panel/slides/SlidesTab';
+import type { DeckSource } from '@/viewer/scene/slides/deck';
 
 const api = vi.hoisted(() => ({
   slide: vi.fn(),
@@ -26,6 +28,11 @@ vi.mock('@/panel/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/panel/api')>();
   return { ...actual, ...api };
 });
+
+// pdf.js has no business in a DOM emulator; the tab's own peek opens nothing.
+vi.mock('@/viewer/scene/slides/deck', () => ({
+  openDeck: () => new Promise<never>(() => {}),
+}));
 
 /**
  * The five things the document tab works out for itself.
@@ -226,5 +233,131 @@ describe('SlidesTab keyboard binding', () => {
       );
     });
     expect(api.slide).toHaveBeenCalledWith({ by: 1 });
+  });
+});
+
+describe('SlidePeek', () => {
+  let root: Root | null = null;
+  let host: HTMLDivElement | null = null;
+
+  afterEach(() => {
+    if (root !== null) {
+      act(() => root?.unmount());
+      root = null;
+    }
+    host?.remove();
+    host = null;
+  });
+
+  function fakeDeck(pages: number) {
+    const drawn: number[] = [];
+    const source: DeckSource = {
+      pages,
+      render: async (page) => {
+        drawn.push(page);
+        return { width: 16, height: 9, close: () => {} } as ImageBitmap;
+      },
+      dispose: vi.fn(),
+    };
+    return { source, drawn, open: vi.fn(async () => source) };
+  }
+
+  async function mount(props: Parameters<typeof SlidePeek>[0]): Promise<HTMLDivElement> {
+    if (host === null) {
+      host = document.createElement('div');
+      document.body.append(host);
+      root = createRoot(host);
+    }
+    await act(async () => {
+      root?.render(createElement(SlidePeek, props));
+    });
+    return host;
+  }
+
+  const button = (where: HTMLElement, label: string): HTMLButtonElement => {
+    const found = [...where.querySelectorAll('button')].find(
+      (b) => b.textContent === label || b.title === label,
+    );
+    if (!found) throw new Error(`no button ${label}`);
+    return found;
+  };
+
+  const click = async (target: HTMLElement): Promise<void> => {
+    await act(async () => {
+      target.click();
+    });
+  };
+
+  it('starts at the page on air and moves on its own, sending nothing', async () => {
+    const { open, drawn } = fakeDeck(4);
+    const where = await mount({ deck: 'talk', onAir: 3, pages: 4, open });
+    expect(open).toHaveBeenCalledWith('/slides/talk.pdf');
+    expect(drawn).toEqual([3]);
+    expect(where.textContent).toContain('On air');
+
+    await click(button(where, 'Next page, here only'));
+    expect(drawn).toEqual([3, 4]);
+    expect(where.textContent).not.toContain('On air');
+    // Stops at the last page rather than drawing past it.
+    expect(button(where, 'Next page, here only').disabled).toBe(true);
+    expect(api.slide).not.toHaveBeenCalled();
+  });
+
+  it('sends the page looked at only when told to, and not the one already on air', async () => {
+    const { open } = fakeDeck(4);
+    const where = await mount({ deck: 'talk', onAir: 2, pages: 4, open });
+    expect(button(where, 'Show this page').disabled).toBe(true);
+
+    await click(button(where, 'Previous page, here only'));
+    await click(button(where, 'Show this page'));
+    expect(api.slide).toHaveBeenCalledTimes(1);
+    expect(api.slide).toHaveBeenCalledWith({ page: 1 });
+  });
+
+  it('takes a typed page, clamped to the document', async () => {
+    const { open, drawn } = fakeDeck(4);
+    const where = await mount({ deck: 'talk', onAir: 1, pages: 4, open });
+    const field = where.querySelector('input');
+    if (!field) throw new Error('no page field');
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      set?.call(field, '9');
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    expect(drawn.at(-1)).toBe(4);
+    expect(api.slide).not.toHaveBeenCalled();
+  });
+
+  it('stays put when the page on air turns, and goes back to it on request', async () => {
+    const { open, drawn } = fakeDeck(6);
+    let where = await mount({ deck: 'talk', onAir: 2, pages: 6, open });
+    await click(button(where, 'Next page, here only'));
+    where = await mount({ deck: 'talk', onAir: 5, pages: 6, open });
+    expect(drawn.at(-1)).toBe(3);
+
+    await click(button(where, 'Back to the page on air'));
+    expect(drawn.at(-1)).toBe(5);
+  });
+
+  it('starts over at the page on air when the document changes', async () => {
+    const first = fakeDeck(6);
+    let where = await mount({ deck: 'talk', onAir: 2, pages: 6, open: first.open });
+    await click(button(where, 'Next page, here only'));
+    const second = fakeDeck(3);
+    where = await mount({ deck: 'other', onAir: 1, pages: 3, open: second.open });
+    expect(second.drawn).toEqual([1]);
+    expect(first.source.dispose).toHaveBeenCalled();
+  });
+
+  it('says why when the document cannot be opened, and keeps going', async () => {
+    const open = vi.fn(async () => {
+      throw new Error('missing');
+    });
+    const where = await mount({ deck: 'gone', onAir: 1, pages: 2, open });
+    expect(where.textContent).toContain('This page could not be drawn: missing');
+    expect(button(where, 'Next page, here only').disabled).toBe(false);
   });
 });

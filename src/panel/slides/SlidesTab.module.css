@@ -118,6 +118,61 @@
   line-height: 1.7;
 }
 
+/* --- the page peek --------------------------------------------------------- */
+
+.peek {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* The page's own shape: the canvas is sized to the bitmap and scaled to fit. */
+.peekPage {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.send,
+.back {
+  height: var(--control-height);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.send {
+  background: var(--accent-tint);
+  border: 1px solid var(--accent-edge);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.send:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.back {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--fg-dim);
+}
+
+.back:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
+.send:disabled,
+.back:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 /* --- the anchor grid ------------------------------------------------------- */
 
 /* A fieldset because the nine buttons are one control; its own frame is not
