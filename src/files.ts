@@ -310,13 +310,13 @@ function validRequest(
   if (parts.length === 0 && request !== '') return false;
   for (const part of parts) {
     const extension = normaliseExtension(extname(part));
-    const id = policy.extensions.includes(extension) ? stem(part, extension) : part;
+    const id =
+      !policy.logical && policy.extensions.includes(extension) ? stem(part, extension) : part;
     if (id.length === 0 || id.length > policy.maxIdLength || part.startsWith('.')) return false;
     if (CONTROL_OR_SEPARATOR.test(part)) return false;
   }
   if (policy.logical) {
     if (parts.length !== 1 || policy.extensions.length === 0) return false;
-    if (policy.extensions.includes(normaliseExtension(extname(request)))) return false;
   } else if (policy.extensions.length > 0 && !finalMayBeDirectory) {
     const extension = normaliseExtension(extname(basename(request)));
     if (!policy.extensions.includes(extension)) return false;
