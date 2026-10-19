@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useT } from '@/i18n';
 import type { QueueEntry, ScriptSummary, ScriptsResponse } from '@/protocol';
 import { Chip, ChipRow } from '@/ui/Chip';
+import { Select } from '@/ui/Select';
 import { Toggle } from '@/ui/Toggle';
 import { isFailure, readScripts, runScript } from '../api';
 import { ago } from '../slides/SlidesTab';
@@ -59,6 +60,8 @@ export function ScriptPicker({ entries, refresh }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [hold, setHold] = useState(true);
+  const [picked, setPicked] = useState('');
+  const [page, setPage] = useState('0');
 
   const rescan = useCallback(async () => {
     const result = await readScripts();
@@ -74,10 +77,10 @@ export function ScriptPicker({ entries, refresh }: Props) {
     void rescan();
   }, [rescan]);
 
-  const load = async (script: ScriptSummary): Promise<void> => {
+  const load = async (script: ScriptSummary, from?: number): Promise<void> => {
     setBusy(true);
     setNotice(null);
-    const result = await runScript(script.id, { pause: hold });
+    const result = await runScript(script.id, { pause: hold, from });
     setBusy(false);
     if (isFailure(result)) {
       setNotice(result.error);
@@ -107,6 +110,16 @@ export function ScriptPicker({ entries, refresh }: Props) {
    * the right one, which is the same rule the document picker follows.
    */
   const loaded = loadedScript(entries, known);
+
+  // Starting part-way: the script defaults to the one that is up, and the page
+  // to its first, until the operator picks otherwise.
+  const paged = scripts.filter((script) => (script.pages?.length ?? 0) > 0);
+  const fromScript =
+    paged.find((script) => script.id === picked) ??
+    paged.find((script) => script.id === loaded) ??
+    paged[0];
+  const fromPages = fromScript?.pages ?? [];
+  const fromPage = fromPages[Number(page)] ?? fromPages[0];
 
   /**
    * Pending lines that did not come from a script, which are the ones a load
@@ -162,6 +175,37 @@ export function ScriptPicker({ entries, refresh }: Props) {
         ))}
       </ChipRow>
 
+      {fromScript !== undefined && fromPage !== undefined ? (
+        <div className={styles.from}>
+          <span className={styles.fromLabel}>{t('panel.script.from')}</span>
+          <Select
+            value={fromScript.id}
+            ariaLabel={t('panel.script.from.script')}
+            options={paged.map((script) => ({
+              value: script.id,
+              label: script.title ?? script.id,
+            }))}
+            onChange={(id) => {
+              setPicked(id);
+              setPage('0');
+            }}
+          />
+          <Select
+            value={String(fromPages.indexOf(fromPage))}
+            ariaLabel={t('panel.script.from.page')}
+            options={pageOptions(fromPages)}
+            onChange={setPage}
+          />
+          <Chip
+            label={t('panel.script.from.run')}
+            variant="action"
+            title={t('panel.script.from.run.title')}
+            disabled={busy}
+            onClick={() => void load(fromScript, fromPage.line)}
+          />
+        </div>
+      ) : null}
+
       {/* Only for what a load would actually lose — see `handmade`. A chip does
           not look like the destructive control it becomes when there is
           somebody's typing in the queue, and this is said here rather than
@@ -191,4 +235,18 @@ export function ScriptPicker({ entries, refresh }: Props) {
       ) : null}
     </section>
   );
+}
+
+/**
+ * A page per option, named by its number, with the document in front when the
+ * script moves between more than one — a bare "p.3" would be ambiguous there.
+ */
+export function pageOptions(
+  pages: NonNullable<ScriptSummary['pages']>,
+): Array<{ value: string; label: string }> {
+  const decks = new Set(pages.map((entry) => entry.deck));
+  return pages.map((entry, index) => ({
+    value: String(index),
+    label: decks.size > 1 ? `${entry.deck} p.${entry.page}` : `p.${entry.page}`,
+  }));
 }

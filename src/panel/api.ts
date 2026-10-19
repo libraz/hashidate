@@ -138,9 +138,13 @@ export const readBgm = (): Promise<BgmResponse | Failure> => request<BgmResponse
  */
 export const runScript = (
   id: string,
-  { replace = true, pause = true }: { replace?: boolean; pause?: boolean } = {},
+  {
+    replace = true,
+    pause = true,
+    from,
+  }: { replace?: boolean; pause?: boolean; from?: number } = {},
 ): Promise<ScriptRunResponse | Failure> =>
-  post<ScriptRunResponse>('/scripts/run', { id, replace, pause });
+  post<ScriptRunResponse>('/scripts/run', { id, replace, pause, from });
 
 /**
  * Hold the queue where it is, or let it move again.

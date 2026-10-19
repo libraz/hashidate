@@ -89,3 +89,16 @@
   color: var(--fg-dim);
   font-family: var(--font-mono);
 }
+
+/* Starting part-way: one row, under the scripts it starts. */
+.from {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.fromLabel {
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+}
