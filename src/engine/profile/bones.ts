@@ -266,6 +266,15 @@ export function measureLimbs(
         limb[`tip.${side}.${f}`] = len;
       }
     }
+
+    // Knuckle pitch and proximal phalanx length size an interlaced clasp.
+    const idx = fingerBones[`index.${side}`];
+    const mid = fingerBones[`middle.${side}`];
+    const pnk = fingerBones[`little.${side}`];
+    if (idx?.length && mid && mid.length >= 2 && pnk?.length) {
+      limb[`pitch.${side}`] = worldPos(pnk[0]).distanceTo(worldPos(idx[0])) / 3;
+      limb[`proximal.${side}`] = worldPos(mid[0]).distanceTo(worldPos(mid[1]));
+    }
   }
   return limb;
 }

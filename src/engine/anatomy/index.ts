@@ -12,7 +12,7 @@
 
 export { ArmAnatomy } from './arm';
 export { buildBodyFrame } from './body-frame';
-export { HAND_CONTACT, JOINTS, ZONES } from './joints';
+export { FINGER_WIDTH, HAND_CONTACT, INTERLACE_GAP, JOINTS, SPLAY_CAP, ZONES } from './joints';
 export type { ArmMeasurement, ArmStrain } from './measurement';
 export type { ElevationCeiling } from './strain';
 export {

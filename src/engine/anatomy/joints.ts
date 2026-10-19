@@ -221,6 +221,15 @@ export const ZONES: Record<StrainZone, Localized> = {
  */
 export const HAND_CONTACT = 0.35;
 
+/** Finger thickness as a fraction of knuckle pitch. Only a clearance measure; bones carry no width. */
+export const FINGER_WIDTH = 0.75;
+
+/** Separation of the two knuckle rows in a clasp, in pitches: about a palm's thickness, so fingers cross at the web fold. */
+export const INTERLACE_GAP = 1.5;
+
+/** Total fan of a hand's four fingers when interlaced, about the MCP abduction a relaxed hand reaches. */
+export const SPLAY_CAP = 25 * D;
+
 /** Points tested per arm segment against the trunk. See `torsoDepth`. */
 export const TORSO_SAMPLES = 6;
 

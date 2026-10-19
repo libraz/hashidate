@@ -11,6 +11,7 @@ import {
   resolveBones,
   resolveFingers,
 } from '@/engine/profile/bones';
+import { Rig } from '@/engine/rig';
 import type { BoneSlot, FingerKey, LegBoneSlot } from '@/engine/types';
 import { must } from '../helpers/must';
 import { buildRig, type RigOptions } from '../helpers/scene';
@@ -452,6 +453,48 @@ describe('measureLimbs', () => {
       world(chain[2]).distanceTo(world(tip));
 
     expect(limb['tip.L.middle']).toBeCloseTo(measured, 12);
+  });
+
+  it('measures knuckle pitch and proximal length per side', () => {
+    const { limb } = measure(1);
+    for (const side of ['L', 'R']) {
+      expect(limb[`pitch.${side}`]).toBeCloseTo(0.012, 6);
+      expect(limb[`proximal.${side}`]).toBeCloseTo(0.025, 6);
+    }
+  });
+
+  it('measures pitch and proximal length identically at both armature scales', () => {
+    expect(measure(0.01).limb['pitch.L']).toBeCloseTo(measure(1).limb['pitch.L'], 9);
+    expect(measure(0.01).limb['proximal.R']).toBeCloseTo(measure(1).limb['proximal.R'], 9);
+  });
+
+  it('omits pitch and proximal length when the rig has no fingers', () => {
+    const rig = buildRig({ fingers: false });
+    const bonesByName = collectBones(rig.root);
+    const { value: bones } = resolveBones(bonesByName);
+    const { value: fingers } = resolveFingers(bonesByName);
+    const limb = measureLimbs(rig.root, bones, fingers);
+    for (const side of ['L', 'R']) {
+      expect(limb).not.toHaveProperty(`pitch.${side}`);
+      expect(limb).not.toHaveProperty(`proximal.${side}`);
+    }
+  });
+
+  it('leaves each finger base where the hand put it when the hand curls', () => {
+    const scene = buildRig();
+    const profile = buildProfile(scene.root, scene.descriptor);
+    const rig = new Rig(profile);
+    const bases = (['index', 'middle', 'ring', 'little'] as const).map((f) =>
+      must(profile.fingerBones[`${f}.L`]?.[0], `${f}.L`),
+    );
+    const read = () => {
+      scene.root.updateMatrixWorld(true);
+      return bases.map((b) => b.getWorldPosition(new THREE.Vector3()));
+    };
+    const before = read();
+    rig.curlHand('L', { index: 1, middle: 1, ring: 1, little: 1 });
+    const after = read();
+    for (const [i, p] of before.entries()) expect(after[i].distanceTo(p)).toBeLessThan(1e-9);
   });
 
   it('leaves out an arm whose links are not all present', () => {
