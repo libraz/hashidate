@@ -149,6 +149,9 @@ export function askSidecar(
         ...target,
         path,
         method: ask.method ?? 'GET',
+        // No keep-alive reuse: uvicorn closes idle sockets at 5 s, the same
+        // moment Node's agent would reuse one, and the probe died with ECONNRESET.
+        agent: false,
         headers:
           payload === null
             ? {}

@@ -161,6 +161,25 @@ describe('one round trip, over either transport', () => {
     expect(reply.body.toString('utf8')).toBe('GET /health ');
   });
 
+  it('opens a connection per ask, because a reused idle one is closed under it', async () => {
+    // uvicorn drops idle connections after five seconds, which is also when a
+    // pooled socket would next be used; the ask then died with ECONNRESET.
+    server = serve();
+    let connections = 0;
+    server.on('connection', () => {
+      connections += 1;
+    });
+    await new Promise((up) => server?.listen(0, '127.0.0.1', () => up(null)));
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('no port');
+    const endpoint = { kind: 'port', port: address.port } as const;
+
+    await askSidecar(endpoint, '/health', { timeoutMs: 2_000 });
+    await askSidecar(endpoint, '/health', { timeoutMs: 2_000 });
+
+    expect(connections).toBe(2);
+  });
+
   it('cuts a hanging socket request when the caller aborts it', async () => {
     let sawRequest!: () => void;
     const started = new Promise<void>((resolve) => {
