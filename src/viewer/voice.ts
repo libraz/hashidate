@@ -1,5 +1,5 @@
 import type { LabelledId, Take, Voice, VoiceChainRequest, VoiceReport } from '@/engine/types';
-import type { VoiceDsp } from '@/protocol';
+import { type SpeechState, speechStateSchema, type VoiceDsp } from '@/protocol';
 import { BrowserAudioOutput } from './audio-output';
 import { buildImpulse, ROOMS, type RoomId, roomList } from './rooms';
 import {
@@ -82,14 +82,14 @@ const ENVELOPE_HZ = 100;
 const ENVELOPE_REFERENCE = 0.95;
 
 /**
- * How long to stop asking after the sidecar turns out not to be there.
+ * How often to look at the sidecar's state while it is unavailable.
  *
- * Not running is the normal case rather than the exceptional one, and without
- * this every line of a stream costs a connection refused. Long enough to be out
- * of the way, short enough that starting the sidecar mid-session is noticed
- * within a line or two.
+ * Loading is the one state with a known end, so it is watched closely; anything
+ * else is a machine without a sidecar or one that has stopped, and a request a
+ * second to find that out would be noise.
  */
-const RETRY_AFTER_MS = 20_000;
+const WATCH_LOADING_MS = 1_000;
+const WATCH_IDLE_MS = 5_000;
 
 /**
  * How long the audio clock may stand still mid-line before the wall clock takes
@@ -300,10 +300,15 @@ export class BrowserVoice implements Voice {
   private unlockWhilePending = false;
   private ctx: AudioContext | null = null;
   private chainNodes: Chain | null = null;
-  private silentUntil = 0;
-  /** How many lines have been asked for, and the first one the back-off covers. */
-  private issued = 0;
-  private backOffFrom = 0;
+  /**
+   * The sidecar refused (503) or could not be reached. Lines are not posted
+   * until `/api/state` says it can answer, so a missing sidecar costs one state
+   * request per line instead of a refused connection.
+   */
+  private unavailable = false;
+  private watcher: ReturnType<typeof setTimeout> | null = null;
+  /** Which `watch` loop is current, so a stopped one recognises itself. */
+  private watchRun = 0;
   /** Requests are run through this one at a time. See `prepare`. */
   private chain: Promise<unknown> = Promise.resolve();
 
@@ -363,6 +368,7 @@ export class BrowserVoice implements Voice {
     this.offUnlock?.();
     this.offUnlock = null;
     this.availableListeners.clear();
+    this.stopWatch();
     this.devicePending = false;
     this.deviceRefused = false;
     this.unlockWhilePending = false;
@@ -695,9 +701,7 @@ export class BrowserVoice implements Voice {
    * lines still queued behind it.
    */
   prepare(text: string, reading?: string, signal?: AbortSignal): Promise<Take | null> {
-    this.issued += 1;
-    const seq = this.issued;
-    const run = () => this.synthesise(text, reading, seq, signal);
+    const run = () => this.synthesise(text, reading, signal);
     const next = this.chain.then(run, run);
     // The chain waits on completion, not on success: a line that failed must
     // not wedge every line behind it.
@@ -735,22 +739,72 @@ export class BrowserVoice implements Voice {
     }
   }
 
-  /** Back off, from now, after the sidecar turned out not to be there. */
-  private backOff(): void {
-    this.backOffFrom = this.issued + 1;
-    this.silentUntil = Date.now() + RETRY_AFTER_MS;
+  /** The sidecar's state as the control server reports it, or null if that could not be read. */
+  private async speechState(): Promise<SpeechState | null> {
+    try {
+      const res = await fetch(`${this.base}/state`);
+      if (!res.ok) return null;
+      const parsed = speechStateSchema.safeParse((await res.json())?.speech);
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private markUnavailable(): void {
+    this.unavailable = true;
+    this.watch();
+  }
+
+  /**
+   * Poll the state until the sidecar is ready, then say so once.
+   *
+   * It only runs while `unavailable`, so the announcement is always a move from
+   * not-ready to ready and the session can ask again for the lines that went
+   * out silent in between.
+   */
+  private watch(): void {
+    if (this.watcher !== null) return;
+    const run = ++this.watchRun;
+    // The first look is soon: a 503 is most often a model a few seconds from ready.
+    let interval = WATCH_LOADING_MS;
+    const tick = async (): Promise<void> => {
+      const state = await this.speechState();
+      if (run !== this.watchRun) return;
+      if (state === 'ready') {
+        this.stopWatch();
+        this.unavailable = false;
+        this.notifyAvailable();
+        return;
+      }
+      if (state !== null) interval = state === 'loading' ? WATCH_LOADING_MS : WATCH_IDLE_MS;
+      this.watcher = setTimeout(tick, interval);
+    };
+    this.watcher = setTimeout(tick, interval);
+  }
+
+  private stopWatch(): void {
+    this.watchRun += 1;
+    if (this.watcher !== null) clearTimeout(this.watcher);
+    this.watcher = null;
   }
 
   private async synthesise(
     text: string,
     reading: string | undefined,
-    seq: number,
     signal: AbortSignal | undefined,
   ): Promise<Take | null> {
     if (signal?.aborted) return null;
-    // Only a line asked for after the failure is skipped: one already queued
-    // behind it is still owed its attempt.
-    if (seq >= this.backOffFrom && Date.now() < this.silentUntil) return null;
+    if (this.unavailable) {
+      const state = await this.speechState();
+      if (signal?.aborted) return null;
+      // Absent is let through: an alternative synthesiser may answer without
+      // ever reporting the sidecar as ready.
+      if (state !== 'ready' && state !== 'absent') return null;
+      this.stopWatch();
+      this.unavailable = false;
+      if (state === 'ready') this.notifyAvailable();
+    }
     const ctx = await this.device();
     if (!ctx) return null;
 
@@ -764,14 +818,14 @@ export class BrowserVoice implements Voice {
       });
       if (!res.ok) {
         // 503 is the sidecar not being there, which is a state rather than an
-        // event: back off instead of asking again on the next line.
-        if (res.status === 503) this.backOff();
+        // event. Any other status is this line's own failure.
+        if (res.status === 503) this.markUnavailable();
         return null;
       }
       encoded = await res.arrayBuffer();
     } catch {
       // A line dropped mid-request says nothing about the sidecar.
-      if (!signal?.aborted) this.backOff();
+      if (!signal?.aborted) this.markUnavailable();
       return null;
     }
 

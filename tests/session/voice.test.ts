@@ -162,6 +162,40 @@ describe('a turn with a voice', () => {
     expect((voice as unknown as FakeVoice).asked).toEqual(['あ', 'い', 'う', 'あ', 'い']);
   });
 
+  it('asks again for silenced lines the moment the queue is released, and the head waits for it', async () => {
+    let up = false;
+    let voice!: FakeVoice;
+    const { session, step } = build({
+      voice: (now) => {
+        voice = new (class extends FakeVoice {
+          override prepare(text: string, reading?: string, signal?: AbortSignal) {
+            if (up) return super.prepare(text, reading, signal);
+            this.asked.push(text);
+            return Promise.resolve(null);
+          }
+        })(now, { defer: true });
+        return voice;
+      },
+    });
+    session.paused = true;
+    session.say({ id: 'a', text: 'あ' });
+    session.say({ id: 'b', text: 'い' });
+    await settle();
+    expect(session.queue.map((turn) => turn.take)).toEqual([null, null]);
+
+    up = true;
+    session.paused = false;
+    expect(voice.asked).toEqual(['あ', 'い', 'あ', 'い']);
+    expect(session.queue.map((turn) => turn.take)).toEqual([undefined, undefined]);
+    step(60);
+    expect(session.turn).toBeNull();
+
+    await voice.answer();
+    step(Math.ceil(1 / DT));
+    expect(session.turn?.id).toBe('a');
+    expect(voice.takes[0].playedAt).not.toBeNull();
+  });
+
   it('retries queued silent lines when the voice announces availability', async () => {
     let voice!: RecoveringVoice;
     const { session } = build({

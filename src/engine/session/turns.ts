@@ -68,8 +68,21 @@ export class TurnQueue {
    * rather than by simply not sending the list: a recording released against a
    * queue full of prepared audio opens on the first word instead of on the wait
    * for it.
+   *
+   * Releasing it asks again for the lines that went silent while it was held:
+   * a sidecar that was loading when they were queued may be ready by now.
    */
-  paused = false;
+  get paused(): boolean {
+    return this._paused;
+  }
+
+  set paused(on: boolean) {
+    const released = this._paused && !on;
+    this._paused = on;
+    if (released && this.voice) this.retrySilenced(this.voice, false);
+  }
+
+  private _paused = false;
 
   private _gap = 0;
   /** The queue head currently waiting on its voice, how long it has waited, and may. */

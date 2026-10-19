@@ -177,8 +177,23 @@ function webAudioEnvironment(
     status: 200,
     arrayBuffer: async () => new ArrayBuffer(1),
   }));
-  vi.stubGlobal('fetch', send);
+  // `/api/state` is what the voice reads to learn the sidecar is back; `send`
+  // stays the speech POSTs alone, so its call counts are lines asked for.
+  const state = { speech: 'ready' as string, reads: 0, fail: false };
+  vi.stubGlobal('fetch', (url: string, request?: RequestInit) => {
+    if (url.endsWith('/state') && (request?.method ?? 'GET') === 'GET') {
+      state.reads++;
+      if (state.fail) return Promise.reject(new Error('unreachable'));
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ speech: state.speech }),
+      });
+    }
+    return send(url, request as RequestInit);
+  });
   return {
+    state,
     context,
     created,
     decoded,
@@ -191,6 +206,7 @@ function webAudioEnvironment(
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -431,42 +447,52 @@ describe('BrowserVoice with an in-memory Web Audio graph', () => {
     fake.output.dispose();
   });
 
-  it('keeps the sidecar retry budget after an unlock retry gets a 503', async () => {
-    const fake = webAudioEnvironment({ blocked: true });
-    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+  it('asks again for a line that got a 503 once the state reads ready, and not for a 502', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const fake = webAudioEnvironment();
+    fake.state.speech = 'loading';
     const { session } = buildSession({ voice: () => fake.voice });
-    session.paused = true;
-    session.say({ id: 'a', text: 'あ' });
-    session.say({ id: 'b', text: 'い' });
-
-    await vi.waitFor(() => expect(session.queue.map((turn) => turn.take)).toEqual([null, null]));
-    fake.send.mockResolvedValueOnce({
+    const refuse = (status: number) => ({
       ok: false,
-      status: 503,
+      status,
       arrayBuffer: async () => new ArrayBuffer(0),
     });
-    fake.send.mockResolvedValueOnce({
-      ok: false,
-      status: 503,
-      arrayBuffer: async () => new ArrayBuffer(0),
-    });
-    fake.context.state = 'running';
-    await fake.output.ensureRunning();
-    await vi.waitFor(() => expect(fake.send).toHaveBeenCalledTimes(2));
-    await vi.waitFor(() => expect(session.queue.map((turn) => turn.take)).toEqual([null, null]));
+    const asked = () =>
+      fake.send.mock.calls.map(([, request]) => JSON.parse(String(request.body)).text);
 
-    now.mockReturnValue(21_001);
-    session.say({ id: 'c', text: 'う' });
-    await vi.waitFor(() => expect(fake.send).toHaveBeenCalledTimes(5));
-    expect(
-      fake.send.mock.calls.map(([, request]) => JSON.parse(String(request.body)).text),
-    ).toEqual(['あ', 'い', 'う', 'あ', 'い']);
-    await vi.waitFor(() =>
-      expect(session.queue.every((turn) => turn.take !== null && turn.take !== undefined)).toBe(
-        true,
-      ),
-    );
-    expect(fake.decodeCalls()).toBe(3);
+    fake.send.mockResolvedValueOnce(refuse(502));
+    session.say({ id: 'bad', text: 'あ' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(asked()).toEqual(['あ']);
+    // A line's own failure watches nothing.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fake.state.reads).toBe(0);
+    expect(asked()).toEqual(['あ']);
+
+    fake.send.mockResolvedValueOnce(refuse(503));
+    session.say({ id: 'a', text: 'い' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(asked()).toEqual(['あ', 'い']);
+    expect(session.queue.map((turn) => turn.take)).toEqual([null, null]);
+
+    // The first look comes a second after the 503, and loading keeps it at a second.
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fake.state.reads).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fake.state.reads).toBe(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.state.reads).toBe(2);
+    expect(asked()).toEqual(['あ', 'い']);
+
+    fake.state.speech = 'ready';
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.state.reads).toBe(3);
+    expect(asked()).toEqual(['あ', 'い', 'あ', 'い']);
+    expect(session.queue.every((turn) => turn.take !== null && turn.take !== undefined)).toBe(true);
+    // Ready ends the watch.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fake.state.reads).toBe(3);
 
     session.dispose();
     fake.voice.dispose();
@@ -491,9 +517,10 @@ describe('BrowserVoice with an in-memory Web Audio graph', () => {
     fake.output.dispose();
   });
 
-  it('backs off a missing sidecar after 503 and retries after the fixed interval', async () => {
+  it('posts nothing after a 503 until the state reads ready or absent', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const fake = webAudioEnvironment();
-    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    fake.state.speech = 'loading';
     fake.send.mockResolvedValueOnce({
       ok: false,
       status: 503,
@@ -501,14 +528,48 @@ describe('BrowserVoice with an in-memory Web Audio graph', () => {
     });
 
     expect(await fake.voice.prepare('first')).toBeNull();
-    expect(await fake.voice.prepare('during backoff')).toBeNull();
+    expect(await fake.voice.prepare('while loading')).toBeNull();
+    fake.state.speech = 'down';
+    expect(await fake.voice.prepare('while down')).toBeNull();
+    fake.state.fail = true;
+    expect(await fake.voice.prepare('unreadable')).toBeNull();
     expect(fake.send).toHaveBeenCalledTimes(1);
 
-    now.mockReturnValue(21_001);
-    expect(await fake.voice.prepare('after backoff')).not.toBeNull();
+    fake.state.fail = false;
+    fake.state.speech = 'ready';
+    expect(await fake.voice.prepare('ready')).not.toBeNull();
     expect(fake.send).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+
+    // A machine with no sidecar reports absent, which is not a reason to stay quiet.
+    fake.send.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      arrayBuffer: async () => new ArrayBuffer(0),
+    });
+    expect(await fake.voice.prepare('refused')).toBeNull();
+    fake.state.speech = 'absent';
+    expect(await fake.voice.prepare('absent')).not.toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
 
     fake.voice.dispose();
+    fake.output.dispose();
+  });
+
+  it('stops watching when disposed', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const fake = webAudioEnvironment();
+    fake.state.speech = 'loading';
+    fake.send.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      arrayBuffer: async () => new ArrayBuffer(0),
+    });
+    expect(await fake.voice.prepare('first')).toBeNull();
+    expect(vi.getTimerCount()).toBe(1);
+
+    fake.voice.dispose();
+    expect(vi.getTimerCount()).toBe(0);
     fake.output.dispose();
   });
 
@@ -593,23 +654,25 @@ describe('BrowserVoice with an in-memory Web Audio graph', () => {
     fake.output.dispose();
   });
 
-  it('still asks for the lines queued before a failure, and backs off only later ones', async () => {
+  it('holds the lines queued behind a network failure until the state allows them', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const fake = webAudioEnvironment();
+    fake.state.speech = 'loading';
     fake.send.mockRejectedValueOnce(new Error('connection refused'));
     // A batch: all three are asked for before the first answers.
     const takes = [fake.voice.prepare('a'), fake.voice.prepare('b'), fake.voice.prepare('c')];
     const [a, b, c] = await Promise.all(takes);
 
     expect(a).toBeNull();
-    expect(b).not.toBeNull();
-    expect(c).not.toBeNull();
-    expect(fake.send).toHaveBeenCalledTimes(3);
+    expect(b).toBeNull();
+    expect(c).toBeNull();
+    expect(fake.send).toHaveBeenCalledTimes(1);
 
     fake.voice.dispose();
     fake.output.dispose();
   });
 
-  it('skips a dropped line without the sidecar, and cuts one in flight without backing off', async () => {
+  it('skips a dropped line without the sidecar, and cuts one in flight without marking it unavailable', async () => {
     const fake = webAudioEnvironment();
     const before = new AbortController();
     before.abort();
@@ -625,6 +688,7 @@ describe('BrowserVoice with an in-memory Web Audio graph', () => {
     // The next line is asked for: a cut request says nothing about the sidecar.
     expect(await fake.voice.prepare('next')).not.toBeNull();
     expect(fake.send).toHaveBeenCalledTimes(2);
+    expect(fake.state.reads).toBe(0);
 
     fake.voice.dispose();
     fake.output.dispose();

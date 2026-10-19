@@ -27,7 +27,7 @@ The state is four values rather than a boolean:
 | `speech` | What it means | What to do |
 |---|---|---|
 | `ready` | The model is loaded and answering | Nothing |
-| `loading` | A sidecar is up and still bringing its model in, which takes the better part of a minute | Wait. Lines queued now go out silently |
+| `loading` | A sidecar is up and still bringing its model in, which takes the better part of a minute | Wait. Lines queued now are asked for again once the voice is ready |
 | `absent` | No sidecar was ever found | Ordinary for a checkout that has not run `make voice`. Nothing is wrong |
 | `down` | One answered earlier and has stopped | The state worth acting on. Check what it printed — under the native shell, `speech.log` |
 
@@ -43,7 +43,7 @@ Three things follow from having the finished take before playback starts, which 
 
 Synthesis starts when a line is *queued* rather than when it is played, so a batch of three is requested up front, one after another, and only the first turn of a run waits. See [Send a whole answer at once](control-api.md#send-a-whole-answer-at-once).
 
-A voice that fails or hangs costs the line its sound and nothing else: the turn plays silently rather than holding up the queue. The wait is five seconds plus the line's own spoken length, because a long line takes about as long to make as to say. A line that came back without a sound is asked for once more when a later line succeeds. A line that leaves the queue unsaid (interrupt, clear, replacement) has its synthesis cancelled, so it stops holding up the lines behind it.
+A voice that fails or hangs costs the line its sound and nothing else: the turn plays silently rather than holding up the queue. The wait is five seconds plus the line's own spoken length, because a long line takes about as long to make as to say. A line that came back without a sound is asked for again when the renderer sees the sidecar become ready and when a held queue is released, and once more when a later line succeeds. A line the sidecar rejected for its own reasons is not retried on those grounds. A line that leaves the queue unsaid (interrupt, clear, replacement) has its synthesis cancelled, so it stops holding up the lines behind it.
 
 ## The watermark
 
