@@ -1,9 +1,5 @@
 import type * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import {
-  createOriginal01AllOutfitsRootHingeMainCuffs,
-  createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector,
-} from '@/avatars/original01';
 import { buildProfile } from '@/engine/profile';
 import { Wardrobe } from '@/engine/scene/wardrobe';
 import type { Profile, WardrobeTable } from '@/engine/types';
@@ -76,80 +72,77 @@ function dress(table: WardrobeTable = TABLE): Fixture {
   return { rig, profile, wardrobe, mesh, influence };
 }
 
+const CUFFS = ['Cuff_L1', 'Cuff_L2', 'Cuff_R1', 'Cuff_R2'];
+
+/** An outfit table whose main item wears `extras` beside its dress, over a rig that has every mesh. */
+function outfits(extras: string[]) {
+  const table: WardrobeTable = {
+    slots: {
+      outfit: {
+        label: same('Outfit'),
+        items: [
+          { id: 'main', label: same('Main'), meshes: ['Main_Dress', ...extras] },
+          { id: 'separates', label: same('Separates'), meshes: ['Separates_Top'] },
+          { id: 'layered', label: same('Layered'), meshes: ['Separates_Top', 'Cape_Shell'] },
+        ],
+      },
+    },
+    presets: { default: { label: same('Default'), set: { outfit: 'main' } } },
+  };
+  const garments = [
+    ...new Set(Object.values(table.slots).flatMap((slot) => slot.items.flatMap((i) => i.meshes))),
+  ];
+  const rig = buildRig({ garments });
+  const profile = buildProfile(rig.root, rig.descriptor);
+  return { rig, table, wardrobe: new Wardrobe(rig.root, profile, table) };
+}
+
 describe('wardrobe visibility', () => {
-  it('shows all main cuffs only with the main outfit on the main-cuffs descriptor', () => {
-    const descriptor = createOriginal01AllOutfitsRootHingeMainCuffs('/models/main-cuffs-test.glb');
-    const table = descriptor.wardrobe;
-    if (!table) throw new Error('main-cuffs wardrobe is missing');
-    const garments = [
-      ...new Set(
-        Object.values(table.slots).flatMap((slot) => slot.items.flatMap((item) => item.meshes)),
-      ),
-    ];
-    const rig = buildRig({ garments });
-    const profile = buildProfile(rig.root, descriptor);
-    const wardrobe = new Wardrobe(rig.root, profile, table);
-    const main = table.slots.outfit.items.find((item) => item.id === 'v02-main-dress');
-    if (!main) throw new Error('main-cuffs item is missing');
-    const cuffs = main.meshes.slice(-8);
+  it('shows the cuffs only with the main outfit', () => {
+    const { rig, wardrobe } = outfits(CUFFS);
+    const visible = (name: string) => rig.meshes.get(name)?.visible;
 
     expect(wardrobe.missing).toEqual([]);
-    expect(wardrobe.state.outfit).toBe('v02-main-dress');
-    for (const name of cuffs) expect(rig.meshes.get(name)?.visible, name).toBe(true);
-    expect(rig.meshes.get('V02_Everyday_Top_Mesh')?.visible).toBe(false);
-    expect(rig.meshes.get('V02_CapeJacket_Shell')?.visible).toBe(false);
+    expect(wardrobe.state.outfit).toBe('main');
+    for (const name of CUFFS) expect(visible(name), name).toBe(true);
+    expect(visible('Separates_Top')).toBe(false);
+    expect(visible('Cape_Shell')).toBe(false);
 
-    wardrobe.set('outfit', 'v02-everyday-separates');
+    wardrobe.set('outfit', 'separates');
+    for (const name of CUFFS) expect(visible(name), name).toBe(false);
+    expect(visible('Separates_Top')).toBe(true);
+    expect(visible('Cape_Shell')).toBe(false);
 
-    for (const name of cuffs) expect(rig.meshes.get(name)?.visible, name).toBe(false);
-    expect(rig.meshes.get('V02_Everyday_Top_Mesh')?.visible).toBe(true);
-    expect(rig.meshes.get('V02_CapeJacket_Shell')?.visible).toBe(false);
+    wardrobe.set('outfit', 'main');
+    for (const name of CUFFS) expect(visible(name), name).toBe(true);
 
-    wardrobe.set('outfit', 'v02-main-dress');
-
-    for (const name of cuffs) expect(rig.meshes.get(name)?.visible, name).toBe(true);
-
-    wardrobe.set('outfit', 'v02-stargazer-layered');
-
-    for (const name of cuffs) expect(rig.meshes.get(name)?.visible, name).toBe(false);
-    expect(rig.meshes.get('V02_Everyday_Top_Mesh')?.visible).toBe(true);
-    expect(rig.meshes.get('V02_CapeJacket_Shell')?.visible).toBe(true);
+    wardrobe.set('outfit', 'layered');
+    for (const name of CUFFS) expect(visible(name), name).toBe(false);
+    expect(visible('Separates_Top')).toBe(true);
+    expect(visible('Cape_Shell')).toBe(true);
   });
 
-  it('resolves the rear-bow connector exactly once and keeps it Main-only', () => {
-    const descriptor = createOriginal01AllOutfitsRootHingeMainCuffsRearBowConnector(
-      '/models/rear-bow-test.glb',
-    );
-    const table = descriptor.wardrobe;
-    if (!table) throw new Error('rear-bow connector wardrobe is missing');
-    const garments = [
-      ...new Set(
-        Object.values(table.slots).flatMap((slot) => slot.items.flatMap((item) => item.meshes)),
-      ),
-    ];
-    const rig = buildRig({ garments });
-    const profile = buildProfile(rig.root, descriptor);
-    const wardrobe = new Wardrobe(rig.root, profile, table);
-    const main = table.slots.outfit.items.find((item) => item.id === 'v02-main-dress');
-    if (!main) throw new Error('rear-bow main item is missing');
-    const connector = 'V02WaistPreview_Back_Connector';
+  it('resolves a connector mesh exactly once and keeps it with the main outfit', () => {
+    const connector = 'Back_Connector';
+    const { rig, table, wardrobe } = outfits([connector]);
+    const main = table.slots.outfit.items.find((item) => item.id === 'main');
+    const visible = (name: string) => rig.meshes.get(name)?.visible;
 
-    expect(main.meshes.filter((mesh) => mesh === connector)).toEqual([connector]);
+    expect(main?.meshes.filter((mesh) => mesh === connector)).toEqual([connector]);
     expect(wardrobe.missing).toEqual([]);
-    expect(wardrobe.state.outfit).toBe('v02-main-dress');
-    expect(rig.meshes.get(connector)?.visible).toBe(true);
-    expect(rig.meshes.get('V02_Everyday_Top_Mesh')?.visible).toBe(false);
-    expect(rig.meshes.get('V02_CapeJacket_Shell')?.visible).toBe(false);
+    expect(visible(connector)).toBe(true);
+    expect(visible('Separates_Top')).toBe(false);
+    expect(visible('Cape_Shell')).toBe(false);
 
-    wardrobe.set('outfit', 'v02-everyday-separates');
-    expect(rig.meshes.get(connector)?.visible).toBe(false);
-    expect(rig.meshes.get('V02_Everyday_Top_Mesh')?.visible).toBe(true);
-    expect(rig.meshes.get('V02_CapeJacket_Shell')?.visible).toBe(false);
+    wardrobe.set('outfit', 'separates');
+    expect(visible(connector)).toBe(false);
+    expect(visible('Separates_Top')).toBe(true);
+    expect(visible('Cape_Shell')).toBe(false);
 
-    wardrobe.set('outfit', 'v02-stargazer-layered');
-    expect(rig.meshes.get(connector)?.visible).toBe(false);
-    expect(rig.meshes.get('V02_Everyday_Top_Mesh')?.visible).toBe(true);
-    expect(rig.meshes.get('V02_CapeJacket_Shell')?.visible).toBe(true);
+    wardrobe.set('outfit', 'layered');
+    expect(visible(connector)).toBe(false);
+    expect(visible('Separates_Top')).toBe(true);
+    expect(visible('Cape_Shell')).toBe(true);
   });
 
   it('applies the default preset at construction when the table has one', () => {

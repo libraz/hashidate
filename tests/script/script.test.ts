@@ -103,13 +103,13 @@ describe('setup', () => {
   it('takes commands exactly as they go on the wire', () => {
     const parsed = script(`
 setup:
-  - { cmd: avatar, id: yoka }
+  - { cmd: avatar, id: example }
   - { cmd: camera, frame: bust, zoom: 1.2 }
 lines:
   - text: "x"
 `);
     expect(parsed.setup).toEqual([
-      { cmd: 'avatar', id: 'yoka' },
+      { cmd: 'avatar', id: 'example' },
       { cmd: 'camera', frame: 'bust', zoom: 1.2 },
     ]);
   });

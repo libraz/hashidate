@@ -172,15 +172,15 @@ describe('readGroups', () => {
   it('reads underscore-delimited groups in the order they were authored', () => {
     const rig = buildRig({
       groups: [
-        ['YOKA', ['F_NIKONIKO', 'F_PUNPUN', 'F_IYAIYA']],
+        ['GROUPA', ['F_NIKONIKO', 'F_PUNPUN', 'F_IYAIYA']],
         ['BSL52', ['Fcl_ALL_Joy']],
       ],
     });
 
     const found = groups(rig.descriptor, rig.root);
 
-    expect([...found.keys()]).toEqual(['YOKA', 'BSL52']);
-    expect(found.get('YOKA')).toEqual(['F_NIKONIKO', 'F_PUNPUN', 'F_IYAIYA']);
+    expect([...found.keys()]).toEqual(['GROUPA', 'BSL52']);
+    expect(found.get('GROUPA')).toEqual(['F_NIKONIKO', 'F_PUNPUN', 'F_IYAIYA']);
     expect(found.get('BSL52')).toEqual(['Fcl_ALL_Joy']);
   });
 
@@ -208,7 +208,7 @@ describe('readGroups', () => {
   });
 
   it('leaves the shapes above the first separator in no group', () => {
-    const rig = buildRig({ groups: [['YOKA', ['F_NIKONIKO']]] });
+    const rig = buildRig({ groups: [['GROUPA', ['F_NIKONIKO']]] });
     const face = must(rig.meshes.get('Face'), 'Face');
 
     const found = groups(rig.descriptor, rig.root);
@@ -216,13 +216,13 @@ describe('readGroups', () => {
 
     // Everything the exporter wrote before the first separator: ARKit, visemes,
     // the blink shapes.
-    expect(authored(face).indexOf('jawOpen')).toBeLessThan(authored(face).indexOf('___YOKA___'));
+    expect(authored(face).indexOf('jawOpen')).toBeLessThan(authored(face).indexOf('___GROUPA___'));
     expect(grouped).toEqual(['F_NIKONIKO']);
     for (const shape of ['jawOpen', 'blink', 'vrc.v_aa']) expect(grouped).not.toContain(shape);
   });
 
   it('does not repeat a name the face carries on more than one mesh', () => {
-    const rig = buildRig({ groups: [['YOKA', ['F_NIKONIKO', 'F_PUNPUN']]] });
+    const rig = buildRig({ groups: [['GROUPA', ['F_NIKONIKO', 'F_PUNPUN']]] });
     // The face arrives split per material, each split carrying the whole list.
     const split = must(rig.meshes.get('Face'), 'Face').clone();
     split.name = 'Face__Alpha';
@@ -235,15 +235,15 @@ describe('readGroups', () => {
       'Face',
       'Face__Alpha',
     ]);
-    expect(found.get('YOKA')).toEqual(['F_NIKONIKO', 'F_PUNPUN']);
+    expect(found.get('GROUPA')).toEqual(['F_NIKONIKO', 'F_PUNPUN']);
   });
 
   it('keeps a separator shape itself out of its own group', () => {
-    const rig = buildRig({ groups: [['YOKA', ['F_NIKONIKO']]] });
+    const rig = buildRig({ groups: [['GROUPA', ['F_NIKONIKO']]] });
 
     const found = readGroups(rig.root, /^_{2,}(.+?)_{2,}$/);
 
-    expect(found.get('YOKA')).not.toContain('___YOKA___');
+    expect(found.get('GROUPA')).not.toContain('___GROUPA___');
   });
 });
 
@@ -271,7 +271,7 @@ describe('arkit detection', () => {
   });
 
   it('does not report arkit as a gap for an avatar that brings its own vocabulary', () => {
-    const rig = buildRig({ arkit: false, groups: [['YOKA', ['F_NIKONIKO']]] });
+    const rig = buildRig({ arkit: false, groups: [['GROUPA', ['F_NIKONIKO']]] });
     const profile = buildProfile(rig.root, {
       ...rig.descriptor,
       emotionShapes: { joy: { F_NIKONIKO: 1 } },

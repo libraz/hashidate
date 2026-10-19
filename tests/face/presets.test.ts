@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { original01AllOutfitsRootHinge } from '@/avatars/original01';
 import { buildIdleFaces, buildOverlays, buildPresets } from '@/engine/face';
 import { buildProfile } from '@/engine/profile';
 import type { AvatarDescriptor, PresetSpec, Profile } from '@/engine/types';
@@ -158,27 +157,25 @@ describe('buildPresets / authored composition', () => {
     expect(profile.morphTargets.has('F_NIKO')).toBe(true);
   });
 
-  it('declares the V02 symbols on the unregistered root-hinge profile', () => {
-    const corrective = 'V02_SpeechNeutralizer_SymbolO';
-    expect(original01AllOutfitsRootHinge.presets?.composition).toEqual({
-      // biome-ignore lint/style/useNamingConvention: Authored morph target name.
-      V02_02_Joy: { speechNeutralizer: 'V02_SpeechNeutralizer_Joy' },
-      // biome-ignore lint/style/useNamingConvention: Authored morph target name.
-      V02_03_ClosedEyeSmile: { speechNeutralizer: 'V02_SpeechNeutralizer_Joy' },
-      // biome-ignore lint/style/useNamingConvention: Authored morph target name.
-      V02_12_StarEyes: { speechNeutralizer: 'V02_SpeechNeutralizer_StarHeart' },
-      // biome-ignore lint/style/useNamingConvention: Authored morph target name.
-      V02_13_HeartEyes: { speechNeutralizer: 'V02_SpeechNeutralizer_StarHeart' },
-      // biome-ignore lint/style/useNamingConvention: Authored morph target name.
-      V02_14_DotEyes: { blink: 'preserve', speechNeutralizer: corrective },
-      // biome-ignore lint/style/useNamingConvention: Authored morph target name.
-      V02_16_Shock: { blink: 'preserve', speechNeutralizer: corrective },
-      // biome-ignore lint/style/useNamingConvention: Authored morph target name.
-      V02_11_Spiral: { speechNeutralizer: corrective },
-      // biome-ignore lint/style/useNamingConvention: Authored morph target name.
-      V02_09_ChevronSmile: { speechNeutralizer: corrective },
+  it('carries a composition map through, with the corrective it names kept out of the list', () => {
+    const corrective = 'F_NIKO';
+    const { profile, descriptor } = setup({
+      presets: {
+        group: FACE_GROUP,
+        exclude: [corrective],
+        composition: {
+          F_SUYASUYA: { speechNeutralizer: corrective },
+          F_DOYA: { blink: 'preserve', speechNeutralizer: corrective },
+          F_JITO: { speechNeutralizer: corrective },
+        },
+      },
     });
-    expect(original01AllOutfitsRootHinge.presets?.exclude).toContain(corrective);
+    const built = buildPresets(profile, descriptor);
+    expect(built.map((p) => p.id)).toEqual(['F_SUYASUYA', 'F_DOYA', 'F_JITO']);
+    for (const preset of built) expect(preset.speechNeutralizer).toBe(corrective);
+    expect(built.find((p) => p.id === 'F_DOYA')?.blink).toBe('preserve');
+    expect(built.find((p) => p.id === 'F_SUYASUYA')).not.toHaveProperty('blink');
+    expect(profile.morphTargets.has(corrective)).toBe(true);
   });
 });
 

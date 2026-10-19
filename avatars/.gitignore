@@ -1,0 +1,9 @@
+# Descriptors and export profiles for models this repository does not ship.
+#
+# Each file describes one avatar under its own filename. They belong to the
+# operator's own models, so they are not tracked — but the directory is, so
+# there is somewhere to put one.
+#
+# The format is in `docs/en/avatars.md`.
+*
+!.gitignore
