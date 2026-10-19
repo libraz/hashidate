@@ -4,28 +4,40 @@ An extra outfit FBX comes out carrying its own armature, so it is re-parented on
 the main skeleton before being merged. The bone names are shared, so the vertex
 groups carry over as they are.
 
-usage: blender -b -P export_glb.py -- [--profile NAME] <in.fbx|in.blend> <out.glb>
-                                     [texdir] [extra.fbx ...]
+usage: blender -b -P export_glb.py -- --profile <path.json> <out.glb>
+
+The profile is a JSON object. Keys read here: source (FBX or blend), extras
+(list of FBX, optional), textures (directory the export reads), separator,
+keep_groups (list), keep_groups_by_mesh (object of lists, optional), keep_names
+(optional), texture_by_material (optional). Other keys belong to textures.py.
 """
 import bpy
+import json
 import mathutils
 import os
 import re
 import sys
 
-argv = sys.argv[sys.argv.index("--") + 1:]
+argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 
-# Which avatar's shape-key conventions to apply. Defaults to the first avatar so
-# the original invocation keeps working unchanged.
-profile_name = "yoka"
-if "--profile" in argv:
-    i = argv.index("--profile")
-    profile_name = argv[i + 1]
-    del argv[i:i + 2]
+if len(argv) != 3 or argv[0] != "--profile":
+    raise SystemExit("usage: export_glb.py -- --profile <path.json> <out.glb>")
+profile_path, dst = argv[1], argv[2]
 
-src, dst = argv[0], argv[1]
-TEXDIR = os.path.abspath(argv[2] if len(argv) > 2 else "tex")
-EXTRA = argv[3:]
+try:
+    with open(profile_path, encoding="utf-8") as f:
+        _profile = json.load(f)
+except (OSError, ValueError) as e:
+    raise SystemExit(f"cannot read export profile {profile_path}: {e}")
+if not isinstance(_profile, dict):
+    raise SystemExit(f"export profile {profile_path}: top level must be an object")
+for _key in ("source", "textures", "separator", "keep_groups"):
+    if _key not in _profile:
+        raise SystemExit(f"export profile {profile_path}: missing '{_key}'")
+
+src = _profile["source"]
+TEXDIR = os.path.abspath(_profile["textures"])
+EXTRA = _profile.get("extras", [])
 
 ARKIT52 = set("""eyeBlinkLeft eyeLookDownLeft eyeLookInLeft eyeLookOutLeft eyeLookUpLeft eyeSquintLeft eyeWideLeft
 eyeBlinkRight eyeLookDownRight eyeLookInRight eyeLookOutRight eyeLookUpRight eyeSquintRight eyeWideRight
@@ -48,72 +60,14 @@ aa ih ou ee oh blink blinkLeft blinkRight lookup lookdown lookLeft lookRight""".
 # The separators are kept as well, so the runtime can rediscover the grouping
 # from the GLB alone rather than being handed a table.
 #
-# The delimiter itself is per-author — underscores on one avatar, asterisks on
-# another — so it is profile data, like the group names.
-PROFILES = {
-    "yoka": {
-        "separator": r"^_{2,}(.+?)_{2,}$",
-        # Dropped groups and why: the per-part primitives the presets are
-        # composed from (eye / brow / mouth) are redundant once the presets are
-        # here, the adjustment group is rig calibration, the blink-inbetween
-        # group is documented as not to be touched directly, and MMD is a
-        # vocabulary this avatar does not need it for.
-        "keep_groups": {"BSL52", "VRM", "VRChat", "YOKA", "YOKA_Hide"},
-        # Groups kept only on particular meshes. Empty right now: the shape
-        # group looked like it would be needed, because the avatar ships
-        # standalone spiral / sparkle / dot irises and the matching presets
-        # obviously use them — but the presets turn out to draw their own, so
-        # the group is a build-time customisation vocabulary (elf ears, fangs,
-        # and on the body, proportions) that the runtime never drives.
-        "keep_groups_by_mesh": {},
-        # This FBX references its textures, so the relink pass finds them.
-        "texture_by_material": {},
-    },
-    "manuka": {
-        "separator": r"^\*{3,}(.+?)\*{3,}$",
-        # The opposite composition to the first avatar: no finished faces at
-        # all, so the per-part primitives are not redundant here — they are the
-        # only way to build an expression, and every one of them has to ship.
-        # OPTION carries the drawn effects (heart iris, spiral, dot pupil,
-        # tears) that no composition reaches, and MMD is a second complete
-        # vocabulary the engine already speaks.
-        #
-        # Dropped: EYELASH is lash-shape customisation chosen once at build
-        # time, and MORPH is face and body proportion (jaw width, elf ears).
-        # Neither is something a running avatar changes.
-        "keep_groups": {"EYE MORPH", "EYELID", "EYE OPTION",
-                        "MOUTH", "BROW", "OPTION", "MMD"},
-        "keep_groups_by_mesh": {},
-        # The body's shapes sit under no separator, and this author writes the
-        # outfit-fitting family as `Shrink_*` rather than `*Hide` — same role,
-        # different word, and a different mechanism: the limb is thinned so the
-        # garment sits over it instead of the vertices being collapsed.
-        "keep_names": r"^Shrink_",
-        # This FBX carries no image references at all — the textures ship
-        # alongside it as loose PNGs, named after the material that uses them.
-        # The vendor .blend does have them wired, but exporting from it crashes
-        # Blender during primitive extraction, so the FBX is the source and the
-        # mapping is stated here.
-        "texture_by_material": {
-            "Manuka_body": "Manuka_body.png",
-            "Manuka_costume": "Manuka_costume.png",
-            "Manuka_face": "Manuka_face.png",
-            "Manuka_hair": "Manuka_hair.png",
-            # The drawn-effect overlay layer shares the face sheet.
-            "Manuka_option": "Manuka_face.png",
-        },
-    },
-}
-
-if profile_name not in PROFILES:
-    raise SystemExit(f"unknown profile '{profile_name}': {sorted(PROFILES)}")
-_profile = PROFILES[profile_name]
+# The delimiter itself is per-author (underscores, asterisks, ...), so it is
+# profile data, like the group names.
 SEPARATOR = re.compile(_profile["separator"])
-KEEP_GROUPS = _profile["keep_groups"]
-KEEP_GROUPS_BY_MESH = _profile["keep_groups_by_mesh"]
+KEEP_GROUPS = set(_profile["keep_groups"])
+KEEP_GROUPS_BY_MESH = _profile.get("keep_groups_by_mesh", {})
 TEX_BY_MATERIAL = _profile.get("texture_by_material", {})
 KEEP_NAMES = re.compile(_profile["keep_names"]) if _profile.get("keep_names") else None
-print(f"@@@ profile={profile_name} keep_groups={sorted(KEEP_GROUPS)}")
+print(f"@@@ profile={profile_path} keep_groups={sorted(KEEP_GROUPS)}")
 
 
 def keep(name, group, mesh):

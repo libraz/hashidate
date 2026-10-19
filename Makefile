@@ -1,12 +1,11 @@
 BLENDER ?= /Applications/Blender.app/Contents/MacOS/Blender
-DL      ?= $(HOME)/Downloads
-# Purchased archives, extracted meshes and raw textures. Git-ignored, and large:
-# the two avatars together are around 1.5 GB.
-RES      = backup/resource
 # What the viewer actually loads. Git-ignored and fully derived — everything
-# here can be rebuilt from $(RES) by the targets below.
+# here can be rebuilt from the sources a profile names.
 OUT      = public/models
 TOOLS    = tools/blender
+# Descriptors and their export profiles (<AVATARS>/export/<id>.json).
+AVATARS ?= avatars
+PROFILE  = $(AVATARS)/export/$(AVATAR).json
 
 # The two ports `make dev` brings up, named once so that `help` and `stop`
 # cannot drift apart. Control honours the same environment variable the runtime
@@ -35,10 +34,9 @@ endif
 # HASHIDATE_VOICE_DIR moves both together.
 CLIPS    = $(TTS)/reference/clips
 
-.PHONY: help dev stop all extract textures resize glb \
-        manuka manuka-extract manuka-textures manuka-glb \
+.PHONY: help dev stop textures glb \
         voice tts-setup tts-vet tts-refs tts \
-        check-assets clean clean-tex
+        check-assets clean
 
 help:
 	@echo "Model conversion and startup. Use yarn ctl for control."
@@ -46,15 +44,9 @@ help:
 	@echo "-- Run"
 	@echo "  dev              start viewer, control and speech at once"
 	@echo "  stop             free :$(VIEWER_PORT), :$(CONTROL_PORT) and the speech socket if something is left holding one"
-	@echo "-- Tabimakura Yoka"
-	@echo "  extract          pull the FBX and unitypackage out of the purchased zip"
-	@echo "  textures         pull the textures out of the unitypackage"
-	@echo "  resize           shrink the textures for the web"
-	@echo "  glb              build $(OUT)/yoka.glb"
-	@echo "-- Manuka"
-	@echo "  manuka-extract   unpack the purchased zip"
-	@echo "  manuka-textures  shrink the bundled textures for the web"
-	@echo "  manuka-glb       build $(OUT)/manuka.glb"
+	@echo "-- Model"
+	@echo "  glb AVATAR=<id>       build $(OUT)/<id>.glb from $(AVATARS)/export/<id>.json"
+	@echo "  textures AVATAR=<id>  copy and shrink the profile's textures for the web"
 	@echo "-- Speech"
 	@echo "  voice            put WAV clips in $(CLIPS), run this, and the voice is ready"
 	@echo "  tts-setup        build the speech sidecar's Python environment (first time only)"
@@ -62,11 +54,8 @@ help:
 	@echo "  tts-refs         re-encode the clips after changing them"
 	@echo "  tts              start the speech server ($(TTS_SOCK))"
 	@echo "-- Common"
-	@echo "  all              take both avatars through to GLB (assumes they are unpacked)"
 	@echo "  check-assets     check that no huge file has crept into what git tracks"
 	@echo "  clean            remove the generated files"
-
-all: glb manuka-glb
 
 # ----------------------------------------------------------------------- Run
 
@@ -184,30 +173,13 @@ stop:
 	if [ -n "$$held" ]; then echo "still held:$$held"; exit 1; fi; \
 	echo "stopped"
 
-# --------------------------------------------------------- Tabimakura Yoka
-#
-# https://booth.pm/en/items/8217336 — the two zips below are what a purchase
-# downloads, and they are expected in $(DL).
+# ------------------------------------------------------------------- Model
 
-extract:
-	mkdir -p $(RES)/yoka/fbx $(RES)/downloads
-	unzip -o -j $(DL)/TabimakuraYoka_Assets_1.0.0.zip "*/Assets/fbx/*.fbx" -d $(RES)/yoka/fbx
-	unzip -o -j $(DL)/TabimakuraYoka_Avatar_1.0.0.zip "*.unitypackage" -d $(RES)/downloads
-
+# Both targets read a profile rather than taking paths; see tools/blender.
 textures:
-	python3 $(TOOLS)/extract_textures.py \
-		$(RES)/downloads/TabimakuraYokaVRChat_1.0.0.unitypackage $(RES)/yoka/tex
-
-# Texture_1K is really 4096px, so it is dropped for the web. Face and body keep 2048
-resize:
-	mkdir -p $(RES)/yoka/tex_web && cp $(RES)/yoka/tex/*.png $(RES)/yoka/tex_web/
-	@for f in $(RES)/yoka/tex_web/*.png; do \
-		case "$$(basename $$f)" in \
-			Face*|Body*) sips -Z 2048 "$$f" >/dev/null ;; \
-			*)           sips -Z 1024 "$$f" >/dev/null ;; \
-		esac \
-	done
-	@du -sh $(RES)/yoka/tex $(RES)/yoka/tex_web
+	@test -n "$(AVATAR)" || { echo "usage: make $@ AVATAR=<id>" >&2; exit 2; }
+	@test -f $(PROFILE) || { echo "no export profile: $(PROFILE)" >&2; exit 2; }
+	python3 $(TOOLS)/textures.py $(PROFILE)
 
 # Run the export script and show only its markers and errors. The filter must not
 # hide the exit status, so Blender writes to a log first: the target fails on a
@@ -222,44 +194,11 @@ fi; \
 rm -f "$$log"
 endef
 
-# Extra outfits carry their own physics bones, so they are merged together with a
-# graft of those bones onto the main skeleton
 glb:
+	@test -n "$(AVATAR)" || { echo "usage: make $@ AVATAR=<id>" >&2; exit 2; }
+	@test -f $(PROFILE) || { echo "no export profile: $(PROFILE)" >&2; exit 2; }
 	mkdir -p $(OUT)
-	@$(call blender-export,$(OUT)/yoka.glb,-- \
-		$(RES)/yoka/fbx/TabimakuraYoka.fbx $(OUT)/yoka.glb $(RES)/yoka/tex_web \
-		$(RES)/yoka/fbx/Bottoms_long.fbx $(RES)/yoka/fbx/Pillow.fbx)
-
-# ------------------------------------------------------------------ Manuka
-#
-# https://booth.pm/en/items/5058077 — the zip below is what a purchase
-# downloads, and it is expected in $(DL).
-
-manuka: manuka-textures manuka-glb
-
-# Manuka bundles blend / FBX / PSD / VRM, so unpacking only has to put them in place
-manuka-extract:
-	mkdir -p $(RES)/manuka
-	unzip -o -q $(DL)/MANUKA_ver1.02.zip -d $(RES)/manuka
-
-# The bundled textures are 4096px. Face and body keep 2048
-manuka-textures:
-	mkdir -p $(RES)/manuka/tex_web
-	cp $(RES)/manuka/MANUKA_ver1.02/PNG/*.png $(RES)/manuka/tex_web/
-	@for f in $(RES)/manuka/tex_web/*.png; do \
-		case "$$(basename $$f)" in \
-			Manuka_face*|Manuka_body*) sips -Z 2048 "$$f" >/dev/null ;; \
-			*)                         sips -Z 1024 "$$f" >/dev/null ;; \
-		esac \
-	done
-	@du -sh $(RES)/manuka/MANUKA_ver1.02/PNG $(RES)/manuka/tex_web
-
-# No extra outfits, and the FBX holds no texture references, so they are wired by
-# material name. Which shape groups to keep is in export_glb.py's manuka profile
-manuka-glb:
-	mkdir -p $(OUT)
-	@$(call blender-export,$(OUT)/manuka.glb,-- --profile manuka \
-		$(RES)/manuka/MANUKA_ver1.02/MANUKA.fbx $(OUT)/manuka.glb $(RES)/manuka/tex_web)
+	@$(call blender-export,$(OUT)/$(AVATAR).glb,-- --profile $(PROFILE) $(OUT)/$(AVATAR).glb)
 
 # -------------------------------------------------------------------- Speech
 
@@ -324,8 +263,3 @@ check-assets:
 clean:
 	rm -f $(OUT)/*.glb
 	rmdir $(OUT) 2>/dev/null || true
-
-# Throws the shrunk textures away as well. The original 4K stays in $(RES), so it
-# can be remade
-clean-tex:
-	rm -rf $(RES)/yoka/tex_web $(RES)/manuka/tex_web
