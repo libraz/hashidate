@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { ArmSolution, Rig } from '../rig';
 import type { ArmSlot, FingerName, Pose, Profile, Side, Vec3Tuple } from '../types';
 import type { ReachAnchors } from './anchors';
+import { type ClaspLeader, type ClaspPlacement, claspMeasure, placeFollower } from './clasp';
 import type { CharacterFrame } from './frame';
 import { BASE_PALM } from './gestures';
 import { EXTEND_ONSET, minJerk, onset } from './timing';
@@ -160,6 +161,24 @@ export class ArmResolver {
   private readonly _bendRest = new THREE.Vector3();
   private readonly _bendX = new THREE.Vector3();
 
+  /** The leader's posed hand, and where the follower goes against it. */
+  private readonly _claspLeader: ClaspLeader = {
+    wrist: new THREE.Vector3(),
+    index: new THREE.Vector3(),
+    middle: new THREE.Vector3(),
+    ring: new THREE.Vector3(),
+    little: new THREE.Vector3(),
+    palm: new THREE.Vector3(),
+  };
+  private readonly _claspPlace: ClaspPlacement = {
+    wrist: new THREE.Vector3(),
+    hand: new THREE.Vector3(),
+    palm: new THREE.Vector3(),
+  };
+  private readonly _claspQ = new THREE.Quaternion();
+  /** Whether the current gesture's follower holds its last solve instead of tracking the leader. */
+  private _claspFrozen = false;
+
   constructor(
     private readonly p: Profile,
     private readonly rig: Rig,
@@ -278,6 +297,68 @@ export class ArmResolver {
     return out.lengthSq() < 1e-8 ? null : out.normalize();
   }
 
+  /** Hold (or release) every clasp follower at its last solve; set while the gesture exits. */
+  freezeClasp(on: boolean): void {
+    this._claspFrozen = on;
+  }
+
+  /**
+   * Place the follower of a clasp against the leader's posed hand, writing the
+   * slot's solver output. False leaves the reach path to take the side.
+   */
+  private resolveClasp(
+    pose: Pose,
+    side: Side,
+    reach: Record<Side, ArmSolution>,
+    handEntrance: number,
+    timed: boolean,
+    frameReady?: boolean,
+  ): ResolvedArm | null {
+    const c = pose.clasp;
+    if (!c || side === c.lead) return null;
+    const out = reach[side];
+    if (!timed || this._claspFrozen) return out.clasp ? out : null;
+
+    const lead = c.lead;
+    const measure = claspMeasure(this.p.limb, lead);
+    const palmLocal = this.rig.palmLocal[lead];
+    const hand = this.p.bones[`hand.${lead}`];
+    const chains = this.p.fingerBones;
+    const index = chains[`index.${lead}`]?.[0];
+    const middle = chains[`middle.${lead}`]?.[0];
+    const ring = chains[`ring.${lead}`]?.[0];
+    const little = chains[`little.${lead}`]?.[0];
+    if (!(measure && palmLocal && hand && index && middle && ring && little)) return null;
+
+    const l = this._claspLeader;
+    hand.updateWorldMatrix(true, false);
+    hand.getWorldPosition(l.wrist);
+    l.palm.copy(palmLocal).applyQuaternion(hand.getWorldQuaternion(this._claspQ)).normalize();
+    index.updateWorldMatrix(true, false);
+    index.getWorldPosition(l.index);
+    middle.updateWorldMatrix(true, false);
+    middle.getWorldPosition(l.middle);
+    ring.updateWorldMatrix(true, false);
+    ring.getWorldPosition(l.ring);
+    little.updateWorldMatrix(true, false);
+    little.getWorldPosition(l.little);
+    const f = this._claspPlace;
+    if (!placeFollower(l, measure, c.dihedral, f)) return null;
+
+    if (handEntrance < 1 && this._wristKnown[side]) {
+      this.anchors.travel(f.wrist, this._wristFrom[side], side, handEntrance);
+    }
+    if (this._wristKnown[side]) this._travelling[side] = true;
+    if (!this.rig.solveReachNatural(side, f.wrist, f.hand, out)) return null;
+    this.axes.toCharacter(out.upperArm, out.upperArm, side, frameReady);
+    this.axes.toCharacter(out.lowerArm, out.lowerArm, side, frameReady);
+    this.axes.toCharacter(out.hand, f.hand, side, frameReady);
+    this.axes.toCharacter(out.palm, f.palm, side, frameReady);
+    out.twist = pose.reach?.[side]?.twist ?? 0;
+    out.clasp = true;
+    return out;
+  }
+
   /** Whether a travelling reach is deciding where this side's hand goes. */
   travelling(side: Side): boolean {
     return this._travelling[side];
@@ -379,6 +460,11 @@ export class ArmResolver {
       return out;
     }
 
+    if (pose?.clasp) {
+      const arm = this.resolveClasp(pose, side, reach, handEntrance, timed, frameReady);
+      if (arm) return arm;
+    }
+
     const r = pose?.reach?.[side];
     if (!r) return pose?.arms?.[side] ?? null;
 
@@ -420,6 +506,7 @@ export class ArmResolver {
     }
 
     const out = reach[side];
+    out.clasp = false;
     const hint = r.hand
       ? this.axes.toWorld(this._pointDir, r.hand, side, mirror, frameReady)
       : null;

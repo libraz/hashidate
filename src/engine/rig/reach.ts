@@ -58,6 +58,8 @@ export interface ArmSolution extends ReachLinks {
   poleA?: number;
   /** Where the elbow search left this slot's elbow; unset until its first solve. */
   swivel?: number;
+  /** Set when the follower hand of a clasp was solved here rather than a plain reach. */
+  clasp?: boolean;
 }
 
 /**

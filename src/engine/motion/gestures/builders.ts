@@ -136,3 +136,15 @@ export const reachBoth = (spec: ReachSpec, fingers: FingerSpec, spine?: SpineOff
   fingers: { L: fingers, R: fingers },
   ...(spine ? { spine } : {}),
 });
+
+/** A mirrored two-hand reach whose other hand interlaces with the `H(v)` hand's. */
+export const clasp = (
+  v: GestureVariation,
+  spec: ReachSpec,
+  fingers: FingerSpec,
+  dihedral: number,
+  spine?: SpineOffsets,
+): Pose => ({
+  ...reachBoth(spec, fingers, spine),
+  clasp: { lead: H(v), dihedral },
+});

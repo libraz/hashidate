@@ -107,25 +107,29 @@ describe('the anatomical limiter', () => {
     // all of them — a link the cap was riding would arrive after its lead
     // instead of during it.
     const late: string[] = [];
-    for (const [id, def] of gestureEntries()) {
-      if (!def.sustain) continue;
-      const h = harness();
-      h.rig.reset();
-      h.body.update(DT);
-      h.body.play(id);
-      const lead = h.body.gesture?.lead ?? 0;
-      const track = [];
-      for (let i = 0; i < 150; i++) {
+    for (const side of ['L', 'R'] as const) {
+      for (const [id, def] of gestureEntries()) {
+        if (!def.sustain) continue;
+        const h = harness();
         h.rig.reset();
         h.body.update(DT);
-        track.push(wristOf(h.profile, 'R'));
+        h.body.play(id, side);
+        const lead = h.body.gesture?.lead ?? 0;
+        const track = [];
+        for (let i = 0; i < 150; i++) {
+          h.rig.reset();
+          h.body.update(DT);
+          track.push(wristOf(h.profile, 'R'));
+        }
+        const end = track[track.length - 1];
+        const far = Math.max(...track.map((p) => p.distanceTo(end)));
+        // A pose this hand does not move for has nothing to arrive at.
+        if (far < 0.02) continue;
+        const settled = track.findIndex((p) => p.distanceTo(end) < far * 0.05);
+        if (!(settled > 0 && settled * DT < lead)) {
+          late.push(`${id} ${side}: ${(settled * DT).toFixed(2)}s`);
+        }
       }
-      const end = track[track.length - 1];
-      const far = Math.max(...track.map((p) => p.distanceTo(end)));
-      // A pose this hand does not move for has nothing to arrive at.
-      if (far < 0.02) continue;
-      const settled = track.findIndex((p) => p.distanceTo(end) < far * 0.05);
-      if (!(settled > 0 && settled * DT < lead)) late.push(`${id}: ${(settled * DT).toFixed(2)}s`);
     }
     expect(late).toEqual([]);
   });

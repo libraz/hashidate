@@ -100,6 +100,11 @@ export interface Pose {
   reach?: Partial<Record<Side, ReachSpec>>;
   point?: Partial<Record<Side, PointSpec>>;
   spine?: SpineOffsets;
+  /**
+   * Interlaced clasp on top of a two-handed `reach`: the other hand is placed
+   * against the `lead` hand's posed bones, `dihedral` radians between the palms.
+   */
+  clasp?: { lead: Side; dihedral: number };
 }
 
 /**

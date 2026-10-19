@@ -1,6 +1,6 @@
 import type { GestureDef } from '../../types';
 import { V } from './base';
-import { both, one, reach, reachBoth } from './builders';
+import { both, clasp, one, reach } from './builders';
 import {
   CLASP_HAND,
   GUN_HAND,
@@ -55,11 +55,12 @@ export const POSE = {
     sustain: true,
     lead: 0.45,
     hold: 1.0,
-    build() {
+    build(_t, v) {
       // Clasped, so the two wrists sit side by side rather than palm to palm —
       // one hand's fingers wrap the other's back, which is half a hand's width
       // more than the contact gap.
-      return reachBoth(
+      return clasp(
+        v,
         {
           space: 'body',
           at: 'navel',
@@ -68,9 +69,10 @@ export const POSE = {
           // upward-forward bearing pinned both wrist-deviation stops before
           // the hands could meet.
           hand: [-0.5, 0, 0.87],
-          palm: [-0.6, 0.5, -0.6],
+          palm: [-0.9, 0, -0.4],
         },
         CLASP_HAND,
+        0.3,
       );
     },
   },

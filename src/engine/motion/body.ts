@@ -3,6 +3,7 @@ import type { ArmSolution, Rig } from '../rig';
 import type {
   ArmSlot,
   FingerName,
+  FingerSpec,
   GestureDef,
   GestureVariation,
   PointSpec,
@@ -13,16 +14,18 @@ import type {
   Vec3Tuple,
 } from '../types';
 import { ReachAnchors } from './anchors';
+import { claspMeasure, claspSpread } from './clasp';
 import { gestureDef } from './custom';
 import { DirFollower, OMEGA_PER_RATE, ScalarFollower } from './follow';
 import { CharacterFrame, sideMirror } from './frame';
 import { Gaze, HEAD_OMEGA } from './gaze';
 import { BASE_FINGERS, BASE_PALM, BASE_POSE, pointHand } from './gestures';
+import { OPEN_HAND } from './gestures/hands';
 import { CROUCH_T, type HopSpec, type JumpArc, planJump, sampleJump } from './jump';
 import { aimGaze } from './look';
 import { IdlePosture, type PostureInput } from './posture';
 import { ArmResolver, mkReachScratch, type ResolvedArm } from './resolve';
-import { FINGER_ONSET, LINK_ONSET, minJerk, onset, reachEnvelope } from './timing';
+import { FINGER_ONSET, LINK_ONSET, minJerk, onset, reachEnvelope, UNTHREAD } from './timing';
 
 /**
  * Body layer: base pose, idle life (breathing / sway / head / gaze), and the
@@ -100,6 +103,10 @@ const LOOK_FOLLOW = HEAD_OMEGA / OMEGA_PER_RATE;
  * Sides, in the order the arm loop walks them.
  */
 const SIDES: readonly Side[] = ['L', 'R'];
+
+/** The arm loop's order for a clasp: the lead hand first, so the follower reads it posed. */
+const ORDER_L: readonly Side[] = ['L', 'R'];
+const ORDER_R: readonly Side[] = ['R', 'L'];
 
 /**
  * Seconds of lead per radian the arms have to travel.
@@ -249,6 +256,12 @@ const mkFingerState = (): Record<FingerName, ScalarFollower> => ({
   little: new ScalarFollower(BASE_FINGERS.little),
 });
 
+/** One finger of a clasp hand, opened `k` of the way toward flat; the follower's thumb starts flat. */
+const claspCurl = (follower: boolean, f: FingerName, pv: number, k: number): number => {
+  const from = follower && f === 'thumb' ? OPEN_HAND.thumb : pv;
+  return from + (OPEN_HAND[f] - from) * k;
+};
+
 const mkFingerSpread = (): Record<FingerName, number> => ({
   thumb: 0,
   index: 0,
@@ -347,6 +360,11 @@ export class Body {
   private _fingerState: Record<Side, Record<FingerName, ScalarFollower>>;
   private _fingerSpreadSpec: Record<Side, Record<FingerName, number>>;
   private _fingerSpreadState: Record<Side, Record<FingerName, ScalarFollower>>;
+  /** Clasp finger spread per side and role; null where the rig cannot be measured. */
+  private readonly _claspSpread: Record<
+    Side,
+    { lead: FingerSpec | null; follow: FingerSpec | null }
+  >;
   private _twist: Record<Side, ScalarFollower>;
 
   /**
@@ -477,6 +495,14 @@ export class Body {
     };
     this._fingerSpreadSpec = { L: mkFingerSpread(), R: mkFingerSpread() };
     this._fingerSpreadState = { L: mkFingerSpreadState(), R: mkFingerSpreadState() };
+    const spreadFor = (side: Side, role: 'lead' | 'follow') => {
+      const m = claspMeasure(profile.limb, side);
+      return m ? claspSpread(m, role, mkFingerSpread()) : null;
+    };
+    this._claspSpread = {
+      L: { lead: spreadFor('L', 'lead'), follow: spreadFor('L', 'follow') },
+      R: { lead: spreadFor('R', 'lead'), follow: spreadFor('R', 'follow') },
+    };
     this._twist = { L: new ScalarFollower(0), R: new ScalarFollower(0) };
 
     this._env = mkEnv();
@@ -813,6 +839,7 @@ export class Body {
     this._fingerEnv.entrance = 0;
     this._fingerEnv.exit = 1;
     this._arm.mark();
+    this._arm.freezeClasp(false);
     this._exiting = false;
   }
 
@@ -884,6 +911,8 @@ export class Body {
     // A new slot's elbow starts at its own answer; see `ElbowSearch.search`.
     this._curReach.L.swivel = undefined;
     this._curReach.R.swivel = undefined;
+    this._curReach.L.clasp = false;
+    this._curReach.R.clasp = false;
     this.gesture = null;
     this.blend = 0;
   }
@@ -997,6 +1026,7 @@ export class Body {
       if (xOut < 1 && !this._exiting) {
         this._exiting = true;
         this._arm.beginExit();
+        this._arm.freezeClasp(true);
       }
 
       // Per link, staggered outward along the limb and allowed to overshoot.
@@ -1109,7 +1139,7 @@ export class Body {
     env.armDrift = armDrift;
     env.dt = dt;
 
-    for (const side of SIDES) {
+    for (const side of g?.clasp ? (g.clasp.lead === 'L' ? ORDER_L : ORDER_R) : SIDES) {
       const mirror = sideMirror(side);
       const dirs = this._armDirs[side];
       const worldDirs = this._armWorld[side];
@@ -1286,20 +1316,32 @@ export class Body {
       const spec = this._fingerSpec[side];
       const spread = this._fingerSpreadSpec[side];
       const fw = plain(this._fingerEnv);
+      // A clasp's fingers open toward flat over the first part of the exit, or of
+      // the fade once it is no longer the current gesture.
+      const cc = g?.clasp;
+      const cSpread = cc ? this._claspSpread[side][side === cc.lead ? 'lead' : 'follow'] : null;
+      const cK = minJerk((this._exiting ? this._exitU : 0) / UNTHREAD);
       for (const f of FINGER_NAMES) {
         let val = BASE_FINGERS[f];
         let spreadVal = 0;
         for (const o of this._fading) {
-          const pv = o.pose?.fingers?.[side]?.[f];
+          const oc = o.pose?.clasp;
+          const oSpread = oc ? this._claspSpread[side][side === oc.lead ? 'lead' : 'follow'] : null;
+          const oK = minJerk((1 - o.w) / UNTHREAD);
+          let pv = o.pose?.fingers?.[side]?.[f];
+          if (pv !== undefined && oSpread) pv = claspCurl(side !== oc?.lead, f, pv, oK);
           if (pv !== undefined) val += (pv - val) * o.w;
-          const pvSpread = o.pose?.fingerSpread?.[side]?.[f];
+          const pvSpread = oSpread
+            ? (oSpread[f] ?? 0) * (1 - oK)
+            : o.pose?.fingerSpread?.[side]?.[f];
           if (pvSpread !== undefined) spreadVal += (pvSpread - spreadVal) * o.w;
         }
-        const cv = cf?.[f];
+        let cv = cf?.[f];
+        if (cv !== undefined && cSpread) cv = claspCurl(side !== cc?.lead, f, cv, cK);
         if (cv !== undefined) val += (cv - val) * fw;
         spec[f] = this._fingerState[side][f].step(val, dt, FINGER_FOLLOW);
 
-        const cvSpread = cfSpread?.[f];
+        const cvSpread = cSpread ? (cSpread[f] ?? 0) * (1 - cK) : cfSpread?.[f];
         if (cvSpread !== undefined) spreadVal += (cvSpread - spreadVal) * fw;
         spread[f] = this._fingerSpreadState[side][f].step(spreadVal, dt, FINGER_FOLLOW);
       }

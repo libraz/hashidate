@@ -117,6 +117,13 @@ export const EXTEND_ONSET = 0.5;
 export const FINGER_ONSET = 0.26;
 
 /**
+ * The share of an exit or fade a clasp takes to unthread its fingers. Rest curl
+ * leaves them hooked, so they open toward a flat hand first and the arms pull
+ * apart once they are free.
+ */
+export const UNTHREAD = 0.3;
+
+/**
  * Re-base a normalised phase onto a link that starts late and finishes with the
  * rest of the limb.
  *
