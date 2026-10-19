@@ -85,7 +85,7 @@ describe('ScriptPicker from a page', () => {
 
   const run = (where: HTMLElement): HTMLButtonElement => {
     const found = [...where.querySelectorAll('button')].find(
-      (b) => b.textContent === 'Load from here',
+      (b) => b.textContent === 'Read from here',
     );
     if (!found) throw new Error('no run button');
     return found;
