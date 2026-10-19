@@ -38,6 +38,8 @@ export interface PresetCompositionSpec {
   blink?: 'preserve';
   /** Authored inverse mouth travel, replacing canonical mouthClose while speech is busy. */
   speechNeutralizer?: string;
+  /** Include the resolved viseme support envelope when driving this inverse. */
+  speechNeutralizerEnvelope?: 'viseme-support';
 }
 
 /** Finished whole-face drawings, plus which canonical emotion reaches each. */

@@ -59,6 +59,19 @@ function build(presets: Partial<PresetSpec> = {}) {
   return { director, weight, step, settle };
 }
 
+function addMorphTarget(mesh: THREE.SkinnedMesh, id: string): void {
+  const dictionary = mesh.morphTargetDictionary ?? {};
+  const attrs = mesh.geometry.morphAttributes.position ?? [];
+  const index = attrs.length;
+  const count = mesh.geometry.attributes.position?.count ?? 0;
+  if (!count) throw new Error(`${mesh.name} has no position attribute`);
+  attrs.push(new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+  mesh.geometry.morphAttributes.position = attrs;
+  dictionary[id] = index;
+  mesh.morphTargetDictionary = dictionary;
+  mesh.morphTargetInfluences = [...(mesh.morphTargetInfluences ?? []), 0];
+}
+
 describe('Director / an authored face that replaces the eye', () => {
   it('measures the drawings apart rather than being told which is which', () => {
     const { director } = build();
@@ -212,12 +225,13 @@ describe('Director / authored mouth opening while speaking', () => {
 });
 
 describe('Director / declared preset composition', () => {
-  function composed(presets: Partial<PresetSpec> = {}) {
+  function composed(presets: Partial<PresetSpec> = {}, threeMeshViseme = false) {
     const rig = buildRig({
       groups: [
         [HIDE_GROUP, ['H_IRIS']],
         [FACE_GROUP, ['DotEyes', 'Shock', 'OpenMouth', 'InverseMouth']],
       ],
+      ...(threeMeshViseme ? { ungrouped: ['vrc.v_aa'], garments: ['MouthExtra'] } : {}),
       deltas: {
         H_IRIS: 4e-3,
         DotEyes: 4e-3,
@@ -230,6 +244,11 @@ describe('Director / declared preset composition', () => {
         eyeBlinkRight: 1e-2,
       },
     });
+    if (threeMeshViseme) {
+      const extra = rig.meshes.get('MouthExtra');
+      if (!extra) throw new Error('the synthetic rig carries no extra mouth mesh');
+      addMorphTarget(extra, 'vrc.v_aa');
+    }
     const profile = buildProfile(rig.root, {
       ...rig.descriptor,
       presets: {
@@ -248,7 +267,7 @@ describe('Director / declared preset composition', () => {
       for (let i = 0; i < frames; i++) director.update(DT);
     };
     const blinkWeight = (): number => weight(profile.blink.L ?? profile.blink.both);
-    return { director, profile, weight, blinkWeight, step };
+    return { director, profile, rig, weight, blinkWeight, step };
   }
 
   it.each(['DotEyes', 'Shock'])(
@@ -367,14 +386,175 @@ describe('Director / declared preset composition', () => {
     expect(weight('InverseMouth')).toBe(0);
   });
 
+  it('uses mouth busy or actual resolved viseme support through onset, interrupt, restart, and release', () => {
+    const { director, profile, weight, step } = composed({
+      composition: {
+        OpenMouth: {
+          speechNeutralizer: 'InverseMouth',
+          speechNeutralizerEnvelope: 'viseme-support',
+        },
+      },
+    });
+    const support = (): number => {
+      const unique = new Map<string, number>();
+      for (const [viseme, rawWeight] of Object.entries(director.mouth.weights)) {
+        if (rawWeight < 0.005) continue;
+        const shape = profile.viseme[viseme as keyof typeof profile.viseme];
+        if (!(shape && profile.morphTargets.get(shape)?.length)) continue;
+        unique.set(shape, Math.max(unique.get(shape) ?? 0, Math.min(1, rawWeight)));
+      }
+      return Math.min(
+        1,
+        [...unique.values()].reduce((sum, value) => sum + value, 0),
+      );
+    };
+    const expectComposedWeight = (): number => {
+      const expected = weight('OpenMouth') * Math.max(director.mouth.busy, support());
+      expect(weight('InverseMouth')).toBeCloseTo(expected, 8);
+      expect(weight('mouthClose')).toBe(0);
+      return support();
+    };
+
+    director.setExpression('OpenMouth');
+    step(120);
+    expect(weight('OpenMouth')).toBeCloseTo(1, 4);
+
+    director.speak('あいうえお');
+    let onsetUsedVisemeLead = false;
+    for (let i = 0; i < 12; i++) {
+      step();
+      const q = expectComposedWeight();
+      onsetUsedVisemeLead ||= q > director.mouth.busy;
+    }
+    expect(onsetUsedVisemeLead).toBe(true);
+    expect(support()).toBeGreaterThan(0);
+
+    director.mouth.stop();
+    step();
+    expect(expectComposedWeight()).toBeGreaterThan(0);
+    expect(weight('InverseMouth')).toBeGreaterThan(0);
+
+    director.speak('あいうえお');
+    step();
+    expect(expectComposedWeight()).toBeGreaterThan(0);
+    expect(weight('InverseMouth')).toBeGreaterThan(0);
+
+    for (let i = 0; i < 240; i++) {
+      step();
+      expectComposedWeight();
+    }
+    expect(weight('InverseMouth')).toBeLessThan(0.001);
+  });
+
+  it('sums two overlapping half-weight visemes to full support', () => {
+    const { director, weight, step } = composed({
+      composition: {
+        OpenMouth: {
+          speechNeutralizer: 'InverseMouth',
+          speechNeutralizerEnvelope: 'viseme-support',
+        },
+      },
+    });
+    director.setExpression('OpenMouth');
+    step(120);
+
+    const updateMouth = director.mouth.update.bind(director.mouth);
+    director.mouth.update = (dt) => {
+      updateMouth(dt);
+      Object.assign(director.mouth.weights, { a: 0.5, i: 0.5, u: 0, e: 0, o: 0, n: 0 });
+      director.mouth.busy = 0;
+    };
+    director.update(DT);
+
+    expect(weight('InverseMouth')).toBeCloseTo(weight('OpenMouth'), 8);
+    expect(weight('vrc.v_aa')).toBeCloseTo(0.5, 8);
+    expect(weight('vrc.v_ih')).toBeCloseTo(0.5, 8);
+    expect(weight('mouthClose')).toBe(0);
+  });
+
+  it('counts a duplicated target once across three meshes and uses its maximum weight', () => {
+    const { director, profile, rig, weight, step } = composed(
+      {
+        composition: {
+          OpenMouth: {
+            speechNeutralizer: 'InverseMouth',
+            speechNeutralizerEnvelope: 'viseme-support',
+          },
+        },
+      },
+      true,
+    );
+    profile.viseme.i = 'vrc.v_aa';
+    expect(profile.morphTargets.get('vrc.v_aa')).toHaveLength(3);
+    director.setExpression('OpenMouth');
+    step(120);
+
+    const updateMouth = director.mouth.update.bind(director.mouth);
+    director.mouth.update = (dt) => {
+      updateMouth(dt);
+      Object.assign(director.mouth.weights, { a: 0.2, i: 0.1, u: 0, e: 0, o: 0, n: 0 });
+      director.mouth.busy = 0;
+    };
+    director.update(DT);
+
+    expect(weight('InverseMouth')).toBeCloseTo(weight('OpenMouth') * 0.2, 8);
+    for (const target of profile.morphTargets.get('vrc.v_aa') ?? []) {
+      expect(target.mesh.morphTargetInfluences?.[target.index]).toBeCloseTo(0.2, 8);
+    }
+    expect(rig.meshes.get('MouthExtra')?.morphTargetInfluences).toBeDefined();
+  });
+
+  it('ignores subthreshold and unresolved viseme targets for the opt-in envelope', () => {
+    const { director, profile, weight, step } = composed({
+      composition: {
+        OpenMouth: {
+          speechNeutralizer: 'InverseMouth',
+          speechNeutralizerEnvelope: 'viseme-support',
+        },
+      },
+    });
+    director.setExpression('OpenMouth');
+    step(120);
+
+    let nextA = 0.004;
+    const updateMouth = director.mouth.update.bind(director.mouth);
+    director.mouth.update = (dt) => {
+      updateMouth(dt);
+      Object.assign(director.mouth.weights, {
+        a: nextA,
+        i: 0,
+        u: 0,
+        e: 0,
+        o: 0,
+        n: 0,
+      });
+      director.mouth.busy = 0;
+    };
+    director.update(DT);
+    expect(weight('InverseMouth')).toBe(0);
+    expect(weight('vrc.v_aa')).toBe(0);
+
+    profile.viseme.a = 'unrouted-vrc-aa';
+    nextA = 0.5;
+    director.update(DT);
+    expect(weight('InverseMouth')).toBe(0);
+    expect(weight('vrc.v_aa')).toBe(0);
+  });
+
   it('reports a missing inverse and uses the unchanged measured close fallback', () => {
     const { director, profile, weight, step } = composed({
-      composition: { OpenMouth: { speechNeutralizer: 'AbsentInverse' } },
+      composition: {
+        OpenMouth: {
+          speechNeutralizer: 'AbsentInverse',
+          speechNeutralizerEnvelope: 'viseme-support',
+        },
+      },
     });
     expect(profile.missing).toContain(
       'preset-composition:OpenMouth:speechNeutralizer:AbsentInverse',
     );
     expect(director.presetById.get('OpenMouth')).not.toHaveProperty('speechNeutralizer');
+    expect(director.presetById.get('OpenMouth')).not.toHaveProperty('speechNeutralizerEnvelope');
     director.setExpression('OpenMouth');
     step(120);
     director.speak('あいうえお');

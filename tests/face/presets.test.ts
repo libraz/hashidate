@@ -125,16 +125,33 @@ describe('buildPresets / authored composition', () => {
         group: FACE_GROUP,
         exclude: ['F_NIKO'],
         composition: {
-          F_SUYASUYA: { blink: 'preserve', speechNeutralizer: 'F_NIKO' },
-          F_DOYA: { speechNeutralizer: 'AbsentCorrective' },
+          F_SUYASUYA: {
+            blink: 'preserve',
+            speechNeutralizer: 'F_NIKO',
+            speechNeutralizerEnvelope: 'viseme-support',
+          },
+          F_DOYA: {
+            speechNeutralizer: 'AbsentCorrective',
+            speechNeutralizerEnvelope: 'viseme-support',
+          },
+          F_JITO: {
+            speechNeutralizer: 'F_NIKO',
+            speechNeutralizerEnvelope: 'busy-only' as 'viseme-support',
+          },
         },
       },
     };
     const missingBefore = [...profile.missing];
     const after = buildPresets(profile, configured);
-    expect(after[0]).toEqual({ ...before[0], blink: 'preserve', speechNeutralizer: 'F_NIKO' });
+    expect(after[0]).toEqual({
+      ...before[0],
+      blink: 'preserve',
+      speechNeutralizer: 'F_NIKO',
+      speechNeutralizerEnvelope: 'viseme-support',
+    });
     expect(after[1]).toEqual(before[1]);
-    expect(after[2]).toEqual(before[2]);
+    expect(after[2]).toEqual({ ...before[2], speechNeutralizer: 'F_NIKO' });
+    expect(after[2]).not.toHaveProperty('speechNeutralizerEnvelope');
     expect(Object.keys(after[1])).toEqual(Object.keys(before[1]));
     expect(profile.missing).toEqual(missingBefore);
     expect(buildIdleFaces(after, configured)).not.toContain('F_NIKO');

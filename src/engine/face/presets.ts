@@ -53,6 +53,8 @@ export interface ExpressionPreset {
   blink?: 'preserve';
   /** Resolved inverse mouth travel, in place of the measured canonical close. */
   speechNeutralizer?: string;
+  /** Drive this inverse from the stronger of mouth busy or resolved viseme support. */
+  speechNeutralizerEnvelope?: 'viseme-support';
 }
 
 /** Deltas accumulated against another shape's, before the ratio is taken. */
@@ -231,6 +233,9 @@ export function buildPresets(profile: Profile, avatar?: AvatarDescriptor): Expre
     const neutralizer = composition?.speechNeutralizer;
     if (neutralizer !== undefined && profile.morphTargets.has(neutralizer)) {
       preset.speechNeutralizer = neutralizer;
+      if (composition?.speechNeutralizerEnvelope === 'viseme-support') {
+        preset.speechNeutralizerEnvelope = 'viseme-support';
+      }
     }
     return preset;
   });

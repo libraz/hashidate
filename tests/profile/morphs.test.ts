@@ -58,6 +58,43 @@ describe('preset composition diagnostics', () => {
     expect(profile.missing).toContain('preset-composition:Missing:preset');
     expect(profile.missing).toContain('preset-composition:Inverse:preset');
   });
+
+  it('reports an unsupported envelope and an envelope without a resolved inverse', () => {
+    const rig = buildRig({
+      groups: [['Drawings', ['Drawn', 'Unsupported', 'Unresolved', 'Inverse']]],
+    });
+    const profile = buildProfile(rig.root, {
+      ...rig.descriptor,
+      presets: {
+        group: 'Drawings',
+        exclude: ['Inverse'],
+        composition: {
+          Drawn: { speechNeutralizerEnvelope: 'viseme-support' },
+          Unsupported: {
+            speechNeutralizer: 'Inverse',
+            speechNeutralizerEnvelope: 'busy-only' as 'viseme-support',
+          },
+          Unresolved: {
+            speechNeutralizer: 'AbsentInverse',
+            speechNeutralizerEnvelope: 'viseme-support',
+          },
+        },
+      },
+    });
+
+    expect(profile.missing).toContain(
+      'preset-composition:Drawn:speechNeutralizerEnvelope:requires-resolved-speechNeutralizer',
+    );
+    expect(profile.missing).toContain(
+      'preset-composition:Unsupported:speechNeutralizerEnvelope:unsupported',
+    );
+    expect(profile.missing).toContain(
+      'preset-composition:Unresolved:speechNeutralizer:AbsentInverse',
+    );
+    expect(profile.missing).toContain(
+      'preset-composition:Unresolved:speechNeutralizerEnvelope:requires-resolved-speechNeutralizer',
+    );
+  });
 });
 
 describe('routeMorphs', () => {

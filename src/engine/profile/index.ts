@@ -117,6 +117,16 @@ export function buildProfile(
       if (neutralizer !== undefined && !morphTargets.has(neutralizer)) {
         missing.push(`preset-composition:${id}:speechNeutralizer:${neutralizer}`);
       }
+      const envelope: unknown = composition.speechNeutralizerEnvelope;
+      if (envelope !== undefined) {
+        if (envelope !== 'viseme-support') {
+          missing.push(`preset-composition:${id}:speechNeutralizerEnvelope:unsupported`);
+        } else if (neutralizer === undefined || !morphTargets.has(neutralizer)) {
+          missing.push(
+            `preset-composition:${id}:speechNeutralizerEnvelope:requires-resolved-speechNeutralizer`,
+          );
+        }
+      }
     }
   }
   const face = buildFaceFrame(root, bones);

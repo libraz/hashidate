@@ -795,6 +795,48 @@ export class Director {
     }
   }
 
+  /**
+   * Sum the effective viseme targets this frame, once per routed shape name.
+   * The face writer below uses the same 0.005 cutoff and max rule for shapes
+   * that are shared by more than one viseme; a shape routed to several meshes
+   * is still one target influence.
+   */
+  private visemeSupport(): number {
+    const { weights } = this.mouth;
+    let support = 0;
+    for (const key in weights) {
+      const viseme = key as MouthViseme;
+      const weight = weights[viseme];
+      if (weight < 0.005) continue;
+      const shape = this.p.viseme[viseme];
+      if (!(shape && this.p.morphTargets.get(shape)?.length)) continue;
+
+      // Count each resolved shape at its maximum effective weight, regardless
+      // of dictionary order or how many meshes carry that shape.
+      let first = true;
+      for (const priorKey in weights) {
+        if (priorKey === key) break;
+        const priorViseme = priorKey as MouthViseme;
+        if (this.p.viseme[priorViseme] === shape && weights[priorViseme] >= 0.005) {
+          first = false;
+          break;
+        }
+      }
+      if (!first) continue;
+
+      let maximum = 0;
+      for (const otherKey in weights) {
+        const otherViseme = otherKey as MouthViseme;
+        if (this.p.viseme[otherViseme] !== shape) continue;
+        const otherWeight = weights[otherViseme];
+        if (otherWeight < 0.005) continue;
+        maximum = Math.max(maximum, Math.min(1, otherWeight));
+      }
+      support += maximum;
+    }
+    return Math.min(1, Math.max(0, support));
+  }
+
   private writeFace(dt: number): void {
     const { p, mouth } = this;
     const emotion = this.effectiveEmotion;
@@ -815,7 +857,11 @@ export class Director {
       // `speaking` immediately but lets this correction decay with the visemes,
       // instead of popping the authored open mouth back in one frame.
       if (preset.speechNeutralizer) {
-        this.set(preset.speechNeutralizer, pw * mouth.busy);
+        const envelope =
+          preset.speechNeutralizerEnvelope === 'viseme-support'
+            ? Math.max(mouth.busy, this.visemeSupport())
+            : mouth.busy;
+        this.set(preset.speechNeutralizer, pw * envelope);
       } else if (preset.mouthClose > 0) {
         this.set('mouthClose', pw * preset.mouthClose * mouth.busy);
       }
