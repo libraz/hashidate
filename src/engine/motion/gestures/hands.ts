@@ -25,6 +25,19 @@ export const SOFT_HAND: Record<FingerName, number> = {
   ring: 0.3,
   little: 0.34,
 };
+/** A hand `t` of the way from one shape to another, for a hand that changes shape as it moves. */
+export const mixHand = (
+  from: Record<FingerName, number>,
+  to: Record<FingerName, number>,
+  t: number,
+): Record<FingerName, number> => ({
+  thumb: from.thumb + (to.thumb - from.thumb) * t,
+  index: from.index + (to.index - from.index) * t,
+  middle: from.middle + (to.middle - from.middle) * t,
+  ring: from.ring + (to.ring - from.ring) * t,
+  little: from.little + (to.little - from.little) * t,
+});
+
 /**
  * The other four, for a hand that is pointing with one finger.
  *

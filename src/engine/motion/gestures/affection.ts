@@ -2,7 +2,7 @@ import type { GestureDef } from '../../types';
 import { V } from './base';
 import type { ArmPose } from './builders';
 import { reach, reachBoth } from './builders';
-import { FULL_HEART_HAND, HEART_HAND, OPEN_HAND, SOFT_HAND } from './hands';
+import { FULL_HEART_HAND, HEART_HAND, mixHand, OPEN_HAND, SOFT_HAND } from './hands';
 
 /** Affection — small ways to say that the character cares. */
 
@@ -22,13 +22,7 @@ export const AFFECTION = {
       // It stays below eye level, with a pole because this is a face reach.
       const depart = ease(t - 0.68, 0.68);
       const open = ease(t - 0.8, 0.34);
-      const fingers = {
-        thumb: SOFT_HAND.thumb + (OPEN_HAND.thumb - SOFT_HAND.thumb) * open,
-        index: SOFT_HAND.index + (OPEN_HAND.index - SOFT_HAND.index) * open,
-        middle: SOFT_HAND.middle + (OPEN_HAND.middle - SOFT_HAND.middle) * open,
-        ring: SOFT_HAND.ring + (OPEN_HAND.ring - SOFT_HAND.ring) * open,
-        little: SOFT_HAND.little + (OPEN_HAND.little - SOFT_HAND.little) * open,
-      };
+      const fingers = mixHand(SOFT_HAND, OPEN_HAND, open);
       return reach(
         v,
         {
