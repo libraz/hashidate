@@ -159,7 +159,7 @@
   color: var(--fg-dim);
 }
 
-.clear:hover {
+.clear:hover:not(:disabled) {
   background: var(--surface-hover);
   color: var(--fg);
 }
@@ -178,9 +178,15 @@
   font-weight: 500;
 }
 
-.stop:hover {
+.stop:hover:not(:disabled) {
   border-color: var(--live);
   color: var(--live);
+}
+
+.clear:disabled,
+.stop:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .armed {

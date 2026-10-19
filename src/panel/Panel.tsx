@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { type MessageKey, useT } from '@/i18n';
-import type { SpeechState } from '@/protocol';
+import type { Snapshot, SpeechState } from '@/protocol';
 import { LocaleSwitch } from '@/ui/LocaleSwitch';
 import { Tabs } from '@/ui/Segmented';
 import { clear, interrupt } from './api';
@@ -83,6 +83,20 @@ const SPEECH_NOTICE: Record<SpeechState, MessageKey | null> = {
   down: 'panel.speech.down',
 };
 
+/**
+ * Which transport buttons have something to act on, so that neither can be
+ * pressed into a no-op. Stop is for a run in progress: a line on air, or an
+ * unheld queue with lines still to go. Drop only ever discards pending lines.
+ */
+export function transport(snapshot: Snapshot): { stop: boolean; drop: boolean } {
+  const onAir =
+    (snapshot.airing?.length ?? 0) > 0 ||
+    (snapshot.state.turn ?? null) !== null ||
+    (snapshot.state.speaking ?? false);
+  const pending = snapshot.queue.length > 0;
+  return { stop: onAir || (pending && !snapshot.paused), drop: pending };
+}
+
 /** What the tab strip points `aria-controls` at. One region, so a constant. */
 const BODY_ID = 'panel-tab-body';
 
@@ -119,6 +133,7 @@ export function Panel() {
   // layout either way, and every field would otherwise need its own branch.
   const data = snapshot ?? EMPTY;
   const speaking = data.state.speaking ?? false;
+  const can = transport(data);
   const notice = SPEECH_NOTICE[data.speech];
   const avatarLabel = data.vocabulary.avatar?.label;
 
@@ -161,6 +176,7 @@ export function Panel() {
             <button
               type="button"
               className={styles.clear}
+              disabled={!can.drop}
               onClick={() => void clear().then(refresh)}
               title={t('panel.drop.title')}
             >
@@ -169,6 +185,7 @@ export function Panel() {
             <button
               type="button"
               className={`${styles.stop} ${speaking ? styles.armed : ''}`}
+              disabled={!can.stop}
               onClick={() => void interrupt().then(refresh)}
               title={t('panel.stop.title')}
             >
