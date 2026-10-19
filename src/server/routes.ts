@@ -486,11 +486,17 @@ async function runScript(
   }
   if (loaded === null) return json(res, { error: 'no such script' }, 404);
 
-  if (parsed.data.replace) hub.queue.clear();
-  hub.queue.add(loaded.script.lines, { source: loaded.id });
-
   const setup = loaded.script.setup ?? [];
   const paused = parsed.data.pause ?? true;
+  const refused = hub.refuseStart([
+    ...setup,
+    { cmd: 'pause', on: paused },
+    { cmd: 'queue', turns: loaded.script.lines },
+  ]);
+  if (refused !== null) return json(res, { error: refused }, 409);
+
+  if (parsed.data.replace) hub.queue.clear();
+  hub.queue.add(loaded.script.lines, { source: loaded.id });
   // One frame, in the order `Hub.subscribe` uses and for the same reason: a
   // script whose setup swaps the avatar makes the renderer hold everything
   // behind the load, and a queue sent as a second frame would arrive after that
@@ -521,6 +527,13 @@ function recordStart(res: ServerResponse, hub: Hub, body: unknown): void {
   if (!parsed.success) {
     json(res, { error: 'invalid recording', detail: parsed.error.issues }, 400);
     return;
+  }
+  if (parsed.data.release && hub.snapshot().paused) {
+    const refused = hub.refuseStart([{ cmd: 'pause', on: false }]);
+    if (refused !== null) {
+      json(res, { error: refused, recording: hub.recording }, 409);
+      return;
+    }
   }
   const opened = hub.startRecording(parsed.data);
   if (opened === null) {
@@ -661,6 +674,11 @@ function queue(res: ServerResponse, hub: Hub, pathname: string, body: unknown): 
         json(res, { error: 'no turns' }, 400);
         return;
       }
+      const refused = hub.refuseStart([], true);
+      if (refused !== null) {
+        json(res, { queue: hub.queue.list(), viewers: hub.viewers, error: refused }, 409);
+        return;
+      }
       hub.queue.add(turns, {
         at: pathname === '/api/queue/unshift' ? 'unshift' : (parsed.data.at ?? 'push'),
         source: parsed.data.source,
@@ -713,6 +731,11 @@ function queue(res: ServerResponse, hub: Hub, pathname: string, body: unknown): 
       const parsed = queueRewindSchema.safeParse(body);
       if (!parsed.success) {
         json(res, { error: 'invalid rewind', detail: parsed.error.issues }, 400);
+        return;
+      }
+      const refused = hub.refuseStart([], true);
+      if (refused !== null) {
+        json(res, { queue: hub.queue.list(), viewers: hub.viewers, error: refused }, 409);
         return;
       }
       const added = hub.rewind(parsed.data.id, parsed.data.mode, {
@@ -778,6 +801,8 @@ async function command(
     return json(res, { error: 'no command', detail: parsed.error.issues }, 400);
   }
   const commands: StampedCommand[] = parsed.data.map(stamp);
+  const refused = hub.refuseStart(commands.map((c) => c.command));
+  if (refused !== null) return json(res, { error: refused }, 409);
 
   // Classified once, by the hub: only a command neither delivered nor kept by
   // the server is a failure. See `commandFateSchema`.

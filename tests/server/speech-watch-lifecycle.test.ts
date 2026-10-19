@@ -9,6 +9,7 @@ let directory: string;
 let socket: string;
 let server: Server;
 let SpeechWatch: typeof import('@/server/speech').SpeechWatch;
+let EXPECTED_GRACE_MS: number;
 let watch: SpeechWatchInstance;
 let log: ReturnType<typeof vi.spyOn>;
 let warn: ReturnType<typeof vi.spyOn>;
@@ -28,9 +29,9 @@ beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'hashidate-speech-watch-'));
   socket = join(directory, 'speech.sock');
   vi.stubEnv('HASHIDATE_TTS_SOCKET', socket);
-  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
   vi.resetModules();
-  ({ SpeechWatch } = await import('@/server/speech'));
+  ({ SpeechWatch, EXPECTED_GRACE_MS } = await import('@/server/speech'));
   watch = new SpeechWatch();
   log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -51,6 +52,109 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.resetModules();
   await rm(directory, { recursive: true, force: true });
+});
+
+/** Let socket I/O land; fake timers do not move it. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setImmediate(resolve));
+}
+
+/** Answer every probe with `ready`, and count them. */
+function answering(ready: boolean | null): { probes: () => number } {
+  let count = 0;
+  server.on('request', (_request, response) => {
+    count += 1;
+    reply(response, ready, ready === null ? 503 : 200);
+  });
+  return { probes: () => count };
+}
+
+describe('SpeechWatch cadence', () => {
+  it('probes every second while the model loads', async () => {
+    const served = answering(false);
+    expect(await watch.start()).toBe('loading');
+    expect(served.probes()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(999);
+    await settle();
+    expect(served.probes()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await settle();
+    expect(served.probes()).toBe(2);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    expect(served.probes()).toBe(3);
+  });
+
+  it('probes every five seconds otherwise, and slows down once ready', async () => {
+    const served = answering(false);
+    expect(await watch.start()).toBe('loading');
+    server.removeAllListeners('request');
+    const ready = answering(true);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    expect(ready.probes()).toBe(1);
+    expect(watch.current).toBe('ready');
+
+    await vi.advanceTimersByTimeAsync(4_999);
+    await settle();
+    expect(ready.probes()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await settle();
+    expect(ready.probes()).toBe(2);
+    expect(served.probes()).toBe(1);
+  });
+
+  it('keeps five seconds for a sidecar that is not there', async () => {
+    const served = answering(null);
+    expect(await watch.start()).toBe('absent');
+
+    await vi.advanceTimersByTimeAsync(4_999);
+    await settle();
+    expect(served.probes()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await settle();
+    expect(served.probes()).toBe(2);
+  });
+});
+
+describe('SpeechWatch with a sidecar the shell started', () => {
+  beforeEach(() => {
+    watch = new SpeechWatch({ expected: true });
+  });
+
+  it('reports loading before any answer, and probes every second', async () => {
+    const served = answering(null);
+    expect(watch.current).toBe('loading');
+    expect(await watch.start()).toBe('loading');
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    expect(served.probes()).toBe(2);
+    expect(watch.current).toBe('loading');
+  });
+
+  it('follows the sidecar from its first answer on', async () => {
+    answering(true);
+    expect(await watch.start()).toBe('ready');
+  });
+
+  it('gives up and reports down once the grace has passed with no answer', async () => {
+    answering(null);
+    await watch.start();
+
+    vi.setSystemTime(Date.now() + EXPECTED_GRACE_MS - 1);
+    expect(await watch.check()).toBe('loading');
+
+    vi.setSystemTime(Date.now() + 1);
+    expect(await watch.check()).toBe('down');
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('SpeechWatch lifecycle', () => {

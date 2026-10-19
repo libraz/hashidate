@@ -246,6 +246,8 @@ async function synthesise(line: string, signal: AbortSignal): Promise<Take> {
     return refusal(503, 'speech sidecar not reachable');
   }
 
+  // Still loading its model: the renderer treats a 503 as "try again when ready".
+  if (upstream.status === 503) return refusal(503, 'speech sidecar is loading its model');
   if (upstream.status < 200 || upstream.status > 299) {
     return refusal(502, `speech sidecar answered ${upstream.status}`);
   }
@@ -361,6 +363,12 @@ export async function handleSpeech(res: ServerResponse, body: unknown): Promise<
 const HEALTH_INTERVAL_MS = 5_000;
 const HEALTH_TIMEOUT_MS = 2_000;
 
+/** The shorter interval while the model loads, which is the one state with a known end. */
+const LOADING_INTERVAL_MS = 1_000;
+
+/** How long an expected sidecar may stay silent before it counts as down. */
+export const EXPECTED_GRACE_MS = 180_000;
+
 /** What the hub reads off the watch. See `SpeechWatch`. */
 export interface SpeechSource {
   readonly current: SpeechState;
@@ -412,9 +420,20 @@ export class SpeechWatch implements SpeechSource {
   private state: SpeechState = 'absent';
   /** Whether anything ever answered. What separates `absent` from `down`. */
   private seen = false;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
   /** Invalidates probes whose answers arrive after this watch was stopped. */
   private generation = 0;
+  /** When this watch was made; the grace of an expected sidecar runs from here. */
+  private readonly createdAt = Date.now();
+
+  /**
+   * `expected` means the shell started a sidecar: until it first answers it is
+   * `loading` rather than `absent`, so playback is not allowed to begin in the
+   * window before the socket exists.
+   */
+  constructor(private readonly options: { expected?: boolean } = {}) {
+    if (options.expected) this.state = 'loading';
+  }
 
   get current(): SpeechState {
     return this.state;
@@ -433,19 +452,29 @@ export class SpeechWatch implements SpeechSource {
     const answer = await ask();
     if (generation !== this.generation) return this.state;
     this.state = this.observe(answer);
-    if (this.timer === null) {
-      this.timer = setInterval(() => void this.check(), HEALTH_INTERVAL_MS);
-      // Nothing here should hold the process open: a server whose last socket
-      // closed is finished, and a five-second timer would keep it running.
-      this.timer.unref?.();
-    }
+    if (this.timer === null) this.schedule();
     return this.state;
   }
 
   stop(): void {
     this.generation++;
-    if (this.timer !== null) clearInterval(this.timer);
+    if (this.timer !== null) clearTimeout(this.timer);
     this.timer = null;
+  }
+
+  /** Arm the next probe; a chain rather than an interval so the delay can follow the state. */
+  private schedule(): void {
+    const generation = this.generation;
+    const delay = this.state === 'loading' ? LOADING_INTERVAL_MS : HEALTH_INTERVAL_MS;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.check().then(() => {
+        if (generation === this.generation && this.timer === null) this.schedule();
+      });
+    }, delay);
+    // Nothing here should hold the process open: a server whose last socket
+    // closed is finished, and a five-second timer would keep it running.
+    this.timer.unref?.();
   }
 
   /** One probe, folded in, announcing a change and only a change. */
@@ -464,7 +493,12 @@ export class SpeechWatch implements SpeechSource {
   }
 
   private observe(answer: Awaited<ReturnType<typeof ask>>): SpeechState {
-    if (answer !== null) this.seen = true;
-    return answer ?? (this.seen ? 'down' : 'absent');
+    if (answer !== null) {
+      this.seen = true;
+      return answer;
+    }
+    if (this.seen) return 'down';
+    if (!this.options.expected) return 'absent';
+    return Date.now() - this.createdAt >= EXPECTED_GRACE_MS ? 'down' : 'loading';
   }
 }

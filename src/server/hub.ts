@@ -685,6 +685,36 @@ export class Hub {
   }
 
   /**
+   * Why this batch may not be applied, or null when it may.
+   *
+   * Refuses only what would start a stopped queue while the voice cannot be
+   * heard: lifting the hold, or adding to a queue that is idle and unheld.
+   * `absent` is not refused (a machine without a voice mouths in silence on
+   * purpose), and a queue already moving is left alone because a probe that
+   * flaps must not cost a caller its lines. `adding` marks a caller that adds
+   * lines without a `say`/`queue` command in the batch.
+   */
+  refuseStart(commands: readonly Command[], adding = false): string | null {
+    const speech = this.speech?.current;
+    if (speech !== 'loading' && speech !== 'down') return null;
+    let paused = this.standing.paused;
+    let resumes = false;
+    let adds = adding;
+    for (const command of commands) {
+      if (command.cmd === 'pause') {
+        // Absent `on` means hold, as the schema states.
+        paused = command.on ?? true;
+        if (!paused) resumes = true;
+      } else if (command.cmd === 'say') adds = true;
+      else if (command.cmd === 'queue' && command.turns.length > 0) adds = true;
+    }
+    if (paused || !(resumes || (adds && !this.queue.hasWork))) return null;
+    return speech === 'loading'
+      ? 'speech sidecar is loading its model; playback cannot start until it is ready'
+      : 'speech sidecar is not answering; playback cannot start until it is back';
+  }
+
+  /**
    * Record and fan out commands exactly as given, with no queue verb applied.
    *
    * For the hub's own frames, which already carry the canonical list: a rewind's
