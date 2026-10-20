@@ -101,6 +101,33 @@ describe('finger life', () => {
     expect(range(frozen.map((c) => c.index))).toBeLessThan(1e-3);
   });
 
+  it('opens a slack hand on the inhale and lets it close on the exhale', () => {
+    h.body.breathDepth = 1;
+    h.body.playDef(held(SOFT_HAND), 'pose', 'R');
+    run(h, 240);
+    const seen = record(h);
+    const breath: number[] = [];
+    for (let i = 0; i < 600; i++) {
+      h.rig.reset();
+      h.body.update(DT);
+      breath.push(h.body.breath);
+    }
+    const curl = seen.map((c) => c.middle);
+    expect(range(curl)).toBeGreaterThan(0.015);
+    const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+    const mc = mean(curl);
+    const mb = mean(breath);
+    let cov = 0;
+    let vc = 0;
+    let vb = 0;
+    for (let i = 0; i < curl.length; i++) {
+      cov += (curl[i] - mc) * (breath[i] - mb);
+      vc += (curl[i] - mc) ** 2;
+      vb += (breath[i] - mb) ** 2;
+    }
+    expect(cov / Math.sqrt(vc * vb)).toBeLessThan(-0.8);
+  });
+
   it('trails a moving hand and settles back onto the shape it holds still', () => {
     h.body.playDef(swung(SOFT_HAND, 1.5), 'pose', 'R');
     const seen = record(h);

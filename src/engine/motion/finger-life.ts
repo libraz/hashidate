@@ -33,6 +33,12 @@ const FINGERS: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'lit
 
 /** Curl the idle drift can add either way, at full slack. About five degrees at the knuckle. */
 const DRIFT = 0.05;
+/**
+ * Curl a full breath takes off a slack hand on the inhale and gives back on the
+ * exhale, about two degrees: the arms already rise with the chest, and a hand
+ * that alone keeps still reads as held.
+ */
+const BREATH = 0.02;
 
 /**
  * The lag is a point hung off the knuckle on a spring, read as how far it sits
@@ -227,10 +233,19 @@ export class FingerLife {
    * Curl to add to finger `f` whose blended curl is `curl`.
    *
    * `idle` scales the drift only — the lag is the hand moving, not the
-   * character idling. `amount` scales both, for a hand whose fingers are not
-   * free to move on their own.
+   * character idling. `breath` is the breath curve times its depth, -1 to 1.
+   * `amount` scales all of it, for a hand whose fingers are not free to move
+   * on their own.
    */
-  offset(side: Side, f: FingerName, curl: number, t: number, idle: number, amount: number): number {
+  offset(
+    side: Side,
+    f: FingerName,
+    curl: number,
+    t: number,
+    idle: number,
+    breath: number,
+    amount: number,
+  ): number {
     const s = slack(curl) * amount;
     if (s <= 0) return 0;
     const i = FINGERS.indexOf(f);
@@ -240,6 +255,6 @@ export class FingerLife {
     const drift =
       (DRIFT * idle * (Math.sin(t * 0.7 + ph) + 0.5 * Math.sin(t * 1.3 + 1.7 * ph))) / 1.5;
     const m = this._motion[side];
-    return s * (drift + m.droop + (m.x + m.teno) * LAG_WEIGHT[f]);
+    return s * (drift - BREATH * breath + m.droop + (m.x + m.teno) * LAG_WEIGHT[f]);
   }
 }

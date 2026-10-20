@@ -1393,7 +1393,7 @@ export class Body {
         let cv = cf?.[f];
         if (cv !== undefined && cSpread) cv = claspCurl(side !== cc?.lead, f, cv, cK);
         if (cv !== undefined) val += (cv - val) * fw;
-        val += this._fingerLife.offset(side, f, val, this.t, idle, free);
+        val += this._fingerLife.offset(side, f, val, this.t, idle, br * d, free);
         spec[f] = this._fingerState[side][f].step(val, dt, FINGER_FOLLOW * FINGER_STAGGER[f]);
 
         const cvSpread = cSpread ? (cSpread[f] ?? 0) * (1 - cK) : cfSpread?.[f];
