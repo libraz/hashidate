@@ -110,6 +110,11 @@ function cueLabel(action: InlineCueAction): string {
       return say('panel.lint.cue.camera', { frame: action.frame });
     case 'slide':
       return say('panel.lint.cue.slide', { page: action.page });
+    case 'place': {
+      const visible = action.place.avatar?.visible;
+      if (visible === undefined) return say('panel.lint.cue.place');
+      return say(visible ? 'panel.lint.cue.place.show' : 'panel.lint.cue.place.hide');
+    }
     case 'bgm':
       if (action.action === 'set') return say('panel.lint.cue.bgm.set');
       return action.action === 'play'
@@ -127,7 +132,7 @@ function knownDynamicId(entries: Array<{ id: string }> | undefined, id: string):
   return entries === undefined || entries.some((entry) => entry.id === id);
 }
 
-/** Camera, slide and BGM are grammar-validated; only avatar data needs a lookup. */
+/** Camera, slide, layout and BGM are grammar-validated; only avatar data needs a lookup. */
 function isKnownCue(action: InlineCueAction, vocabulary: Partial<Vocabulary>): boolean {
   switch (action.kind) {
     case 'perform':
@@ -140,6 +145,7 @@ function isKnownCue(action: InlineCueAction, vocabulary: Partial<Vocabulary>): b
       return knownDynamicId(vocabulary.hops, action.id);
     case 'camera':
     case 'slide':
+    case 'place':
     case 'bgm':
       return true;
   }

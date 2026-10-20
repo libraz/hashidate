@@ -3,7 +3,13 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { parseLine } from '../engine/cues';
 import { readExactFile, readSafeFile } from '../files';
-import { type Command, commandSchema, type TurnRequest, turnSchema } from '../protocol';
+import {
+  type Command,
+  commandSchema,
+  type InlineCueAction,
+  type TurnRequest,
+  turnSchema,
+} from '../protocol';
 
 /**
  * A script: a run of turns, written out in advance.
@@ -251,6 +257,50 @@ interface Reached {
   page: number;
   /** The axes the lines have set, folded in order. `slide` is kept in `page`. */
   lines: Stage;
+  /** What the lines' BGM cues have done to the music, folded in order. */
+  bgm: ReachedBgm;
+}
+
+/**
+ * The music as the BGM cues of the lines walked so far left it: the last
+ * transport verb, and every setting a `set` or a named `play` changed. The
+ * playback position is not part of it — how far a track has run depends on how
+ * long the skipped lines took to say, which a script cannot know.
+ */
+interface ReachedBgm {
+  action?: 'play' | 'pause' | 'stop';
+  settings: Record<string, unknown>;
+}
+
+/** A settings patch folded into what came before it, nested objects field by field. */
+function foldSettings(base: Record<string, unknown>, patch: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(patch)) {
+    const current = base[key];
+    if (isPlainObject(value) && isPlainObject(current)) foldSettings(current, value);
+    else base[key] = isPlainObject(value) ? structuredClone(value) : value;
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function foldBgm(bgm: ReachedBgm, cue: Extract<InlineCueAction, { kind: 'bgm' }>): void {
+  if (cue.action === 'set') {
+    const { action, ...settings } = cue.settings;
+    if (action !== undefined) bgm.action = action;
+    foldSettings(bgm.settings, settings);
+    return;
+  }
+  bgm.action = cue.action;
+  if (cue.action === 'play' && cue.track !== undefined) bgm.settings.track = cue.track;
+}
+
+/** One cue that puts the music where the skipped lines left it, or null if they never touched it. */
+function bgmCue(bgm: ReachedBgm): string | null {
+  if (bgm.action === undefined && Object.keys(bgm.settings).length === 0) return null;
+  const settings = { ...(bgm.action === undefined ? {} : { action: bgm.action }), ...bgm.settings };
+  return `[@bgm set ${JSON.stringify(settings)}]`;
 }
 
 /** Two halves of a layout folded field by field, as `Standing` folds `place`. */
@@ -264,7 +314,7 @@ function foldPlace(base: Stage['place'], next: Stage['place']): Stage['place'] {
 }
 
 function afterSetup(setup: readonly Command[] | undefined): Reached {
-  const at: Reached = { deck: null, page: 1, lines: {} };
+  const at: Reached = { deck: null, page: 1, lines: {}, bgm: { settings: {} } };
   for (const command of setup ?? []) {
     if (command.cmd === 'deck') {
       at.deck = command.id ?? null;
@@ -302,7 +352,11 @@ function walk(
 ): void {
   const at = afterSetup(script.setup);
   for (const [index, line] of script.lines.entries()) {
-    const before: Reached = { ...at, lines: { ...at.lines } };
+    const before: Reached = {
+      ...at,
+      lines: { ...at.lines },
+      bgm: { ...at.bgm, settings: structuredClone(at.bgm.settings) },
+    };
     applyStage(at, line.stage);
     if (visit(index, before, at)) return;
     // A cue turns the page or moves the camera part-way through the line, and
@@ -313,6 +367,10 @@ function walk(
         if (visit(index, before, at)) return;
       } else if (cue.action?.kind === 'camera') {
         at.lines.camera = cue.action.frame;
+      } else if (cue.action?.kind === 'place') {
+        at.lines.place = foldPlace(at.lines.place, cue.action.place);
+      } else if (cue.action?.kind === 'bgm') {
+        foldBgm(at.bgm, cue.action);
       }
     }
   }
@@ -345,6 +403,10 @@ export function pageStarts(script: Script): ScriptPage[] {
  * What the earlier lines set is folded into the first one, under its own
  * stage, and the page it starts on is stated outright. Moods are not carried:
  * they are a line's performance rather than the shot, and a line names its own.
+ * The music is carried as one `[@bgm set]` cue at the very front of the first
+ * line — the only place a cue may go on a line with a reading — so a run that
+ * starts after the line that began the music still has it; the track starts
+ * from its beginning, since where it would have reached is not knowable here.
  */
 export function linesFrom(script: Script, from: number): TurnRequest[] {
   const [first, ...after] = script.lines.slice(from);
@@ -357,6 +419,7 @@ export function linesFrom(script: Script, from: number): TurnRequest[] {
   });
   const start = reached as Reached | null;
   if (start === null) return [first, ...after];
+  const music = bgmCue(start.bgm);
 
   const own = first.stage ?? {};
   const stage: Stage = { ...start.lines };
@@ -367,5 +430,6 @@ export function linesFrom(script: Script, from: number): TurnRequest[] {
   const { place: _ownPlace, ...ownAxes } = own;
   Object.assign(stage, ownAxes);
   if (place !== undefined) stage.place = place;
-  return [{ ...first, stage }, ...after];
+  const text = music === null ? {} : { text: `${music}${first.text ?? ''}` };
+  return [{ ...first, ...text, stage }, ...after];
 }

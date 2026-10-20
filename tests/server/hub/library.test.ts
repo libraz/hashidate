@@ -72,7 +72,9 @@ describe('documents', () => {
     hub.report({ placement: placement() });
     expect(hub.snapshot().placement).toEqual(placement());
     // A layout nothing sent as a command: the source was opened on it.
-    const moved = placement({ avatar: { anchor: 'left', width: 0.5, height: 0.5, margin: 0 } });
+    const moved = placement({
+      avatar: { anchor: 'left', width: 0.5, height: 0.5, margin: 0, visible: false, shift: 0.1 },
+    });
     hub.report({ placement: moved });
     expect(hub.snapshot().placement).toEqual(moved);
   });

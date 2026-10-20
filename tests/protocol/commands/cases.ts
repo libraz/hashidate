@@ -92,6 +92,11 @@ export const SWITCH_CASES: Record<CommandName, Command[]> = {
   ],
   room: [{ cmd: 'room', id: 'hall' }, { cmd: 'room', id: null }, { cmd: 'room' }],
   backdrop: [{ cmd: 'backdrop', id: 'night' }, { cmd: 'backdrop', id: null }, { cmd: 'backdrop' }],
+  bloom: [
+    { cmd: 'bloom', enabled: false },
+    { cmd: 'bloom', strength: 1.1 },
+    { cmd: 'bloom', id: 'c-8', radius: 0.5, threshold: 1.2 },
+  ],
   deck: [
     { cmd: 'deck', id: 'intro' },
     { cmd: 'deck', id: 'intro', page: 4 },

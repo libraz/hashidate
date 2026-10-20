@@ -1,6 +1,6 @@
 import type {
+  AvatarPlacement,
   Composition,
-  Placement,
   PlacementReport,
   SlidePlacement,
   SlideReport,
@@ -176,14 +176,14 @@ export class FakeSlides implements Slides {
 
 /** A frame layout that keeps every patch it was handed, on the same footing. */
 export class FakeComposition implements Composition {
-  readonly placements: Array<{ avatar?: Placement; slide?: SlidePlacement }> = [];
+  readonly placements: Array<{ avatar?: AvatarPlacement; slide?: SlidePlacement }> = [];
   /** Where both layers are, merged as a renderer would merge them. */
   private readonly current: PlacementReport = {
-    avatar: { anchor: 'center', width: 1, height: 1, margin: 0 },
+    avatar: { anchor: 'center', width: 1, height: 1, margin: 0, visible: true, shift: 0 },
     slide: { anchor: 'center', width: 1, height: 1, margin: 0, fit: 'contain' },
   };
 
-  setPlacement(placement: { avatar?: Placement; slide?: SlidePlacement }): void {
+  setPlacement(placement: { avatar?: AvatarPlacement; slide?: SlidePlacement }): void {
     this.placements.push(placement);
     Object.assign(this.current.avatar, placement.avatar);
     Object.assign(this.current.slide, placement.slide);

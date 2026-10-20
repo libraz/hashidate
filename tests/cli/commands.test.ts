@@ -4,6 +4,7 @@ import { point } from '@/cli/commands/body';
 import { vocab } from '@/cli/commands/inspect';
 import { tune } from '@/cli/commands/renderer';
 import { avatars, play } from '@/cli/commands/show';
+import { bloom as bloomCommand } from '@/cli/commands/staging';
 import { parseVoiceArgs, voice } from '@/cli/commands/voice';
 import { show } from '@/cli/output';
 import type { QueueResponse } from '@/protocol';
@@ -66,6 +67,32 @@ describe('CLI command construction', () => {
     await tune(fake as ControlClient, ['sway.stiffness=2']);
 
     expect(commands).toEqual([{ cmd: 'tune', sway: { stiffness: 2 } }]);
+  });
+
+  it('preserves bloom off and validates optional numeric settings through the schema', async () => {
+    const { client: fake, commands } = client();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await bloomCommand(fake as ControlClient, ['off', '--strength', '1.2', '--threshold', '1.4']);
+
+    expect(commands).toEqual([
+      { cmd: 'bloom', enabled: false, strength: 1.2, radius: undefined, threshold: 1.4 },
+    ]);
+  });
+
+  it('rejects a missing bloom mode and out-of-range bloom values', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process exited');
+    });
+    const { client: fake, commands } = client();
+
+    await expect(bloomCommand(fake as ControlClient, [])).rejects.toThrow('process exited');
+    await expect(bloomCommand(fake as ControlClient, ['on', '--radius', '1.1'])).rejects.toThrow(
+      'process exited',
+    );
+
+    expect(commands).toHaveLength(0);
   });
 
   it.each([

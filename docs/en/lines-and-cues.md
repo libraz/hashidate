@@ -22,6 +22,7 @@ A bracketed cue starts its action where it is written. There is no other way to 
 | `[@hop id]` | Start a hop. |
 | `[@camera face\|bust\|upper\|full]` | Change the camera framing. |
 | `[@slide 3]` | Move to an absolute, 1-based document page. |
+| `[@place {JSON}]` | Apply a layout patch at this point in the line. |
 | `[@bgm play]` | Resume the currently selected BGM track. |
 | `[@bgm play track filename]` | Select and play a track. The remainder is the filename, so spaces and Japanese characters are allowed. |
 | `[@bgm pause]` | Pause the selected BGM track. |
@@ -31,6 +32,21 @@ A bracketed cue starts its action where it is written. There is no other way to 
 Typed cues are part of the ordinary `text` field. They travel through `speak`, `say`, `queue`, and script lines; no extra MCP or CLI operation is needed. The `[` and `]` characters are reserved because they delimit a cue.
 
 For `perform`, `expression`, `gesture`, and `hop`, everything after the cue kind is the id. That lets a loaded motion such as `big wave` be written as `[@gesture big wave]`; spaces and Japanese characters are valid in these dynamic ids.
+
+### Layout patches
+
+`[@place {JSON}]` carries the same partial a line's `stage.place` takes: an `avatar` half, a `slide` half, or both, each with only the fields that change. It lands at the cue's mouth position and stays in force for later lines.
+
+The character's half has two fields beyond the rectangle:
+
+| Field | Allowed value |
+|---|---|
+| `avatar.visible` | Boolean. `false` stops drawing the character; the voice, the mouth and the motion go on, so the line keeps its timing and the character comes back mid-gesture when shown again. |
+| `avatar.shift` | Number from −0.5 to 0.5: how far the figure moves across its picture, as a fraction of the picture's width. Positive is to the right. |
+
+```text
+[@place {"avatar":{"visible":false}}]From here it is the voice alone. [@place {"avatar":{"visible":true,"shift":-0.2}}]And back, a little to the left.
+```
 
 ### Structured BGM patches
 
@@ -65,7 +81,7 @@ Unknown fields, including unknown nested fields, are rejected. Empty patches at 
 
 A cue carries no `side`, so a movement started mid-sentence draws its hand as it always has. A line that needs a particular hand names the movement in the line's own `gesture` or `perform` and pins it there — see [Which hand](commands.md#which-hand).
 
-Camera, slide, and structured BGM cues act at the point in the line where they occur. `room`, `backdrop`, `deck`, and `place` remain line-start `stage` setup because they describe the state for the line rather than a point inside it. The short BGM transport cues use the current fade settings; use a structured patch when the cue itself must change volume, looping, fade durations, or libsonare DSP. Relative slides are not inline cues; use an absolute page.
+Camera, slide, layout, and structured BGM cues act at the point in the line where they occur. `room`, `backdrop`, and `deck` remain line-start `stage` setup because they describe the state for the line rather than a point inside it; `place` can be written either way. The short BGM transport cues use the current fade settings; use a structured patch when the cue itself must change volume, looping, fade durations, or libsonare DSP. Relative slides are not inline cues; use an absolute page.
 
 ## Brackets are reserved
 

@@ -1,8 +1,10 @@
-import { type Dispatch, type SetStateAction, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react';
 import { HOP_IDS, HOPS } from '@/engine/motion';
 import { TUNING_RANGES as R } from '@/engine/tuning';
 import type { GazeLimits } from '@/engine/types';
 import { useT } from '@/i18n';
+import { bloom, POLL_INTERVAL } from '@/panel/api';
+import { BLOOM_DEFAULTS, BLOOM_RANGES, type BloomPatch, type BloomSettings } from '@/protocol';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { Section } from '@/ui/Section';
 import { Slider } from '@/ui/Slider';
@@ -66,6 +68,29 @@ export function TuneTab({
 
   const [toon, setToon] = useState(runtime?.toonEnabled ?? true);
   const [useArkit, setUseArkit] = useState(director.useArkit);
+  const [reportedBloom, setReportedBloom] = useState<BloomSettings>(BLOOM_DEFAULTS);
+  const [optimisticBloom, setOptimisticBloom] = useState<BloomSettings | null>(null);
+  const bloomSettings = optimisticBloom ?? reportedBloom;
+
+  useEffect(
+    () =>
+      runtime?.onBloom((settings) => {
+        setReportedBloom(settings);
+        setOptimisticBloom(null);
+      }),
+    [runtime],
+  );
+
+  useEffect(() => {
+    if (!optimisticBloom) return;
+    const timer = setTimeout(() => setOptimisticBloom(null), POLL_INTERVAL * 2);
+    return () => clearTimeout(timer);
+  }, [optimisticBloom]);
+
+  const patchBloom = (patch: BloomPatch): void => {
+    setOptimisticBloom((current) => ({ ...(current ?? reportedBloom), ...patch }));
+    void bloom(patch);
+  };
 
   /**
    * Mirror into local state and write through to the engine in one step.
@@ -290,6 +315,45 @@ export function TuneTab({
               director.useArkit = v;
             })}
           />
+        ) : null}
+      </Section>
+
+      <Section title={t('console.tune.bloom')} note={[t('console.tune.bloom.note')]}>
+        <Toggle
+          label={t('console.tune.bloom.enabled')}
+          checked={bloomSettings.enabled}
+          onChange={(enabled) => patchBloom({ enabled })}
+        />
+        {bloomSettings.enabled ? (
+          <>
+            <Slider
+              label={t('console.tune.bloom.strength')}
+              value={bloomSettings.strength}
+              min={BLOOM_RANGES.strength.min}
+              max={BLOOM_RANGES.strength.max}
+              step={0.01}
+              precision={2}
+              onChange={(strength) => patchBloom({ strength })}
+            />
+            <Slider
+              label={t('console.tune.bloom.radius')}
+              value={bloomSettings.radius}
+              min={BLOOM_RANGES.radius.min}
+              max={BLOOM_RANGES.radius.max}
+              step={0.01}
+              precision={2}
+              onChange={(radius) => patchBloom({ radius })}
+            />
+            <Slider
+              label={t('console.tune.bloom.threshold')}
+              value={bloomSettings.threshold}
+              min={BLOOM_RANGES.threshold.min}
+              max={BLOOM_RANGES.threshold.max}
+              step={0.01}
+              precision={2}
+              onChange={(threshold) => patchBloom({ threshold })}
+            />
+          </>
         ) : null}
       </Section>
     </>

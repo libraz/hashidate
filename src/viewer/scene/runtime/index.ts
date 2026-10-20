@@ -3,9 +3,11 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { Session } from '@/engine/session';
 import type {
   AvatarDescriptor,
+  AvatarPlacement,
+  BloomPatch,
+  BloomSettings,
   CameraFrame,
   LabelledId,
-  Placement,
   PlacementReport,
   Shot,
   SlidePlacement,
@@ -21,10 +23,11 @@ import { rendererId } from '../../renderer-id';
 import { stageMode } from '../../stage-mode';
 import { BrowserVoice } from '../../voice';
 import { BackdropStage } from '../backdrop';
+import { BloomStage } from '../bloom';
 import { StudioEnvironment } from '../environment';
 import { buildFramings } from '../framing';
 import {
-  FULL_FRAME,
+  FULL_AVATAR,
   fitInside,
   hugContent,
   type Rect,
@@ -36,7 +39,7 @@ import { SlideStage } from '../slides';
 import { FOV, ShotCamera } from './camera';
 import { buildHud, HUD_INTERVAL, type Hud } from './hud';
 import { disposeAvatar, disposeRawAvatar, mountAvatar } from './mount';
-import { sceneryPort, shadingPort } from './ports';
+import { bloomPort, sceneryPort, shadingPort } from './ports';
 import type { Listener, LoadedAvatar, RuntimeStatus, StageFrame } from './types';
 
 export { FOV } from './camera';
@@ -79,6 +82,8 @@ export class AvatarRuntime {
   private readonly slides: SlideStage;
   /** Where the camera stands, and how a drag on it is published. */
   private readonly shotCamera: ShotCamera;
+  /** The optional postprocess stage, allocated only after bloom is enabled. */
+  private readonly bloomStage: BloomStage;
   /**
    * The flat background, held rather than built where it is set.
    *
@@ -133,8 +138,8 @@ export class AvatarRuntime {
 
   private toon = true;
 
-  /** Where the picture of the character goes in the frame. See `Placement`. */
-  private avatarPlacement: Required<Placement> = FULL_FRAME;
+  /** Where the picture of the character goes in the frame. See `AvatarPlacement`. */
+  private avatarPlacement: Required<AvatarPlacement> = FULL_AVATAR;
   /** The host's size in CSS pixels, which both layers are placed against. */
   private stage: StageSize = { width: 0, height: 0 };
   /**
@@ -151,6 +156,7 @@ export class AvatarRuntime {
   private status: RuntimeStatus = { phase: 'idle' };
   private readonly statusListeners = new Set<Listener<RuntimeStatus>>();
   private readonly hudListeners = new Set<Listener<Hud>>();
+  private readonly bloomListeners = new Set<Listener<BloomSettings>>();
   /**
    * Called at the end of every frame, with the render still on the buffer.
    *
@@ -213,6 +219,7 @@ export class AvatarRuntime {
       { pointer: stageMode().console || embedded, embedded },
       () => this.resize(),
     );
+    this.bloomStage = new BloomStage(this.renderer);
 
     // Toon materials blow out easily; these levels are tuned for MeshToonMaterial.
     //
@@ -287,6 +294,26 @@ export class AvatarRuntime {
   onHud(fn: Listener<Hud>): () => void {
     this.hudListeners.add(fn);
     return () => this.hudListeners.delete(fn);
+  }
+
+  /** The current bloom controls, sent immediately and after every update. */
+  onBloom(fn: Listener<BloomSettings>): () => void {
+    this.bloomListeners.add(fn);
+    fn(this.bloomSettings);
+    return () => this.bloomListeners.delete(fn);
+  }
+
+  /** The full bloom configuration the renderer is applying. */
+  get bloomSettings(): BloomSettings {
+    return this.bloomStage.report();
+  }
+
+  /** Merge bloom settings from the panel, control channel, or a session. */
+  setBloom(patch: BloomPatch): void {
+    if (this.disposed) return;
+    this.bloomStage.setBloom(patch);
+    const settings = this.bloomSettings;
+    for (const fn of this.bloomListeners) fn(settings);
   }
 
   onCamera(fn: Listener<CameraFrame>): () => void {
@@ -508,9 +535,10 @@ export class AvatarRuntime {
    * stays the only thing that sizes the canvas — the shot is untouched, and
    * what changes is how much of the frame the picture of it occupies.
    */
-  setPlacement(placement: { avatar?: Placement; slide?: SlidePlacement }): void {
+  setPlacement(placement: { avatar?: AvatarPlacement; slide?: SlidePlacement }): void {
     if (placement.avatar) {
       this.avatarPlacement = resolvePlacement(this.avatarPlacement, placement.avatar);
+      this.showAvatar();
       this.resize();
     }
     if (placement.slide) this.slides.setPlacement(placement.slide);
@@ -585,7 +613,19 @@ export class AvatarRuntime {
     // `setSize` writes the element's width and height itself, so only where it
     // sits is set above.
     this.renderer.setSize(rect.width, rect.height);
-    this.shotCamera.setAspect(rect.width / rect.height);
+    this.bloomStage.resize(rect.width, rect.height);
+    this.shotCamera.setLens(rect.width / rect.height, this.avatarPlacement.shift);
+  }
+
+  /**
+   * Draw the character or not, as the placement says.
+   *
+   * Only the model is taken out of the picture. The session behind it goes on
+   * speaking and moving, so a line read in voice alone keeps its clock and the
+   * character comes back mid-gesture, and the room around it stays up.
+   */
+  private showAvatar(): void {
+    if (this.current) this.current.root.visible = this.avatarPlacement.visible;
   }
 
   // --- loading --------------------------------------------------------------
@@ -664,6 +704,10 @@ export class AvatarRuntime {
       // backdrop is: a session tuning the shading has to be able to say so
       // without being handed everything else that draws.
       shading: shadingPort(this),
+      // Bloom is a renderer option on the same footing as shading. Its report
+      // returns the whole resolved state so the panel and control heartbeat
+      // stay in step with changes made by a session line.
+      bloom: bloomPort(this),
       // The document layer directly, on the same footing as the backdrop: it is
       // already exactly the port, and it survives an avatar swap because what
       // is being presented has nothing to do with who is presenting it.
@@ -679,6 +723,7 @@ export class AvatarRuntime {
     });
 
     this.current = { avatar, root, profile, director, session, wardrobe, materials, problems };
+    this.showAvatar();
     this.resize();
     this.setStatus({ phase: 'ready', loaded: this.current });
     this.drainQueued();
@@ -747,10 +792,12 @@ export class AvatarRuntime {
     this.backdrop.dispose();
     this.environment.dispose();
     this.shotCamera.dispose();
+    this.bloomStage.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
     this.statusListeners.clear();
     this.hudListeners.clear();
+    this.bloomListeners.clear();
     this.frameListeners.clear();
   }
 
@@ -793,7 +840,7 @@ export class AvatarRuntime {
       }
     }
 
-    this.renderer.render(this.scene, this.camera);
+    this.bloomStage.render(this.scene, this.camera);
 
     // After the render and inside the same frame, which is the whole contract:
     // the drawing buffer is readable here and is gone by the next tick. See

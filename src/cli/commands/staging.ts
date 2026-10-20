@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import {
   backdropCommandSchema,
+  bloomCommandSchema,
   cameraCommandSchema,
   deckCommandSchema,
   placeCommandSchema,
@@ -65,6 +66,36 @@ export const backdrop: Handler = async (client, args) => {
       build(backdropCommandSchema, {
         cmd: 'backdrop',
         id: positionals[0] ?? null,
+      }),
+    ),
+  );
+};
+
+/** Toggle bloom, optionally changing its numeric controls at the same time. */
+export const bloom: Handler = async (client, args) => {
+  const { positionals, values } = parseArgs({
+    args,
+    options: {
+      strength: { type: 'string' },
+      radius: { type: 'string' },
+      threshold: { type: 'string' },
+    },
+    allowPositionals: true,
+  });
+  const mode = positionals[0];
+  if (positionals.length !== 1 || (mode !== 'on' && mode !== 'off')) {
+    fail('bloom on|off [--strength value] [--radius value] [--threshold value]');
+  }
+  const number = (raw: string | undefined, flag: string) =>
+    raw === undefined ? undefined : toNumber(raw, 0, flag);
+  show(
+    await client.command(
+      build(bloomCommandSchema, {
+        cmd: 'bloom',
+        enabled: mode === 'on',
+        strength: number(values.strength, '--strength'),
+        radius: number(values.radius, '--radius'),
+        threshold: number(values.threshold, '--threshold'),
       }),
     ),
   );
@@ -136,6 +167,9 @@ export const place: Handler = async (client, args) => {
       height: { type: 'string' },
       margin: { type: 'string' },
       fit: { type: 'string' },
+      hide: { type: 'boolean' },
+      show: { type: 'boolean' },
+      shift: { type: 'string' },
     },
     allowPositionals: true,
   });
@@ -144,6 +178,11 @@ export const place: Handler = async (client, args) => {
   // `fit` is how a picture fills its rectangle, which the character's does not
   // have — it is a render of a scene rather than an image with edges.
   if (layer === 'avatar' && values.fit !== undefined) fail('--fit can only be given for slide');
+  // Hiding the document is taking it down, which `deck none` already says.
+  for (const flag of ['hide', 'show', 'shift'] as const) {
+    if (layer === 'slide' && values[flag] !== undefined) fail(`--${flag} is for avatar only`);
+  }
+  if (values.hide && values.show) fail('--hide and --show contradict each other');
   const number = (raw: string | undefined, flag: string) =>
     raw === undefined ? undefined : toNumber(raw, 0, flag);
   const placement = {
@@ -151,7 +190,12 @@ export const place: Handler = async (client, args) => {
     width: number(values.width, '--width'),
     height: number(values.height, '--height'),
     margin: number(values.margin, '--margin'),
-    ...(layer === 'slide' ? { fit: values.fit } : {}),
+    ...(layer === 'slide'
+      ? { fit: values.fit }
+      : {
+          visible: values.hide ? false : values.show ? true : undefined,
+          shift: number(values.shift, '--shift'),
+        }),
   };
   show(await client.command(build(placeCommandSchema, { cmd: 'place', [layer]: placement })));
 };

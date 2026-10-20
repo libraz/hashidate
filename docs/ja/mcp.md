@@ -18,7 +18,7 @@
 | `status` | 分岐に使う値。発話中かどうか、積まれている数、出ている表情・プリセット・ジェスチャ、腕ごとの関節の負担。 |
 | `interrupt` | 積んだ分を捨てます。`now` は話している途中の行も切り、`after_line` はその行を言い終えさせます。 |
 | `react` | それ以外のうち即時のもの。プリセット、ジェスチャ、視線。 |
-| `stage` | それ以外のうち常設のもの。アバター、カメラ、背景、音の部屋、衣装、待機モーション。 |
+| `stage` | それ以外のうち常設のもの。アバター、カメラ、背景、音の部屋、衣装、待機モーション、Bloom の ON/OFF。 |
 | `revise` | 積んだ行を直します。 |
 | `deck` | スライドを読みます。それについての台本を書くためのものです。 |
 | `bgm` | ローカルの MP3/FLAC を一覧・再生し、音量、ループ、フェード、BGM 専用の libsonare エフェクトを設定します。 |
@@ -51,18 +51,22 @@
 
 ```text
 [@perform id] [@expression id] [@gesture id] [@hop id]
-[@camera face|bust|upper|full] [@slide 3]
+[@camera face|bust|upper|full] [@slide 3] [@place {"avatar":{"visible":false}}]
 [@bgm play] [@bgm play track filename] [@bgm pause] [@bgm stop]
 [@bgm set {"action":"play","track":"opening.mp3","volume":0.16}]
 ```
 
-`[@bgm play]` は選択中のトラックを再開します。`play` の後ろは正確な BGM ファイル名の末尾全体として扱うため、空白と日本語を含められます。プリセット、表情、ジェスチャ、跳躍の動的 id にも同じ末尾全体の規則を使います。`[` と `]` は予約文字です。型付きキューは通常の台詞テキストとして `speak` と台本のテキストを通ります。`room`、`backdrop`、`deck`、`place` は行頭の `stage` 設定に残ります。短い BGM の再生キューは現在のフェード設定を引き継ぎ、`[@bgm set {JSON}]` は音量、ループ、フェード、DSP を含む BGM コマンドのパッチをその位置で原子的に適用します。省略したフィールドは残り、未知のフィールド、コマンドの外枠やサーバが付けるフィールドは拒否します。`dsp` では `toneDb`、`pitch: { semitones, mix }`、`presence: { amount, drive, frequencyHz }` を組み合わせられます。たとえば `[@bgm set {"dsp":{"toneDb":1,"pitch":{"semitones":7,"mix":0.35},"presence":{"amount":0.25,"drive":3,"frequencyHz":3200}}}]` のように書けます。相対ページはインラインキューに含まれません。範囲とタイミングは[原稿と演出](lines-and-cues.md)を参照してください。
+`[@bgm play]` は選択中のトラックを再開します。`play` の後ろは正確な BGM ファイル名の末尾全体として扱うため、空白と日本語を含められます。プリセット、表情、ジェスチャ、跳躍の動的 id にも同じ末尾全体の規則を使います。`[` と `]` は予約文字です。型付きキューは通常の台詞テキストとして `speak` と台本のテキストを通ります。`room`、`backdrop`、`deck` は行頭の `stage` 設定に残ります。`[@place {JSON}]` は、キャラクターを隠すといった配置の差分を、その位置で当てます。短い BGM の再生キューは現在のフェード設定を引き継ぎ、`[@bgm set {JSON}]` は音量、ループ、フェード、DSP を含む BGM コマンドのパッチをその位置で原子的に適用します。省略したフィールドは残り、未知のフィールド、コマンドの外枠やサーバが付けるフィールドは拒否します。`dsp` では `toneDb`、`pitch: { semitones, mix }`、`presence: { amount, drive, frequencyHz }` を組み合わせられます。たとえば `[@bgm set {"dsp":{"toneDb":1,"pitch":{"semitones":7,"mix":0.35},"presence":{"amount":0.25,"drive":3,"frequencyHz":3200}}}]` のように書けます。相対ページはインラインキューに含まれません。範囲とタイミングは[原稿と演出](lines-and-cues.md)を参照してください。
 
 ## BGM
 
 `bgm` を `action: "list"` で呼ぶと `show/bgm/` を再走査し、後続の `play` が受け取る正確なファイル名を返します。他の action は `play`・`pause`・`resume`・`stop`・`settings` です。音量、ループ、フェードは個別に変えられ、`fade.inSeconds` と `fade.outSeconds` は 0〜10 秒です。0 は瞬時の切り替えを表します。別トラックへの切り替えではクロスフェードし、最初の再生と停止中からの再生はフェードインだけを使います。一時停止・再開は即時です。停止は `fade.outSeconds` に従ってフェードアウトします。`dsp` では BGM だけの音色、コンプレッション、ステレオ幅、リバーブ、テンポを保つピッチシフト、選んだ帯域の成分から非線形倍音を生成するプレゼンスを操作できます。ピッチは `semitones` −24〜24、`mix` 0〜1（既定値 0/0、mix 0 ならシフターを無効にして元のピッチ）、プレゼンスは `amount` 0〜1、`drive` 0〜8、`frequencyHz` 500〜8000（既定値 0/2/3200）で、量 0 ならプレゼンスを無効にして倍音を生成しません。固定順は音色、コンプレッション、プレゼンス、ステレオ幅、ピッチ、プレートリバーブです。[BGM](bgm.md)を参照してください。
 
 `status` には、サーバが持つ BGM の再生状態と解決済み設定も入ります。再生中か、レンダラがエフェクトなしの再生へ退避したかを呼び出し側から判定できます。発話の外で一覧や設定変更を行う場合は、独立した `bgm` ツールを使います。
+
+## Bloom
+
+`stage` に `{"bloom":true}` を渡すと ON、`{"bloom":false}` で OFF になります。`speak` の各行にも `stage: { bloom: true }` または `stage: { bloom: false }` を付けられ、その行の開始時に切り替わります。切り替えても、パネルの調整タブで選んだ強さ・広がり・しきい値は維持します。数値の調整には UI または `bloom` コマンドを使います。`status.bloom` で現在の ON/OFF を真偽値として確認でき、レンダラーからの報告前は null です。
 
 ## 公開していないもの
 

@@ -217,6 +217,28 @@ describe('place', () => {
     }
   });
 
+  it('accepts both ends of the shift and refuses either side', () => {
+    const { min, max } = PLACEMENT_LIMITS.shift;
+    for (const shift of [min, 0, max]) {
+      expect(parseCommand({ cmd: 'place', avatar: { shift } }), String(shift)).not.toBeNull();
+    }
+    for (const shift of [min - 0.01, max + 0.01]) {
+      expect(parseCommand({ cmd: 'place', avatar: { shift } }), String(shift)).toBeNull();
+    }
+  });
+
+  it('has visible and shift on the character half and nowhere else', () => {
+    // Hiding the document is taking it down, which `deck` already says.
+    expect(parseCommand({ cmd: 'place', avatar: { visible: false, shift: 0.2 } })).toEqual({
+      cmd: 'place',
+      avatar: { visible: false, shift: 0.2 },
+    });
+    expect(parseCommand({ cmd: 'place', slide: { visible: false, shift: 0.2 } })).toEqual({
+      cmd: 'place',
+      slide: {},
+    });
+  });
+
   it('has fit on the document half and nowhere else', () => {
     // How a picture fills its rectangle is a question only a picture asks. On
     // the character it is an unknown field and is stripped, like any other.

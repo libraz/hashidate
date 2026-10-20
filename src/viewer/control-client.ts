@@ -505,6 +505,8 @@ export class ControlClient {
     // opened with.
     const placement = session?.composition?.report();
     if (placement) body.placement = placement;
+    const bloom = session?.bloom?.report();
+    if (bloom) body.bloom = bloom;
     const bgm = this.renderer?.bgmReport?.();
     if (bgm) body.bgm = bgm;
 
@@ -730,6 +732,11 @@ export class ControlClient {
       case 'place':
         s.setPlacement({ avatar: c.avatar, slide: c.slide });
         return;
+      case 'bloom': {
+        const { cmd: _cmd, id: _id, ...patch } = c;
+        s.setBloom(patch);
+        return;
+      }
       // Both fields are passed through as given. Absent `preset` means "keep the
       // base", which is not the same as null, so it must not be defaulted here.
       case 'voice':

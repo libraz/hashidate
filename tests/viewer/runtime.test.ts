@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import type { AvatarDescriptor } from '@/engine/types';
 import { same } from '@/i18n/locale';
+import { FULL_AVATAR, FULL_SLIDE } from '@/viewer/scene/placement';
 import { AvatarRuntime } from '@/viewer/scene/runtime';
 import { disposeRawAvatar } from '@/viewer/scene/runtime/mount';
 import type { RuntimeStatus } from '@/viewer/scene/runtime/types';
@@ -49,7 +50,9 @@ function bareRuntime(loader: { loadAsync: (url: string) => Promise<unknown> }): 
     status: { phase: 'idle' } satisfies RuntimeStatus,
     statusListeners: new Set<(status: RuntimeStatus) => void>(),
     hudListeners: new Set(),
+    bloomListeners: new Set(),
     frameListeners: new Set(),
+    bloomStage: { dispose: vi.fn() },
     scene: { add: vi.fn(), remove: vi.fn() },
     renderer: {
       setAnimationLoop: vi.fn(),
@@ -165,5 +168,37 @@ describe('avatar load teardown', () => {
     lone.reject(new Error('absent'));
     await only;
     expect(seen).toEqual([true, false]);
+  });
+});
+
+describe('AvatarRuntime placement', () => {
+  /** A runtime with a model mounted and no canvas to size, so only the layer is in play. */
+  function mounted(): { runtime: AvatarRuntime; root: THREE.Object3D } {
+    const root = new THREE.Object3D();
+    const runtime = Object.create(AvatarRuntime.prototype) as AvatarRuntime;
+    Object.assign(runtime as object, {
+      current: { root },
+      avatarPlacement: FULL_AVATAR,
+      host: { clientWidth: 0, clientHeight: 0 },
+    });
+    return { runtime, root };
+  }
+
+  it('takes the model out of the picture and puts it back, leaving it mounted', () => {
+    const { runtime, root } = mounted();
+    runtime.setPlacement({ avatar: { visible: false } });
+    expect(root.visible).toBe(false);
+    expect(runtime.current?.root).toBe(root);
+    runtime.setPlacement({ avatar: { width: 0.5 } });
+    expect(root.visible).toBe(false);
+    runtime.setPlacement({ avatar: { visible: true } });
+    expect(root.visible).toBe(true);
+  });
+
+  it('reports the hidden, shifted layer it is applying', () => {
+    const { runtime } = mounted();
+    Object.assign(runtime as object, { slides: { slidePlacement: FULL_SLIDE } });
+    runtime.setPlacement({ avatar: { visible: false, shift: 0.25 } });
+    expect(runtime.placement.avatar).toEqual({ ...FULL_AVATAR, visible: false, shift: 0.25 });
   });
 });

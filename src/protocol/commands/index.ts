@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { bgmCommandSchema } from './bgm';
+import { bloomCommandSchema } from './bloom';
 import {
   gestureCommandSchema,
   hopCommandSchema,
@@ -69,6 +70,7 @@ import { voiceCommandSchema } from './voice';
  * the only public door, and this is the one it opens.
  */
 
+export { BLOOM_DEFAULTS, BLOOM_RANGES } from '../../engine/types';
 export { bgmActionSchema, bgmTrackIdSchema, cameraFrameSchema } from '../cues';
 export {
   BGM_DEFAULT_LOOP,
@@ -95,6 +97,14 @@ export {
   hasBgmSetting,
 } from './bgm';
 export {
+  type BloomCommand,
+  type BloomPatch,
+  type BloomSettings,
+  bloomCommandSchema,
+  bloomPatchSchema,
+  bloomSettingsSchema,
+} from './bloom';
+export {
   gestureCommandSchema,
   hopCommandSchema,
   idleCommandSchema,
@@ -111,6 +121,8 @@ export {
 export type { Assert, Equals, Expect } from './guards';
 export {
   type Anchor,
+  type AvatarPlacement,
+  avatarPlacementSchema,
   type Placement,
   placementSchema,
   placeStageSchema,
@@ -193,6 +205,7 @@ export const commandSchema = z.discriminatedUnion('cmd', [
   avatarCommandSchema,
   tuneCommandSchema,
   bgmCommandSchema,
+  bloomCommandSchema,
 ]);
 
 export type Command = z.infer<typeof commandSchema>;

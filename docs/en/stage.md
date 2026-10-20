@@ -73,6 +73,50 @@ A layout can also ride on a line, under `stage.place`, which is how a script mov
 
 Both belong on the same line. Sent as a separate command the layout lands at some other moment, and the frame is briefly wrong in the most visible way available — the character standing in the middle of the page being talked about. See [Scripts](scripts.md).
 
+## Hiding the character, and moving it across its picture
+
+```sh
+yarn ctl place avatar --hide        # voice only
+yarn ctl place avatar --show
+yarn ctl place avatar --shift=-0.2  # a fifth of the picture to the left
+```
+
+`visible: false` stops drawing the character and nothing else. The model stays loaded and the session behind it goes on speaking, moving and lip-syncing out of sight, so a segment read in voice alone keeps its timing, and showing the character again brings it back mid-gesture. The room stays up. This is also how a script starts without the character and brings it in later.
+
+`shift` moves the figure across its own picture, as a fraction of the picture's width, from −0.5 to 0.5; positive is to the right. It is a lens shift: the camera does not move or turn, so the framing and the gestures are unchanged, and a full-frame picture still covers the whole frame. That makes it the control for a full-frame character that should stand off-centre, where an anchor has nowhere to move to. In a corner the picture is already pulled so the figure stands on the frame's edge, so shifting it further toward that edge takes it out of frame.
+
+Both are fields of the character's half of a layout, so they go wherever a layout goes — the panel's Slides tab, `stage.place` on a line, or a `[@place {JSON}]` cue part-way through one:
+
+```yaml
+- text: "ここからしばらく、声だけで話します。"
+  stage:
+    place:
+      avatar: { visible: false }
+- text: '[@place {"avatar":{"visible":true,"shift":-0.2}}]お待たせしました。'
+```
+
+A run started part-way through a script carries both, like the rest of the layout. Both also outlast the run that set them: a script that hides the character should show it again before it ends, or the next one starts without it.
+
+## Bloom
+
+Bloom adds a soft glow around bright areas of the rendered scene. It starts off. In the panel's **Tune** tab or the viewer console's **Tune** tab, enable **Bloom** and adjust its strength, radius and brightness threshold. Lower thresholds include more of the picture; higher strength makes white clothing and skin glow too.
+
+```sh
+yarn ctl bloom on
+yarn ctl bloom on --strength 0.2 --radius 0.4 --threshold 0.85
+yarn ctl bloom off
+```
+
+The API accepts the same settings as a partial command:
+
+```json
+{"cmd":"bloom","enabled":true,"strength":0.2,"radius":0.4,"threshold":0.85}
+```
+
+`strength` is 0..3, `radius` is 0..1, and `threshold` is 0..2. Omitted fields keep their values; switching off keeps the parameters for the next use. Settings are shared by the preview and stage, survive avatar changes, and are replayed to renderers that connect later. Recording captures the effect from the rendered canvas. Slide documents remain sharp because they occupy a separate layer.
+
+MCP uses `stage` with `{"bloom":true}` or `{"bloom":false}`. A script can switch it for each line with `stage.bloom`; see [Scripts](scripts.md#bloom).
+
 ## Next
 
 - [Slides](slides.md) — what else occupies this place

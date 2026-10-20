@@ -18,7 +18,7 @@
 | `status` | What to branch on: speaking, queue depth, the expression, performance and gesture that are up, strain per arm. |
 | `interrupt` | Drop the queue. `now` also cuts the line being said mid-word; `after_line` lets it finish. |
 | `react` | The immediate half of everything else — a performance, a gesture, a glance. |
-| `stage` | The persistent half — the avatar, the camera, the set, the acoustic, the outfit, the idle. |
+| `stage` | The persistent half — the avatar, the camera, the set, the acoustic, the outfit, the idle, Bloom on/off. |
 | `revise` | Edit what is already queued. |
 | `deck` | Read a document, so a script can be written about it. |
 | `bgm` | List and play local MP3/FLAC tracks; set their level, loop, crossfade durations and BGM-only libsonare effects. |
@@ -51,18 +51,22 @@ The `text` field accepts the legacy `[performanceId]` shorthand and these typed 
 
 ```text
 [@perform id] [@expression id] [@gesture id] [@hop id]
-[@camera face|bust|upper|full] [@slide 3]
+[@camera face|bust|upper|full] [@slide 3] [@place {"avatar":{"visible":false}}]
 [@bgm play] [@bgm play track filename] [@bgm pause] [@bgm stop]
 [@bgm set {"action":"play","track":"opening.mp3","volume":0.16}]
 ```
 
-`[@bgm play]` resumes the selected track. The remainder after `play` is the exact BGM filename, so spaces and Japanese characters are allowed. The same remainder rule applies to dynamic performance, expression, gesture, and hop ids. `[` and `]` are reserved. Typed cues are ordinary line text and travel through `speak` and script queues. `room`, `backdrop`, `deck`, and `place` stay in line-start `stage` setup. Short BGM transport cues inherit the current fade settings; `[@bgm set {JSON}]` applies an atomic BGM command patch at that mouth position, including volume, looping, fade and DSP fields. Omitted fields persist, while unknown, command-envelope and server-stamped fields are rejected. A DSP patch can combine `toneDb`, `pitch: { semitones, mix }` and `presence: { amount, drive, frequencyHz }`, for example `[@bgm set {"dsp":{"toneDb":1,"pitch":{"semitones":7,"mix":0.35},"presence":{"amount":0.25,"drive":3,"frequencyHz":3200}}}]`. Relative slides are not inline cues. See [Lines and cues](lines-and-cues.md) for the timing rules and field ranges.
+`[@bgm play]` resumes the selected track. The remainder after `play` is the exact BGM filename, so spaces and Japanese characters are allowed. The same remainder rule applies to dynamic performance, expression, gesture, and hop ids. `[` and `]` are reserved. Typed cues are ordinary line text and travel through `speak` and script queues. `room`, `backdrop`, and `deck` stay in line-start `stage` setup; `[@place {JSON}]` applies a layout patch, such as hiding the character, at that mouth position. Short BGM transport cues inherit the current fade settings; `[@bgm set {JSON}]` applies an atomic BGM command patch at that mouth position, including volume, looping, fade and DSP fields. Omitted fields persist, while unknown, command-envelope and server-stamped fields are rejected. A DSP patch can combine `toneDb`, `pitch: { semitones, mix }` and `presence: { amount, drive, frequencyHz }`, for example `[@bgm set {"dsp":{"toneDb":1,"pitch":{"semitones":7,"mix":0.35},"presence":{"amount":0.25,"drive":3,"frequencyHz":3200}}}]`. Relative slides are not inline cues. See [Lines and cues](lines-and-cues.md) for the timing rules and field ranges.
 
 ## Background music
 
 `bgm` with `action: "list"` re-scans `show/bgm/` and returns the exact filenames a later `play` accepts. The remaining actions are `play`, `pause`, `resume`, `stop` and `settings`. Level, looping and `fade` can be changed independently; `fade.inSeconds` and `fade.outSeconds` are 0..10 seconds, where 0 is a hard edge. A different-track play crossfades the two tracks; the first or stopped play uses only fade-in, and pause and resume are immediate. Stop fades out over `fade.outSeconds`. The `dsp` object controls tone, compression, stereo width, reverb, tempo-preserving pitch shift and nonlinear presence generated from a selected band on BGM alone. Pitch is `semitones` −24..24 and `mix` 0..1 (defaults 0/0; mix 0 disables the shifter and keeps the original pitch); presence is `amount` 0..1, `drive` 0..8 and `frequencyHz` 500..8000 (defaults 0/2/3200; amount 0 disables it and adds no harmonics). The fixed order is tone, compression, presence, width, pitch and plate reverb. See [Background music](bgm.md).
 
 `status` includes the server-owned BGM transport and resolved settings, so a caller can tell whether it is playing and whether a renderer had to fall back to dry playback. The separate `bgm` tool remains available for listing tracks and changing settings outside a spoken line.
+
+## Bloom
+
+Call `stage` with `{"bloom":true}` to enable Bloom or `{"bloom":false}` to disable it. Each line sent to `speak` can also carry `stage: { bloom: true }` or `stage: { bloom: false }`, applied when that line starts. The switch preserves the strength, radius and threshold chosen in the panel's Tune tab. Those parameters are adjusted in the UI or through the `bloom` command. `status.bloom` reports the switch as a boolean, or null before a renderer reports it.
 
 ## What is not exposed
 

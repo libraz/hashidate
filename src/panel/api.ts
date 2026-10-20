@@ -1,13 +1,14 @@
 import { getLocale, translate } from '@/i18n';
 import type {
+  AvatarPlacement,
   BgmCommand,
   BgmResponse,
+  BloomPatch,
   Command,
   DecksResponse,
   EmotionVector,
   FingerName,
   HistoryResponse,
-  Placement,
   QueueResponse,
   QueueRewind,
   QueueUpdate,
@@ -62,6 +63,8 @@ export const POLL_INTERVAL = 500;
 /** What a failed request answers with, so callers branch on data rather than throw. */
 export interface Failure {
   error: string;
+  /** Set when the server never answered at all, as opposed to answering no. */
+  unreachable?: true;
 }
 
 const isFailure = (value: unknown): value is Failure =>
@@ -85,9 +88,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T | Failure
     // Read at the moment of failure rather than captured at module load: the
     // language can be switched while the panel is open, and this is the one
     // string here that has no component around it to re-render.
-    return { error: translate('error.controlUnreachable', getLocale()) };
+    return { error: translate('error.controlUnreachable', getLocale()), unreachable: true };
   }
 }
+
+/**
+ * What a read nobody asked for should show of its failure.
+ *
+ * Nothing when the server is simply gone: the bar's banner already says so, and
+ * a list that repeats it under the banner is the same fault twice on one
+ * screen. A refusal from a server that did answer is the list's own to report.
+ */
+export const readError = (failure: Failure): string | null =>
+  failure.unreachable ? null : failure.error;
 
 const post = <T>(path: string, body: unknown): Promise<T | Failure> =>
   request<T>(path, {
@@ -320,8 +333,10 @@ export const slide = (move: { page?: number; by?: number } = {}): Promise<unknow
  * behind them sits. Both halves are partials that merge onto what is set, so a
  * slider under the pointer sends the one number it moved.
  */
-export const place = (layout: { avatar?: Placement; slide?: SlidePlacement }): Promise<unknown> =>
-  send({ cmd: 'place', ...layout });
+export const place = (layout: {
+  avatar?: AvatarPlacement;
+  slide?: SlidePlacement;
+}): Promise<unknown> => send({ cmd: 'place', ...layout });
 
 // --- the performance --------------------------------------------------------
 
@@ -377,5 +392,8 @@ export const wearPreset = (preset: string): Promise<unknown> => send({ cmd: 'wea
  * so a drag costs one small message. See `tuneCommandSchema`.
  */
 export const tune = (patch: TuningPatch): Promise<unknown> => send({ cmd: 'tune', ...patch });
+
+/** Change the renderer's bloom effect through the shared control command. */
+export const bloom = (patch: BloomPatch): Promise<unknown> => send({ cmd: 'bloom', ...patch });
 
 export { isFailure };

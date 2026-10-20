@@ -53,7 +53,9 @@ export interface Staging {
    * the line that takes the deck down is the line that says where she stands
    * without one.
    */
-  place?: { avatar?: Placement; slide?: SlidePlacement };
+  place?: { avatar?: AvatarPlacement; slide?: SlidePlacement };
+  /** Whether the bloom pass is enabled for this line and the lines after it. */
+  bloom?: boolean;
 }
 
 /**
@@ -184,6 +186,27 @@ export interface Placement {
   margin?: number;
 }
 
+/**
+ * A `Placement` with the two questions only the character's layer asks: whether
+ * it is drawn at all, and how far the figure stands off the middle of it.
+ *
+ * Hidden is not unloaded. The avatar stays mounted and goes on speaking, moving
+ * and lip-syncing out of sight, so a segment read in voice alone is the same
+ * queue on the same clock, and showing the character again mid-line brings it
+ * back mid-gesture rather than from a cold start.
+ */
+export interface AvatarPlacement extends Placement {
+  /** Whether the character is drawn. The voice is heard either way. */
+  visible?: boolean;
+  /**
+   * How far the figure is moved across its picture, as a fraction of the
+   * picture's width; positive is to the right. It is a lens shift rather than
+   * a moved camera or canvas, so the shot keeps its framing and a full-frame
+   * picture keeps covering the frame.
+   */
+  shift?: number;
+}
+
 /** A `Placement` with the one extra question a picture asks: how it fills it. */
 export interface SlidePlacement extends Placement {
   /** `contain` shows the whole page and letterboxes; `cover` fills and crops. */
@@ -202,6 +225,8 @@ export const PLACEMENT_LIMITS = {
   width: { min: 0.1, max: 1 },
   height: { min: 0.1, max: 1 },
   margin: { min: 0, max: 0.2 },
+  /** Half a picture either way puts the middle of the figure on its edge. */
+  shift: { min: -0.5, max: 0.5 },
 } as const;
 
 /**
@@ -239,6 +264,6 @@ export interface SlideReport {
  * is exactly what the surface asking cannot rely on.
  */
 export interface PlacementReport {
-  avatar: Required<Placement>;
+  avatar: Required<AvatarPlacement>;
   slide: Required<SlidePlacement>;
 }

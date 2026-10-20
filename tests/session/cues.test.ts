@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { textToVisemes } from '@/engine/face';
 import type { Shot } from '@/engine/types';
-import { FakeSlides } from './fakes';
+import { FakeComposition, FakeSlides } from './fakes';
 import { build, DT, type Harness } from './harness';
 
 /**
@@ -169,6 +169,15 @@ describe('cues in a line', () => {
     expect(director.expression).toBe('F_JITO');
     expect(director.body.gesture?.id).toBe('nod');
     expect(director.body.jumping).toBe(true);
+  });
+
+  it('lays the frame out from a layout cue, as a line stage.place would', () => {
+    const composition = new FakeComposition();
+    const { session, step } = build({ composition });
+    session.say({ text: '[@place {"avatar": {"visible": false, "shift": 0.2}}]あ' });
+    step(1);
+    expect(composition.placements).toEqual([{ avatar: { visible: false, shift: 0.2 } }]);
+    expect(composition.report().avatar).toMatchObject({ visible: false, shift: 0.2 });
   });
 
   it('fires a typed camera cue at its written mouth-clock position', () => {

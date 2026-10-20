@@ -535,7 +535,7 @@ export class TurnQueue {
     this.turn = turn;
     const d = this.d;
     // The shot first, and before the audio below, so the frame the line opens
-    // on is already the right one. See `Stage.apply` for the order the five
+    // on is already the right one. See `Stage.apply` for the order the six
     // axes go in and why it is that order.
     if (turn.stage) this.stage.apply(turn.stage);
     // The autopilot has to be off before anything goes in. Its own timer would
@@ -596,8 +596,8 @@ export class TurnQueue {
    * time zero rather than one frame into it.
    *
    * A cue whose effect outlives the line — a performance's mood, a shot, a
-   * page — is reported as well as applied, so the server can hand it to a
-   * renderer that attaches later. BGM is reported and not applied: the server
+   * page, a layout — is reported as well as applied, so the server can hand it
+   * to a renderer that attaches later. BGM is reported and not applied: the server
    * owns that transport.
    */
   private fireCues(t: number): void {
@@ -627,6 +627,10 @@ export class TurnQueue {
           break;
         case 'slide':
           this.stage.setSlide(action.page);
+          this.reportCue(action, scheduled.ordinal);
+          break;
+        case 'place':
+          this.stage.setPlacement(action.place);
           this.reportCue(action, scheduled.ordinal);
           break;
         case 'bgm':

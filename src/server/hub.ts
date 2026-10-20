@@ -1,5 +1,6 @@
 import type {
   AvatarStatus,
+  BloomReport,
   Command,
   LabelledId,
   PlacementReport,
@@ -199,6 +200,7 @@ export class Hub {
   private tuning: Tuning | null = null;
   private slides: SlideReport | null = null;
   private placement: PlacementReport | null = null;
+  private bloom: BloomReport | null = null;
   private avatars: LabelledId[] = [];
   private avatar: AvatarStatus | null = null;
   /** Last valid report, including avatar-only heartbeats. */
@@ -1056,6 +1058,7 @@ export class Hub {
     if (body.tuning !== undefined) this.tuning = body.tuning;
     if (body.slides !== undefined) this.slides = body.slides;
     if (body.placement !== undefined) this.placement = body.placement;
+    if (body.bloom !== undefined) this.bloom = body.bloom;
     // Rides with the vocabulary rather than on the timer. Replaced by each
     // report that carries one, since a renderer refetches it on every stream
     // open; not cleared by a report that omits it.
@@ -1150,6 +1153,7 @@ export class Hub {
       // is the last shape the frame had, which is the shape it will come back
       // in when the source is reopened.
       placement: this.placement,
+      bloom: this.bloom,
       avatars: this.avatars,
       // The roster the store last read, not one read here: the snapshot is
       // assembled in one turn and the directory is on disk. See `Decks.current`

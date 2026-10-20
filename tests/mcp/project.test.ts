@@ -64,3 +64,20 @@ describe('projectStatus face, movement and strain', () => {
     });
   });
 });
+
+describe('projectStatus bloom switch', () => {
+  it('exposes the enabled state without sending numeric tuning to the caller', () => {
+    const status = projectStatus(
+      snapshot({
+        bloom: { enabled: true, strength: 1.2, radius: 0.4, threshold: 0.85 },
+      }),
+    );
+
+    expect(status.bloom).toBe(true);
+    expect(status).not.toHaveProperty('bloom.strength');
+  });
+
+  it('uses null until a renderer reports bloom settings', () => {
+    expect(projectStatus(snapshot({ bloom: undefined })).bloom).toBeNull();
+  });
+});

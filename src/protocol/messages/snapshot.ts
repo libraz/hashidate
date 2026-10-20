@@ -6,6 +6,7 @@ import { queueEntrySchema } from './queue';
 import { recordingSchema } from './recording';
 import {
   avatarStatusSchema,
+  bloomReportSchema,
   placementReportSchema,
   slideReportSchema,
   tuningSchema,
@@ -93,6 +94,8 @@ export const snapshotSchema = z.object({
   tuning: tuningSchema.nullable(),
   /** How the frame is laid out. Null until a viewer has reported one. */
   placement: placementReportSchema.nullable(),
+  /** Bloom settings, null until a renderer with a pass has reported. */
+  bloom: bloomReportSchema.nullable().optional(),
   /** What this renderer can load. Empty until a viewer has reported. */
   avatars: z.array(labelledIdSchema),
   /**

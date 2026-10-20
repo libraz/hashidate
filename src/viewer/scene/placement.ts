@@ -1,4 +1,4 @@
-import type { Anchor, Placement, SlidePlacement } from '@/engine/types';
+import type { Anchor, AvatarPlacement, Placement, SlidePlacement } from '@/engine/types';
 import { PLACEMENT_LIMITS } from '@/engine/types';
 
 /**
@@ -66,6 +66,9 @@ export const FULL_FRAME: Required<Placement> = {
   height: 1,
   margin: 0,
 };
+
+/** The character's layer at rest: the whole frame, drawn, standing in the middle. */
+export const FULL_AVATAR: Required<AvatarPlacement> = { ...FULL_FRAME, visible: true, shift: 0 };
 
 /** The same, plus the one extra question a picture asks. See `SlidePlacement`. */
 export const FULL_SLIDE: Required<SlidePlacement> = { ...FULL_FRAME, fit: 'contain' };

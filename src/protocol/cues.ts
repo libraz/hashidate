@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { type BgmAction, bgmCueSettingsSchema, bgmTrackIdSchema } from './bgm-controls';
+import { placeStageSchema } from './commands/layout';
 
 export type { BgmAction, BgmCueSettings } from './bgm-controls';
 export {
@@ -49,6 +50,7 @@ export const inlineCueActionSchema = z.union([
   z.object({ kind: z.literal('hop'), id: typedIdSchema }).strict(),
   z.object({ kind: z.literal('camera'), frame: cameraFrameSchema }).strict(),
   z.object({ kind: z.literal('slide'), page: z.number().int().min(1) }).strict(),
+  z.object({ kind: z.literal('place'), place: placeStageSchema.strict() }).strict(),
   z
     .object({
       kind: z.literal('bgm'),
@@ -127,6 +129,17 @@ export function parseInlineCue(source: string): InlineCueAction | null {
       const page = Number(rest[0]);
       if (!Number.isSafeInteger(page)) return null;
       candidate = { kind: 'slide', page };
+      break;
+    }
+    case 'place': {
+      // One JSON layout patch, the same partial a line's `stage.place` takes,
+      // so a character can be hidden or moved part-way through a sentence.
+      if (remainder === '') return null;
+      try {
+        candidate = { kind: 'place', place: JSON.parse(remainder) as unknown };
+      } catch {
+        return null;
+      }
       break;
     }
     case 'bgm': {

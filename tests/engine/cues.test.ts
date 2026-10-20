@@ -92,6 +92,12 @@ describe('the cue grammar', () => {
     ).toBe(true);
   });
 
+  it('accepts a layout cue, the partial a line stage.place takes', () => {
+    expect(isWellFormed('[@place {"avatar": {"visible": false}}]声だけ。')).toBe(true);
+    expect(isWellFormed('あ[@place {"avatar": {"shift": -0.2, "visible": true}}]い')).toBe(true);
+    expect(isWellFormed('[@place {"slide": {"width": 0.6}}]')).toBe(true);
+  });
+
   // Including the dangerous near-misses. `[笑]` is what a language model writes
   // when it means a stage direction, and 「かくかっこ わらい かくかっことじ」 is
   // the sentence this whole design exists so that nobody ever hears.
@@ -112,6 +118,11 @@ describe('the cue grammar', () => {
     '[@bgm pause track.mp3]は',
     '[@bgm play .hidden.mp3]は',
     '[@bgm play song.wav]は',
+    '[@place]は',
+    '[@place hide]は',
+    '[@place {"avatar": {"shift": 2}}]は',
+    '[@place {"avatar": {"visible": "no"}}]は',
+    '[@place {"camera": "full"}]は',
   ])('refuses malformed typed cue %j', (source) => {
     expect(isWellFormed(source)).toBe(false);
   });

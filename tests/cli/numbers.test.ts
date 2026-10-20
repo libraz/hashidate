@@ -58,6 +58,10 @@ describe('strict numeric parsing', () => {
     [deck, ['talk', '--page', '']],
     [place, ['avatar', '--width', '']],
     [place, ['avatar', '--margin', '0.1x']],
+    [place, ['avatar', '--shift', 'left']],
+    [place, ['avatar', '--hide', '--show']],
+    [place, ['slide', '--hide']],
+    [place, ['slide', '--shift', '0.1']],
     [say, ['hi', '--slide', '2.7']],
     [say, ['hi', '--slide', '']],
   ])('refuses %j before sending anything', async (handler, args) => {
@@ -76,6 +80,17 @@ describe('strict numeric parsing', () => {
     expect(commands).toEqual([
       { cmd: 'camera', frame: 'full', yaw: 25 },
       { cmd: 'deck', id: 'talk', page: 2 },
+    ]);
+  });
+
+  it('hides, shows and shifts the character', async () => {
+    const { fake, commands } = client();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await place(fake, ['avatar', '--hide']);
+    await place(fake, ['--show', '--shift=-0.2']);
+    expect(commands).toEqual([
+      { cmd: 'place', avatar: { visible: false } },
+      { cmd: 'place', avatar: { visible: true, shift: -0.2 } },
     ]);
   });
 });

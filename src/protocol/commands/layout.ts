@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Anchor, Placement, SlidePlacement } from '../../engine/types';
+import type { Anchor, AvatarPlacement, Placement, SlidePlacement } from '../../engine/types';
 import { PLACEMENT_LIMITS } from '../../engine/types';
 import type { Assert, Equals, Expect } from './guards';
 import { within } from './primitives';
@@ -42,6 +42,15 @@ export const placementSchema = z.object({
 
 type _PlacementMatchesEngine = Expect<Equals<z.infer<typeof placementSchema>, Placement>>;
 
+/** The character's layer: a rectangle, whether it is drawn, and the figure's shift in it. */
+export const avatarPlacementSchema = placementSchema.extend({
+  visible: z.boolean().optional(),
+  shift: within(PLACEMENT_LIMITS.shift).optional(),
+});
+
+type _AvatarPlacementMatchesEngine = Assert<z.infer<typeof avatarPlacementSchema>, AvatarPlacement>;
+type _EngineMatchesAvatarPlacement = Assert<AvatarPlacement, z.infer<typeof avatarPlacementSchema>>;
+
 export const slidePlacementSchema = placementSchema.extend({
   fit: z.enum(['contain', 'cover']).optional(),
 });
@@ -49,10 +58,10 @@ export const slidePlacementSchema = placementSchema.extend({
 type _SlidePlacementMatchesEngine = Assert<z.infer<typeof slidePlacementSchema>, SlidePlacement>;
 type _EngineMatchesSlidePlacement = Assert<SlidePlacement, z.infer<typeof slidePlacementSchema>>;
 
-export type { Anchor, Placement, SlidePlacement };
+export type { Anchor, AvatarPlacement, Placement, SlidePlacement };
 
 /** Both layers of a layout: the command's payload, and `stage.place`. */
 export const placeStageSchema = z.object({
-  avatar: placementSchema.optional(),
+  avatar: avatarPlacementSchema.optional(),
   slide: slidePlacementSchema.optional(),
 });

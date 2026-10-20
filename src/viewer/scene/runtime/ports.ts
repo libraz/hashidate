@@ -1,4 +1,4 @@
-import type { LabelledId, Scenery, Shading } from '@/engine/types';
+import type { Bloom, LabelledId, Scenery, Shading } from '@/engine/types';
 import type { AvatarRuntime } from './index';
 
 /**
@@ -37,5 +37,13 @@ export function shadingPort(runtime: AvatarRuntime): Shading {
       return runtime.toonEnabled;
     },
     setToon: (on) => runtime.setToon(on),
+  };
+}
+
+/** The renderer's post-processing state, as the one switch a session may reach. */
+export function bloomPort(runtime: AvatarRuntime): Bloom {
+  return {
+    setBloom: (patch) => runtime.setBloom(patch),
+    report: () => runtime.bloomSettings,
   };
 }

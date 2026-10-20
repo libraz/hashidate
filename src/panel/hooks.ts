@@ -8,7 +8,7 @@ import {
   type BgmState,
   type Snapshot,
 } from '@/protocol';
-import { isFailure, POLL_INTERVAL, readState } from './api';
+import { type Failure, isFailure, POLL_INTERVAL, readState } from './api';
 
 /**
  * The runtime, as the panel sees it: one snapshot, re-read on a timer.
@@ -124,7 +124,7 @@ interface ReaderSinks {
  * restarted server counts from zero again.
  */
 export function singleFlight(
-  read: () => Promise<Snapshot | { error: string }>,
+  read: () => Promise<Snapshot | Failure>,
   sinks: ReaderSinks,
 ): () => Promise<void> {
   let inFlight: Promise<void> | null = null;

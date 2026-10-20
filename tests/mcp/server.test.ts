@@ -348,6 +348,7 @@ describe('status', () => {
       [
         'bgm',
         'avatar',
+        'bloom',
         'connected',
         'emotion',
         'events',
@@ -374,6 +375,7 @@ describe('status', () => {
       idle: false,
       emotion: { joy: 0.6 },
       seq: 3,
+      bloom: null,
       bgm: expect.objectContaining({
         dsp: expect.objectContaining({ toneDb: 0, width: 1 }),
         fade: { inSeconds: 1, outSeconds: 1 },
@@ -520,6 +522,19 @@ describe('status', () => {
     // be able to find out that the renderer is not up.
     expect(result.isError).toBeFalsy();
     expect(payloadOf(result)).toMatchObject({ connected: false, viewers: 0 });
+  });
+});
+
+describe('stage bloom', () => {
+  it.each([true, false])('sends enabled=%s through the control API', async (enabled) => {
+    h = harness();
+    const client = await connect(h.control);
+
+    await client.callTool({ name: 'stage', arguments: { bloom: enabled } });
+
+    expect(h.control.command).toHaveBeenCalledWith({
+      batch: [{ cmd: 'bloom', enabled }],
+    });
   });
 });
 

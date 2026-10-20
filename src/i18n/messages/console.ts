@@ -236,6 +236,13 @@ export const consoleEn = {
     'With ARKit blending off, the face falls back to VRM presets. A preset sculpts the whole face, so only one can be up at a time and mixing them breaks it — this is for seeing what the fallback looks like.',
   'console.tune.toon': 'Toon shading',
   'console.tune.arkit': 'Drive the face with ARKit blending',
+  'console.tune.bloom': 'Bloom',
+  'console.tune.bloom.note':
+    'Adds a glow around bright areas. Raise the threshold to keep skin and light clothing clear.',
+  'console.tune.bloom.enabled': 'Enable bloom',
+  'console.tune.bloom.strength': 'Strength',
+  'console.tune.bloom.radius': 'Radius',
+  'console.tune.bloom.threshold': 'Threshold',
 
   'console.inspect.strain': 'Joint strain',
   'console.inspect.strain.note.zones':
@@ -511,6 +518,13 @@ export const consoleJa: Record<keyof typeof consoleEn, string> = {
     'ARKit 合成を切ると VRM プリセットに落ちる。プリセットは顔全体の彫刻なので同時にひとつしか出せず、混ぜると崩れる — 縮退動作がどう見えるかの確認用。',
   'console.tune.toon': 'トゥーン表示',
   'console.tune.arkit': '表情を ARKit 合成で駆動',
+  'console.tune.bloom': 'ブルーム',
+  'console.tune.bloom.note':
+    '明るい部分に光のにじみを加える。しきい値を上げると、肌や明るい衣装にかかりにくくなる。',
+  'console.tune.bloom.enabled': 'ブルームを有効にする',
+  'console.tune.bloom.strength': '強さ',
+  'console.tune.bloom.radius': '広がり',
+  'console.tune.bloom.threshold': 'しきい値',
 
   'console.inspect.strain': '関節の負担',
   'console.inspect.strain.note.zones':

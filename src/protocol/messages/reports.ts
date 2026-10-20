@@ -1,15 +1,17 @@
 import { z } from 'zod';
 import type { Tuning as EngineTuning } from '../../engine/tuning';
 import type {
+  BloomSettings as EngineBloomSettings,
   PlacementReport as EnginePlacementReport,
   SlideReport as EngineSlideReport,
   VoiceReport as EngineVoiceReport,
 } from '../../engine/types';
 import {
   type Assert,
+  avatarPlacementSchema,
+  bloomSettingsSchema,
   type Equals,
   type Expect,
-  placementSchema,
   slidePlacementSchema,
 } from '../commands';
 import { bgmReportSchema } from './bgm';
@@ -134,7 +136,7 @@ type _TuningMatchesEngine = Expect<Equals<Tuning, EngineTuning>>;
  * once, in the command schema, and this is that schema with the optionality
  * taken off.
  */
-const resolvedPlacementSchema = placementSchema.required();
+const resolvedAvatarPlacementSchema = avatarPlacementSchema.required();
 const resolvedSlidePlacementSchema = slidePlacementSchema.required();
 
 /**
@@ -148,13 +150,19 @@ const resolvedSlidePlacementSchema = slidePlacementSchema.required();
  * is showing a corner that no command ever asked for.
  */
 export const placementReportSchema = z.object({
-  avatar: resolvedPlacementSchema,
+  avatar: resolvedAvatarPlacementSchema,
   slide: resolvedSlidePlacementSchema,
 });
 
 export type PlacementReport = z.infer<typeof placementReportSchema>;
 type _PlacementReportMatchesEngine = Assert<PlacementReport, EnginePlacementReport>;
 type _EngineMatchesPlacementReport = Assert<EnginePlacementReport, PlacementReport>;
+
+/** The settings the renderer is applying to its final frame. */
+export const bloomReportSchema = bloomSettingsSchema;
+export type BloomReport = z.infer<typeof bloomReportSchema>;
+type _BloomReportMatchesEngine = Assert<BloomReport, EngineBloomSettings>;
+type _EngineMatchesBloomReport = Assert<EngineBloomSettings, BloomReport>;
 
 /** The renderer's avatar loading lifecycle, independent of the heartbeat. */
 export const avatarStatusPhaseSchema = z.enum(['idle', 'loading', 'ready', 'failed']);
@@ -202,6 +210,8 @@ export const reportBodySchema = z.object({
    * one way, on the same footing as the slide report above.
    */
   placement: placementReportSchema.optional(),
+  /** The full bloom pass state, absent when this renderer has no such pass. */
+  bloom: bloomReportSchema.optional(),
   /** What this renderer is doing with the server-owned background track. */
   bgm: bgmReportSchema.optional(),
   /**

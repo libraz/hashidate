@@ -90,7 +90,7 @@ const EMPTY_REACT =
 
 const EMPTY_STAGE =
   'Nothing was named in stage, so nothing was sent. ' +
-  'Name at least one: avatar, camera, backdrop, room, wear, idle';
+  'Name at least one: avatar, camera, bloom, backdrop, room, wear, idle';
 
 const INSTRUCTIONS = [
   'Drive the broadcast avatar of an AITuber. Queue lines with speak, and read what is happening with status.',
@@ -602,6 +602,7 @@ function stageCommands(input: StageInput): Command[] {
   const batch: Command[] = [];
   if (input.avatar !== undefined) batch.push({ cmd: 'avatar', id: input.avatar });
   if (input.camera !== undefined) batch.push({ cmd: 'camera', frame: input.camera });
+  if (input.bloom !== undefined) batch.push({ cmd: 'bloom', enabled: input.bloom });
   if (input.backdrop !== undefined) batch.push({ cmd: 'backdrop', id: input.backdrop });
   if (input.room !== undefined) batch.push({ cmd: 'room', id: input.room });
   if (input.wear !== undefined) batch.push({ cmd: 'wear', ...input.wear });

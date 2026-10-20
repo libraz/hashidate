@@ -26,6 +26,20 @@ import type { Listener } from './types';
 export const FOV = 28;
 
 /**
+ * Move the picture across the lens, by a fraction of its width; positive moves
+ * what is in shot to the right.
+ *
+ * A film offset rather than a turned or moved camera: the projection slides
+ * sideways and nothing else does, so the framing's height, its perspective and
+ * every gesture authored against it stay exactly as they were.
+ */
+export function lensShift(camera: THREE.PerspectiveCamera, shift: number): void {
+  const halfHeight = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / camera.zoom;
+  camera.filmOffset = -shift * 2 * halfHeight * camera.aspect * camera.getFilmWidth();
+  camera.updateProjectionMatrix();
+}
+
+/**
  * How often a dragged shot is published, in milliseconds.
  *
  * Every one of these is a request out of the panel and a frame back down to
@@ -216,9 +230,10 @@ export class ShotCamera {
     return world === 0 ? 1 : (2 * f.halfWidth) / world;
   }
 
-  setAspect(aspect: number): void {
+  /** Fit the lens to the picture: its shape, and how far across it the figure stands. */
+  setLens(aspect: number, shift: number): void {
     this.camera.aspect = aspect;
-    this.camera.updateProjectionMatrix();
+    lensShift(this.camera, shift);
   }
 
   update(): void {

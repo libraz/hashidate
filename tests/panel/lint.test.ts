@@ -106,6 +106,20 @@ describe('checkLine, on cues', () => {
     expect(check.findings).toEqual([]);
   });
 
+  it('labels a layout cue by what it does to the character', () => {
+    const check = checkLine(
+      {
+        text: '[@place {"avatar": {"visible": false}}]あ[@place {"avatar": {"visible": true}}]い[@place {"avatar": {"shift": 0.1}}]う',
+      },
+      vocabulary,
+    );
+    expect(check.cues.map((cue) => [cue.action.kind, cue.label, cue.known])).toEqual([
+      ['place', 'hide avatar', true],
+      ['place', 'show avatar', true],
+      ['place', 'layout', true],
+    ]);
+  });
+
   it('flags a cue the performance table does not have', () => {
     // The session drops this rather than playing it, and drops it silently —
     // releasing the face mid-sentence over a typo would be worse. So this

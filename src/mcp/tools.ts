@@ -92,11 +92,12 @@ const SPEAK_NOTE = [
   '',
   '- Pass several lines at once. Calling one line at a time puts silence between them',
   '- Write reading. Only the writer knows how numbers, dates, proper nouns and homographs are read',
-  '- [performance_id] is shorthand for [@perform performance_id]. Typed cues are [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@bgm play], [@bgm play track filename], [@bgm pause], [@bgm stop] and [@bgm set {JSON}]. The brackets are not spoken',
+  '- [performance_id] is shorthand for [@perform performance_id]. Typed cues are [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@place {JSON}], [@bgm play], [@bgm play track filename], [@bgm pause], [@bgm stop] and [@bgm set {JSON}]. The brackets are not spoken',
   '- For perform, expression, gesture and hop, the whole remainder is the id, so spaces and Japanese characters are allowed',
   '- [@bgm play] resumes the selected track. The filename after play may contain spaces and Japanese characters; [ and ] are reserved',
   `- [@bgm set {JSON}] applies one atomic BGM command patch at the written position. It accepts optional action (play, pause, stop), track (a filename or null), volume 0..1, loop, fade.inSeconds/outSeconds 0..10 and BGM-only dsp fields; omitted values persist. ${BGM_CUE_DSP_NOTE} ${BGM_CUE_DSP_EXAMPLE}`,
-  '- BGM set rejects unknown, command-envelope or server-stamped fields, empty patches at any level and out-of-range values. room, backdrop, deck and place stay in line-start stage',
+  '- BGM set rejects unknown, command-envelope or server-stamped fields, empty patches at any level and out-of-range values. room, backdrop and deck stay in line-start stage',
+  '- [@place {JSON}] applies the same layout patch as stage.place at the written position. avatar.visible false hides the character while the voice goes on; avatar.shift -0.5..0.5 moves it across its picture, positive to the right',
   '- A document page goes in stage.slide. Write it on the line that talks about that page',
   '- Queue lines carrying pages in order and the document follows the speech. This is the only way to keep script and document together',
 ].join('\n');
@@ -104,7 +105,7 @@ const SPEAK_NOTE = [
 const STATUS_NOTE = [
   'What is happening right now, in one round trip. Only the values to branch on; no vocabulary.',
   'Speaking, queue depth, the expression, performance and gesture that are up, and strain per arm — how much the last point cost, the only sign an aim was approximated rather than met.',
-  'The document being presented, its page and its page count come back too. Read the vocabulary at hashidate://vocabulary.',
+  'The document being presented, its page and its page count come back too. Bloom reports whether the renderer glow is enabled. Read the vocabulary at hashidate://vocabulary.',
 ].join('\n');
 
 const DECK_NOTE = [
@@ -192,6 +193,7 @@ const STAGE_NOTE = [
   '',
   "- Changing avatar swaps the whole vocabulary, and from the next call the tools' id lists are replaced",
   '- backdrop is where the figure is seen, room is where the voice resonates. Separate axes; either can be changed alone',
+  '- bloom turns the renderer glow on or off; its strength, radius and threshold stay under operator control',
   '- Voice processing and body tuning are not here. Both are decided against the broadcast mix and how the render actually looks',
 ].join('\n');
 
@@ -203,7 +205,7 @@ const REVISE_NOTE = [
   '- When the target is not found, the current queue comes back with the error. Call again with an id from it',
 ].join('\n');
 
-const TEXT_NOTE = `The line to say. [performance_id] is shorthand for [@perform performance_id]. Typed cues are [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@bgm play], [@bgm play track filename], [@bgm pause], [@bgm stop] and [@bgm set {JSON}]. Dynamic ids and BGM filename remainders may contain spaces and Japanese characters. [@bgm play] resumes the selected track. A structured set cue applies one atomic BGM patch at its position; omitted values persist and its allowed fields are action, track, volume, loop, fade and BGM-only dsp. ${BGM_CUE_DSP_NOTE} ${BGM_CUE_DSP_EXAMPLE} The brackets are reserved and are not spoken.`;
+const TEXT_NOTE = `The line to say. [performance_id] is shorthand for [@perform performance_id]. Typed cues are [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@place {JSON}], [@bgm play], [@bgm play track filename], [@bgm pause], [@bgm stop] and [@bgm set {JSON}]. Dynamic ids and BGM filename remainders may contain spaces and Japanese characters. [@bgm play] resumes the selected track. A structured set cue applies one atomic BGM patch at its position; omitted values persist and its allowed fields are action, track, volume, loop, fade and BGM-only dsp. ${BGM_CUE_DSP_NOTE} ${BGM_CUE_DSP_EXAMPLE} The brackets are reserved and are not spoken.`;
 const READING_NOTE =
   'The kana reading of text. Numbers, dates, proper nouns and homographs get their reading decided here. Brackets cannot be written.';
 const PERFORM_NOTE = 'A named expression and motion. In effect only for the duration of the line.';
@@ -378,6 +380,7 @@ export type ReactInput = z.infer<typeof reactInput>;
 const stageInput = z.object({
   avatar: z.string().optional().describe(AVATAR_NOTE),
   camera: cameraFrameSchema.optional().describe(CAMERA_NOTE),
+  bloom: z.boolean().optional().describe('Enable or disable the renderer bloom effect.'),
   backdrop: z.string().nullable().optional().describe(BACKDROP_NOTE),
   room: z.string().nullable().optional().describe(ROOM_NOTE),
   wear: wearSpec.optional().describe(WEAR_NOTE),
@@ -787,7 +790,7 @@ function advise(issue: ZodError['issues'][number], tools: Tools): string {
   if (issue.code === 'custom' && field === 'text') {
     const ids = tools.vocabulary.performances?.map((item) => item.id) ?? [];
     const known = ids.length > 0 ? `\n    performance ids this avatar has: ${ids.join(', ')}` : '';
-    return `The brackets do not match up. Accepted forms: [performance_id], [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@bgm play], [@bgm play track filename], [@bgm pause], [@bgm stop] and [@bgm set {JSON}]. BGM filenames may contain spaces and Japanese characters; [ and ] are reserved. Structured BGM patches accept action, track, volume, loop, fade and BGM-only dsp fields; unknown, command-envelope and server-stamped fields are rejected. ${BGM_CUE_DSP_NOTE} ${BGM_CUE_DSP_EXAMPLE} The brackets are not spoken.${known}`;
+    return `The brackets do not match up. Accepted forms: [performance_id], [@perform id], [@expression id], [@gesture id], [@hop id], [@camera face|bust|upper|full], [@slide 3] for an absolute page, [@place {JSON}], [@bgm play], [@bgm play track filename], [@bgm pause], [@bgm stop] and [@bgm set {JSON}]. BGM filenames may contain spaces and Japanese characters; [ and ] are reserved. Structured BGM patches accept action, track, volume, loop, fade and BGM-only dsp fields; unknown, command-envelope and server-stamped fields are rejected. ${BGM_CUE_DSP_NOTE} ${BGM_CUE_DSP_EXAMPLE} The brackets are not spoken.${known}`;
   }
   if (issue.code === 'custom' && field === 'reading') {
     return 'Brackets cannot be written in a reading. A cue is a position inside the line, so it goes on the text side.';

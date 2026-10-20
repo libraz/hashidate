@@ -85,6 +85,8 @@ export interface Status {
   slides: { deck: string | null; page: number; pages: number } | null;
   /** The server-owned BGM transport, including its resolved DSP and fallback state. */
   bgm: BgmState | null;
+  /** Bloom's enabled state, or null until a renderer reports its settings. */
+  bloom: boolean | null;
 }
 
 export function projectStatus(snapshot: Snapshot, since?: number, depth?: number): Status {
@@ -119,6 +121,7 @@ export function projectStatus(snapshot: Snapshot, since?: number, depth?: number
     // resolved DSP and `dspDegraded` marker intact so an orchestrator can see
     // what the broadcast is actually applying without touching voice or room.
     bgm: snapshot.bgm ?? null,
+    bloom: snapshot.bloom?.enabled ?? null,
   };
 }
 

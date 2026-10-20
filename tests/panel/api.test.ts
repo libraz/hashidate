@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { isFailure, queuePop, queueShift, queueUpdate } from '@/panel/api';
+import {
+  bloom,
+  isFailure,
+  queuePop,
+  queueShift,
+  queueUpdate,
+  readError,
+  readScripts,
+} from '@/panel/api';
 import { queueResponseSchema } from '@/protocol';
 
 const response = (body: unknown): Response =>
@@ -51,5 +59,51 @@ describe('panel queue response adapter', () => {
       perform: null,
       hold: false,
     });
+  });
+
+  it('sends bloom false as a named command field', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await bloom({ enabled: false });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/command',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ cmd: 'bloom', enabled: false }),
+      }),
+    );
+  });
+});
+
+describe('a failed read', () => {
+  it('is marked unreachable when the server never answered, and says nothing of it', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+
+    const result = await readScripts();
+
+    expect(isFailure(result)).toBe(true);
+    if (!isFailure(result)) return;
+    expect(result.unreachable).toBe(true);
+    expect(readError(result)).toBeNull();
+  });
+
+  it('keeps a refusal from a server that did answer', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ error: 'scripts directory unreadable' }), { status: 500 }),
+        ),
+    );
+
+    const result = await readScripts();
+
+    expect(isFailure(result)).toBe(true);
+    if (!isFailure(result)) return;
+    expect(result.unreachable).toBeUndefined();
+    expect(readError(result)).toBe('scripts directory unreadable');
   });
 });

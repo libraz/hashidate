@@ -5,7 +5,7 @@ Every command goes to `POST /api/command`, one at a time or several under `batch
 | Command | What it does |
 |---|---|
 | `perform` | A named face and movement. No id releases the one that is up. `side` names the hand its movement uses. |
-| `say` | Queue a turn. Takes a `perform`, or the parts spelled out, or cues written into the text itself. The legacy `[performanceId]` shorthand and typed `[@perform]`, `[@expression]`, `[@gesture]`, `[@hop]`, `[@camera]`, `[@slide]`, and `[@bgm]` forms are available. `hold` keeps the face up past the line. `reading` gives the kana pronunciation where the writing does not determine it, and carries no cues of its own. `side` names the hand. `stage` names the shot. |
+| `say` | Queue a turn. Takes a `perform`, or the parts spelled out, or cues written into the text itself. The legacy `[performanceId]` shorthand and typed `[@perform]`, `[@expression]`, `[@gesture]`, `[@hop]`, `[@camera]`, `[@slide]`, `[@place]`, and `[@bgm]` forms are available. `hold` keeps the face up past the line. `reading` gives the kana pronunciation where the writing does not determine it, and carries no cues of its own. `side` names the hand. `stage` names the shot. |
 | `emotion` | The persistent mood, as a blend rather than a choice. |
 | `expression` | One of the avatar's own drawn faces. `null` hands the face back to the emotion. |
 | `overlay` | A drawn effect, at a weight. It layers over whatever face is showing, so several can be up at once. |
@@ -17,9 +17,10 @@ Every command goes to `POST /api/command`, one at a time or several under `batch
 | `camera` | Where the camera stands: a framing — `face`, `bust`, `upper`, `full` — and how far off it, as a yaw, a pitch and a zoom. The offsets are relative to the framing so they survive an avatar swap, and every field is optional: naming a shot does not straighten one that was deliberately tilted. |
 | `room` | The space the voice is heard in. No id is dry. Persistent, like the camera. |
 | `backdrop` | The room the character is seen in. No id is the flat background. A separate axis from `room`, so a set can be cut without the microphone appearing to move. |
+| `bloom` | Enable or disable the glow around bright areas. Optional `enabled`, `strength` (0..3), `radius` (0..1), and `threshold` (0..2) merge onto the current settings. Off by default; settings persist across avatar swaps and renderer reconnects. |
 | `deck` | The document the character is presenting from, by filename. No id takes it down. It occupies the same place as a backdrop, so the set is put away while one is up and restored when it comes down. |
 | `slide` | Turn a page. `page` is absolute, `by` is relative, and a bare `slide` is next. Past either end is clamped rather than refused. |
-| `place` | Where the character stands in the output frame and where the document sits behind, each as a rectangle of it. Not the camera: the shot is untouched and the picture of it is moved, so the gestures still play as authored. Also rides on a line under `stage.place`, which is how a script moves the character aside for a deck and back. |
+| `place` | Where the character stands in the output frame and where the document sits behind, each as a rectangle of it. Not the camera: the shot is untouched and the picture of it is moved, so the gestures still play as authored. The character's half can also hide it while the voice goes on (`visible: false`) and shift it left or right across its picture (`shift`). Also rides on a line under `stage.place`, which is how a script moves the character aside for a deck and back. |
 | `wear` | One slot to an item, or a whole preset at once. `item: null` takes the slot's garment off; a slot with no `item` is left alone. |
 | `avatar` | Load a different character. The only command that replaces the session every other one talks to, so the renderer holds what arrives behind it until the model is standing: swap and dress in one batch behaves as written. |
 | `tune` | The set-once layer: breath, sway, jump, tail, shading. Every field optional and merged onto what is running, so one fader is one small message. Bounded, unlike `point`. |
@@ -57,12 +58,13 @@ The `text` field accepts these inline forms. `[performanceId]` remains shorthand
 | `[@perform id]` / `[@expression id]` / `[@gesture id]` / `[@hop id]` | Change the named performance, expression, gesture, or hop. |
 | `[@camera face\|bust\|upper\|full]` | Change the camera framing at that point. |
 | `[@slide 3]` | Move to an absolute, 1-based page. |
+| `[@place {JSON}]` | Apply a layout patch, the same partial as `stage.place`, at that point — for example `[@place {"avatar":{"visible":false}}]`. |
 | `[@bgm play]` | Resume the selected BGM track immediately from paused, or fade it in from stopped. |
 | `[@bgm play track filename]` | Select and play the filename remainder; spaces and Japanese characters are allowed. |
 | `[@bgm pause]` / `[@bgm stop]` | Pause or stop the selected track. |
 | `[@bgm set {JSON}]` | Apply one atomic BGM command patch at that point. Omitted fields retain their values. |
 
-Typed cues travel through ordinary `say`, `queue`, and script text. For `perform`, `expression`, `gesture`, and `hop`, the whole remainder is the id, so spaces and Japanese characters are allowed. Both square brackets are reserved and are not spoken. `room`, `backdrop`, `deck`, and `place` remain line-start `stage` setup. Short BGM transport cues inherit the current fade settings; use structured `[@bgm set {JSON}]` for the documented volume, loop, fade and DSP patch fields, including a combined tone, pitch and presence change. Relative slides are not inline cues.
+Typed cues travel through ordinary `say`, `queue`, and script text. For `perform`, `expression`, `gesture`, and `hop`, the whole remainder is the id, so spaces and Japanese characters are allowed. Both square brackets are reserved and are not spoken. `room`, `backdrop`, and `deck` remain line-start `stage` setup; `place` can be either. Short BGM transport cues inherit the current fade settings; use structured `[@bgm set {JSON}]` for the documented volume, loop, fade and DSP patch fields, including a combined tone, pitch and presence change. Relative slides are not inline cues.
 
 ## Which hand
 

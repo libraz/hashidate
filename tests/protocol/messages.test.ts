@@ -57,7 +57,14 @@ const SLIDES = { deck: 'intro', page: 3, pages: 12, ready: true, error: null };
 
 /** And how it is laying the frame out: the character in a corner of one. */
 const PLACEMENT = {
-  avatar: { anchor: 'bottom-right', width: 0.32, height: 0.6, margin: 0.04 },
+  avatar: {
+    anchor: 'bottom-right',
+    width: 0.32,
+    height: 0.6,
+    margin: 0.04,
+    visible: true,
+    shift: 0,
+  },
   slide: { anchor: 'center', width: 1, height: 1, margin: 0, fit: 'contain' },
 };
 

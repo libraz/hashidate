@@ -1,5 +1,6 @@
+import type { BloomPatch, BloomSettings } from './bloom';
 import type { LabelledId } from './primitives';
-import type { Placement, PlacementReport, SlidePlacement, SlideReport } from './staging';
+import type { AvatarPlacement, PlacementReport, SlidePlacement, SlideReport } from './staging';
 import type { Take } from './turn';
 import type { VoiceChainRequest, VoiceReport } from './voice';
 
@@ -32,6 +33,14 @@ export interface Scenery {
   readonly backdrops: LabelledId[];
   /** Show one of them, or null for the flat background. Unknown ids are null. */
   setBackdrop(id: string | null): void;
+}
+
+/** The post-processing pass applied to the renderer's final frame. */
+export interface Bloom {
+  /** Merge these fields into the current settings. */
+  setBloom(patch: BloomPatch): void;
+  /** The complete settings currently applied by this renderer. */
+  report(): BloomSettings;
 }
 
 /**
@@ -88,7 +97,7 @@ export interface Slides {
  * number, and absent means "leave it" rather than "reset it".
  */
 export interface Composition {
-  setPlacement(placement: { avatar?: Placement; slide?: SlidePlacement }): void;
+  setPlacement(placement: { avatar?: AvatarPlacement; slide?: SlidePlacement }): void;
   /** What the merging produced, and what is actually being drawn. */
   report(): PlacementReport;
 }

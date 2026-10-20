@@ -120,3 +120,98 @@ describe('linesFrom', () => {
     expect(linesFrom(talk, talk.lines.length)).toEqual([]);
   });
 });
+
+/** The settings of the `[@bgm set …]` cue a run starts with, or null. */
+function leadingBgm(text: string | undefined): Record<string, unknown> | null {
+  const match = (text ?? '').match(/^\[@bgm set (\{.*?\})\]/u);
+  return match === null ? null : (JSON.parse(match[1] ?? '') as Record<string, unknown>);
+}
+
+describe('linesFrom and the BGM', () => {
+  /** Setup selects the track stopped; the first line starts it, later lines adjust it. */
+  const show = script({
+    setup: [{ cmd: 'bgm', track: 'piano.mp3', volume: 0.14, loop: true }],
+    lines: [
+      { text: '[@bgm play]こんばんは。' },
+      { text: '[@bgm set {"volume": 0.35}]大きく。' },
+      { text: '[@bgm set {"dsp": {"reverb": {"mix": 0.2}}}]響き。' },
+      { text: '[@bgm set {"dsp": {"reverb": {"decay": 0.5}}}]もっと。' },
+      { text: 'ここから。', reading: 'ここから。' },
+      { text: '[@bgm stop]おしまい。' },
+      { text: '後書き。' },
+    ],
+  });
+
+  it('starts the music a skipped line started, with the settings the skipped lines left', () => {
+    const [first] = linesFrom(show, 4);
+    expect(leadingBgm(first?.text)).toEqual({
+      action: 'play',
+      volume: 0.35,
+      dsp: { reverb: { mix: 0.2, decay: 0.5 } },
+    });
+    // The line's own words, and its reading, follow the cue untouched.
+    expect(first?.text?.endsWith(']ここから。')).toBe(true);
+    expect(first?.reading).toBe('ここから。');
+  });
+
+  it('leaves the music stopped when a skipped line stopped it', () => {
+    expect(leadingBgm(linesFrom(show, 6)[0]?.text)).toMatchObject({ action: 'stop' });
+  });
+
+  it('adds nothing when no skipped line touched the music', () => {
+    expect(linesFrom(show, 0)[0]?.text).toBe('[@bgm play]こんばんは。');
+    expect(linesFrom(talk, 3)[0]?.text).toBe('3 ページ目。');
+  });
+
+  it('carries the track a skipped play cue named', () => {
+    const named = script({
+      lines: [{ text: '[@bgm play other.mp3]はじめ。' }, { text: 'ここから。' }],
+    });
+    expect(leadingBgm(linesFrom(named, 1)[0]?.text)).toEqual({
+      action: 'play',
+      track: 'other.mp3',
+    });
+  });
+});
+
+describe('linesFrom and the character', () => {
+  /** The character is hidden on a line, shown again by a cue, moved by another. */
+  const show = script({
+    setup: [{ cmd: 'deck', id: 'talk' }],
+    lines: [
+      { text: '声だけで。', stage: { place: { avatar: { visible: false } } } },
+      { text: 'まだ声だけ。' },
+      { text: '[@place {"avatar": {"visible": true}}]出てきました。' },
+      { text: 'あ[@place {"avatar": {"shift": -0.2}}]左へ。' },
+      { text: 'ここから。' },
+    ],
+  });
+
+  it('starts hidden where an earlier line hid the character', () => {
+    expect(linesFrom(show, 1)[0]?.stage?.place).toEqual({ avatar: { visible: false } });
+  });
+
+  it('carries what layout cues in skipped lines left, folded onto the line stages', () => {
+    expect(linesFrom(show, 4)[0]?.stage?.place).toEqual({
+      avatar: { visible: true, shift: -0.2 },
+    });
+  });
+});
+
+describe('linesFrom and bloom', () => {
+  it('accepts bloom setup and carries an earlier off toggle into a resumed run', () => {
+    const show = script({
+      setup: [{ cmd: 'bloom', enabled: true }],
+      lines: [
+        { text: '光を切る。', stage: { bloom: false } },
+        { text: 'ここから。' },
+        { text: '戻す。', stage: { bloom: true } },
+        { text: '再開。' },
+      ],
+    });
+
+    expect(show.setup).toEqual([{ cmd: 'bloom', enabled: true }]);
+    expect(linesFrom(show, 1)[0]?.stage?.bloom).toBe(false);
+    expect(linesFrom(show, 3)[0]?.stage?.bloom).toBe(true);
+  });
+});

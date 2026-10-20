@@ -52,6 +52,8 @@ export const stageSchema = z.object({
    * two — with a frame in between where they overlap.
    */
   place: placeStageSchema.optional(),
+  /** Toggle the renderer's persistent bloom pass when this line starts. */
+  bloom: z.boolean().optional(),
 });
 
 type _StageIsStaging = Expect<Equals<z.infer<typeof stageSchema>, Staging>>;

@@ -14,7 +14,7 @@ yarn ctl play demo --hold     # load it without starting it
 yarn ctl play show/scripts/opening.yaml
 ```
 
-The panel has the same list, at the top of its Queue tab, above the queue a script fills, so the lines appear underneath the moment one is pressed. There it holds by default, and the toggle beside the list is what decides that; see [Recording](recording.md). Under the list, **From a page** loads a script from a chosen page of its document to the end, with the camera, document and layout the earlier lines would have left, which is how a segment is resumed part-way.
+The panel has the same list, at the top of its Queue tab, above the queue a script fills, so the lines appear underneath the moment one is pressed. There it holds by default, and the toggle beside the list is what decides that; see [Recording](recording.md). Under the list, **From a page** loads a script from a chosen page of its document to the end, with the camera, document and layout the earlier lines would have left, which is how a segment is resumed part-way. Their BGM cues are carried the same way: the music is playing, paused or stopped with the settings those lines left, though the track itself starts from its beginning, since how far it would have run depends on how long the skipped lines took to say.
 
 The native shell has `File → Run Script…` (`⌘⇧O` / `Ctrl+Shift+O`), which is the same operation from a file dialog and is the way to run a script that lives outside the directory the panel lists. See [The native shell](shell.md).
 
@@ -59,11 +59,33 @@ The two halves have two lifetimes. `setup` is applied once, before anything is s
 
 That split is the one the command set already makes between what outlives a turn and what is released with it — see [Commands](commands.md).
 
+## Bloom
+
+Use a `bloom` command in `setup` to choose the initial effect and its parameters:
+
+```yaml
+setup:
+  - cmd: bloom
+    enabled: false
+    strength: 0.2
+    radius: 0.4
+    threshold: 0.85
+lines:
+  - text: "The lights come up."
+    stage:
+      bloom: true
+  - text: "Back to the usual picture."
+    stage:
+      bloom: false
+```
+
+A line's `stage.bloom` changes only the switch, before the line starts, and stays in force until changed again. Omitting it leaves the current setting alone. Starting from a later page restores the switch left by the skipped lines.
+
 ## Cues in lines
 
-The `text` field can contain the legacy `[performanceId]` shorthand and typed cues such as `[@camera bust]`, `[@slide 2]`, `[@bgm play opening.mp3]`, and `[@bgm set {JSON}]`. A cue fires at that point in the spoken line, so it can change the shot or BGM without adding a gap. `[@bgm play]` resumes the selected track; a track name may contain spaces and Japanese characters. Square brackets are reserved and are not spoken. The full syntax is in [Lines and cues](lines-and-cues.md).
+The `text` field can contain the legacy `[performanceId]` shorthand and typed cues such as `[@camera bust]`, `[@slide 2]`, `[@place {JSON}]`, `[@bgm play opening.mp3]`, and `[@bgm set {JSON}]`. A cue fires at that point in the spoken line, so it can change the shot or BGM without adding a gap. `[@bgm play]` resumes the selected track; a track name may contain spaces and Japanese characters. Square brackets are reserved and are not spoken. The full syntax is in [Lines and cues](lines-and-cues.md).
 
-Inline cues use the same text that `speak`, `say`, and `queue` accept; they are not a second script dialect. Line-start `stage` remains the place for `room`, `backdrop`, `deck`, and `place`. BGM play cues use the current fade settings; a structured `set` cue changes the documented BGM volume, loop, fade and DSP fields at its position and keeps omitted values.
+Inline cues use the same text that `speak`, `say`, and `queue` accept; they are not a second script dialect. Line-start `stage` remains the place for `room`, `backdrop`, and `deck`; `place` goes on the line's `stage` or, part-way through it, in a `[@place {JSON}]` cue. BGM play cues use the current fade settings; a structured `set` cue changes the documented BGM volume, loop, fade and DSP fields at its position and keeps omitted values.
 
 ## The format reuses the wire vocabulary
 

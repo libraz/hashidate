@@ -43,9 +43,10 @@ import type { InlineCueAction } from '../protocol/cues';
  * ## A started line is a decision too
  *
  * A line's `stage` and mood stay put after it, like the commands they mirror,
- * and so do the camera, page and performance cues fired inside it. `recordTurn`
- * and `recordCue` turn each into the command it mirrors and fold that through
- * `record`, so a line and a command cannot fold one axis two different ways.
+ * and so do the camera, page, layout and performance cues fired inside it.
+ * `recordTurn` and `recordCue` turn each into the command it mirrors and fold
+ * that through `record`, so a line and a command cannot fold one axis two
+ * different ways.
  *
  * ## A relative page turn is resolved here
  *
@@ -78,6 +79,7 @@ type Persistent = Extract<
       | 'wear'
       | 'camera'
       | 'place'
+      | 'bloom'
       | 'backdrop'
       | 'deck'
       | 'slide'
@@ -108,6 +110,7 @@ type Of<K extends Persistent['cmd']> = Extract<Persistent, { cmd: K }>;
 const ORDER = [
   'avatar',
   'tune',
+  'bloom',
   'wear',
   'camera',
   'place',
@@ -208,6 +211,12 @@ export class Standing {
         const base = this.last.get('voice') as Of<'voice'> | undefined;
         const { cmd: _cmd, id: _id, ...next } = command;
         this.last.set('voice', { cmd: 'voice', ...fold(stripped(base), next) });
+        return true;
+      }
+      case 'bloom': {
+        const base = this.last.get('bloom') as Of<'bloom'> | undefined;
+        const { cmd: _cmd, id: _id, ...next } = command;
+        this.last.set('bloom', { cmd: 'bloom', ...fold(stripped(base), next) });
         return true;
       }
       // The framing and the offsets off it are set from different places — a
@@ -371,6 +380,7 @@ function turnCommands({ stage, perform, emotion }: TurnRequest): Command[] {
     out.push({ cmd: 'slide', page: stage.slide });
   }
   if (stage?.place !== undefined) out.push({ cmd: 'place', ...stage.place });
+  if (stage?.bloom !== undefined) out.push({ cmd: 'bloom', enabled: stage.bloom });
   if (perform) out.push({ cmd: 'perform', id: perform });
   if (emotion) out.push({ cmd: 'emotion', vec: emotion });
   return out;
@@ -383,6 +393,8 @@ function cueCommand(action: InlineCueAction): Command | null {
       return { cmd: 'camera', frame: action.frame };
     case 'slide':
       return { cmd: 'slide', page: action.page };
+    case 'place':
+      return { cmd: 'place', ...action.place };
     case 'perform':
       return { cmd: 'perform', id: action.id };
     default:

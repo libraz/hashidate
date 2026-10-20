@@ -56,7 +56,10 @@ export type {
   WardrobeSlot,
   WardrobeTable,
 } from './avatar';
+export type { BloomPatch, BloomSettings } from './bloom';
+export { BLOOM_DEFAULTS, BLOOM_RANGES } from './bloom';
 export type {
+  Bloom,
   Composition,
   Scenery,
   Shading,
@@ -113,6 +116,7 @@ export type {
 } from './session';
 export type {
   Anchor,
+  AvatarPlacement,
   Placement,
   PlacementReport,
   Shot,

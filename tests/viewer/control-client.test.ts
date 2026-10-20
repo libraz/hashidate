@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Director } from '@/engine/director';
 import { buildProfile } from '@/engine/profile';
 import { Session } from '@/engine/session';
-import type { AvatarDescriptor } from '@/engine/types';
+import {
+  type AvatarDescriptor,
+  BLOOM_DEFAULTS,
+  type BloomPatch,
+  type BloomSettings,
+} from '@/engine/types';
 import type { BgmCommand, BgmReport, Command, SessionEvent } from '@/protocol';
 import { ControlClient, type RendererControls } from '@/viewer/control-client';
 import { buildRig } from '../helpers/scene';
@@ -22,7 +27,17 @@ import { buildRig } from '../helpers/scene';
 function build() {
   const rig = buildRig({ arkit: false });
   const profile = buildProfile(rig.root, rig.descriptor);
-  const session = new Session(new Director(profile));
+  const bloomSettings: BloomSettings = { ...BLOOM_DEFAULTS };
+  const bloomPatches: BloomPatch[] = [];
+  const session = new Session(new Director(profile), {
+    bloom: {
+      setBloom: (patch) => {
+        bloomPatches.push(patch);
+        Object.assign(bloomSettings, patch);
+      },
+      report: () => ({ ...bloomSettings }),
+    },
+  });
 
   const loads: string[] = [];
   /** Every readout switch that reached the page, in order. */
@@ -71,7 +86,19 @@ function build() {
   };
 
   const client = new ControlClient(session, { renderer });
-  return { client, session, renderer, loads, handed, readout, takes, bgm, bgmState };
+  return {
+    client,
+    session,
+    renderer,
+    loads,
+    handed,
+    readout,
+    takes,
+    bgm,
+    bgmState,
+    bloomSettings,
+    bloomPatches,
+  };
 }
 
 /**
@@ -155,6 +182,12 @@ describe('ControlClient.apply', () => {
     expect(harness.session.tuning().idle.breathDepth).toBe(1.9);
   });
 
+  it('passes bloom partials through to the renderer session', () => {
+    harness.client.apply({ cmd: 'bloom', id: 'request-1', enabled: true, strength: 1.1 });
+    expect(harness.bloomPatches).toEqual([{ enabled: true, strength: 1.1 }]);
+    expect(harness.bloomSettings).toMatchObject({ enabled: true, strength: 1.1 });
+  });
+
   it('turns a pause into a held queue, without touching the line on air', () => {
     harness.client.apply({ cmd: 'say', id: 'turn-1', text: 'あ' });
     harness.client.apply({ cmd: 'pause', on: true });
@@ -207,7 +240,9 @@ describe('ControlClient.apply', () => {
     });
     try {
       await (harness.client as unknown as { report(): Promise<void> }).report();
-      expect(JSON.parse(body ?? '{}').bgm).toEqual(harness.bgmState);
+      const report = JSON.parse(body ?? '{}') as { bgm?: unknown; bloom?: unknown };
+      expect(report.bgm).toEqual(harness.bgmState);
+      expect(report.bloom).toEqual(harness.bloomSettings);
     } finally {
       fetch.mockRestore();
     }
@@ -360,7 +395,7 @@ function composed() {
     composition: {
       setPlacement: (placement) => calls.push(JSON.stringify(placement)),
       report: () => ({
-        avatar: { anchor: 'center', width: 1, height: 1, margin: 0 },
+        avatar: { anchor: 'center', width: 1, height: 1, margin: 0, visible: true, shift: 0 },
         slide: { anchor: 'center', width: 1, height: 1, margin: 0, fit: 'contain' },
       }),
     },

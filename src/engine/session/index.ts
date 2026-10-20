@@ -34,10 +34,12 @@ import type { Director } from '../director';
 import type { Wardrobe } from '../scene';
 import type { Tuning, TuningPatch } from '../tuning';
 import type {
+  AvatarPlacement,
+  Bloom,
+  BloomPatch,
   Composition,
   EmotionVector,
   FingerName,
-  Placement,
   Scenery,
   SessionEvent,
   SessionState,
@@ -99,6 +101,8 @@ export interface SessionOptions {
    * and `place` does nothing, on the same footing as `shading`.
    */
   composition?: Composition | null;
+  /** The renderer's optional post-processing pass. */
+  bloom?: Bloom | null;
 }
 
 /**
@@ -130,6 +134,7 @@ export class Session {
   readonly shading: Shading | null;
   readonly slides: Slides | null;
   readonly composition: Composition | null;
+  readonly bloom: Bloom | null;
 
   idleEnabled: boolean;
 
@@ -152,6 +157,7 @@ export class Session {
       shading = null,
       slides = null,
       composition = null,
+      bloom = null,
     }: SessionOptions = {},
   ) {
     this.d = director;
@@ -162,8 +168,9 @@ export class Session {
     this.shading = shading;
     this.slides = slides;
     this.composition = composition;
+    this.bloom = bloom;
 
-    this._stage = new Stage(camera, scenery, voice, slides, composition);
+    this._stage = new Stage(camera, scenery, voice, slides, composition, bloom);
     this._turns = new TurnQueue(director, voice, this._stage, this._events);
     this._tuning = new TuningControl(director, shading);
 
@@ -371,8 +378,12 @@ export class Session {
     this._stage.turnSlide(by);
   }
 
-  setPlacement(placement: { avatar?: Placement; slide?: SlidePlacement }): void {
+  setPlacement(placement: { avatar?: AvatarPlacement; slide?: SlidePlacement }): void {
     this._stage.setPlacement(placement);
+  }
+
+  setBloom(patch: BloomPatch): void {
+    this._stage.setBloom(patch);
   }
 
   setVoiceChain(request: VoiceChainRequest): void {

@@ -24,6 +24,7 @@ describe('what counts as standing', () => {
   it.each<[CommandName, Command]>([
     ['avatar', { cmd: 'avatar', id: 'sample' }],
     ['tune', { cmd: 'tune', idle: { breathDepth: 1 } }],
+    ['bloom', { cmd: 'bloom', enabled: false }],
     ['wear', { cmd: 'wear', slot: 'top', item: 'shirt' }],
     ['camera', { cmd: 'camera', frame: 'full' }],
     ['place', { cmd: 'place', avatar: { anchor: 'bottom-right' } }],
@@ -104,6 +105,14 @@ describe('what counts as standing', () => {
     ]);
   });
 
+  it('folds a fired layout cue into the layout already standing', () => {
+    standing.record({ cmd: 'place', avatar: { anchor: 'bottom-right', width: 0.3 } });
+    standing.recordCue({ kind: 'place', place: { avatar: { visible: false } } });
+    expect(standing.commands()).toEqual([
+      { cmd: 'place', avatar: { anchor: 'bottom-right', width: 0.3, visible: false } },
+    ]);
+  });
+
   it('never keeps the telemetry readout, however long it was left on', () => {
     // The one exclusion that is a safety property rather than a taxonomy. A
     // readout raised to answer a question during rehearsal must not come back
@@ -140,6 +149,22 @@ describe('what counts as standing', () => {
 });
 
 describe('the newest statement of a setting wins', () => {
+  it('folds bloom patches, preserves explicit false, and strips request ids', () => {
+    standing.record({ cmd: 'bloom', id: 'first', enabled: false, strength: 1.4 });
+    standing.record({ cmd: 'bloom', id: 'second', radius: 0.7 });
+
+    expect(standing.commands()).toEqual([
+      { cmd: 'bloom', enabled: false, strength: 1.4, radius: 0.7 },
+    ]);
+  });
+
+  it('keeps a staged bloom toggle when a line starts', () => {
+    standing.record({ cmd: 'bloom', enabled: true, threshold: 0.9 });
+    standing.recordTurn({ text: '声だけ', stage: { bloom: false } });
+
+    expect(standing.commands()).toEqual([{ cmd: 'bloom', enabled: false, threshold: 0.9 }]);
+  });
+
   it('keeps only the last camera, backdrop and room', () => {
     standing.record({ cmd: 'camera', frame: 'face' });
     standing.record({ cmd: 'backdrop', id: 'day' });

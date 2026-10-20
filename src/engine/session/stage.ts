@@ -1,6 +1,8 @@
 import type {
+  AvatarPlacement,
+  Bloom,
+  BloomPatch,
   Composition,
-  Placement,
   Scenery,
   Shot,
   SlidePlacement,
@@ -13,11 +15,10 @@ import type {
 /**
  * Where the line is delivered.
  *
- * Five axes — the framing, the acoustic, the set, the document, the layout —
- * and every one of them is a pass-through to whatever the renderer supplied.
- * The engine names the thing and does not describe it, so each method here is
- * one line; what this module is actually for is the *sixth* thing, `apply`,
- * which is the order they go in when a turn carries them all at once.
+ * Six axes — framing, acoustic, set, document, layout and bloom — and every
+ * one is a pass-through to whatever the renderer supplied. The engine names
+ * each thing and does not describe it; what this module is actually for is
+ * applying them in the right order when a turn carries them all at once.
  *
  * Every axis persists. None of them is a property of a sentence — a shot is
  * where the stream is — so each stays until something says otherwise, unlike
@@ -30,6 +31,7 @@ export class Stage {
     private readonly voice: Voice | null,
     private readonly slides: Slides | null,
     private readonly composition: Composition | null,
+    private readonly bloom: Bloom | null,
   ) {}
 
   /**
@@ -121,8 +123,13 @@ export class Stage {
    * Both halves merge onto what is already set rather than replacing it, so a
    * panel with one slider under the pointer sends one number.
    */
-  setPlacement(placement: { avatar?: Placement; slide?: SlidePlacement }): void {
+  setPlacement(placement: { avatar?: AvatarPlacement; slide?: SlidePlacement }): void {
     this.composition?.setPlacement(placement);
+  }
+
+  /** Change the renderer's post-processing settings. */
+  setBloom(patch: BloomPatch): void {
+    this.bloom?.setBloom(patch);
   }
 
   /**
@@ -158,7 +165,7 @@ export class Stage {
    * null is emptied. `??` here would quietly turn the first into the second.
    */
   apply(staging: Staging): void {
-    const { camera, backdrop, room, deck, slide, place } = staging;
+    const { camera, backdrop, room, deck, slide, place, bloom } = staging;
     // The framing only: a line names how much of the character is in shot,
     // and where the operator is standing is not a property of a sentence.
     if (camera !== undefined) this.setCamera({ frame: camera });
@@ -182,5 +189,6 @@ export class Stage {
     // her stepping aside. The other shows her already gone from a frame that
     // has nothing in it yet, which reads as a dropped frame.
     if (place !== undefined) this.setPlacement(place);
+    if (bloom !== undefined) this.setBloom({ enabled: bloom });
   }
 }

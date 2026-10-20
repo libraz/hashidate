@@ -115,7 +115,14 @@ export const slides = (over: Partial<SlideReport> = {}): SlideReport => ({
 
 /** And how it is laying the frame out: both rectangles, resolved. */
 export const placement = (over: Partial<PlacementReport> = {}): PlacementReport => ({
-  avatar: { anchor: 'bottom-right', width: 0.32, height: 0.6, margin: 0.04 },
+  avatar: {
+    anchor: 'bottom-right',
+    width: 0.32,
+    height: 0.6,
+    margin: 0.04,
+    visible: true,
+    shift: 0,
+  },
   slide: { anchor: 'center', width: 1, height: 1, margin: 0, fit: 'contain' },
   ...over,
 });

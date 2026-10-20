@@ -370,6 +370,7 @@ describe('stage', () => {
       name: 'stage',
       arguments: {
         idle: false,
+        bloom: false,
         wear: { slot: 'top', item: 'coat' },
         room: 'hall',
         backdrop: 'night',
@@ -382,16 +383,34 @@ describe('stage', () => {
     const body = h.control.command.mock.calls[0][0];
     // The avatar leads because it replaces the thing the rest are talking to:
     // a swap builds a new scene, and what follows is applied to the new one.
-    expect(namesOf(body)).toEqual(['avatar', 'camera', 'backdrop', 'room', 'wear', 'idle']);
+    expect(namesOf(body)).toEqual([
+      'avatar',
+      'camera',
+      'bloom',
+      'backdrop',
+      'room',
+      'wear',
+      'idle',
+    ]);
     expect(commandsOf(body)).toEqual([
       { cmd: 'avatar', id: 'synthetic' },
       { cmd: 'camera', frame: 'bust' },
+      { cmd: 'bloom', enabled: false },
       { cmd: 'backdrop', id: 'night' },
       { cmd: 'room', id: 'hall' },
       { cmd: 'wear', slot: 'top', item: 'coat' },
       { cmd: 'idle', on: false },
     ]);
     expect(survives(body)).toBe(true);
+  });
+
+  it('turns bloom on when explicitly requested', async () => {
+    h = harness();
+    const client = await connect(h.control);
+
+    await client.callTool({ name: 'stage', arguments: { bloom: true } });
+
+    expect(only(h.control.command.mock.calls[0][0])).toEqual({ cmd: 'bloom', enabled: true });
   });
 
   it('dresses one slot or the whole outfit at once', async () => {
@@ -477,6 +496,7 @@ describe('stage', () => {
     // Not merely undocumented: a field stripped by the parse would leave the
     // call empty, and an empty call is refused rather than answered `ok`.
     expect(offers(schema, 'voice')).toBe(false);
+    expect(offers(schema, 'bloom')).toBe(true);
     expect(result.isError).toBe(true);
     expect(h.control.command).not.toHaveBeenCalled();
   });

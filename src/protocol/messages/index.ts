@@ -99,6 +99,8 @@ export {
   type AvatarStatusPhase,
   avatarStatusPhaseSchema,
   avatarStatusSchema,
+  type BloomReport,
+  bloomReportSchema,
   type PlacementReport,
   placementReportSchema,
   type ReportBody,

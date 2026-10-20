@@ -6,7 +6,7 @@ import { emotion, expression, overlay } from './commands/face';
 import { state, vocab, watch } from './commands/inspect';
 import { avatar, debug, tune, wear } from './commands/renderer';
 import { avatars, motions, play } from './commands/show';
-import { backdrop, camera, deck, decks, place, room, slide } from './commands/staging';
+import { backdrop, bloom, camera, deck, decks, place, room, slide } from './commands/staging';
 import { bare, hold, resume, say } from './commands/turn';
 import { voice } from './commands/voice';
 
@@ -65,6 +65,7 @@ const HANDLERS: Record<string, Handler> = {
   camera,
   room,
   backdrop,
+  bloom,
   deck,
   slide,
   place,
@@ -102,6 +103,7 @@ function usage(): never {
       '  yarn ctl say "コメント3件ありがとう" --reading "コメントさんけんありがとう"',
       '  yarn ctl gesture peace --side L',
       '  yarn ctl point 40 25 --extent 0.9',
+      '  yarn ctl bloom on --strength 0.8 --radius 0.4 --threshold 0.9',
       '  yarn ctl idle on',
       '  yarn ctl debug        # overlay the measurements on every viewer (off clears them)',
       '  yarn ctl avatars          # list the avatars the server found, and the files it rejected',
@@ -116,6 +118,8 @@ function usage(): never {
       '  yarn ctl play demo --check   # read show/scripts/demo.yaml without a server',
       '  yarn ctl play demo --replace # drop what is pending and run it',
       '  yarn ctl place avatar --anchor bottom-right --width 0.32 --height 0.6 --margin 0.02',
+      '  yarn ctl place avatar --hide             # voice only; --show brings it back',
+      '  yarn ctl place avatar --shift=-0.2       # move the character left in its picture',
     ].join('\n'),
   );
 }
