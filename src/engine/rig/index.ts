@@ -11,4 +11,4 @@ export { solveFingerAxes } from './finger-axes';
 export type { ArmSolution, ReachLinks } from './reach';
 export { poleAngle, reachRef, solveReach } from './reach';
 export type { OffsetSlot, PointRequest } from './rig';
-export { Rig } from './rig';
+export { handFrame, Rig } from './rig';

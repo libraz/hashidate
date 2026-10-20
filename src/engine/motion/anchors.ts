@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { HAND_CONTACT } from '../anatomy';
 import { BODY_ANCHORS, FACE_ANCHORS } from '../profile';
-import type { Rig } from '../rig';
+import { handFrame, type Rig } from '../rig';
 import type { Profile, ReachSpec, Side, Vec3Tuple } from '../types';
 import { type CharacterFrame, sideMirror } from './frame';
 
+/** Halvings that settle how far a target slides out of the face, below a finger's half-thickness. */
+const CLEAR_REFINE = 3;
 /** Points a travel's arc is checked at for passing through the body. */
 const TRAVEL_SAMPLES = 8;
 
@@ -28,6 +30,13 @@ export class ReachAnchors {
   // pole is built.
   private readonly _pole = new THREE.Vector3();
   private readonly _hand = new THREE.Vector3();
+  private readonly _clearX = new THREE.Vector3();
+  private readonly _clearY = new THREE.Vector3();
+  private readonly _clearP = new THREE.Vector3();
+  private readonly _clearM = new THREE.Vector3();
+  private readonly _clearN = new THREE.Vector3();
+  private readonly _clearF = new THREE.Matrix3();
+  private readonly _clearAt = new THREE.Vector3();
   private readonly _travelS = new THREE.Vector3();
   private readonly _travelA = new THREE.Vector3();
   private readonly _travelB = new THREE.Vector3();
@@ -131,6 +140,7 @@ export class ReachAnchors {
           : null;
     if (!target) return null;
     if (r.hand && r.space !== 'body') {
+      const anchor = this._clearAt.copy(target);
       const back = (this.p.limb?.[`tip.${side}.middle`] ?? 0) * HAND_CONTACT;
       if (back > 0) {
         target.addScaledVector(
@@ -138,8 +148,72 @@ export class ReachAnchors {
           -back,
         );
       }
+      if (r.palm) this.clearFace(target, anchor, r.hand, r.palm, side, frameReady);
     }
     return target;
+  }
+
+  /**
+   * Move a wrist target out until the fingers it brings are off the face. In
+   * place.
+   *
+   * The back-off above puts the palm's contact point on the anchor and says
+   * nothing about the fingers past it, which go where the hand points, as far
+   * as this avatar's fingers are long: on a face small against its hands, a
+   * finger pointed up at the cheek ran on into it, and a turn of the hand could
+   * not bring it out. So the hand is placed as the pose orients it, holding the
+   * shape it was last given, and slid out along the skin's normal at the
+   * anchor until every finger clears. Out along that one normal and not the
+   * skin's under each finger: a fingertip a centimetre into the face is nearest
+   * the inside of the mouth or the far wall of a cheek, and stepping the way
+   * those face drew the hand further in.
+   */
+  private clearFace(
+    target: THREE.Vector3,
+    anchor: THREE.Vector3,
+    hand: Vec3Tuple,
+    palm: Vec3Tuple,
+    side: Side,
+    frameReady?: boolean,
+  ): void {
+    const face = this.rig.anat?.face;
+    if (!face) return;
+    const F = handFrame(
+      this.axes.toWorld(this._clearX, hand, side, sideMirror(side), frameReady),
+      this.axes.toWorld(this._clearY, palm, side, sideMirror(side), frameReady),
+      this._clearF,
+    );
+    if (!F) return;
+    const shape = this.rig.fingerShape(side);
+    const clear = this.rig.fingerClearance(side);
+    if (!(shape.length && clear > 0)) return;
+    face.refresh();
+    // The anchor is on the skin, where its normal can be read.
+    const out = this._clearN;
+    if (face.shortfall(anchor, Number.POSITIVE_INFINITY, out) <= 0) return;
+    let reach = 0;
+    for (const local of shape) reach = Math.max(reach, local.length());
+    const clearAt = (s: number) => {
+      for (const local of shape) {
+        const P = this._clearP.copy(local).applyMatrix3(F).add(target).addScaledVector(out, s);
+        if (face.shortfall(P, clear, this._clearM) > 0) return false;
+      }
+      return true;
+    };
+    if (clearAt(0)) return;
+    let lo = 0;
+    let hi = clear;
+    while (!clearAt(hi)) {
+      lo = hi;
+      hi += clear;
+      if (hi > reach + clear) return;
+    }
+    for (let i = 0; i < CLEAR_REFINE; i++) {
+      const mid = 0.5 * (lo + hi);
+      if (clearAt(mid)) hi = mid;
+      else lo = mid;
+    }
+    target.addScaledVector(out, hi);
   }
 
   /**

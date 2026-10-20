@@ -12,17 +12,19 @@ import { partSkin } from './volume';
  * fingers are tested against the skin itself, measured once at load in the
  * head bone's frame — whatever face the avatar has.
  *
- * Inside or out is read off the nearest vertex's normal, which holds near the
- * surface, where the question is asked; nothing here claims a distance deep in
- * the skull. The normal is the surface's own, from its triangles: an anime face
+ * Inside or out is read off the skin's normals round the point, which hold
+ * near the surface, where the question is asked; nothing here claims a
+ * distance deep in the skull. The normal is the surface's own, from its triangles: an anime face
  * carries normals edited toward the front for its shading, and by those a hand
  * cupped behind the ear read as three centimetres inside the cheek.
  */
 
-/** Hash cell, metres. About a fingertip's breadth: a query reads 27 cells. */
+/** Hash cell, metres. About a fingertip's breadth. */
 const CELL = 0.02;
 /** Cells out to look before calling a point nowhere near the face. */
 const REACH = 3;
+/** Least radius the skin is read over round a point, metres: a few vertex spacings. */
+const SMOOTH = 0.01;
 
 const _p = new THREE.Vector3();
 const _n = new THREE.Vector3();
@@ -168,6 +170,12 @@ export class FaceSurface {
    * How far short of `clear` outside the skin a world point is, in metres,
    * writing the skin's outward normal there into `outward` (world). Zero when
    * the point is clear, or nowhere near the face.
+   *
+   * Read off the vertices round the point rather than the nearest one alone,
+   * each weighted down to nothing at a radius: the nearest vertex changes
+   * under a moving point, the distance to its plane jumped by millimetres when
+   * it did, and a hand placed by that distance jerked with it. The radius
+   * grows with the distance to the skin, so the reading stays smooth deep in.
    */
   shortfall(P: THREE.Vector3, clear: number, outward: THREE.Vector3): number {
     const p = _p.copy(P).applyMatrix4(this.toHead);
@@ -179,35 +187,81 @@ export class FaceSurface {
     // Widened only when the near cells are empty: a finger sunk deep in a cheek
     // is further from the skin than a cell, and that is the finger to move most.
     for (let r = 1; r <= REACH && bi < 0; r++) {
-      for (let x = cx - r; x <= cx + r; x++) {
-        for (let y = cy - r; y <= cy + r; y++) {
-          for (let z = cz - r; z <= cz + r; z++) {
-            const c = this.cells.get(key(x, y, z));
-            if (!c) continue;
-            for (const i of c) {
-              const dx = p.x - this.pos[i * 3];
-              const dy = p.y - this.pos[i * 3 + 1];
-              const dz = p.z - this.pos[i * 3 + 2];
-              const d = dx * dx + dy * dy + dz * dz;
-              if (d < best) {
-                best = d;
-                bi = i;
-              }
-            }
-          }
+      this.each(cx, cy, cz, r, (i) => {
+        const d2 = this.dist2(p, i);
+        if (d2 < best) {
+          best = d2;
+          bi = i;
         }
-      }
+      });
     }
     if (bi < 0) return 0;
-    const nx = this.nrm[bi * 3];
-    const ny = this.nrm[bi * 3 + 1];
-    const nz = this.nrm[bi * 3 + 2];
+    const R = Math.max(SMOOTH, 2 * Math.sqrt(best));
+    // Too far off the skin to gather round: its nearest vertex's plane says it.
+    if (R > REACH * CELL) return this.planeShortfall(p, bi, clear, outward);
+    const R2 = R * R;
+    let sum = 0;
+    let weight = 0;
+    _n.set(0, 0, 0);
+    this.each(cx, cy, cz, Math.ceil(R / CELL), (i) => {
+      const d2 = this.dist2(p, i);
+      if (d2 >= R2) return;
+      const k = 1 - d2 / R2;
+      const w = k * k;
+      const nx = this.nrm[i * 3];
+      const ny = this.nrm[i * 3 + 1];
+      const nz = this.nrm[i * 3 + 2];
+      sum +=
+        w *
+        ((p.x - this.pos[i * 3]) * nx +
+          (p.y - this.pos[i * 3 + 1]) * ny +
+          (p.z - this.pos[i * 3 + 2]) * nz);
+      weight += w;
+      _n.x += w * nx;
+      _n.y += w * ny;
+      _n.z += w * nz;
+    });
+    if (!(weight > 0)) return 0;
+    const s = sum / weight;
+    if (s >= clear || _n.lengthSq() < 1e-12) return 0;
+    outward.copy(_n).normalize().applyQuaternion(this.turn);
+    return clear - s;
+  }
+
+  private planeShortfall(
+    p: THREE.Vector3,
+    i: number,
+    clear: number,
+    outward: THREE.Vector3,
+  ): number {
+    const nx = this.nrm[i * 3];
+    const ny = this.nrm[i * 3 + 1];
+    const nz = this.nrm[i * 3 + 2];
     const s =
-      (p.x - this.pos[bi * 3]) * nx +
-      (p.y - this.pos[bi * 3 + 1]) * ny +
-      (p.z - this.pos[bi * 3 + 2]) * nz;
+      (p.x - this.pos[i * 3]) * nx +
+      (p.y - this.pos[i * 3 + 1]) * ny +
+      (p.z - this.pos[i * 3 + 2]) * nz;
     if (s >= clear) return 0;
     outward.set(nx, ny, nz).applyQuaternion(this.turn);
     return clear - s;
+  }
+
+  private dist2(p: THREE.Vector3, i: number): number {
+    const dx = p.x - this.pos[i * 3];
+    const dy = p.y - this.pos[i * 3 + 1];
+    const dz = p.z - this.pos[i * 3 + 2];
+    return dx * dx + dy * dy + dz * dz;
+  }
+
+  /** Every vertex in the cells within `r` of cell (cx, cy, cz). */
+  private each(cx: number, cy: number, cz: number, r: number, fn: (i: number) => void): void {
+    for (let x = cx - r; x <= cx + r; x++) {
+      for (let y = cy - r; y <= cy + r; y++) {
+        for (let z = cz - r; z <= cz + r; z++) {
+          const c = this.cells.get(key(x, y, z));
+          if (c) for (const i of c) fn(i);
+        }
+      }
+    }
   }
 }

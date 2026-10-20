@@ -95,6 +95,7 @@ const FINGER_TURN_MAX = JOINTS.wrist.dofs.deviation.free[1] - JOINTS.wrist.dofs.
 const _fW = new THREE.Vector3();
 const _fP = new THREE.Vector3();
 const _fT = new THREE.Vector3();
+const _fU = new THREE.Vector3();
 const _fN = new THREE.Vector3();
 const _fG = new THREE.Vector3();
 const _fB = new THREE.Vector3();
@@ -102,6 +103,7 @@ const _fA = new THREE.Matrix3();
 const _fTurn = new THREE.Quaternion();
 const _fParent = new THREE.Quaternion();
 const _fLocal = new THREE.Quaternion();
+const _fFrame = new THREE.Matrix3();
 /** Trial flexion that measures a curl's lever on a finger's points. */
 const FINGER_CURL_PROBE = 0.05;
 const _fSpec: FingerSpec = {};
@@ -276,6 +278,16 @@ export class Rig {
   };
   /** Roll the last palm solve asked for. */
   private _roll = 0;
+  /** The hand direction and palm the last `aimArm` was asked for, in world space. */
+  private readonly _askedHand: Record<
+    Side,
+    { point: THREE.Vector3; palm: THREE.Vector3; set: boolean }
+  > = {
+    L: { point: new THREE.Vector3(), palm: new THREE.Vector3(), set: false },
+    R: { point: new THREE.Vector3(), palm: new THREE.Vector3(), set: false },
+  };
+  /** Each hand's fingers as last posed, in its own frame. See `fingerShape`. */
+  private readonly _fingerShape: Record<Side, THREE.Vector3[]> = { L: [], R: [] };
   /** The humerus's front at rest, in its own space: the way the elbow folds. */
   private readonly _humeralFront: Partial<Record<Side, THREE.Vector3>> = {};
   /** What the roll budget delivered last frame, for its slew. See `aimArm`. */
@@ -607,6 +619,12 @@ export class Rig {
   ): void {
     const { bones, restDir } = this.p;
     const palmLocal = this.palmLocal[side];
+    const asked = this._askedHand[side];
+    asked.set = !!(dirs.hand && palmTarget);
+    if (dirs.hand && palmTarget) {
+      asked.point.set(dirs.hand[0], dirs.hand[1], dirs.hand[2]);
+      asked.palm.set(palmTarget[0], palmTarget[1], palmTarget[2]);
+    }
     let palm: PalmSpec | null = null;
     if (palmTarget && palmWeight > 1e-3 && palmLocal) {
       _palmSpec.local = palmLocal;
@@ -1021,7 +1039,57 @@ export class Rig {
 
   curlHand(side: Side, spec: FingerSpec, spread: FingerSpec = {}): void {
     this.hands.curlHand(side, spec, spread);
+    // Before the clearance bends any: the shape the pose asked for is the one
+    // it will ask for again wherever the hand is placed next.
+    this.noteFingers(side);
     this.clearFingers(side, spec, spread);
+  }
+
+  /** How far off the skin a finger's bones are held: half its thickness, from the knuckle pitch. */
+  fingerClearance(side: Side): number {
+    return 0.5 * FINGER_WIDTH * (this.p.limb?.[`pitch.${side}`] ?? 0);
+  }
+
+  /**
+   * The hand's finger joints and tips as last posed, in the frame of the
+   * pointing direction and palm the arm was asked for (see `handFrame`): where
+   * a hand asked for that puts its fingers, for placing it somewhere it has not
+   * been yet. The asked frame rather than the reached one, so the turn the
+   * roll budget and the wrist's limits put between them comes along too.
+   */
+  fingerShape(side: Side): readonly THREE.Vector3[] {
+    return this._fingerShape[side];
+  }
+
+  private noteFingers(side: Side): void {
+    const hand = this.p.bones[`hand.${side}`];
+    const palm = this.palmLocal[side];
+    if (!(hand && palm)) return;
+    const asked = this._askedHand[side];
+    if (asked.set) {
+      _fG.copy(asked.point);
+      _fN.copy(asked.palm);
+    } else {
+      hand.getWorldQuaternion(_fParent);
+      _fG.copy(this.p.restDir[`hand.${side}`]).applyQuaternion(_fParent);
+      _fN.copy(palm).applyQuaternion(_fParent);
+    }
+    const F = handFrame(_fG, _fN, _fFrame);
+    if (!F) return;
+    F.transpose();
+    const W = hand.getWorldPosition(_fW);
+    const out = this._fingerShape[side];
+    let k = 0;
+    for (const f of FINGER_NAMES) {
+      const chain = this.p.fingerBones[`${f}.${side}`];
+      if (!chain?.length) continue;
+      for (let i = 0; i <= chain.length; i++) {
+        if (!this.fingerPoint(chain, i, _fP)) continue;
+        if (k === out.length) out.push(new THREE.Vector3());
+        out[k++].copy(_fP).sub(W).applyMatrix3(F);
+      }
+    }
+    out.length = k;
   }
 
   /**
@@ -1035,7 +1103,7 @@ export class Rig {
     }
     if (chain.length < 2) return false;
     chain[i - 1].getWorldPosition(out);
-    out.addScaledVector(_fT.copy(out).sub(chain[i - 2].getWorldPosition(_fT)), 0.75);
+    out.addScaledVector(_fT.subVectors(out, chain[i - 2].getWorldPosition(_fU)), 0.75);
     return true;
   }
 
@@ -1054,10 +1122,9 @@ export class Rig {
   private clearFingers(side: Side, spec: FingerSpec, spread: FingerSpec): void {
     const face = this.anat.face;
     const hand = this.p.bones[`hand.${side}`];
-    const pitch = this.p.limb?.[`pitch.${side}`] ?? 0;
+    const clear = this.fingerClearance(side);
     const parent = hand?.parent;
-    if (!(face && hand && parent && pitch > 0)) return;
-    const clear = 0.5 * FINGER_WIDTH * pitch;
+    if (!(face && hand && parent && clear > 0)) return;
     const damp = FINGER_DAMP * clear * clear;
     face.refresh();
     hand.updateWorldMatrix(true, true);
@@ -1155,6 +1222,27 @@ export class Rig {
     }
   }
 }
+const _hfY = new THREE.Vector3();
+const _hfZ = new THREE.Vector3();
+/**
+ * The frame a hand's pointing direction and palm normal make, as columns:
+ * pointing, palm, and their cross. Null when the two are parallel. Normalises
+ * `point` in place.
+ */
+export function handFrame(
+  point: THREE.Vector3,
+  palm: THREE.Vector3,
+  out: THREE.Matrix3,
+): THREE.Matrix3 | null {
+  const x = point.lengthSq() > 1e-12 ? point.normalize() : null;
+  if (!x) return null;
+  const y = _hfY.copy(palm).addScaledVector(x, -palm.dot(x));
+  if (y.lengthSq() < 1e-8) return null;
+  y.normalize();
+  const z = _hfZ.crossVectors(x, y);
+  return out.set(x.x, y.x, z.x, x.y, y.y, z.y, x.z, y.z, z.z);
+}
+
 const _t = new THREE.Vector3();
 /**
  * A world direction from either form a caller holds one in.

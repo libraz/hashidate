@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FINGER_WIDTH, JOINTS } from '@/engine/anatomy';
-import type { FingerName, JointReading, Side } from '@/engine/types';
-import { DT, type Harness, harness } from './harness';
+import type { JointReading, Side } from '@/engine/types';
+import { DT, fingerDepth, type Harness, harness } from './harness';
 
 /**
  * What an arm passes through between two poses.
@@ -36,23 +36,6 @@ function across<T = JointReading[]>(
     out.push(read(h));
   }
   return out;
-}
-
-const FINGERS: FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
-
-/** How far the deepest finger joint of `side` is inside the face's skin, metres. */
-function fingerDepth(h: Harness, side: Side): number {
-  const face = h.rig.anat.face;
-  if (!face) throw new Error('synthetic avatar has no face skin');
-  face.refresh();
-  const n = new THREE.Vector3();
-  let worst = 0;
-  for (const f of FINGERS) {
-    for (const bone of h.profile.fingerBones[`${f}.${side}`] ?? []) {
-      worst = Math.max(worst, face.shortfall(bone.getWorldPosition(new THREE.Vector3()), 0, n));
-    }
-  }
-  return worst;
 }
 
 const reading = (frame: JointReading[], id: string) => frame.find((r) => r.id === id);

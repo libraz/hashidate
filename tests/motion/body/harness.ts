@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Body } from '@/engine/motion/body';
 import { buildProfile } from '@/engine/profile';
 import { Rig } from '@/engine/rig';
-import type { BoneSlot, GestureDef, Profile, Side, Vec3Tuple } from '@/engine/types';
+import type { BoneSlot, FingerName, GestureDef, Profile, Side, Vec3Tuple } from '@/engine/types';
 import { buildRig } from '../../helpers/scene';
 
 /**
@@ -214,3 +214,28 @@ export function speeds(h: Harness, id: string, frames: number, side: Side = 'R')
 
 /** A gesture that puts the hand somewhere far from where it is standing. */
 export const FAR = 'wave';
+
+const FINGERS: FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
+
+/**
+ * How far the deepest finger point of `side` is inside the face's skin, metres:
+ * each joint, and the tip as the rig estimates it, the last segment carried on
+ * three quarters of its length.
+ */
+export function fingerDepth(h: Harness, side: Side): number {
+  const face = h.rig.anat.face;
+  if (!face) throw new Error('synthetic avatar has no face skin');
+  face.refresh();
+  const n = new THREE.Vector3();
+  let worst = 0;
+  for (const f of FINGERS) {
+    const pts = (h.profile.fingerBones[`${f}.${side}`] ?? []).map((b) =>
+      b.getWorldPosition(new THREE.Vector3()),
+    );
+    const k = pts.length;
+    if (k > 1)
+      pts.push(pts[k - 1].clone().addScaledVector(pts[k - 1].clone().sub(pts[k - 2]), 0.75));
+    for (const p of pts) worst = Math.max(worst, face.shortfall(p, 0, n));
+  }
+  return worst;
+}
