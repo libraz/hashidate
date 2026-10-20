@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AvatarDescriptor } from '@/engine/types';
 import { useT } from '@/i18n';
+import { isTyping } from '@/ui/typing';
 import styles from './App.module.css';
 import { chooseAvatar, pinnedAvatar, rememberAvatar, rememberedAvatar } from './avatar-selection';
 import { Console } from './console/Console';
@@ -33,11 +34,6 @@ const MODE = stageMode();
  * running, and the answer is not worth reloading the browser source for.
  */
 const TELEMETRY_KEY = '`';
-
-/** Anything the operator could be typing into. The stage page has none. */
-const isTyping = (target: EventTarget | null): boolean =>
-  target instanceof HTMLElement &&
-  (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
 
 export function App() {
   const { t, tx, locale } = useT();
