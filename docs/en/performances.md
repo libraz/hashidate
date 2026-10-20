@@ -43,11 +43,15 @@ Its mood is the exception and persists, for the same reason a turn's emotion doe
 
 For what the table has no name for, `emotion`, `expression`, `overlay`, `gesture` and `hop` are all still commands of their own. See [Commands](commands.md).
 
-The idle autopilot draws from a selected pool in the same table. The six groups above play when selected explicitly; they do not change the idle pool. `idle on` lets the character keep performing between turns without the caller sending anything.
+The idle autopilot draws from a selected pool in the same table. The six groups above play when selected explicitly; they do not change the idle pool. `idle on` lets the character keep performing between turns without the caller sending anything. The autopilot does not repeat a gesture it used in either of its last two picks, and its first pick each time it starts (after a line, at session start, or when switched on) is a standing mood rather than a gesture.
 
 ## What runs continuously
 
 Under all of it the character is never still. Breathing, a weight shift from one foot to the other, blinks on a scheduler, gaze with saccades and a head that springs after it, hair and garments catching up a beat late: none of it is a command and none of it waits for a caller.
+
+While the character speaks, the head also nods at phrase ends. Most nods land at sentence ends and at commas the voice actually pauses on, fewer where the floor is handed over, and none at commas the voice runs through. A gesture that moves the head or neck takes precedence, so no phrase-end nod is added while one is playing.
+
+Gaze follows the run of speech as well. The first line of a run may open with the eyes looking away for a moment, and the last couple of seconds of the run's final line hold the camera. Lines queued back to back count as one run. A run ends when nothing is queued behind a line, and a new one starts after an interrupt or after a gap of about a second before the next line is queued.
 
 `idle` sits above that layer rather than switching it on. With `idle` off the character stops *performing* by itself and goes on breathing. Those numbers are reached by `tune`, which is a fader per curve rather than a switch.
 
