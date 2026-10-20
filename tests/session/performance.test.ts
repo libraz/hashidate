@@ -124,7 +124,7 @@ describe('a turn that names a performance', () => {
     step(Math.ceil((IDLE_AFTER + 1) / DT));
     const random = vi.spyOn(Math, 'random').mockReturnValue(11 / 35 + 0.001);
     try {
-      const limit = 10;
+      const limit = 25;
       let elapsed = 0;
       while (director.performance !== 'agree' && elapsed < limit) {
         step(1);

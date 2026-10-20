@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { chooseAutoAct } from '@/engine/director';
 import { clearMotions, GESTURES, HOPS, loadMotions, planJump } from '@/engine/motion';
 import { CROUCH_T, RECOVER_T } from '@/engine/motion/jump';
-import { PERFORMANCE_TABLE } from '@/engine/performance';
+import { PERFORMANCE_TABLE, type PerformanceId, performanceDef } from '@/engine/performance';
 import { build, DT, IDLE_AFTER } from './harness';
 
 afterEach(() => {
@@ -123,7 +124,7 @@ describe('the autopilot picking performances', () => {
     try {
       step(Math.ceil((IDLE_AFTER + 1) / DT));
       let elapsed = 0;
-      while (director.performance !== 'guarded' && elapsed < 10) {
+      while (director.performance !== 'guarded' && elapsed < 25) {
         step(1);
         elapsed += DT;
       }
@@ -165,7 +166,7 @@ describe('idle ownership', () => {
     try {
       step(Math.ceil((IDLE_AFTER + 1) / DT));
       let elapsed = 0;
-      while (director.performance !== 'nice' && elapsed < 10) {
+      while (director.performance !== 'nice' && elapsed < 25) {
         step(1);
         elapsed += DT;
       }
@@ -262,7 +263,7 @@ describe('idle ownership', () => {
     try {
       step(Math.ceil((IDLE_AFTER + 1) / DT));
       let elapsed = 0;
-      while (director.performance !== 'bouncy' && elapsed < 10) {
+      while (director.performance !== 'bouncy' && elapsed < 25) {
         step(1);
         elapsed += DT;
       }
@@ -370,7 +371,7 @@ describe('idle handing the face back', () => {
     try {
       h.step(Math.ceil((IDLE_AFTER + 1) / DT));
       let elapsed = 0;
-      while (h.director.performance !== 'guarded' && elapsed < 10) {
+      while (h.director.performance !== 'guarded' && elapsed < 25) {
         h.step(1);
         elapsed += DT;
       }
@@ -391,5 +392,56 @@ describe('idle handing the face back', () => {
     }
     // Bounded by one frame of the emotion ease, not the distance between moods.
     expect(worst).toBeLessThan(1 - Math.exp(-DT * h.director.emotionRate) + 1e-9);
+  });
+});
+
+describe('the autopilot choosing in context', () => {
+  const pool = Object.keys(PERFORMANCE_TABLE) as PerformanceId[];
+  const lcg = (seed: number) => () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 2 ** 32;
+  };
+
+  it('never repeats the gesture of either of the last two picks', () => {
+    const random = lcg(7);
+    let recent: string[] = [];
+    for (let i = 0; i < 400; i++) {
+      const id = chooseAutoAct(pool, recent, false, random);
+      const gesture = performanceDef(id)?.gesture;
+      if (gesture) {
+        expect(recent).not.toContain(gesture);
+        recent = [gesture, ...recent].slice(0, 2);
+      }
+    }
+  });
+
+  it('draws only rows with no gesture while settling', () => {
+    const random = lcg(11);
+    for (let i = 0; i < 400; i++) {
+      expect(performanceDef(chooseAutoAct(pool, ['nod'], true, random))?.gesture).toBeUndefined();
+    }
+  });
+
+  it('starts from a standing row and then draws from the whole pool', () => {
+    const { director, step } = build({ idle: true });
+    // 31/35 lands on a gesture row of the whole pool, so a gesture on the first draw is a settle failure.
+    const random = vi.spyOn(Math, 'random').mockReturnValue(31 / 35 + 0.001);
+    try {
+      step(Math.ceil((IDLE_AFTER + 1) / DT));
+      let elapsed = 0;
+      while (director.performance === null && elapsed < 25) {
+        step(1);
+        elapsed += DT;
+      }
+      expect(director.performance).toBe('bashful');
+      expect(director.body.gesture).toBeNull();
+      while (director.performance === 'bashful' && elapsed < 25) {
+        step(1);
+        elapsed += DT;
+      }
+      expect(director.performance).toBe('guarded');
+    } finally {
+      random.mockRestore();
+    }
   });
 });

@@ -91,6 +91,28 @@ const AUTO_ACTS: PerformanceId[] = [
   'polite', 'bored', 'guarded', 'nice', 'love', 'listening',
 ];
 
+/**
+ * One autopilot draw from the pool, weighted by its repetition.
+ *
+ * A gesture shared by two rows (`sparkle`) is one gesture, so repeats are
+ * judged by gesture rather than by row. Rows with no gesture are never excluded.
+ * After something has just ended (`settle`) the character stands in a mood
+ * before moving again, so only rows with no gesture are eligible.
+ */
+export function chooseAutoAct(
+  pool: readonly PerformanceId[],
+  recentGestures: readonly string[],
+  settle: boolean,
+  random: () => number,
+): PerformanceId {
+  const rows = pool.filter((id) => {
+    const gesture = performanceDef(id)?.gesture;
+    if (!gesture) return true;
+    return !(settle || recentGestures.includes(gesture));
+  });
+  return rows[Math.floor(random() * rows.length)];
+}
+
 /** What the current state asks the authored-face channel for, and how strongly. */
 interface WantedPreset {
   id: string;
@@ -157,6 +179,10 @@ export class Director {
 
   /** autopilot: performances, and the avatar's own faces between them */
   private _auto = false;
+  /** Gestures of the last two autopilot picks, newest first. */
+  private _recentGestures: string[] = [];
+  /** Set when the autopilot starts, so its first pick is a standing one. */
+  private _settle = false;
 
   /** The baseline performance in flight, and what it will have to put back. */
   private _act: string | null = null;
@@ -246,6 +272,7 @@ export class Director {
     if (on && this.baselinePerformanceHeld) return;
     this._auto = on;
     if (on) {
+      this._settle = true;
       // Idle starts from what the baseline has actually reached. The baseline
       // continues easing underneath it, so turning idle off reveals the state
       // the caller has been driving rather than the mood idle happened to pick.
@@ -642,7 +669,11 @@ export class Director {
     }
     // Resolve the selected built-in performance before its gesture is played.
     // Loaded motion ids never enter this path: they are not performance rows.
-    this.autoPerform(pickOne(AUTO_ACTS));
+    const id = chooseAutoAct(AUTO_ACTS, this._recentGestures, this._settle, Math.random);
+    this._settle = false;
+    const gesture = performanceDef(id)?.gesture;
+    if (gesture) this._recentGestures = [gesture, ...this._recentGestures].slice(0, 2);
+    this.autoPerform(id);
     // Long enough that a pose is a pose rather than a flicker, uneven enough
     // that the rotation does not become a beat the viewer can count along with.
     this._autoTimer = 5.5 + Math.random() * 7;
