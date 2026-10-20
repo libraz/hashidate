@@ -16,6 +16,7 @@ import type {
 import { ReachAnchors } from './anchors';
 import { claspMeasure, claspSpread } from './clasp';
 import { gestureDef } from './custom';
+import { FingerLife } from './finger-life';
 import { DirFollower, OMEGA_PER_RATE, ScalarFollower } from './follow';
 import { CharacterFrame, sideMirror } from './frame';
 import { Gaze, HEAD_OMEGA } from './gaze';
@@ -360,6 +361,8 @@ export class Body {
   private _fingerState: Record<Side, Record<FingerName, ScalarFollower>>;
   private _fingerSpreadSpec: Record<Side, Record<FingerName, number>>;
   private _fingerSpreadState: Record<Side, Record<FingerName, ScalarFollower>>;
+  /** Drift and lag on top of the authored hand. See `finger-life.ts`. */
+  private readonly _fingerLife: FingerLife;
   /** Clasp finger spread per side and role; null where the rig cannot be measured. */
   private readonly _claspSpread: Record<
     Side,
@@ -495,6 +498,7 @@ export class Body {
     };
     this._fingerSpreadSpec = { L: mkFingerSpread(), R: mkFingerSpread() };
     this._fingerSpreadState = { L: mkFingerSpreadState(), R: mkFingerSpreadState() };
+    this._fingerLife = new FingerLife(profile, rig.palmLocal);
     const spreadFor = (side: Side, role: 'lead' | 'follow') => {
       const m = claspMeasure(profile.limb, side);
       return m ? claspSpread(m, role, mkFingerSpread()) : null;
@@ -1321,6 +1325,14 @@ export class Body {
       const cc = g?.clasp;
       const cSpread = cc ? this._claspSpread[side][side === cc.lead ? 'lead' : 'follow'] : null;
       const cK = minJerk((this._exiting ? this._exitU : 0) / UNTHREAD);
+      // Interlaced fingers are not free to drift or trail; the life fades with
+      // whatever share of the hand a clasp still holds.
+      let held = cc ? fw * (1 - cK) : 0;
+      for (const o of this._fading) {
+        if (o.pose?.clasp) held += o.w * (1 - minJerk((1 - o.w) / UNTHREAD));
+      }
+      const free = Math.max(0, 1 - held);
+      this._fingerLife.sense(side, dt);
       for (const f of FINGER_NAMES) {
         let val = BASE_FINGERS[f];
         let spreadVal = 0;
@@ -1339,6 +1351,7 @@ export class Body {
         let cv = cf?.[f];
         if (cv !== undefined && cSpread) cv = claspCurl(side !== cc?.lead, f, cv, cK);
         if (cv !== undefined) val += (cv - val) * fw;
+        val += this._fingerLife.offset(side, f, val, this.t, idle, free);
         spec[f] = this._fingerState[side][f].step(val, dt, FINGER_FOLLOW);
 
         const cvSpread = cSpread ? (cSpread[f] ?? 0) * (1 - cK) : cfSpread?.[f];
