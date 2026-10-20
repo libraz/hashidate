@@ -236,6 +236,11 @@ export class Rig {
   };
   /** Roll the last palm solve asked for. */
   private _roll = 0;
+  /** What the roll budget delivered last frame, for its slew. See `aimArm`. */
+  private readonly _rollHeld: Record<Side, { fore: number; humeral: number; set: boolean }> = {
+    L: { fore: 0, humeral: 0, set: false },
+    R: { fore: 0, humeral: 0, set: false },
+  };
 
   // Scratch for the anatomical clamp, which needs all three arm directions at
   // once — the chain walk in `aimArm` only ever holds one.
@@ -645,7 +650,32 @@ export class Rig {
       } else R = after;
     }
 
-    const total = THREE.MathUtils.clamp(R, pron.max[0], pron.max[1]);
+    // The axial half of `slew`: neither roll shows in a link direction, so the
+    // direction slew cannot see one change. A palm demand passing half a turn
+    // changes sign in a frame, and the clamp sent the forearm from one stop to
+    // the other; the shoulder's share steps on its gate and its undo. Eased, the
+    // arm still ends where the plain answer says, however it was arrived at.
+    const held = this._rollHeld[side];
+    const rollStep = LIMIT_SLEW * this.dt;
+    if (held.set && rollStep > 0) {
+      const eased =
+        held.humeral + THREE.MathUtils.clamp(humeral - held.humeral, -rollStep, rollStep);
+      if (upper && eased !== humeral) {
+        upper.quaternion.multiply(
+          _twistQ.setFromAxisAngle(restDir[`upperArm.${side}`], eased - humeral),
+        );
+        this._upperQ.copy(this._upperParentQ).multiply(upper.quaternion);
+        humeral = eased;
+        R = below(0, 0);
+      }
+    }
+
+    let total = THREE.MathUtils.clamp(R, pron.max[0], pron.max[1]);
+    if (held.set && rollStep > 0)
+      total = held.fore + THREE.MathUtils.clamp(total - held.fore, -rollStep, rollStep);
+    held.fore = total;
+    held.humeral = humeral;
+    held.set = true;
     const carry = total * (1 - PRONATION_SPLIT);
     const hw = palm ? total * PRONATION_SPLIT : twist;
     below(carry, hw);
