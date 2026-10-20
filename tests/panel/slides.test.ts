@@ -75,7 +75,14 @@ describe('fitAspect', () => {
 });
 
 describe('avatarPlacement', () => {
-  const full = { anchor: 'center' as const, width: 1, height: 1, margin: 0.04 };
+  const full = {
+    anchor: 'center' as const,
+    width: 1,
+    height: 1,
+    margin: 0.04,
+    visible: true,
+    shift: 0,
+  };
 
   it('shrinks a full-frame avatar when moving away from centre', () => {
     // A top-only anchor is the regression: horizontal anchors appeared to work
@@ -85,6 +92,8 @@ describe('avatarPlacement', () => {
       width: 0.32,
       height: 0.32,
       margin: 0.04,
+      visible: true,
+      shift: 0,
     });
   });
 
@@ -95,19 +104,43 @@ describe('avatarPlacement', () => {
   it('uses the renderer effective size from a non-square report', () => {
     expect(
       avatarPlacement(
-        { anchor: 'bottom-right', width: 0.32, height: 0.6, margin: 0.08 },
+        { anchor: 'bottom-right', width: 0.32, height: 0.6, margin: 0.08, visible: true, shift: 0 },
         { anchor: 'top-left' },
       ),
-    ).toEqual({ anchor: 'top-left', width: 0.32, height: 0.32, margin: 0.08 });
+    ).toEqual({
+      anchor: 'top-left',
+      width: 0.32,
+      height: 0.32,
+      margin: 0.08,
+      visible: true,
+      shift: 0,
+    });
   });
 
   it('keeps an existing effective size below full frame', () => {
     expect(
       avatarPlacement(
-        { anchor: 'bottom-right', width: 0.47, height: 0.72, margin: 0.1 },
+        { anchor: 'bottom-right', width: 0.47, height: 0.72, margin: 0.1, visible: true, shift: 0 },
         { anchor: 'left' },
       ),
-    ).toEqual({ anchor: 'left', width: 0.47, height: 0.47, margin: 0.1 });
+    ).toEqual({
+      anchor: 'left',
+      width: 0.47,
+      height: 0.47,
+      margin: 0.1,
+      visible: true,
+      shift: 0,
+    });
+  });
+
+  it('hides and shifts the character without touching its rectangle', () => {
+    expect(avatarPlacement(full, { visible: false })).toEqual({ ...full, visible: false });
+    expect(avatarPlacement(full, { shift: -0.2 })).toEqual({ ...full, shift: -0.2 });
+  });
+
+  it('keeps a hidden or shifted character so while its rectangle moves', () => {
+    const away = { ...full, visible: false, shift: 0.15 };
+    expect(avatarPlacement(away, { margin: 0.1 })).toMatchObject({ visible: false, shift: 0.15 });
   });
 });
 

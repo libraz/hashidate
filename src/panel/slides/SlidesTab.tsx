@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { PLACEMENT_LIMITS } from '@/engine/types';
 import { getLocale, type MessageKey, translate, useT } from '@/i18n';
-import type { Anchor, Placement, SlidePlacement, Snapshot } from '@/protocol';
+import type { Anchor, AvatarPlacement, SlidePlacement, Snapshot } from '@/protocol';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { Field } from '@/ui/Field';
 import { Section } from '@/ui/Section';
 import { Segmented } from '@/ui/Segmented';
 import { Slider } from '@/ui/Slider';
-import { FULL_FRAME, FULL_SLIDE } from '@/viewer/scene/placement';
+import { isTyping } from '@/ui/typing';
+import { FULL_AVATAR, FULL_SLIDE } from '@/viewer/scene/placement';
 import type { DeckSource } from '@/viewer/scene/slides/deck';
 import { deck, place, readDecks, slide } from '../api';
 import styles from './SlidesTab.module.css';
@@ -80,6 +81,8 @@ interface AvatarControls {
   anchor: Anchor;
   size: number;
   margin: number;
+  visible: boolean;
+  shift: number;
 }
 
 /** The document's, which needs no aspect: `fit` is what shapes the page. */
@@ -154,14 +157,16 @@ export function fitAspect(size: number): { width: number; height: number } {
  * the current effective scale.
  */
 export function avatarPlacement(
-  avatar: Required<Placement>,
+  avatar: Required<AvatarPlacement>,
   next: Partial<AvatarControls>,
-): Required<Placement> {
+): Required<AvatarPlacement> {
   const currentSize = Math.min(avatar.width, avatar.height);
   const merged: AvatarControls = {
     anchor: avatar.anchor,
     size: currentSize,
     margin: avatar.margin,
+    visible: avatar.visible,
+    shift: avatar.shift,
     ...next,
   };
   const size =
@@ -174,6 +179,8 @@ export function avatarPlacement(
     anchor: merged.anchor,
     margin: merged.margin,
     ...fitAspect(size),
+    visible: merged.visible,
+    shift: clamp(merged.shift, PLACEMENT_LIMITS.shift),
   };
 }
 
@@ -213,19 +220,6 @@ export function ago(at: number, now: number = Date.now() / 1000): string {
 const clamp = (value: number, limit: { min: number; max: number }): number =>
   Math.min(limit.max, Math.max(limit.min, value));
 
-/**
- * Whether a keystroke is somebody typing.
- *
- * The arrow keys are bound to the page turn while this tab is open, so the jump
- * field beside the transport — and any other field that gains focus — has to
- * keep its own arrows for moving the caret.
- */
-function isTyping(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
-}
-
 export function SlidesTab({ snapshot, refresh }: Props) {
   const slides = snapshot.slides;
   const decks = snapshot.decks;
@@ -246,10 +240,10 @@ export function SlidesTab({ snapshot, refresh }: Props) {
    * asked for — a source opened on `?place=bottom-right:0.32x0.6`, or a `place`
    * an orchestrator sent mid-segment.
    */
-  const [sentAvatar, setSentAvatar] = useState<Required<Placement> | null>(null);
+  const [sentAvatar, setSentAvatar] = useState<Required<AvatarPlacement> | null>(null);
   const [sentDoc, setSentDoc] = useState<Required<SlidePlacement> | null>(null);
   const reported = snapshot.placement;
-  const avatar = sentAvatar ?? reported?.avatar ?? FULL_FRAME;
+  const avatar = sentAvatar ?? reported?.avatar ?? FULL_AVATAR;
   const doc = sentDoc ?? reported?.slide ?? FULL_SLIDE;
 
   /** Let go of a change the moment the renderer reports it. See `settled`. */
@@ -327,7 +321,7 @@ export function SlidesTab({ snapshot, refresh }: Props) {
         }
         note={[t('panel.slides.title.note1'), t('panel.slides.title.note2')]}
       >
-        <ChipRow>
+        <ChipRow list>
           {/* A state and not an action: no document up is one of the things the
               layer can be showing, and it is picked the same way a document is.
               As an action it took that variant's transparent fill over the
@@ -423,6 +417,17 @@ export function SlidesTab({ snapshot, refresh }: Props) {
         title={t('panel.slides.layout')}
         note={[t('panel.slides.layout.note1'), t('panel.slides.layout.note2')]}
       >
+        <Field label={t('panel.slides.show')}>
+          <Segmented
+            ariaLabel={t('panel.slides.show.aria')}
+            options={[
+              { value: 'shown', label: t('panel.slides.show.shown') },
+              { value: 'hidden', label: t('panel.slides.show.hidden') },
+            ]}
+            value={avatar.visible ? 'shown' : 'hidden'}
+            onChange={(shown) => moveAvatar({ visible: shown === 'shown' })}
+          />
+        </Field>
         <Field label={t('panel.slides.stand')}>
           <AnchorGrid
             value={avatar.anchor}
@@ -445,6 +450,14 @@ export function SlidesTab({ snapshot, refresh }: Props) {
           max={PLACEMENT_LIMITS.margin.max}
           step={0.005}
           onChange={(margin) => moveAvatar({ margin })}
+        />
+        <Slider
+          label={t('panel.slides.shift')}
+          value={avatar.shift}
+          min={PLACEMENT_LIMITS.shift.min}
+          max={PLACEMENT_LIMITS.shift.max}
+          step={0.005}
+          onChange={(shift) => moveAvatar({ shift })}
         />
 
         <Field label={t('panel.slides.docPosition')}>
