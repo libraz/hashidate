@@ -110,6 +110,13 @@ export const LINK_ONSET: Record<ArmSlot, number> = {
 export const EXTEND_ONSET = 0.5;
 
 /**
+ * Where a clasp's follower stops heading for the mirrored reach and takes the
+ * leader's posed hand, as a share of the leader's arrival. The leader's palm is
+ * still turning before this, and a plane read off it put the follower 5 cm low.
+ */
+export const HANDOVER_ONSET = 0.85;
+
+/**
  * Fingers trail the hand that carries them. Slightly further out than the hand
  * itself, because a hand changing shape while it travels reads as one motion
  * and a hand that arrives already shaped reads as two.

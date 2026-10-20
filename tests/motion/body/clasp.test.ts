@@ -8,7 +8,7 @@ import { buildProfile } from '@/engine/profile';
 import { Rig } from '@/engine/rig';
 import type { FingerName, GestureDef, Side } from '@/engine/types';
 import { buildRig } from '../../helpers/scene';
-import { DT, type Harness, harness, wristOf } from './harness';
+import { canonicalDirection, DT, type Harness, harness, wristOf } from './harness';
 
 /**
  * The interlaced clasp, measured on the posed bones of the synthetic rig.
@@ -160,6 +160,23 @@ describe.each(SIDES)('handsClasp, lead %s', (lead) => {
     // The wrist limiter can bend the hand off its axis while the palm stays put.
     const axis = chain(h, 'middle', follow)[0].sub(wristOf(h.profile, follow)).normalize();
     expect(axis.angleTo(placed.hand)).toBeLessThanOrEqual(THREE.MathUtils.degToRad(3));
+  });
+
+  // Placed against a leader still on its way in, the follower swung a straight
+  // arm low across the belly and folded the elbow late.
+  it('rises as the mirror of the leader until the leader has arrived', () => {
+    const h = harness();
+    h.rig.reset();
+    h.body.update(DT);
+    h.body.play('handsClasp', lead);
+    const upper = (s: Side) => canonicalDirection(h, s, `upperArm.${s}`, `lowerArm.${s}`);
+    let worst = 0;
+    for (let i = 0; i < 30; i++) {
+      h.rig.reset();
+      h.body.update(DT);
+      worst = Math.max(worst, upper(lead).angleTo(upper(follow)));
+    }
+    expect(worst).toBeLessThanOrEqual(THREE.MathUtils.degToRad(5));
   });
 
   it('S5: a released clasp unthreads by the time the exit is under half over', () => {

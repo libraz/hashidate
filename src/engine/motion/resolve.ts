@@ -5,7 +5,7 @@ import type { ReachAnchors } from './anchors';
 import { type ClaspLeader, type ClaspPlacement, claspMeasure, placeFollower } from './clasp';
 import type { CharacterFrame } from './frame';
 import { BASE_PALM } from './gestures';
-import { EXTEND_ONSET, minJerk, onset } from './timing';
+import { EXTEND_ONSET, HANDOVER_ONSET, minJerk, onset } from './timing';
 
 /**
  * What one arm of a gesture pose actually asks for, in the frame the blend
@@ -319,6 +319,7 @@ export class ArmResolver {
     reach: Record<Side, ArmSolution>,
     handEntrance: number,
     timed: boolean,
+    mirror: number,
     frameReady?: boolean,
   ): ResolvedArm | null {
     const c = pose.clasp;
@@ -352,6 +353,22 @@ export class ArmResolver {
     const f = this._claspPlace;
     if (!placeFollower(l, measure, c.dihedral, f)) return null;
 
+    // Until the leader's hand has arrived, placing against it drags the
+    // follower low across the belly; head for the mirrored reach instead and
+    // hand over to the placement by how far the leader has actually come.
+    const arrived = this.leaderArrival(pose, lead, l.wrist, frameReady);
+    if (arrived < 1) {
+      const r = pose.reach?.[side];
+      const k = minJerk(onset(arrived, HANDOVER_ONSET));
+      const mirrored = this.anchors.target(r, side, frameReady);
+      if (mirrored) f.wrist.lerpVectors(mirrored, f.wrist, k);
+      // The leader's hand still hangs as it rises, and as the elbow's hint it
+      // picks a different elbow from the leader's.
+      if (r?.hand) {
+        const hint = this.axes.toWorld(this._pointDir, r.hand, side, mirror, frameReady);
+        f.hand.lerpVectors(hint, f.hand, k).normalize();
+      }
+    }
     if (handEntrance < 1 && this._wristKnown[side]) {
       this.anchors.travel(f.wrist, this._wristFrom[side], side, handEntrance);
     }
@@ -364,6 +381,21 @@ export class ArmResolver {
     out.twist = pose.reach?.[side]?.twist ?? 0;
     out.clasp = true;
     return out;
+  }
+
+  /** How far the leader's wrist has come from its departure to its target, 0..1. */
+  private leaderArrival(
+    pose: Pose,
+    lead: Side,
+    wrist: THREE.Vector3,
+    frameReady?: boolean,
+  ): number {
+    if (!this._wristKnown[lead]) return 1;
+    const target = this.anchors.target(pose.reach?.[lead], lead, frameReady);
+    if (!target) return 1;
+    const span = target.distanceTo(this._wristFrom[lead]);
+    if (span < 1e-4) return 1;
+    return Math.max(0, Math.min(1, 1 - target.distanceTo(wrist) / span));
   }
 
   /** Whether a travelling reach is deciding where this side's hand goes. */
@@ -468,7 +500,7 @@ export class ArmResolver {
     }
 
     if (pose?.clasp) {
-      const arm = this.resolveClasp(pose, side, reach, handEntrance, timed, frameReady);
+      const arm = this.resolveClasp(pose, side, reach, handEntrance, timed, mirror, frameReady);
       if (arm) return arm;
     }
 
