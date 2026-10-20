@@ -511,12 +511,19 @@ async function inspectLogicalPath(
   if (exact !== undefined) {
     return inspectTarget(root, resolve(parent, exact.name), policy);
   }
-  const wanted = name.normalize('NFC');
+  // The deck roster accepts `.PDF` too, while the viewer builds `.pdf` URLs.
+  // Fold only the extension: the document id itself remains case-sensitive.
+  const wantedExtension = normaliseExtension(extname(name));
+  const wanted = stem(name, wantedExtension).normalize('NFC');
   const candidates = entries
     .map((entry) => entry.name)
     .filter((entry) => {
       const extension = normaliseExtension(extname(entry));
-      return policy.extensions.includes(extension) && entry.normalize('NFC') === wanted;
+      return (
+        policy.extensions.includes(extension) &&
+        extension === wantedExtension &&
+        stem(entry, extension).normalize('NFC') === wanted
+      );
     });
   if (candidates.length === 0) return failure('missing', 'not found');
   if (candidates.length > 1) return failure('ambiguous', ambiguousMessage(candidates));
