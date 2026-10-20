@@ -621,7 +621,12 @@ async function ttsAPIReady(endpoint: SpeechEndpoint, timeoutMs: number): Promise
     const reply = await askSidecar(endpoint, '/health', { timeoutMs });
     if (reply.status < 200 || reply.status > 299) return false;
     const body: unknown = JSON.parse(reply.body.toString('utf8'));
-    return typeof body === 'object' && body !== null && 'ready' in body;
+    return (
+      typeof body === 'object' &&
+      body !== null &&
+      'ready' in body &&
+      typeof body.ready === 'boolean'
+    );
   } catch {
     return false;
   }
