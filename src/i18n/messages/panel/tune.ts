@@ -47,6 +47,13 @@ export const tuneEn = {
     'Turn ARKit blending off and the face falls back to the VRM presets. A preset sculpts the whole face, so only one can be up at a time — for checking the degraded path.',
   'panel.tune.toon': 'Toon shading',
   'panel.tune.arkit': 'Drive the face with ARKit blending',
+  'panel.tune.bloom': 'Bloom',
+  'panel.tune.bloom.note':
+    'Adds a glow around bright areas. Raise the threshold to keep skin and light clothing clear.',
+  'panel.tune.bloom.enabled': 'Enable bloom',
+  'panel.tune.bloom.strength': 'Strength',
+  'panel.tune.bloom.radius': 'Radius',
+  'panel.tune.bloom.threshold': 'Threshold',
 } as const;
 
 export const tuneJa: Record<keyof typeof tuneEn, string> = {
@@ -91,4 +98,11 @@ export const tuneJa: Record<keyof typeof tuneEn, string> = {
     'ARKit 合成を切ると VRM プリセットに落ちる。プリセットは顔全体の彫刻なので同時にひとつしか出せない — 縮退動作の確認用。',
   'panel.tune.toon': 'トゥーン表示',
   'panel.tune.arkit': '表情を ARKit 合成で駆動',
+  'panel.tune.bloom': 'ブルーム',
+  'panel.tune.bloom.note':
+    '明るい部分に光のにじみを加える。しきい値を上げると、肌や明るい衣装にかかりにくくなる。',
+  'panel.tune.bloom.enabled': 'ブルームを有効にする',
+  'panel.tune.bloom.strength': '強さ',
+  'panel.tune.bloom.radius': '広がり',
+  'panel.tune.bloom.threshold': 'しきい値',
 };

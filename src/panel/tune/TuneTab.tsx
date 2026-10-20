@@ -1,12 +1,41 @@
 import { useEffect, useRef, useState } from 'react';
-import { TUNING_RANGES, type Tuning, type TuningPatch } from '@/engine/tuning';
+import { TUNING_RANGES, type Tuning, type TuningPatch, type TuningRange } from '@/engine/tuning';
 import { useT } from '@/i18n';
-import type { Snapshot } from '@/protocol';
+import {
+  BLOOM_DEFAULTS,
+  BLOOM_RANGES,
+  type BloomPatch,
+  type BloomSettings,
+  type Snapshot,
+} from '@/protocol';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { Section } from '@/ui/Section';
 import { Slider } from '@/ui/Slider';
 import { Toggle } from '@/ui/Toggle';
-import { tune } from '../api';
+import { bloom, POLL_INTERVAL, tune } from '../api';
+
+const BLOOM_PENDING_MS = POLL_INTERVAL * 2;
+
+interface PendingBloom {
+  patch: BloomPatch;
+  until: number;
+}
+
+/** Keep the just-sent values under the pointer until a report catches up. */
+export function reconcileBloom(
+  reported: BloomSettings | null | undefined,
+  pending: PendingBloom | null,
+  now = Date.now(),
+): { settings: BloomSettings; pending: boolean } {
+  const settings = reported ?? BLOOM_DEFAULTS;
+  if (!pending) return { settings, pending: false };
+
+  const acknowledged = (Object.keys(pending.patch) as (keyof BloomSettings)[]).every(
+    (key) => settings[key] === pending.patch[key],
+  );
+  if (acknowledged || now >= pending.until) return { settings, pending: false };
+  return { settings: { ...settings, ...pending.patch }, pending: true };
+}
 
 /**
  * Everything that is set once and left.
@@ -44,6 +73,8 @@ export function TuneTab({ snapshot }: Props) {
   const avatar = snapshot.vocabulary.avatar?.id ?? null;
 
   const [draft, setDraft] = useState<Tuning | null>(reported);
+  const [pendingBloom, setPendingBloom] = useState<PendingBloom | null>(null);
+  const bloomState = reconcileBloom(snapshot.bloom, pendingBloom);
   /** Which avatar the draft describes, so a swap re-seeds it. */
   const seededFor = useRef<string | null>(avatar);
 
@@ -54,11 +85,35 @@ export function TuneTab({ snapshot }: Props) {
     setDraft(reported);
   }, [reported, draft, avatar]);
 
+  useEffect(() => {
+    if (!pendingBloom) return;
+    if (!bloomState.pending) {
+      setPendingBloom(null);
+      return;
+    }
+    const timer = setTimeout(
+      () => setPendingBloom((current) => (current?.until === pendingBloom.until ? null : current)),
+      Math.max(0, pendingBloom.until - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [pendingBloom, bloomState.pending]);
+
+  const setBloom = (patch: BloomPatch): void => {
+    setPendingBloom((current) => ({
+      patch: { ...current?.patch, ...patch },
+      until: Date.now() + BLOOM_PENDING_MS,
+    }));
+    void bloom(patch);
+  };
+
   if (!draft) {
     return (
-      <Section title={t('panel.tune.title')}>
-        <p>{t('panel.tune.empty')}</p>
-      </Section>
+      <>
+        <Section title={t('panel.tune.title')}>
+          <p>{t('panel.tune.empty')}</p>
+        </Section>
+        <BloomControls settings={bloomState.settings} onChange={setBloom} />
+      </>
     );
   }
 
@@ -216,7 +271,59 @@ export function TuneTab({ snapshot }: Props) {
           />
         ) : null}
       </Section>
+
+      <BloomControls settings={bloomState.settings} onChange={setBloom} />
     </>
+  );
+}
+
+function BloomControls({
+  settings,
+  onChange,
+}: {
+  settings: BloomSettings;
+  onChange: (patch: BloomPatch) => void;
+}) {
+  const { t } = useT();
+  return (
+    <Section title={t('panel.tune.bloom')} note={[t('panel.tune.bloom.note')]}>
+      <Toggle
+        label={t('panel.tune.bloom.enabled')}
+        checked={settings.enabled}
+        onChange={(enabled) => onChange({ enabled })}
+      />
+      {settings.enabled ? (
+        <>
+          <Slider
+            label={t('panel.tune.bloom.strength')}
+            value={settings.strength}
+            min={BLOOM_RANGES.strength.min}
+            max={BLOOM_RANGES.strength.max}
+            step={0.01}
+            precision={2}
+            onChange={(strength) => onChange({ strength })}
+          />
+          <Slider
+            label={t('panel.tune.bloom.radius')}
+            value={settings.radius}
+            min={BLOOM_RANGES.radius.min}
+            max={BLOOM_RANGES.radius.max}
+            step={0.01}
+            precision={2}
+            onChange={(radius) => onChange({ radius })}
+          />
+          <Slider
+            label={t('panel.tune.bloom.threshold')}
+            value={settings.threshold}
+            min={BLOOM_RANGES.threshold.min}
+            max={BLOOM_RANGES.threshold.max}
+            step={0.01}
+            precision={2}
+            onChange={(threshold) => onChange({ threshold })}
+          />
+        </>
+      ) : null}
+    </Section>
   );
 }
 
@@ -231,7 +338,7 @@ function Fader({
   unit,
 }: {
   label: string;
-  range: { min: number; max: number; step: number; precision: number; unit: string };
+  range: TuningRange;
   value: number;
   onChange: (value: number) => void;
   step?: number;
@@ -247,6 +354,7 @@ function Fader({
       step={step ?? range.step}
       precision={precision ?? range.precision}
       unit={unit ?? range.unit}
+      rest={range.rest}
       onChange={onChange}
     />
   );
