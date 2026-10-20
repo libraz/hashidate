@@ -269,7 +269,7 @@ export class Recordings implements RecordingStore {
           live.stream = stream;
         }
         try {
-          await writeChunk(stream, chunk);
+          await completeSinkOperation(stream, (done) => stream.write(chunk, done));
         } catch (error) {
           live.error = errorText(error);
           return { accepted: false, first: false };
@@ -318,7 +318,15 @@ export class Recordings implements RecordingStore {
         // a later recording start.
         stream.destroy();
       } else {
-        await new Promise<void>((done) => stream.end(done));
+        // A sink can close without invoking its final callback or emitting an
+        // error. Observe completion and premature closure before asking it to
+        // end, so neither outcome can strand the stop request.
+        try {
+          await completeSinkOperation(stream, (done) => stream.end(done));
+        } catch (error) {
+          live.error = errorText(error);
+          stream.destroy();
+        }
       }
     }
     return report(live);
@@ -360,21 +368,32 @@ export class Recordings implements RecordingStore {
   }
 }
 
-/** Wait for the sink's callback or its error event, whichever comes first. */
-function writeChunk(stream: Writable, chunk: Buffer): Promise<void> {
+/** Wait for a sink operation's callback, error or premature close. */
+function completeSinkOperation(
+  stream: Writable,
+  operation: (done: (error?: Error | null) => void) => void,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let settled = false;
     const finish = (error?: Error | null): void => {
       if (settled) return;
       settled = true;
       stream.off('error', onError);
+      stream.off('close', onClose);
       if (error) reject(error);
       else resolve();
     };
     const onError = (error: Error): void => finish(error);
+    const onClose = (): void =>
+      finish(new Error('recording sink closed before operation completed'));
     stream.once('error', onError);
+    stream.once('close', onClose);
+    if (stream.destroyed) {
+      onClose();
+      return;
+    }
     try {
-      stream.write(chunk, (error?: Error | null) => finish(error));
+      operation(finish);
     } catch (error) {
       finish(error instanceof Error ? error : new Error(String(error)));
     }
