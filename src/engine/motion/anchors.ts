@@ -5,6 +5,9 @@ import type { Rig } from '../rig';
 import type { Profile, ReachSpec, Side, Vec3Tuple } from '../types';
 import { type CharacterFrame, sideMirror } from './frame';
 
+/** Points a travel's arc is checked at for passing through the body. */
+const TRAVEL_SAMPLES = 8;
+
 /**
  * Where a reach is going, in world space.
  *
@@ -32,6 +35,8 @@ export class ReachAnchors {
   private readonly _travelL = new THREE.Vector3();
   private readonly _travelP = new THREE.Vector3();
   private readonly _travelQ = new THREE.Vector3();
+  private readonly _travelV = new THREE.Vector3();
+  private readonly _travelW = new THREE.Vector3();
 
   constructor(
     private readonly p: Profile,
@@ -196,11 +201,13 @@ export class ReachAnchors {
     const behind =
       mid.lengthSq() > 1e-12 &&
       mid.normalize().dot(anat.fwd) < Math.min(a.dot(anat.fwd), b.dot(anat.fwd));
-    if (behind) {
-      // The same bulge mirrored to the front of the body: a spherical Bezier
-      // drawn toward the arc's midpoint reflected through the frontal plane,
-      // so the bearing turns smoothly rather than cornering at a via point.
-      const via = this._travelL.copy(mid).addScaledVector(anat.fwd, -2 * mid.dot(anat.fwd));
+    // The same bulge mirrored to the front of the body: a spherical Bezier
+    // drawn toward the arc's midpoint reflected through the frontal plane,
+    // so the bearing turns smoothly rather than cornering at a via point.
+    const via = behind
+      ? this._travelL.copy(mid).addScaledVector(anat.fwd, -2 * mid.dot(anat.fwd))
+      : this.clearance(S, a, b, ra, rb);
+    if (via) {
       const p = slerp(this._travelP, a, via, e);
       const q = slerp(this._travelQ, via, b, e);
       slerp(a, p, q, e);
@@ -208,6 +215,48 @@ export class ReachAnchors {
       slerp(a, a, b, e);
     }
     target.copy(S).addScaledVector(a, ra + (rb - ra) * e);
+  }
+
+  /**
+   * The bearing a travel has to be drawn toward to keep the wrist out of the
+   * body, or null where the plain arc already does.
+   *
+   * The arc between two points on the body is not clear of it just because its
+   * ends are: from the mouth to behind the ear, the shortest swing about the
+   * shoulder carries the wrist through the cheek. Each of a few samples is
+   * lifted to the surface, and the control point moves off the arc's midpoint —
+   * where it reproduces the plain arc exactly — by what the worst of them needs.
+   * Proportional to the lift, so the bulge grows out of nothing as the arc
+   * first touches the body rather than appearing whole.
+   */
+  private clearance(
+    S: THREE.Vector3,
+    a: THREE.Vector3,
+    b: THREE.Vector3,
+    ra: number,
+    rb: number,
+  ): THREE.Vector3 | null {
+    const anat = this.rig.anat;
+    const push = this._travelW.set(0, 0, 0);
+    let need = 0;
+    for (let i = 1; i < TRAVEL_SAMPLES; i++) {
+      const t = i / TRAVEL_SAMPLES;
+      const on = slerp(this._travelP, a, b, t);
+      const P = this._travelV.copy(S).addScaledVector(on, ra + (rb - ra) * t);
+      if (anat.surface(P) <= 0) continue;
+      // A control-point move shifts the curve at t by 2t(1-t) of itself.
+      const off = P.sub(S)
+        .normalize()
+        .sub(on)
+        .divideScalar(2 * t * (1 - t));
+      const n = off.lengthSq();
+      if (n > need) {
+        need = n;
+        push.copy(off);
+      }
+    }
+    if (need <= 0) return null;
+    return slerp(this._travelL, a, b, 0.5).add(push).normalize();
   }
 }
 

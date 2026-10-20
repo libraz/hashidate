@@ -417,6 +417,11 @@ export class ArmAnatomy {
     this.body.clear(u, l, h, this.lateral);
   }
 
+  /** Move a world point out to the body's surface, in place. See `BodyVolumes.surface`. */
+  surface(P: THREE.Vector3): number {
+    return this.body.surface(P);
+  }
+
   /**
    * Re-run the hand's escape alone, after something downstream has moved it.
    *

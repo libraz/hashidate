@@ -227,6 +227,23 @@ export class BodyVolumes {
   }
 
   /**
+   * Move a world point out to the surface of whichever body part it is inside,
+   * along that part's own radius, in place. Returns how deep it was, 0 if clear.
+   */
+  surface(P: THREE.Vector3): number {
+    const depth = this.depthAt(P);
+    if (depth <= 0) return 0;
+    const f = this._inFrame;
+    const rel = this._rel.copy(P).sub(f.O);
+    const radial = this._radial.copy(rel).addScaledVector(f.up, -rel.dot(f.up));
+    const r = radial.length();
+    // On the axis itself there is no radius to follow, and no way out to prefer.
+    if (r < 1e-9) return depth;
+    P.addScaledVector(radial.divideScalar(r), r / (1 - depth) - r);
+    return depth;
+  }
+
+  /**
    * How far the arm has pushed into the trunk, as a fraction of the radius.
    *
    * Sampled along both segments, not read off the elbow.
