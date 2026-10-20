@@ -55,12 +55,20 @@ export function Chip({
       disabled={disabled}
       aria-pressed={pressed}
     >
-      {label}
+      <span className={styles.label}>{label}</span>
       {tag ? <span className={styles.tag}>{tag}</span> : null}
     </button>
   );
 }
 
-export function ChipRow({ children }: { children: ReactNode }) {
-  return <div className={styles.row}>{children}</div>;
+/**
+ * A wrap of chips, or with `list` a column of them.
+ *
+ * The column is for a roster read by name — scripts, documents, tracks on disk.
+ * Wrapped, titles of different lengths land wherever the last one left room and
+ * the eye has to zigzag to find one; stacked, the names share a left edge and
+ * their details a right one, the way a file list does.
+ */
+export function ChipRow({ children, list = false }: { children: ReactNode; list?: boolean }) {
+  return <div className={list ? styles.list : styles.row}>{children}</div>;
 }

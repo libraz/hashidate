@@ -4,7 +4,7 @@ import type { QueueEntry, ScriptSummary, ScriptsResponse } from '@/protocol';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { Select } from '@/ui/Select';
 import { Toggle } from '@/ui/Toggle';
-import { isFailure, readScripts, runScript } from '../api';
+import { isFailure, readError, readScripts, runScript } from '../api';
 import { ago } from '../slides/SlidesTab';
 import styles from './ScriptPicker.module.css';
 
@@ -66,7 +66,7 @@ export function ScriptPicker({ entries, refresh }: Props) {
   const rescan = useCallback(async () => {
     const result = await readScripts();
     if (isFailure(result)) {
-      setError(result.error);
+      setError(readError(result));
       return;
     }
     setError(null);
@@ -159,7 +159,7 @@ export function ScriptPicker({ entries, refresh }: Props) {
         </div>
       </div>
 
-      <ChipRow>
+      <ChipRow list>
         {scripts.map((script) => (
           <Chip
             key={script.id}

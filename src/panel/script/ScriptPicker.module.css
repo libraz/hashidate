@@ -90,15 +90,28 @@
   font-family: var(--font-mono);
 }
 
-/* Starting part-way: one row, under the scripts it starts. */
+/* Starting part-way: one row, under the scripts it starts, set off from them
+   by a hairline so it does not read as one more script. */
 .from {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line-soft);
+}
+
+.from > :nth-child(2) {
+  flex: 1 1 auto;
+}
+
+/* The page picker keeps room for "p.12" however long the title beside it. */
+.from > :nth-child(3) {
+  flex: 0 0 auto;
+  min-width: 84px;
 }
 
 .fromLabel {
   color: var(--fg-dim);
   font-size: var(--text-sm);
+  white-space: nowrap;
 }

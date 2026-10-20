@@ -80,6 +80,13 @@
   color: var(--accent-ink);
 }
 
+/* A long name is cut rather than allowed to push its tag out of the chip. */
+.label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* The count badge on an overlay chip, and the strain figure on a hand chip. */
 .tag {
   font-family: var(--font-mono);
@@ -91,4 +98,46 @@
 .chip.auto .tag {
   color: inherit;
   opacity: 0.75;
+}
+
+/*
+ * The roster column. Rows rather than buttons: no fill until hovered, the name
+ * on the left and its details against the right edge, and the chosen row lit
+ * with the same border and tint a chosen chip takes.
+ */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.list .chip {
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--space-4);
+  gap: var(--space-5);
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--radius-md);
+  color: var(--fg);
+}
+
+.list .chip:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.list .chip.on {
+  background: var(--accent-tint);
+  border-color: var(--accent-edge);
+  color: var(--accent);
+}
+
+.list .chip .tag {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/* An action in a roster — "none", say — reads as a quieter row, not a button. */
+.list .chip.action {
+  color: var(--fg-dim);
 }

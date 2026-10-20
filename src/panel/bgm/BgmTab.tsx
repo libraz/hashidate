@@ -288,7 +288,7 @@ export function BgmTab({ snapshot, refresh }: Props) {
         }
         note={[t('panel.bgm.note1'), t('panel.bgm.note2')]}
       >
-        <ChipRow>
+        <ChipRow list>
           {tracks.map((track) => (
             <Chip
               key={track.id}
