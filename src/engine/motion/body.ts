@@ -79,6 +79,18 @@ const DRIFT_WEIGHT: Record<ArmSlot, number> = {
  */
 const ARM_FOLLOW = 13;
 const FINGER_FOLLOW = 13;
+/**
+ * Each finger's share of `FINGER_FOLLOW`. A hand whose five fingers arrive
+ * together changes shape like a part being swapped; led by the index and
+ * trailed by the little finger, it closes and opens as a ripple.
+ */
+const FINGER_STAGGER: Record<FingerName, number> = {
+  thumb: 1.1,
+  index: 1.1,
+  middle: 1,
+  ring: 0.9,
+  little: 0.8,
+};
 
 /**
  * How fast the limb follows while a reach is carrying the wrist through the
@@ -1382,7 +1394,7 @@ export class Body {
         if (cv !== undefined && cSpread) cv = claspCurl(side !== cc?.lead, f, cv, cK);
         if (cv !== undefined) val += (cv - val) * fw;
         val += this._fingerLife.offset(side, f, val, this.t, idle, free);
-        spec[f] = this._fingerState[side][f].step(val, dt, FINGER_FOLLOW);
+        spec[f] = this._fingerState[side][f].step(val, dt, FINGER_FOLLOW * FINGER_STAGGER[f]);
 
         const cvSpread = cSpread ? (cSpread[f] ?? 0) * (1 - cK) : cfSpread?.[f];
         if (cvSpread !== undefined) spreadVal += (cvSpread - spreadVal) * fw;

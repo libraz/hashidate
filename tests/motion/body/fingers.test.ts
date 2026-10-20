@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SOFT_HAND } from '@/engine/motion/gestures/hands';
+import { FIST, OPEN_HAND, SOFT_HAND } from '@/engine/motion/gestures/hands';
 import type { FingerName, GestureDef } from '@/engine/types';
 import { DT, type Harness, harness } from './harness';
 
@@ -54,6 +54,26 @@ const swung = (fingers: Record<FingerName, number>, swing: number): GestureDef =
   },
 });
 
+/** A hand held forward with its palm turned toward `palm`, character space. */
+const held = (fingers: Record<FingerName, number>, palm?: THREE.Vector3): GestureDef => ({
+  label: { en: 'Hold', ja: '保持' },
+  group: 'pose',
+  lead: 0.3,
+  hold: 10,
+  sustain: true,
+  build: () => ({
+    fingers: { R: fingers },
+    arms: {
+      R: {
+        upperArm: V(0.3, -0.9, 0.3),
+        lowerArm: V(0.1, -0.2, 0.95),
+        hand: V(0.1, -0.2, 0.95),
+        palm,
+      },
+    },
+  }),
+});
+
 describe('finger life', () => {
   let h: Harness;
   beforeEach(() => {
@@ -81,17 +101,50 @@ describe('finger life', () => {
     expect(range(frozen.map((c) => c.index))).toBeLessThan(1e-3);
   });
 
-  it('trails a moving hand and settles back onto the authored shape', () => {
+  it('trails a moving hand and settles back onto the shape it holds still', () => {
     h.body.playDef(swung(SOFT_HAND, 1.5), 'pose', 'R');
     const seen = record(h);
     run(h, 90);
     const moving = seen.slice(30, 90).map((c) => c.middle);
     run(h, 180);
     expect(range(moving)).toBeGreaterThan(0.03);
+
+    vi.restoreAllMocks();
+    const still = harness();
+    still.body.playDef(swung(SOFT_HAND, 0), 'pose', 'R');
+    const ref = record(still);
+    run(still, 270);
     const last = seen[seen.length - 1];
+    const want = ref[ref.length - 1];
     for (const f of Object.keys(SOFT_HAND) as FingerName[]) {
-      expect(last[f]).toBeCloseTo(SOFT_HAND[f], 4);
+      expect(last[f]).toBeCloseTo(want[f], 4);
     }
+  });
+
+  it('lets a slack hand fall open palm up and close palm down', () => {
+    const settle = (palm: THREE.Vector3) => {
+      const k = harness();
+      k.body.playDef(held(SOFT_HAND, palm), 'pose', 'R');
+      const seen = record(k);
+      run(k, 150);
+      vi.restoreAllMocks();
+      return seen[seen.length - 1].middle;
+    };
+    expect(settle(V(0, 1, 0))).toBeLessThan(settle(V(0, -1, 0)) - 0.03);
+  });
+
+  it('closes a hand from the index to the little finger, not all at once', () => {
+    h.body.playDef(held(OPEN_HAND), 'pose', 'R');
+    run(h, 120);
+    const seen = record(h);
+    h.body.playDef(held(FIST), 'pose', 'R');
+    run(h, 90);
+    const progress = (c: Record<FingerName, number>, f: FingerName) =>
+      (c[f] - OPEN_HAND[f]) / (FIST[f] - OPEN_HAND[f]);
+    const lead = Math.max(...seen.map((c) => progress(c, 'index') - progress(c, 'little')));
+    expect(lead).toBeGreaterThan(0.05);
+    const last = seen[seen.length - 1];
+    expect(Math.abs(progress(last, 'index') - progress(last, 'little'))).toBeLessThan(0.02);
   });
 
   it('fans the fingers after a hand swung across the palm', () => {

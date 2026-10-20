@@ -15,7 +15,10 @@ import type { FingerName, Profile, Side } from '../types';
  * whichever side the hand left behind — a wave swings in the palm plane, and
  * would otherwise move nothing.
  *
- * Both scale with how slack the finger is. A finger held straight to point or
+ * Slack fingers also hang: a hand turned palm up lets them fall open a little,
+ * and palm down lets them fall in.
+ *
+ * All of it scales with how slack the finger is. A finger held straight to point or
  * closed into a fist is held there on purpose, and the pointing solver reads
  * its fingertip off that curl.
  */
@@ -42,6 +45,14 @@ const LAG_MAX = 0.15;
 const TELEPORT = 0.3;
 /** A frame this long is a tab coming back, not motion. */
 const STALE_DT = 0.1;
+/** Curl gravity takes off a slack hand turned fully palm up, or adds palm down. */
+const DROOP = 0.04;
+/**
+ * How far the palm may tip from vertical before gravity shows; tone holds the
+ * rest. A hand hanging at the side tips about 0.22 on the test rig, and that
+ * shape is tuned by eye.
+ */
+const DROOP_DEAD = 0.35;
 /** Splay per metre of sideways lag, radians. */
 const SPLAY_PER_METRE = 3.5;
 /** Most the sideways lag may splay a finger, radians. About eight degrees. */
@@ -84,6 +95,8 @@ interface HandMotion {
   x: number;
   /** The sideways lag this frame, in splay radians. */
   splay: number;
+  /** What gravity does to the curl this frame. */
+  droop: number;
 }
 
 const mkMotion = (): HandMotion => ({
@@ -92,11 +105,13 @@ const mkMotion = (): HandMotion => ({
   seeded: false,
   x: 0,
   splay: 0,
+  droop: 0,
 });
 
 const _pos = new THREE.Vector3();
 const _off = new THREE.Vector3();
 const _normal = new THREE.Vector3();
+const UP = new THREE.Vector3(0, 1, 0);
 const _lateral = new THREE.Vector3();
 const _base = new THREE.Vector3();
 const _q = new THREE.Quaternion();
@@ -138,6 +153,8 @@ export class FingerLife {
     _normal.copy(palm).applyQuaternion(_q).normalize();
     // Left on the palm side, the hand was thrown toward its back: the fingers
     // fold in after it.
+    const up = _normal.dot(UP);
+    m.droop = -DROOP * Math.sign(up) * Math.max(0, (Math.abs(up) - DROOP_DEAD) / (1 - DROOP_DEAD));
     _off.copy(m.point).sub(_pos);
     const lag = LAG_PER_METRE * _off.dot(_normal);
     m.x = LAG_MAX * Math.tanh(lag / LAG_MAX);
@@ -186,6 +203,7 @@ export class FingerLife {
     const ph = i * 0.7 + (side === 'L' ? 0 : 2.3);
     const drift =
       (DRIFT * idle * (Math.sin(t * 0.7 + ph) + 0.5 * Math.sin(t * 1.3 + 1.7 * ph))) / 1.5;
-    return s * (drift + this._motion[side].x * LAG_WEIGHT[f]);
+    const m = this._motion[side];
+    return s * (drift + m.droop + m.x * LAG_WEIGHT[f]);
   }
 }
