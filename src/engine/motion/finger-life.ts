@@ -21,14 +21,21 @@ const FINGERS: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'lit
 /** Curl the idle drift can add either way, at full slack. About five degrees at the knuckle. */
 const DRIFT = 0.05;
 
-/** Curl per m/s² of knuckle acceleration along the palm normal. A wave's ~2.5 m/s² gives 0.05. */
-const LAG_GAIN = 0.02;
-/** Most the lag may move a finger either way. */
+/**
+ * The lag is a point hung off the knuckle on a spring, read as how far it sits
+ * off the knuckle along the palm normal.
+ *
+ * Not a differentiated acceleration: the solved wrist jitters by millimetres a
+ * frame, and a second difference at 60 Hz multiplies that by 3600 — every
+ * gesture read as 7 g and pinned the fingers at their limit. A spring answers
+ * slow motion the same way (offset ≈ a/ω²) and passes jitter through at its
+ * own size.
+ */
+const LAG_PER_METRE = 9.7;
+/** Most the lag may move a finger either way; approached softly, never clipped. */
 const LAG_MAX = 0.15;
-/** Acceleration the lag reads at most; a hard swing saturates rather than flicking. */
-const ACCEL_MAX = 25;
-/** Beyond this the hand was moved rather than swung — a placement change, a reload. */
-const TELEPORT = 120;
+/** Further than this from its point and the hand was moved rather than swung — a placement change, a reload. */
+const TELEPORT = 0.3;
 /** A frame this long is a tab coming back, not motion. */
 const STALE_DT = 0.1;
 /** The fingers' own spring: about 3.5 Hz, a little under critical so a stop leaves a small follow-through. */
@@ -51,26 +58,24 @@ const slack = (v: number): number => {
 };
 
 interface HandMotion {
-  /** Knuckle position on the last two frames, world space. */
-  prev: THREE.Vector3;
-  prev2: THREE.Vector3;
-  /** How many frames of history are valid, up to 2. */
-  frames: number;
-  /** Spring state, in curl. */
+  /** The lagging point and its velocity, world space. */
+  point: THREE.Vector3;
+  vel: THREE.Vector3;
+  /** False until the point has been placed on the knuckle once. */
+  seeded: boolean;
+  /** The lag this frame, in curl. */
   x: number;
-  v: number;
 }
 
 const mkMotion = (): HandMotion => ({
-  prev: new THREE.Vector3(),
-  prev2: new THREE.Vector3(),
-  frames: 0,
+  point: new THREE.Vector3(),
+  vel: new THREE.Vector3(),
+  seeded: false,
   x: 0,
-  v: 0,
 });
 
 const _pos = new THREE.Vector3();
-const _acc = new THREE.Vector3();
+const _off = new THREE.Vector3();
 const _normal = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 
@@ -92,38 +97,28 @@ export class FingerLife {
     const knuckle = this.p.fingerBones[`middle.${side}`]?.[0];
     const palm = this.palmLocal[side];
     if (!(hand && knuckle && palm) || dt <= 0) return;
-    if (dt > STALE_DT) m.frames = 0;
 
     knuckle.updateWorldMatrix(true, false);
     knuckle.getWorldPosition(_pos);
-
-    let drive = 0;
-    if (m.frames >= 2) {
-      _acc
-        .copy(_pos)
-        .sub(m.prev)
-        .sub(m.prev)
-        .add(m.prev2)
-        .divideScalar(dt * dt);
-      const a = _acc.length();
-      if (a > TELEPORT) {
-        m.frames = 0;
-      } else {
-        if (a > ACCEL_MAX) _acc.multiplyScalar(ACCEL_MAX / a);
-        hand.getWorldQuaternion(_q);
-        _normal.copy(palm).applyQuaternion(_q).normalize();
-        // Thrown toward the palm, the fingers are left behind on the back side.
-        drive = -LAG_GAIN * _acc.dot(_normal);
-      }
+    if (!m.seeded || dt > STALE_DT || m.point.distanceTo(_pos) > TELEPORT) {
+      m.point.copy(_pos);
+      m.vel.set(0, 0, 0);
+      m.seeded = true;
     }
-    m.prev2.copy(m.prev);
-    m.prev.copy(_pos);
-    m.frames = Math.min(2, m.frames + 1);
 
     // Implicit damped spring, stable at any frame length.
     const w2 = LAG_OMEGA * LAG_OMEGA;
-    m.v = (m.v + w2 * dt * (drive - m.x)) / (1 + 2 * LAG_ZETA * LAG_OMEGA * dt + w2 * dt * dt);
-    m.x = THREE.MathUtils.clamp(m.x + m.v * dt, -LAG_MAX, LAG_MAX);
+    m.vel
+      .addScaledVector(_off.copy(_pos).sub(m.point), w2 * dt)
+      .divideScalar(1 + 2 * LAG_ZETA * LAG_OMEGA * dt + w2 * dt * dt);
+    m.point.addScaledVector(m.vel, dt);
+
+    hand.getWorldQuaternion(_q);
+    _normal.copy(palm).applyQuaternion(_q).normalize();
+    // Left on the palm side, the hand was thrown toward its back: the fingers
+    // fold in after it.
+    const lag = LAG_PER_METRE * _off.copy(m.point).sub(_pos).dot(_normal);
+    m.x = LAG_MAX * Math.tanh(lag / LAG_MAX);
   }
 
   /**
