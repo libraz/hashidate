@@ -50,8 +50,15 @@
   background: var(--fg-faint);
   border-radius: 99px;
   transition:
-    transform var(--dur) var(--ease),
+    transform var(--dur-move) var(--ease-glide),
+    width var(--dur) var(--ease),
     background var(--dur) var(--ease);
+}
+
+/* Held down, the knob stretches toward where it is about to go, and the far
+   edge stays put on the checked side so it reads as leaning, not sliding. */
+.row:active .knob {
+  width: 13px;
 }
 
 .input:checked + .switch {
@@ -64,7 +71,11 @@
   background: var(--accent);
 }
 
+.row:active .input:checked + .switch .knob {
+  transform: translateX(9px);
+}
+
 .input:focus-visible + .switch {
-  outline: 1px solid var(--accent);
-  outline-offset: 1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }

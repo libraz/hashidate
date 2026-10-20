@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import { LOCALES, useLocale, useT } from '@/i18n';
 import styles from './LocaleSwitch.module.css';
 
@@ -19,7 +20,14 @@ export function LocaleSwitch() {
   const { t } = useT();
 
   return (
-    <fieldset className={styles.track} aria-label={t('locale.label')}>
+    <fieldset
+      className={styles.track}
+      style={
+        { '--count': LOCALES.length, '--at': Math.max(LOCALES.indexOf(locale), 0) } as CSSProperties
+      }
+      aria-label={t('locale.label')}
+    >
+      <span className={styles.selection} aria-hidden="true" />
       {LOCALES.map((option) => (
         <button
           key={option}

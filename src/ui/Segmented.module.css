@@ -9,16 +9,42 @@
  */
 
 .track {
+  --pad: 2px;
+  --gap: 2px;
+  position: relative;
   display: flex;
   width: 100%;
-  padding: 2px;
-  gap: 2px;
+  padding: var(--pad);
+  gap: var(--gap);
   background: var(--surface-sunken);
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-md);
 }
 
+/*
+ * The selection, drawn once under the track and moved rather than repainted on
+ * each segment, so a change of framing shows where it came from the way a
+ * hardware switcher's lit key does. One segment's width, stepped by the index.
+ */
+.selection {
+  position: absolute;
+  top: var(--pad);
+  bottom: var(--pad);
+  left: var(--pad);
+  width: calc((100% - 2 * var(--pad) - (var(--count) - 1) * var(--gap)) / var(--count));
+  background: var(--accent-tint);
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-sm);
+  opacity: var(--lit);
+  transform: translateX(calc(var(--at) * (100% + var(--gap))));
+  transition:
+    transform var(--dur-move) var(--ease-glide),
+    opacity var(--dur) var(--ease);
+  pointer-events: none;
+}
+
 .segment {
+  position: relative;
   flex: 1 1 0;
   /* Without this a long label pushes its own segment wider than its siblings,
      which is the whole thing `flex: 1 1 0` is here to prevent. */
@@ -48,9 +74,9 @@
   background: var(--surface-hover);
 }
 
+/* The plate underneath carries the fill and the border; the segment only takes
+   its ink, and none of the hover fill, which would sit over the plate. */
 .segment.on {
-  background: var(--accent-tint);
-  border-color: var(--accent-edge);
   color: var(--accent);
   font-weight: 500;
 }

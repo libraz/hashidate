@@ -49,6 +49,7 @@
  * one keystroke away rather than always on screen.
  */
 .info {
+  position: relative;
   flex: 0 0 auto;
   width: 16px;
   height: 16px;
@@ -66,7 +67,16 @@
   cursor: pointer;
   transition:
     color var(--dur) var(--ease),
+    background var(--dur) var(--ease),
     border-color var(--dur) var(--ease);
+}
+
+/* A 16px mark with a 28px target. Grown less to the sides, where the section's
+   action sits one gap away. */
+.info::before {
+  content: "";
+  position: absolute;
+  inset: -6px -3px;
 }
 
 .info:hover,
@@ -75,13 +85,25 @@
   border-color: var(--accent-edge);
 }
 
+.info.open {
+  background: var(--accent-tint);
+}
+
 .body {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
 }
 
+/* Unfolds from the title row's edge rather than appearing below it, so the
+   sections under it are pushed down instead of jumping. */
 .note {
+  overflow: hidden;
+  transition:
+    height var(--dur-enter) var(--ease-glide),
+    opacity var(--dur-enter) var(--ease),
+    margin-top var(--dur-enter) var(--ease-glide),
+    padding-block var(--dur-enter) var(--ease-glide);
   margin-top: var(--space-4);
   padding: var(--space-4) var(--space-5);
   background: var(--surface-sunken);
@@ -90,6 +112,15 @@
   font-size: var(--text-xs);
   line-height: 1.7;
   color: var(--fg-dim);
+}
+
+@starting-style {
+  .note {
+    height: 0;
+    opacity: 0;
+    margin-top: 0;
+    padding-block: 0;
+  }
 }
 
 .note p {

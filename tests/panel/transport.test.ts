@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EMPTY } from '@/panel/hooks';
-import { transport } from '@/panel/Panel';
+import { canHold, transport } from '@/panel/transport';
 import type { QueueEntry, Snapshot } from '@/protocol';
 
 /**
@@ -60,5 +60,26 @@ describe('the transport buttons', () => {
         drop: on.pending,
       });
     }
+  });
+});
+
+describe('the hold', () => {
+  const held = (pending: boolean, speech: Snapshot['speech']): Snapshot => ({
+    ...snapshot({ pending, paused: true }),
+    speech,
+  });
+
+  it('can always be thrown on', () => {
+    for (const speech of ['absent', 'ready', 'loading', 'down'] as const) {
+      expect(canHold({ ...snapshot({}), speech }), speech).toBe(true);
+    }
+  });
+
+  it('can be released only with lines to release and a voice to say them', () => {
+    expect(canHold(held(true, 'ready'))).toBe(true);
+    expect(canHold(held(true, 'absent'))).toBe(true);
+    expect(canHold(held(false, 'ready'))).toBe(false);
+    expect(canHold(held(true, 'loading'))).toBe(false);
+    expect(canHold(held(true, 'down'))).toBe(false);
   });
 });

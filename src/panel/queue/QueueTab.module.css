@@ -145,6 +145,7 @@
 }
 
 .summaryActions button {
+  position: relative;
   height: 22px;
   padding: 0 var(--space-3);
   background: transparent;
@@ -153,6 +154,14 @@
   color: var(--fg-dim);
   font-size: var(--text-xs);
   cursor: pointer;
+}
+
+/* Drawn 22px tall, taken 28px tall: the pointer target grows up and down only,
+   so it never takes a neighbour's clicks across the gap beside it. */
+.summaryActions button::before {
+  content: "";
+  position: absolute;
+  inset: -3px 0;
 }
 
 .summaryActions button:hover:not(:disabled) {

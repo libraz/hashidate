@@ -14,6 +14,8 @@ import {
 } from '../api';
 import { checkQueue, type LineCheck } from '../lint';
 import { ScriptPicker } from '../script/ScriptPicker';
+import { KEYS, withKey } from '../shortcuts';
+import { canHold } from '../transport';
 import { History } from './History';
 import { type LineDraft, LineEditor } from './LineEditor';
 import { clock, QueueRow } from './QueueRow';
@@ -146,7 +148,7 @@ export function QueueTab({ snapshot, refresh }: Props) {
         speaking={snapshot.state.speaking ?? false}
         paused={snapshot.paused}
         speech={snapshot.speech}
-        pending={entries.length}
+        holdable={canHold(snapshot)}
         onToggleHold={() => void run(setPaused(!snapshot.paused))}
       />
 
@@ -268,14 +270,14 @@ function OnAir({
   speaking,
   paused,
   speech,
-  pending,
+  holdable,
   onToggleHold,
 }: {
   running: string | null;
   speaking: boolean;
   paused: boolean;
   speech: Snapshot['speech'];
-  pending: number;
+  holdable: boolean;
   onToggleHold: () => void;
 }) {
   const { t } = useT();
@@ -302,13 +304,17 @@ function OnAir({
       <button
         type="button"
         className={`${styles.hold} ${paused ? styles.armed : ''}`}
-        disabled={(paused && pending === 0) || noVoice}
+        disabled={!holdable}
         onClick={onToggleHold}
         title={
           noVoice
             ? t(speech === 'loading' ? 'panel.speech.loading' : 'panel.speech.down')
-            : t(paused ? 'panel.queue.play.title' : 'panel.queue.hold.title')
+            : withKey(
+                t(paused ? 'panel.queue.play.title' : 'panel.queue.hold.title'),
+                KEYS.hold.shown,
+              )
         }
+        aria-keyshortcuts={KEYS.hold.aria}
       >
         {t(paused ? 'panel.queue.play' : 'panel.queue.hold')}
       </button>

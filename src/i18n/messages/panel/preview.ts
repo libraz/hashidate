@@ -15,6 +15,11 @@ export const previewEn = {
   'panel.preview.hideTitle': 'Stop the preview and give the GPU back',
   'panel.preview.showTitle': 'Show the preview',
   'panel.preview.frameTitle': 'Avatar preview',
+  'panel.preview.empty.offline': 'Waiting for the control server',
+  'panel.preview.empty.noAvatar':
+    'No avatar here yet. Put a descriptor in avatars/ and its model in public/models/.',
+  'panel.preview.empty.loading': 'Loading the avatar…',
+  'panel.preview.empty.failed': 'The avatar did not load: {error}',
   'panel.preview.stopped':
     'Preview stopped. No second WebGL context is open, so the renderer going to air has more to work with.',
   'panel.preview.blocked':
@@ -49,6 +54,11 @@ export const previewJa: Record<keyof typeof previewEn, string> = {
   'panel.preview.hideTitle': 'プレビューを止めて GPU を返す',
   'panel.preview.showTitle': 'プレビューを表示する',
   'panel.preview.frameTitle': 'アバターのプレビュー',
+  'panel.preview.empty.offline': '制御サーバーの応答待ち',
+  'panel.preview.empty.noAvatar':
+    'アバターがまだありません。avatars/ に記述子を、public/models/ にモデルを置いてください。',
+  'panel.preview.empty.loading': 'アバターを読み込み中…',
+  'panel.preview.empty.failed': 'アバターを読み込めませんでした：{error}',
   'panel.preview.stopped':
     'プレビュー停止中。二つ目の WebGL コンテキストを開かないので、配信側の描画が軽くなります。',
   'panel.preview.blocked':

@@ -1,17 +1,18 @@
 /*
- * The preview column.
+ * The stage: picture, words, staging, in one column.
  *
- * Sticky, because the whole point is watching the character while scrolling a
- * queue — a picture that scrolls away is a picture that is only looked at when
- * nothing is happening.
+ * The column is sized off the window's height as well as the pane's width, so
+ * on a short window the picture gives up width before the staging controls are
+ * pushed below the fold — those are pressed by feel while watching the picture,
+ * and a control that has to be scrolled to is not pressed by feel.
  */
 
 .preview {
-  position: sticky;
-  top: 0;
+  width: min(100%, max(480px, calc((100dvh - 400px) * 16 / 9)));
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 
 .head {
@@ -25,12 +26,15 @@
      right edge rather than spreading out as more of them are added. */
   margin-right: auto;
   font-size: var(--text-xs);
-  color: var(--fg-dim);
-  letter-spacing: 0.04em;
+  font-weight: 500;
+  color: var(--fg-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .toggle {
-  height: 20px;
+  position: relative;
+  height: 22px;
   padding: 0 var(--space-3);
   background: transparent;
   border: 1px solid var(--line);
@@ -38,6 +42,14 @@
   color: var(--fg-faint);
   font-size: var(--text-xs);
   cursor: pointer;
+}
+
+/* Drawn 22px tall, taken 28px tall: the pointer target grows up and down only,
+   so it never takes a neighbour's clicks across the gap beside it. */
+.toggle::before {
+  content: "";
+  position: absolute;
+  inset: -3px 0;
 }
 
 .toggle:hover:not(:disabled) {
@@ -73,10 +85,13 @@
   position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
-  background: var(--bg);
-  border: 1px solid var(--line-soft);
+  background: #07080a;
+  border: 1px solid var(--line);
   border-radius: var(--radius-md);
   overflow: hidden;
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 0.02),
+    0 12px 32px rgb(0 0 0 / 0.35);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -87,7 +102,7 @@
  * judged, which is the one thing a monitor must not do.
  */
 .live {
-  border-color: color-mix(in srgb, var(--live) 45%, var(--line));
+  border-color: color-mix(in srgb, var(--live) 55%, var(--line));
 }
 
 /*
@@ -113,6 +128,37 @@
 
 .canvas:active {
   cursor: grabbing;
+}
+
+/*
+ * Why the frame is empty, over the frame itself. It does not take the pointer:
+ * the picture under it is still the camera control the moment a model loads.
+ */
+.empty {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-7);
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  line-height: 1.8;
+  text-align: center;
+  pointer-events: none;
+  animation: settle var(--dur-enter) var(--ease);
+}
+
+@keyframes settle {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .empty {
+    animation: none;
+  }
 }
 
 .off {
@@ -144,18 +190,45 @@
 
 /*
  * The four controls chosen by looking at the picture: who, how framed, in front
- * of what, and whether they are moving between lines. Stacked rather than in a
- * row — every one of them is a segmented track that wants the full width, and
- * two of them side by side would each be narrower than their own labels.
+ * of what, and whether they are moving between lines.
  *
- * Each carries the same left label column as the tabs beside it, so the two
- * halves of the page share one axis rather than being two layouts that happen
- * to be adjacent.
+ * A grid that puts two tracks side by side once each can be wider than its
+ * longest label set, and stacks them when it cannot. The name sits over each
+ * track, small, so the eye goes to the segments rather than to the words.
  */
 .staging {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--space-5) var(--space-6);
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-lg);
+}
+
+.cell {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  min-width: 0;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.cellLabel {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--fg-faint);
+}
+
+/* The autopilot switch closes the block on its own row, under a hairline, so
+   it reads as a state of the character rather than as a fifth picker. */
+.idle {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line-soft);
 }
 
 /* The framing and the way back to it, on one line: the second is only ever
@@ -196,19 +269,4 @@
 .reset:disabled {
   color: var(--fg-faint);
   cursor: default;
-}
-
-/*
- * Stacked, the picture is above the controls rather than beside them, and
- * sticking it to the top would hold half a short viewport for a monitor while
- * the queue it exists to serve is squeezed into the rest.
- *
- * The rule lives here rather than in the parent because turning it off from
- * outside is a specificity tie with the rule above, and which of the two wins
- * would depend on the order the bundler happened to emit two files in.
- */
-@media (max-width: 1100px) {
-  .preview {
-    position: static;
-  }
 }

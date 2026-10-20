@@ -6,9 +6,9 @@ There are three pages. The difference between them is not what they can do but w
 
 Where a broadcast is run. It holds no renderer and no `AudioContext`: every control goes out through the control API, which means a control that works there is a control a language model can drive.
 
-Nine tabs — Queue (which script is loaded, the pending lines, the history, and rewinding into it), Recording (writing a take to a file), Perform, Voice, BGM, Slides, Dress, Tune, Inspect — with the avatar, the framing, the set and the idle switch under a preview, because those four are chosen by looking at the picture. The BGM tab lists `show/bgm/`, controls its transport and level, and keeps its libsonare effects separate from the spoken voice.
+A status bar runs across the top: whether a line is on air or the queue is held, how many lines are waiting and how long they will take, a record light with the take's running time, and the two buttons that end a run. Under it are three panes. The rail on the left holds nine tabs, split into the six touched during a broadcast and the three set before one — Queue (which script is loaded, the pending lines, the history, and rewinding into it), Recording (writing a take to a file), Perform, Voice, BGM, Slides, Dress, Tune, Inspect — and a tab whose subject is running shows it on the rail: the waiting count on Queue, a lamp on Recording and BGM, the page on Slides. The middle pane is the preview, with the avatar, the framing, the set and the idle switch under it, because those four are chosen by looking at the picture. The right pane shows whichever tab is picked. The BGM tab lists `show/bgm/`, controls its transport and level, and keeps its libsonare effects separate from the spoken voice.
 
-Under the picture is the line being said, in words. It is there rather than in the Queue tab because it belongs to every tab: a segment is spent turning pages in Slides, and the answer to "what is it saying right now" has to be in the same place all evening. It is three lines tall whatever is in it, so the controls under it do not move when a turn starts.
+Under the picture is the line being said, in words. It is there rather than in the Queue tab because it belongs to every tab: a segment is spent turning pages in Slides, and the answer to "what is it saying right now" has to be in the same place all evening. It is two lines tall whatever is in it, so the controls under it do not move when a turn starts.
 
 The preview *is* the camera control: drag to swing round the character, wheel to come in. The embedded viewer reads its own camera back and hands it up to the panel, which sends the ordinary `camera` command an orchestrator could have sent, so the renderer on air swings with it and nothing about the shot lives in one page rather than the other.
 
@@ -16,7 +16,11 @@ The preview is always silent. It is a second renderer of the same commands, and 
 
 That silence is also what decides which page records. A take is what the room heard, so the renderer that is not muted is the one that writes it — see [Recording](recording.md).
 
-Above the tabs is the one address OBS needs, composed rather than typed: size, set, document, where the character stands in the frame, and whether the background is transparent. What comes out is a `/?size=…` URL to paste into a browser source. None of it is application state — OBS owns that setting the moment it is pasted there.
+Behind the **OBS source** button in the bar is the one address OBS needs, composed rather than typed: size, set, document, where the character stands in the frame, and whether the background is transparent. What comes out is a `/?size=…` URL to paste into a browser source. None of it is application state — OBS owns that setting the moment it is pasted there.
+
+Three things can be done from the keyboard without looking away from the picture: **Shift+Esc** stops, **Shift+Space** holds or releases the queue, and **1**–**9** pick a tab in the rail's order. None of them fire while a text field has focus, while an input method is still converting, or when the key is held down. A bare Esc does not stop, because it is pressed by habit to close a popover or abandon an edit.
+
+If the control server stops answering, the tally reads **Offline** with a dashed lamp, and the figures beside it are struck through because they are the last ones received. With the server up but no renderer attached it reads **No renderer** instead: the queue is real and waits on the server, and it starts playing the moment a renderer attaches unless it is held.
 
 Queue additions and edits keep the draft open if saving fails, with the error shown beside the form. Correct the draft or restore the connection, then save again. If the line being edited goes on air or is dropped meanwhile, the draft stays open with a notice and saves as a new line at the end. Cancelling a drag leaves the queue order unchanged.
 
@@ -44,7 +48,7 @@ Everything a source is configured *as* rides on the address, because a browser s
 
 Anything unparseable degrades rather than failing: an unknown set is the flat background, a bad `place` is the full frame, an oversized `size` fills the window. A renderer has nowhere to report an error to, because the URL was typed into a field inside OBS, so a typo has to leave something that still streams.
 
-Three of these are the panel's business too: the address above the tabs is composed from `size`, `backdrop`, `deck`, `place` and `transparent`, which is why the panel is where a browser source gets set up rather than a document to copy from.
+Three of these are the panel's business too: the address behind the bar's OBS source button is composed from `size`, `backdrop`, `deck`, `place` and `transparent`, which is why the panel is where a browser source gets set up rather than a document to copy from.
 
 `/monitor/` passes its own query string straight through to the viewer it holds, so all of these work there as well.
 

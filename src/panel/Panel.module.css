@@ -1,58 +1,78 @@
 /*
- * The panel frame.
+ * The panel frame: a status bar over three panes.
  *
- * A fixed header and tab strip over a scrolling body, so the transport bar is in
- * the same place whatever is below it and whichever tab is up. The two tabs are
- * very different heights and a frame that resized around the switch would move
- * the stop button — which is the one control that has to be reachable without
- * looking.
+ * Rail, stage, inspector. The rail and the inspector are fixed widths and the
+ * stage takes the slack, because a queue row is a sentence and stops improving
+ * at about 600 px while a face keeps improving all the way up. Each pane
+ * scrolls on its own and the bar never moves, so the stop button is in the same
+ * place every time it is reached for.
  *
- * Comfortably wider than the viewer's console. That panel is 384 px because it
- * sits beside a render and must not steal from it; this page has the window to
- * itself and holds lines of dialogue, which need the measure.
+ * Three depths of surface do the separating that borders would otherwise have
+ * to: the stage is the darkest, a viewing room the picture sits in; the rail
+ * and the inspector are the panel's material; the bar is the same material
+ * with a rule under it.
  */
 
 .panel {
+  --bar-height: 52px;
+  --rail-width: 136px;
+  --inspector-width: clamp(440px, 34vw, 600px);
+
   display: flex;
   flex-direction: column;
   height: 100%;
-  /*
-   * Room for a monitor column beside the controls.
-   *
-   * The controls stay near the measure they were designed for — they hold lines
-   * of dialogue and do not get more legible for being wider — so every pixel
-   * past that goes to the picture, which does. Wide, because this page lives on
-   * a second display for the length of a broadcast and there is nothing else
-   * competing for the room.
-   */
-  max-width: 1600px;
-  margin: 0 auto;
-  border-left: 1px solid var(--line-soft);
-  border-right: 1px solid var(--line-soft);
   background: var(--surface);
 }
 
-/* --- header --------------------------------------------------------------- */
+/* --- bar ------------------------------------------------------------------ */
 
-.header {
-  flex: 0 0 auto;
+.bar {
+  flex: 0 0 var(--bar-height);
   display: flex;
   align-items: center;
-  gap: var(--space-5);
-  padding: var(--space-4) var(--space-5);
+  gap: var(--space-6);
+  padding: 0 var(--space-5) 0 var(--space-6);
   border-bottom: 1px solid var(--line);
+  background: var(--surface);
 }
 
 .identity {
   display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  /* The rail's width less the bar's own left padding, so the tally starts over
+     the stage's left edge rather than wherever the title happened to end. */
+  flex: 0 0 calc(var(--rail-width) - var(--space-6));
+}
+
+/*
+ * The mark: a diamond in the selection colour. The only ornament on the page,
+ * and small enough to be one.
+ */
+.mark {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--accent);
+  border-radius: 1.5px;
+  transform: rotate(45deg);
+}
+
+.names {
+  display: flex;
   flex-direction: column;
   min-width: 0;
+  line-height: 1.35;
 }
 
 .title {
   font-size: var(--text-md);
-  font-weight: 500;
+  font-weight: 600;
   color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .avatar {
@@ -63,34 +83,157 @@
   text-overflow: ellipsis;
 }
 
-.link {
+/*
+ * The tally.
+ *
+ * Lit `--live` while a line is on air and nothing else is allowed that colour on
+ * the bar, which is what makes it readable from across a room. Held is drawn
+ * as a hollow lamp in plain ink rather than in a warning colour, because a held
+ * queue is a choice the operator made, not a fault.
+ */
+.tally {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-xs);
-  color: var(--fg-faint);
+  gap: var(--space-4);
+  height: 32px;
+  padding: 0 var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: var(--surface-sunken);
+  white-space: nowrap;
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
 }
 
-.dot {
-  width: 6px;
-  height: 6px;
+.tallyLamp {
+  width: 8px;
+  height: 8px;
   border-radius: 99px;
   background: var(--fg-faint);
+  transition:
+    background var(--dur) var(--ease),
+    box-shadow var(--dur-move) var(--ease);
 }
 
-.online {
+/* The state name is keyed on the state, so a change of word arrives rather
+   than being swapped in place under a lamp that has just changed colour. */
+.tallyState {
+  animation: arrive var(--dur-enter) var(--ease-glide);
+}
+
+.tallyState {
+  min-width: 3.5em;
+  font-size: var(--text-md);
+  font-weight: 600;
   color: var(--fg-dim);
 }
 
-.online .dot {
-  background: var(--ok);
+.tallyRule {
+  width: 1px;
+  height: 14px;
+  background: var(--line);
+}
+
+/* A size up from the other mono readouts and in the dimmer ink rather than the
+   faintest: these two figures are what is read off the bar from across a room. */
+.tallyFigure {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+}
+
+.live {
+  border-color: color-mix(in srgb, var(--live) 50%, var(--line));
+  background: var(--live-tint);
+}
+
+.live .tallyLamp {
+  background: var(--live);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 22%, transparent);
+  animation: ignite 420ms var(--ease) 1;
+}
+
+/*
+ * One flare as the tally goes live, and then a steady lamp. A lamp that kept
+ * pulsing through a segment would be the one moving thing in the operator's
+ * peripheral vision for its whole length.
+ */
+@keyframes ignite {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--live) 60%, transparent);
+  }
+  40% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--live) 30%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 22%, transparent);
+  }
+}
+
+@keyframes arrive {
+  from {
+    opacity: 0;
+    translate: 0 2px;
+  }
+}
+
+.live .tallyState {
+  color: var(--live);
+}
+
+.live .tallyFigure {
+  color: var(--fg);
+}
+
+.held .tallyLamp {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--fg-dim);
+}
+
+.held .tallyState {
+  color: var(--fg);
+}
+
+/*
+ * The control server is gone. A broken lamp — dashed, unlit — rather than a
+ * colour: `--bad` belongs to measurement and the record light, and the banner
+ * under the bar already says what failed. The figures are the last snapshot's,
+ * so they are struck back to the faintest ink.
+ */
+.offline {
+  border-style: dashed;
+}
+
+.offline .tallyLamp {
+  background: transparent;
+  box-shadow: none;
+  outline: 1.5px dashed var(--fg-faint);
+  outline-offset: -1.5px;
+}
+
+.offline .tallyFigure {
+  color: var(--fg-faint);
+  text-decoration: line-through;
+}
+
+/* No renderer: the same broken lamp, on a whole border, and the figures stand —
+   the queue is real and will play the moment a renderer attaches. */
+.unattached .tallyLamp {
+  background: transparent;
+  outline: 1.5px dashed var(--fg-dim);
+  outline-offset: -1.5px;
+}
+
+.unattached .tallyState {
+  color: var(--fg);
 }
 
 /*
  * A take is being written.
  *
  * Deliberately not `--live`, which the token file reserves for the character
- * speaking: those two are true at different times and the header is read at a
+ * speaking: those two are true at different times and the bar is read at a
  * glance from across a room, so a second thing in the same colour would make
  * both unreadable. The record light is its own mark, and it is only ever on the
  * page while bytes are actually landing on disk.
@@ -98,44 +241,137 @@
 .taking {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-3);
-  height: var(--control-height);
-  border: 1px solid var(--bad);
-  border-radius: var(--radius-sm);
+  gap: var(--space-3);
+  height: 32px;
+  padding: 0 var(--space-5);
+  border: 1px solid color-mix(in srgb, var(--bad) 60%, var(--line));
+  border-radius: 99px;
   background: color-mix(in srgb, var(--bad) 12%, var(--surface-raised));
   color: var(--bad);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    width var(--dur-enter) var(--ease-glide),
+    padding-inline var(--dur-enter) var(--ease-glide),
+    opacity var(--dur-enter) var(--ease);
+}
+
+/* Opens out of nothing, so the connection readout beside it is eased along
+   rather than shoved across the bar the moment a take starts. */
+@starting-style {
+  .taking {
+    width: 0;
+    padding-inline: 0;
+    opacity: 0;
+  }
 }
 
 .takingDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+  background: var(--bad);
+  animation: blink 1.6s steps(1, end) infinite;
+}
+
+.takingClock {
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .takingDot,
+  .tallyState,
+  .live .tallyLamp,
+  .inspectorBody {
+    animation: none;
+  }
+}
+
+.link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+.dot {
   width: 6px;
   height: 6px;
   border-radius: 99px;
-  background: var(--bad);
+  background: var(--ok);
 }
 
-/* --- transport ------------------------------------------------------------ */
+/* --- tools and transport ------------------------------------------------- */
 
-/*
- * Everything the operator reaches for, held against the edge they reach from.
- *
- * The language switch used to sit next to the link readout, which put a control
- * nobody touches twice a session in the middle of a row of things that are only
- * read, and left the two buttons that matter alone across a metre of nothing.
- * Grouped here they read as one cluster, and the rule keeps the setting from
- * reading as part of the transport.
- */
 .tools {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: var(--space-5);
+  gap: var(--space-4);
+}
+
+.tool {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--control-height);
+  padding: 0 var(--space-4);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.tool:hover {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
+/* Drawn the way `Select` draws its own, so the two disclosures on the page
+   point the same way with the same weight. */
+.chevron {
+  width: 5px;
+  height: 5px;
+  border-right: 1px solid currentcolor;
+  border-bottom: 1px solid currentcolor;
+  transform: translateY(-2px) rotate(45deg);
+  opacity: 0.7;
+  transition: transform var(--dur-move) var(--ease-glide);
+}
+
+/* The source popover is the bar's next sibling, so whether it is open can be
+   read here without the button keeping its own copy of that state. */
+.bar:has(+ :popover-open) .tool {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
+.bar:has(+ :popover-open) .chevron {
+  transform: translateY(1px) rotate(-135deg);
 }
 
 .divider {
   width: 1px;
-  height: 16px;
+  height: 20px;
   background: var(--line);
 }
 
@@ -146,15 +382,25 @@
 
 .clear,
 .stop {
-  height: var(--control-height);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 32px;
   padding: 0 var(--space-5);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   font-size: var(--text-sm);
+  white-space: nowrap;
   cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
 }
 
+/* Raised while there is something to drop and flat when there is not, the way
+   a key on a desk is lit or dark: the ink alone was too close to tell apart. */
 .clear {
-  background: transparent;
+  background: var(--surface-raised);
   border: 1px solid var(--line);
   color: var(--fg-dim);
 }
@@ -169,33 +415,52 @@
  *
  * Outlined while nothing is being said and filled while something is: it is the
  * same button either way, but the moment it has an effect is the moment it
- * should look like it does. Full border plus tint, never a stripe.
+ * should look like it does.
  */
 .stop {
+  min-width: 88px;
+  justify-content: center;
   background: transparent;
-  border: 1px solid color-mix(in srgb, var(--live) 30%, var(--line));
-  color: color-mix(in srgb, var(--live) 70%, var(--fg-dim));
-  font-weight: 500;
+  border: 1px solid color-mix(in srgb, var(--live) 40%, var(--line));
+  color: color-mix(in srgb, var(--live) 80%, var(--fg-dim));
+  font-weight: 600;
 }
 
 .stop:hover:not(:disabled) {
   border-color: var(--live);
   color: var(--live);
+  background: var(--live-tint);
 }
 
+.stopGlyph {
+  width: 8px;
+  height: 8px;
+  border-radius: 1.5px;
+  background: currentcolor;
+}
+
+/*
+ * Disabled, both keep their outline and their place at full opacity, in the
+ * faintest ink. The stop is reached for by position without looking, so it has
+ * to stay findable when there is nothing to stop — a button faded to a third
+ * reads as gone.
+ */
 .clear:disabled,
 .stop:disabled {
-  opacity: 0.35;
+  background: transparent;
+  border-color: var(--line);
+  color: var(--fg-faint);
   cursor: default;
 }
 
-.armed {
-  background: var(--live-tint);
-  border-color: color-mix(in srgb, var(--live) 55%, var(--line));
-  color: var(--live);
+.armed,
+.armed:hover:not(:disabled) {
+  background: var(--live);
+  border-color: var(--live);
+  color: #1a0904;
 }
 
-/* --- error banner --------------------------------------------------------- */
+/* --- banners -------------------------------------------------------------- */
 
 /*
  * Square, so the one-sided accent edge is legitimate: a rule down a rounded
@@ -204,8 +469,9 @@
  */
 .error {
   flex: 0 0 auto;
-  padding: var(--space-3) var(--space-5);
+  padding: var(--space-3) var(--space-6);
   border-left: 2px solid var(--bad);
+  border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--bad) 10%, var(--surface-raised));
   color: var(--bad);
   font-size: var(--text-sm);
@@ -218,89 +484,133 @@
  */
 .notice {
   flex: 0 0 auto;
-  padding: var(--space-3) var(--space-5);
+  padding: var(--space-3) var(--space-6);
   border-left: 2px solid var(--warn);
+  border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--warn) 10%, var(--surface-raised));
   color: var(--warn);
   font-size: var(--text-sm);
 }
 
-/* --- tabs and body -------------------------------------------------------- */
-
-.tabs {
-  flex: 0 0 auto;
-  padding: var(--space-4) var(--space-5) 0;
+/* Both banners unfold from the bar rather than appearing under it, so the
+   panes below are lowered instead of jumping. */
+.error,
+.notice {
+  overflow: hidden;
+  transition:
+    height var(--dur-enter) var(--ease-glide),
+    padding-block var(--dur-enter) var(--ease-glide),
+    opacity var(--dur-enter) var(--ease);
 }
 
-/*
- * Monitor beside controls, both inside one scroll region.
- *
- * One region and not two, so there is a single scrollbar and the operator never
- * has to work out which pane the wheel is over. The picture stays put anyway,
- * because it is `position: sticky` inside its column.
- */
-.body {
+@starting-style {
+  .error,
+  .notice {
+    height: 0;
+    padding-block: 0;
+    opacity: 0;
+  }
+}
+
+/* --- workspace ------------------------------------------------------------ */
+
+.workspace {
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
   display: grid;
-  /*
-   * The picture takes the slack and the controls are capped.
-   *
-   * That is the way round it has to be for a panel whose whole purpose is
-   * watching while operating: a queue row is a sentence and stops improving at
-   * about 640 px, while a face keeps improving all the way up.
-   */
-  grid-template-columns: minmax(360px, 1fr) minmax(0, 640px);
-  gap: var(--space-6);
-  align-items: start;
-  /*
-   * Both, and they are not the same thing.
-   *
-   * `align-items` places an item inside its row; `align-content` decides how
-   * tall the rows are when the grid has height to spare — and its default,
-   * `stretch`, hands the leftover out to every auto row. Stacked on a narrow
-   * window that put a couple of hundred pixels of nothing between the picture
-   * and the queue, with both items dutifully sitting at the top of rows far
-   * taller than they were.
-   */
-  align-content: start;
-  padding: var(--space-4) var(--space-5) var(--space-8);
+  grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--inspector-width);
+  grid-template-areas: "nav stage inspector";
 }
 
-.monitor {
-  min-width: 0;
+.nav {
+  grid-area: nav;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-3);
+  border-right: 1px solid var(--line-soft);
 }
 
-.controls {
+.stage {
+  grid-area: stage;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-6) var(--space-8);
+  background: var(--bg);
+}
+
+.inspector {
+  grid-area: inspector;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--line-soft);
 }
 
 /*
- * Below this the two columns would both be too narrow to be worth having: the
- * queue rows hold sentences and the preview stops showing a face. So they stack,
- * with the picture on top.
- *
- * The column is capped rather than the item inside it. Capping the item leaves
- * the row sized against the full width it *could* have had — the preview's
- * 16:9 box resolves against the column, not against the element — and the queue
- * ends up pushed down by a couple of hundred pixels of nothing.
+ * The name of what the inspector is showing, held at the top while the body
+ * scrolls under it. A long fader list otherwise scrolls its own title away
+ * and leaves a column of sliders that could belong to any tab.
  */
-@media (max-width: 1100px) {
-  .body {
-    grid-template-columns: minmax(0, 1fr);
+.inspectorHead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6) var(--space-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.inspectorTitle {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* Keyed on the tab, so a new tab's controls arrive under a title that has
+   already changed, rather than the column repainting in one frame. Short
+   enough that a control can be pressed while it is still settling. */
+.inspectorBody {
+  padding: var(--space-2) var(--space-6) var(--space-8);
+  animation: arrive var(--dur-enter) var(--ease-glide);
+}
+
+/*
+ * Below this the stage and the inspector would both be too narrow to be worth
+ * having, so they stack in one scrolling column beside the rail, picture first.
+ */
+@media (max-width: 1180px) {
+  .workspace {
+    grid-template-columns: var(--rail-width) minmax(0, 1fr);
+    grid-template-areas:
+      "nav stage"
+      "nav inspector";
+    grid-template-rows: auto 1fr;
+    overflow-y: auto;
   }
 
-  /*
-   * A definite width, not a `max-width`.
-   *
-   * The preview's box is 16:9 against its container, and a container that is
-   * merely *capped* still resolves that ratio against the full column during
-   * grid's intrinsic sizing pass. The element ends up the right size and the row
-   * it sits in does not, so the queue is pushed down by a couple of hundred
-   * pixels of nothing. A definite width resolves the same in every pass.
-   */
-  .monitor {
-    width: 420px;
+  .nav {
+    grid-row: 1 / span 2;
+    position: sticky;
+    top: 0;
+    max-height: 100%;
+  }
+
+  .stage,
+  .inspector {
+    overflow: visible;
+  }
+
+  .inspector {
+    border-left: none;
+    border-top: 1px solid var(--line-soft);
+  }
+
+  .link {
+    display: none;
   }
 }

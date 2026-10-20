@@ -27,13 +27,17 @@ type CopyState = 'idle' | 'copied' | 'failed';
  * make that one address visible and copyable after the browser's address bar
  * has gone away inside the shell.
  *
+ * A popover off the panel's bar rather than a strip of its own: it is composed
+ * once a session, and a row held open all evening for that is a row taken from
+ * the picture.
+ *
  * Which is also why the copy failing has to be visible. In a browser the button
  * works and there is a URL bar behind it anyway; inside the shell there is no
  * address bar, no way to select the text, and a clipboard write that is refused
  * leaves an operator clicking a button that does nothing and no way at all to
  * get the address out. So it says so.
  */
-export function StageSource({ snapshot }: { snapshot: Snapshot }) {
+export function StageSource({ id, snapshot }: { id: string; snapshot: Snapshot }) {
   const { t, tx } = useT();
   // Bound by `htmlFor` rather than by wrapping the control in its own label:
   // the popup is a real `select` several components down, and a wrapping label
@@ -88,77 +92,79 @@ export function StageSource({ snapshot }: { snapshot: Snapshot }) {
         : t('panel.source.copy');
 
   return (
-    <section className={styles.source} aria-label={t('panel.source.aria')}>
+    <section id={id} popover="auto" className={styles.source} aria-label={t('panel.source.aria')}>
       <span className={styles.title}>{t('panel.source.title')}</span>
 
       {/* Four settings and a switch, each label bound to its own control rather
           than merely laid out beside it: at this density a row of bare pairs
           runs together and there is no reading of it that says where one
           setting ends. */}
-      <div className={styles.group}>
-        <label className={styles.name} htmlFor={ids.size}>
-          {t('panel.source.size')}
-        </label>
-        <Select
-          id={ids.size}
-          value={size}
-          onChange={(value) => setSize(value as SourceSize)}
-          options={SOURCE_SIZES.map((value) => ({ value, label: value }))}
-        />
-      </div>
-      <div className={styles.group}>
-        <label className={styles.name} htmlFor={ids.backdrop}>
-          {t('panel.source.backdrop')}
-        </label>
-        <Select
-          id={ids.backdrop}
-          value={backdrop}
-          onChange={setBackdrop}
-          placeholder={t('panel.source.none')}
-          options={(snapshot.vocabulary.backdrops ?? []).map((item) => ({
-            value: item.id,
-            label: tx(item.label),
-          }))}
-        />
-      </div>
-      <div className={styles.group}>
-        <label className={styles.name} htmlFor={ids.deck}>
-          {t('panel.source.deck')}
-        </label>
-        <Select
-          id={ids.deck}
-          value={chosenDeck}
-          onChange={setDeck}
-          placeholder={t('panel.source.none')}
-          options={snapshot.decks.map((item) => ({ value: item.id, label: item.id }))}
-        />
-      </div>
-      <div className={styles.group}>
-        <label className={styles.name} htmlFor={ids.place}>
-          {t('panel.source.place')}
-        </label>
-        <Select
-          id={ids.place}
-          value={place}
-          onChange={(value) => setPlace(value as SourcePlace)}
-          options={SOURCE_PLACES.map((value) => ({
-            value,
-            label: t(SOURCE_PLACE_LABELS[value]),
-          }))}
-        />
-      </div>
+      <div className={styles.fields}>
+        <div className={styles.group}>
+          <label className={styles.name} htmlFor={ids.size}>
+            {t('panel.source.size')}
+          </label>
+          <Select
+            id={ids.size}
+            value={size}
+            onChange={(value) => setSize(value as SourceSize)}
+            options={SOURCE_SIZES.map((value) => ({ value, label: value }))}
+          />
+        </div>
+        <div className={styles.group}>
+          <label className={styles.name} htmlFor={ids.backdrop}>
+            {t('panel.source.backdrop')}
+          </label>
+          <Select
+            id={ids.backdrop}
+            value={backdrop}
+            onChange={setBackdrop}
+            placeholder={t('panel.source.none')}
+            options={(snapshot.vocabulary.backdrops ?? []).map((item) => ({
+              value: item.id,
+              label: tx(item.label),
+            }))}
+          />
+        </div>
+        <div className={styles.group}>
+          <label className={styles.name} htmlFor={ids.deck}>
+            {t('panel.source.deck')}
+          </label>
+          <Select
+            id={ids.deck}
+            value={chosenDeck}
+            onChange={setDeck}
+            placeholder={t('panel.source.none')}
+            options={snapshot.decks.map((item) => ({ value: item.id, label: item.id }))}
+          />
+        </div>
+        <div className={styles.group}>
+          <label className={styles.name} htmlFor={ids.place}>
+            {t('panel.source.place')}
+          </label>
+          <Select
+            id={ids.place}
+            value={place}
+            onChange={(value) => setPlace(value as SourcePlace)}
+            options={SOURCE_PLACES.map((value) => ({
+              value,
+              label: t(SOURCE_PLACE_LABELS[value]),
+            }))}
+          />
+        </div>
 
-      {/* A chip rather than a checkbox, for the reason every other switch on
+        {/* A chip rather than a checkbox, for the reason every other switch on
           this page is one of the panel's own: it is the last control in a row
           of four that now look like the panel, and a system checkbox beside
           them is the only thing left that does not. */}
-      <Chip
-        label={t('panel.source.transparent')}
-        state={transparent && transparentAllowed ? 'on' : 'off'}
-        disabled={!transparentAllowed}
-        title={transparentAllowed ? undefined : t('panel.source.transparent.roomWins')}
-        onClick={() => setTransparent((on) => !on)}
-      />
+        <Chip
+          label={t('panel.source.transparent')}
+          state={transparent && transparentAllowed ? 'on' : 'off'}
+          disabled={!transparentAllowed}
+          title={transparentAllowed ? undefined : t('panel.source.transparent.roomWins')}
+          onClick={() => setTransparent((on) => !on)}
+        />
+      </div>
 
       <div className={styles.address}>
         <code className={styles.url}>{url}</code>

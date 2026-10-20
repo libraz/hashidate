@@ -31,6 +31,12 @@ body,
   margin: 0;
 }
 
+/* Lets a block that arrives open from zero to its natural height, rather than
+   every disclosure needing a measured pixel figure to animate toward. */
+:root {
+  interpolate-size: allow-keywords;
+}
+
 body {
   background: var(--bg);
   color: var(--fg);
@@ -87,10 +93,23 @@ select {
 }
 
 :focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 ::selection {
   background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/*
+ * Every button gives under the pointer, and nothing else on the page moves when
+ * it does. `translate` rather than `transform`, so a control that already
+ * transforms its own box keeps doing so. Segments and tabs are left out: their
+ * selection glides to them instead, and a segment sinking under a still lamp
+ * reads as two things moving.
+ */
+/* Inside `:where` so a control whose selection glides in its own module can
+   opt out without out-ranking this. */
+:where(button:active:not(:disabled, [role="tab"], [role="radio"])) {
+  translate: 0 var(--press);
 }

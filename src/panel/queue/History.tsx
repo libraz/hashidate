@@ -2,7 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useT } from '@/i18n';
 import type { HistoryEntry } from '@/protocol';
 import { Segmented } from '@/ui/Segmented';
-import { isFailure, POLL_INTERVAL, queueRewind, type RewindMode, readHistory } from '../api';
+import {
+  isFailure,
+  POLL_INTERVAL,
+  queueRewind,
+  type RewindMode,
+  readError,
+  readHistory,
+} from '../api';
 import styles from './History.module.css';
 
 /**
@@ -65,8 +72,10 @@ export function History({ refresh }: { refresh: () => void }) {
   const applyHistory = useCallback(
     (token: number, result: Awaited<ReturnType<typeof readHistory>>): boolean => {
       if (generation.current !== token) return false;
-      if (isFailure(result)) setError(t('panel.history.error', { error: result.error }));
-      else {
+      if (isFailure(result)) {
+        const error = readError(result);
+        setError(error === null ? null : t('panel.history.error', { error }));
+      } else {
         setError(null);
         setEntries(result.history);
       }

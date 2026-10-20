@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type RefObject, useRef } from 'react';
+import { type CSSProperties, type KeyboardEvent, type RefObject, useRef } from 'react';
 import styles from './Segmented.module.css';
 
 export interface SegmentedOption<T extends string> {
@@ -58,10 +58,12 @@ export function Segmented<T extends string>({ options, value, onChange, ariaLabe
     <div
       ref={track}
       className={styles.track}
+      style={selectionAt(options, value)}
       role="radiogroup"
       aria-label={ariaLabel}
       onKeyDown={keys}
     >
+      <span className={styles.selection} aria-hidden="true" />
       {options.map((o, index) => (
         // An `input type=radio` cannot carry this track's geometry: the
         // equal-width rule needs the flex item to be the control itself rather
@@ -108,10 +110,12 @@ export function Tabs<T extends string>({
     <div
       ref={track}
       className={styles.track}
+      style={selectionAt(options, value)}
       role="tablist"
       aria-label={ariaLabel}
       onKeyDown={keys}
     >
+      <span className={styles.selection} aria-hidden="true" />
       {options.map((o, index) => (
         <button
           key={o.value}
@@ -132,8 +136,25 @@ export function Tabs<T extends string>({
   );
 }
 
+/**
+ * Where the selection sits, as two custom properties the stylesheet turns
+ * into geometry. Segments are equal width, so an index is a position; −1 puts
+ * the selection out, for a picker whose value matches none of its options.
+ */
+function selectionAt<T extends string>(
+  options: ReadonlyArray<SegmentedOption<T>>,
+  value: T | null,
+): CSSProperties {
+  const at = options.findIndex((o) => o.value === value);
+  return {
+    '--count': options.length,
+    '--at': Math.max(at, 0),
+    '--lit': at === -1 ? 0 : 1,
+  } as CSSProperties;
+}
+
 /** The one segment in the tab order: the chosen one, or the first choosable. */
-function tabStop<T extends string>(
+export function tabStop<T extends string>(
   options: ReadonlyArray<SegmentedOption<T>>,
   value: T | null,
 ): number {
@@ -142,7 +163,7 @@ function tabStop<T extends string>(
 }
 
 /** Arrow and Home/End handling, shared because both roles use the same ring. */
-function roving<T extends string>(
+export function roving<T extends string>(
   options: ReadonlyArray<SegmentedOption<T>>,
   at: number,
   onChange: (value: T) => void,

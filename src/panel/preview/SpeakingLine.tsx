@@ -20,7 +20,7 @@ import styles from './SpeakingLine.module.css';
  *
  * The staging controls sit directly below this, and they are pressed by feel
  * while the operator is looking at the picture. A readout that grew with the
- * length of the line would move them on every turn, so the block is three lines
+ * length of the line would move them on every turn, so the block is two lines
  * tall whatever is in it and a longer line scrolls inside it.
  *
  * ## Only what went through the queue
@@ -77,7 +77,7 @@ export function SpeakingLine({ snapshot }: { snapshot: Snapshot }) {
           {t(line === null ? 'panel.preview.speaking.standingBy' : 'panel.preview.speaking')}
         </span>
       </div>
-      <p className={styles.line}>
+      <p key={line ?? ''} className={styles.line}>
         {line === null
           ? null
           : line || <span className={styles.silent}>{t('panel.row.silent')}</span>}

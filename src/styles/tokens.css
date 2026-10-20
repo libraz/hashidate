@@ -30,7 +30,10 @@
   /* --- ink --------------------------------------------------------------- */
   --fg: #dfe2e8;
   --fg-dim: #8b919e;
-  --fg-faint: #626875;
+  /* The lowest ink that still reads at a glance: 4.5:1 on `--surface`, which is
+     where most faint text sits. Any lower and the bar's figures and the field
+     labels drop out from across the room; any higher and it meets `--fg-dim`. */
+  --fg-faint: #7a808d;
 
   /* --- signal ------------------------------------------------------------ */
   --accent: #7ad3e8;
@@ -99,10 +102,31 @@
   /* Fast enough to feel like a switch rather than an animation. */
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --dur: 120ms;
+
+  /*
+   * Motion that confirms a change, never motion to be watched. `--dur-move` is a
+   * selection gliding to where it was sent — long enough to show where from;
+   * `--dur-enter` is something arriving. Exits are faster than entries.
+   */
+  --ease-glide: cubic-bezier(0.3, 0, 0, 1);
+  --dur-move: 180ms;
+  --dur-enter: 160ms;
+  --dur-exit: 100ms;
+  /* How far a pressed control sinks under the pointer: a key's travel, the
+     same at every size, where a scale would shrink a full-width row by 10px. */
+  --press: 1px;
+  /* Two pixels clear of the control, so the ring reads against a tinted fill
+     and is found again after looking away from the panel. */
+  --focus-ring: 2px solid var(--accent);
+  --focus-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {
   :root {
     --dur: 0ms;
+    --dur-move: 0ms;
+    --dur-enter: 0ms;
+    --dur-exit: 0ms;
+    --press: 0px;
   }
 }

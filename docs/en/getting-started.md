@@ -130,7 +130,7 @@ That `:8765` address is served from `dist/`, so it exists under `yarn start` aft
 
 For a transparent background over a game capture, use `http://127.0.0.1:8765/?size=1920x1080&transparent=1` (same run modes as above). Leave out `backdrop`, which takes precedence over transparency. See [The stage](stage.md).
 
-The panel composes that address above the tabs: pick the size, the set, the document and where the character stands, then copy the result.
+The panel composes that address behind the **OBS source** button in its top bar: pick the size, the set, the document and where the character stands, then copy the result.
 
 `/monitor/` is the same renderer letterboxed to 16:9 with nothing around it. That page is the one meant to be listened to: a browser source sends its audio to the stream and not to the desk, so on an ordinary setup it is the only way to hear the character in the room.
 

@@ -28,7 +28,9 @@
   border-bottom: 1px solid var(--fg-faint);
   transform: translateY(-70%) rotate(45deg);
   pointer-events: none;
-  transition: border-color var(--dur) var(--ease);
+  transition:
+    border-color var(--dur) var(--ease),
+    transform var(--dur-move) var(--ease-glide);
 }
 
 .wrap:hover::after {
@@ -56,6 +58,9 @@
   font-size: var(--text-sm);
   text-overflow: ellipsis;
   cursor: pointer;
+  /* On the control rather than the root: a dark root would also darken the
+     canvas behind a renderer opened with `?transparent=1`. */
+  color-scheme: dark;
   transition:
     background var(--dur) var(--ease),
     border-color var(--dur) var(--ease),
@@ -73,11 +78,105 @@
 }
 
 /*
- * The popup is the system's and inherits nothing from here. Naming the two
- * colours on the options at least keeps the list from being white-on-white in a
- * browser that takes the control's colours as the menu's defaults.
+ * The popup, where the system's is all there is. Naming the two colours on the
+ * options at least keeps the list from being white-on-white in a browser that
+ * takes the control's colours as the menu's defaults.
  */
 .select option {
   background: var(--surface-raised);
   color: var(--fg);
+}
+
+/*
+ * The popup drawn in the panel's materials, where the browser lets it be. Still
+ * the native element underneath, so the keyboard and type-to-find behave as a
+ * select does. The chosen row takes the selection tint every picker here uses,
+ * and the list drops out of the control the way the source popover drops out
+ * of its button.
+ */
+@supports (appearance: base-select) {
+  .select,
+  .select::picker(select) {
+    appearance: base-select;
+  }
+
+  .select {
+    display: flex;
+    align-items: center;
+  }
+
+  /* The wrapper already draws the chevron. */
+  .select::picker-icon {
+    display: none;
+  }
+
+  .wrap:has(.select:open)::after {
+    border-color: var(--accent);
+    transform: translateY(-20%) rotate(-135deg);
+  }
+
+  .select::picker(select) {
+    margin-top: var(--space-2);
+    padding: var(--space-2);
+    max-block-size: min(360px, 60vh);
+    background: var(--surface-raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    box-shadow:
+      0 12px 32px rgb(0 0 0 / 0.45),
+      0 2px 6px rgb(0 0 0 / 0.3);
+    opacity: 0;
+    translate: 0 -4px;
+    transition:
+      opacity var(--dur-exit) var(--ease),
+      translate var(--dur-exit) var(--ease),
+      overlay var(--dur-exit) allow-discrete,
+      display var(--dur-exit) allow-discrete;
+  }
+
+  .select:open::picker(select) {
+    opacity: 1;
+    translate: 0 0;
+    transition-duration: var(--dur-enter);
+    transition-timing-function: var(--ease-glide);
+  }
+
+  @starting-style {
+    .select:open::picker(select) {
+      opacity: 0;
+      translate: 0 -4px;
+    }
+  }
+
+  .select option {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-block-size: 28px;
+    padding: 0 var(--space-4);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--fg-dim);
+    font-size: var(--text-sm);
+    white-space: nowrap;
+  }
+
+  .select option:hover,
+  .select option:focus-visible {
+    background: var(--surface-hover);
+    color: var(--fg);
+    outline: none;
+  }
+
+  .select option:checked {
+    background: var(--accent-tint);
+    border-color: var(--accent-edge);
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  .select option::checkmark {
+    display: none;
+  }
 }

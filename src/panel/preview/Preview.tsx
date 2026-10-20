@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { type Translator, useT } from '@/i18n';
+import { type MessageKey, type Translator, useT } from '@/i18n';
 import type { CameraFrame, Shot, Snapshot } from '@/protocol';
-import { Field } from '@/ui/Field';
 import { Segmented } from '@/ui/Segmented';
 import { Toggle } from '@/ui/Toggle';
 import { onMonitorShot } from '@/viewer/monitor-link';
@@ -56,7 +55,8 @@ import { SpeakingLine } from './SpeakingLine';
  *
  * Who is on screen, how they are framed, what is behind them and whether they
  * are moving between lines: four controls an operator reaches for *because of
- * what they can see*, so they sit under the picture rather than in a tab. They
+ * what they can see*, so they sit under the picture on the stage rather than in
+ * the inspector. They
  * are the same four the console keeps above its tabs, for the same reason.
  *
  * ## The picture is also the camera control
@@ -145,7 +145,37 @@ const store = (key: string, value: boolean): void => {
   }
 };
 
-export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: () => void }) {
+/**
+ * Why the picture is empty, or null when it should not be.
+ *
+ * Said here, over the panel's own copy, because the renderer going to air says
+ * nothing on purpose — whatever it printed would be on the stream. An empty
+ * roster is the state a fresh checkout is in, so it is answered with where a
+ * model goes rather than treated as a fault. Offline outranks the rest: with no
+ * server every other field is the empty snapshot's, not the truth.
+ */
+export function previewNotice(
+  snapshot: Snapshot,
+  offline: boolean,
+): { key: MessageKey; error?: string } | null {
+  if (offline) return { key: 'panel.preview.empty.offline' };
+  if (snapshot.avatars.length === 0) return { key: 'panel.preview.empty.noAvatar' };
+  if (snapshot.avatar?.phase === 'loading') return { key: 'panel.preview.empty.loading' };
+  if (snapshot.avatar?.phase === 'failed') {
+    return { key: 'panel.preview.empty.failed', error: snapshot.avatar.error ?? '' };
+  }
+  return null;
+}
+
+export function Preview({
+  snapshot,
+  offline,
+  refresh,
+}: {
+  snapshot: Snapshot;
+  offline: boolean;
+  refresh: () => void;
+}) {
   const { t, tx } = useT();
   const [on, setOn] = useState(() => readStored(SHOWN_KEY, true));
   /**
@@ -163,6 +193,7 @@ export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: ()
 
   const avatar = snapshot.vocabulary.avatar?.id ?? null;
   const speaking = snapshot.state.speaking ?? false;
+  const notice = previewNotice(snapshot, offline);
   const blocked = useHeld(snapshot.voice?.blocked ?? false, BLOCKED_HOLD_MS);
   const backdrops = snapshot.vocabulary.backdrops ?? [];
   const idle = snapshot.state.idleEnabled ?? false;
@@ -280,6 +311,11 @@ export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: ()
         ) : (
           <p className={styles.off}>{t('panel.preview.stopped')}</p>
         )}
+        {on && notice !== null ? (
+          <p className={styles.empty} role="status">
+            {t(notice.key, notice.error === undefined ? undefined : { error: notice.error })}
+          </p>
+        ) : null}
       </div>
 
       {/* Under the picture and inside this block, so it is carried by the same
@@ -296,31 +332,29 @@ export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: ()
       {blocked ? <p className={styles.blocked}>{t('panel.preview.blocked')}</p> : null}
 
       {/*
-        Named, and they were not.
-
-        Three anonymous tracks under the picture are readable to whoever built
-        them and to nobody else: an avatar's own name, a framing and a set are
-        all just words, and stacked with no left column there is nothing that
-        says which question each row answers. The labels also put these rows on
-        the same axis as every control in the tabs beside them, which is what
-        makes the two halves read as one instrument.
+        Named, and each name sits over its control rather than beside it: the
+        stage is wide and the four tracks are long, so a label column would
+        spend a strip of the picture's width on four words. Laid out in a grid
+        that puts two side by side once there is room for both.
       */}
       <div className={styles.staging}>
         {/* Who is on screen. The renderer holds every command sent behind a swap
-            until the model is standing, so the tab below can be used the moment
-            this is clicked rather than after the picture comes back. */}
+            until the model is standing, so the tab beside this can be used the
+            moment it is clicked rather than after the picture comes back. */}
         {snapshot.avatars.length > 1 ? (
-          <Field label={t('panel.preview.avatarAria')}>
+          <div className={`${styles.cell} ${styles.wide}`}>
+            <span className={styles.cellLabel}>{t('panel.preview.avatarAria')}</span>
             <Segmented
               ariaLabel={t('panel.preview.avatarAria')}
               options={snapshot.avatars.map((a) => ({ value: a.id, label: tx(a.label) }))}
               value={avatar}
               onChange={(id) => void setAvatar(id).then(refresh)}
             />
-          </Field>
+          </div>
         ) : null}
 
-        <Field label={t('panel.preview.cameraAria')}>
+        <div className={styles.cell}>
+          <span className={styles.cellLabel}>{t('panel.preview.cameraAria')}</span>
           <div className={styles.shot}>
             <Segmented
               ariaLabel={t('panel.preview.cameraAria')}
@@ -342,10 +376,11 @@ export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: ()
                 : t('panel.preview.straightOn')}
             </button>
           </div>
-        </Field>
+        </div>
 
         {backdrops.length ? (
-          <Field label={t('panel.preview.backdropAria')}>
+          <div className={styles.cell}>
+            <span className={styles.cellLabel}>{t('panel.preview.backdropAria')}</span>
             <Segmented
               ariaLabel={t('panel.preview.backdropAria')}
               options={[
@@ -363,14 +398,16 @@ export function Preview({ snapshot, refresh }: { snapshot: Snapshot; refresh: ()
                 void sendBackdrop(next);
               }}
             />
-          </Field>
+          </div>
         ) : null}
 
-        <Toggle
-          label={t('panel.preview.idle')}
-          checked={idle}
-          onChange={(v) => void setIdle(v).then(refresh)}
-        />
+        <div className={`${styles.cell} ${styles.wide} ${styles.idle}`}>
+          <Toggle
+            label={t('panel.preview.idle')}
+            checked={idle}
+            onChange={(v) => void setIdle(v).then(refresh)}
+          />
+        </div>
       </div>
     </section>
   );
