@@ -10,7 +10,7 @@
  * bound.
  */
 
-export { ArmAnatomy } from './arm';
+export { ArmAnatomy, rotationTrust } from './arm';
 export { buildBodyFrame } from './body-frame';
 export { contactCost } from './cost';
 export { FINGER_WIDTH, HAND_CONTACT, INTERLACE_GAP, JOINTS, SPLAY_CAP, ZONES } from './joints';

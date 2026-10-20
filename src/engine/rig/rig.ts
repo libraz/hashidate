@@ -1,5 +1,12 @@
 import * as THREE from 'three';
-import { ArmAnatomy, HAND_CONTACT, JOINTS, rollRoom } from '../anatomy';
+import {
+  ArmAnatomy,
+  FINGER_WIDTH,
+  HAND_CONTACT,
+  JOINTS,
+  rollRoom,
+  rotationTrust,
+} from '../anatomy';
 import type {
   ArmSlot,
   FingerName,
@@ -71,6 +78,39 @@ const LIMIT_SLEW = 14;
 const _palmCur = new THREE.Vector3();
 const _palmWant = new THREE.Vector3();
 const _palmAxis = new THREE.Vector3();
+const _hingeFront = new THREE.Vector3();
+const _hingeFold = new THREE.Vector3();
+const _hingeAxis = new THREE.Vector3();
+const FINGER_NAMES: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
+/** Turns per hand per frame: the later ones catch a finger an earlier one brought in. */
+const FINGER_PASSES = 3;
+/** Damping on the fingers' turn, in squared finger half-thicknesses. */
+const FINGER_DAMP = 0.01;
+/**
+ * Most a hand turns in a frame to clear its fingers: the span of the wrist's
+ * narrowest comfortable range. A correction, not a pose — a hand set inside the
+ * face needs its arm moved, and turned further it only folded the wrist.
+ */
+const FINGER_TURN_MAX = JOINTS.wrist.dofs.deviation.free[1] - JOINTS.wrist.dofs.deviation.free[0];
+const _fW = new THREE.Vector3();
+const _fP = new THREE.Vector3();
+const _fT = new THREE.Vector3();
+const _fN = new THREE.Vector3();
+const _fG = new THREE.Vector3();
+const _fB = new THREE.Vector3();
+const _fA = new THREE.Matrix3();
+const _fTurn = new THREE.Quaternion();
+const _fParent = new THREE.Quaternion();
+const _fLocal = new THREE.Quaternion();
+/** Trial flexion that measures a curl's lever on a finger's points. */
+const FINGER_CURL_PROBE = 0.05;
+const _fSpec: FingerSpec = {};
+const _fIn = Array.from({ length: 5 }, () => ({
+  p: new THREE.Vector3(),
+  n: new THREE.Vector3(),
+  d: 0,
+  i: 0,
+}));
 const _armS = new THREE.Vector3();
 const _fixDir = new THREE.Vector3();
 // Stands in for a bone that was never given a rest orientation, which cannot
@@ -236,6 +276,8 @@ export class Rig {
   };
   /** Roll the last palm solve asked for. */
   private _roll = 0;
+  /** The humerus's front at rest, in its own space: the way the elbow folds. */
+  private readonly _humeralFront: Partial<Record<Side, THREE.Vector3>> = {};
   /** What the roll budget delivered last frame, for its slew. See `aimArm`. */
   private readonly _rollHeld: Record<Side, { fore: number; humeral: number; set: boolean }> = {
     L: { fore: 0, humeral: 0, set: false },
@@ -284,6 +326,19 @@ export class Rig {
     });
     this._limited = { L: trio(), R: trio() };
     this._held = { L: trio(), R: trio() };
+
+    const chest = profile.bones.chest ?? profile.bones.spine ?? profile.bones.hips;
+    for (const side of ['L', 'R'] as Side[]) {
+      const upper = profile.bones[`upperArm.${side}`];
+      if (!(upper && chest && profile.body)) continue;
+      upper.updateWorldMatrix(true, false);
+      const q = upper.getWorldQuaternion(new THREE.Quaternion());
+      const along = profile.restDir[`upperArm.${side}`].clone().applyQuaternion(q);
+      const front = profile.body.forward.clone().applyQuaternion(chest.getWorldQuaternion(_q));
+      front.addScaledVector(along, -front.dot(along));
+      if (front.lengthSq() > 1e-8)
+        this._humeralFront[side] = front.normalize().applyQuaternion(q.invert());
+    }
   }
 
   /** Curl axis per finger bone, in that bone's own space. */
@@ -392,6 +447,34 @@ export class Rig {
     }
     bone.quaternion.copy(_local);
     return out;
+  }
+
+  /**
+   * Turn an aimed humerus about its own axis until its front faces the way the
+   * forearm folds.
+   *
+   * The shortest-arc aim leaves the humerus at whatever roll the swing from rest
+   * gives it, so a rotated arm bent its elbow up to eighty degrees off the bone's
+   * own hinge: the crease of the mesh faced one way and the forearm folded
+   * another, and pronation was counted from a frame no forearm has. Faded in with
+   * the bend, by the trust the measurement gives it, because a straight elbow
+   * folds nowhere.
+   */
+  private hingeUpper(side: Side, upper: THREE.Bone, uD: THREE.Vector3, lD: THREE.Vector3): void {
+    const rest = this._humeralFront[side];
+    const trust = rotationTrust(Math.acos(THREE.MathUtils.clamp(uD.dot(lD), -1, 1)));
+    if (!rest || trust <= 0) return;
+    const front = _hingeFront.copy(rest).applyQuaternion(this._upperQ);
+    front.addScaledVector(uD, -front.dot(uD));
+    const fold = _hingeFold.copy(lD).addScaledVector(uD, -lD.dot(uD));
+    if (front.lengthSq() < 1e-8 || fold.lengthSq() < 1e-8) return;
+    front.normalize();
+    fold.normalize();
+    const turn = Math.atan2(_hingeAxis.crossVectors(front, fold).dot(uD), front.dot(fold));
+    upper.quaternion.multiply(
+      _twistQ.setFromAxisAngle(this.p.restDir[`upperArm.${side}`], turn * trust),
+    );
+    this._upperQ.copy(this._upperParentQ).multiply(upper.quaternion);
   }
 
   /**
@@ -577,6 +660,7 @@ export class Rig {
     if (upper) {
       if (uD) this.aim(upper, restDir[`upperArm.${side}`], this._upperParentQ, uD, 0, this._upperQ);
       else this._upperQ.copy(q).multiply(this.restOf(upper));
+      if (uD && lD) this.hingeUpper(side, upper, uD, lD);
     } else this._upperQ.copy(q);
 
     /**
@@ -937,6 +1021,138 @@ export class Rig {
 
   curlHand(side: Side, spec: FingerSpec, spread: FingerSpec = {}): void {
     this.hands.curlHand(side, spec, spread);
+    this.clearFingers(side, spec, spread);
+  }
+
+  /**
+   * Point `i` of a finger chain, the last one past its last bone: the tip has no
+   * bone, so the last segment is carried on, as `limb` estimates it.
+   */
+  private fingerPoint(chain: THREE.Bone[], i: number, out: THREE.Vector3): boolean {
+    if (i < chain.length) {
+      chain[i].getWorldPosition(out);
+      return true;
+    }
+    if (chain.length < 2) return false;
+    chain[i - 1].getWorldPosition(out);
+    out.addScaledVector(_fT.copy(out).sub(chain[i - 2].getWorldPosition(_fT)), 0.75);
+    return true;
+  }
+
+  /**
+   * Keep the fingers out of the face: turn the hand about the wrist, and curl a
+   * finger the turn could not free.
+   *
+   * The arm's escape ends the hand at the palm's contact point, deliberately —
+   * see `HAND_CONTACT` — so the fingers past it went wherever the hand pointed:
+   * a hand turning from behind the ear to the mouth swept them through the
+   * cheek, and curled knuckles beside a cheek sank into it. Each joint and the
+   * tip is held half a finger's thickness off the skin, that thickness taken
+   * from the avatar's own knuckle pitch. Only the hand and its fingers move, so
+   * the arm above them, and everything it reported, stands.
+   */
+  private clearFingers(side: Side, spec: FingerSpec, spread: FingerSpec): void {
+    const face = this.anat.face;
+    const hand = this.p.bones[`hand.${side}`];
+    const pitch = this.p.limb?.[`pitch.${side}`] ?? 0;
+    const parent = hand?.parent;
+    if (!(face && hand && parent && pitch > 0)) return;
+    const clear = 0.5 * FINGER_WIDTH * pitch;
+    const damp = FINGER_DAMP * clear * clear;
+    face.refresh();
+    hand.updateWorldMatrix(true, true);
+    const W = hand.getWorldPosition(_fW);
+    let turned = 0;
+    for (let pass = 0; pass < FINGER_PASSES && turned < FINGER_TURN_MAX; pass++) {
+      // One small turn for every finger that is in, solved together. Pushing
+      // the worst one alone pressed the next one in: fingers kissed to the lips
+      // touch skin that faces several ways, and the hand rocked between them.
+      // Each point gains (w x r).n = w.(r x n) along its normal; least squares
+      // over that, damped so a point straight down the lever does not throw it.
+      _fA.set(0, 0, 0, 0, 0, 0, 0, 0, 0);
+      _fB.set(0, 0, 0);
+      let any = false;
+      for (const f of FINGER_NAMES) {
+        const chain = this.p.fingerBones[`${f}.${side}`];
+        if (!chain?.length) continue;
+        for (let i = 0; i <= chain.length; i++) {
+          if (!this.fingerPoint(chain, i, _fP)) continue;
+          const d = face.shortfall(_fP, clear, _fN);
+          if (d <= 0) continue;
+          any = true;
+          const g = _fG.copy(_fP).sub(W).cross(_fN);
+          const e = _fA.elements;
+          e[0] += g.x * g.x;
+          e[1] += g.y * g.x;
+          e[2] += g.z * g.x;
+          e[3] += g.x * g.y;
+          e[4] += g.y * g.y;
+          e[5] += g.z * g.y;
+          e[6] += g.x * g.z;
+          e[7] += g.y * g.z;
+          e[8] += g.z * g.z;
+          _fB.addScaledVector(g, d);
+        }
+      }
+      if (!any) return;
+      const e = _fA.elements;
+      e[0] += damp;
+      e[4] += damp;
+      e[8] += damp;
+      const w = _fB.applyMatrix3(_fA.invert());
+      const angle = w.length();
+      if (!(angle > 1e-6)) break;
+      const turn = Math.min(angle, FINGER_TURN_MAX - turned);
+      turned += turn;
+      _fTurn.setFromAxisAngle(w.divideScalar(angle), turn);
+      // A world turn about the wrist, put into the hand's own parent space.
+      parent.getWorldQuaternion(_fParent);
+      hand.quaternion.premultiply(
+        _fLocal.copy(_fParent).invert().multiply(_fTurn).multiply(_fParent),
+      );
+      hand.updateWorldMatrix(false, true);
+    }
+
+    // What the turn left in: fingers pressed on skin facing opposite ways, the
+    // tip under the jaw and the knuckles at the cheek. A finger gives to what
+    // it is pushed into, so each one left in curls or straightens on its own,
+    // least squares over its points, between straight and its full flexion.
+    for (const f of FINGER_NAMES) _fSpec[f] = spec[f] ?? 0;
+    for (let pass = 0; pass < FINGER_PASSES; pass++) {
+      let moved = false;
+      for (const f of FINGER_NAMES) {
+        const chain = this.p.fingerBones[`${f}.${side}`];
+        const from = _fSpec[f] ?? 0;
+        const lo = Math.min(from, 0) - from;
+        const hi = Math.max(from, 1) - from;
+        if (!chain?.length) continue;
+        let n = 0;
+        for (let i = 0; i <= chain.length && n < _fIn.length; i++) {
+          if (!this.fingerPoint(chain, i, _fIn[n].p)) continue;
+          _fIn[n].d = face.shortfall(_fIn[n].p, clear, _fIn[n].n);
+          if (_fIn[n].d > 0) _fIn[n++].i = i;
+        }
+        if (!n) continue;
+        // The curl's lever on each point, by a small trial flexion.
+        _fSpec[f] = from + FINGER_CURL_PROBE;
+        this.hands.curlHand(side, _fSpec, spread);
+        hand.updateWorldMatrix(false, true);
+        let num = 0;
+        let den = damp;
+        for (let k = 0; k < n; k++) {
+          const q = _fIn[k];
+          this.fingerPoint(chain, q.i, _fP);
+          const j = _fP.sub(q.p).dot(q.n) / FINGER_CURL_PROBE;
+          num += j * q.d;
+          den += j * j;
+        }
+        _fSpec[f] = from + THREE.MathUtils.clamp(num / den, lo, hi);
+        this.hands.curlHand(side, _fSpec, spread);
+        hand.updateWorldMatrix(false, true);
+        if (_fSpec[f] !== from) moved = true;
+      }
+      if (!moved) return;
+    }
   }
 }
 const _t = new THREE.Vector3();

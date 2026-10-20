@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { BodyFrame, JointReading, JointTable, Profile, Side } from '../types';
 import { cost, report, score } from './cost';
+import type { FaceSurface } from './face';
 import { JOINTS } from './joints';
 import type { ArmMeasurement, ArmStrain } from './measurement';
 import { clampDof, elevationCeiling } from './strain';
@@ -10,7 +11,7 @@ import { BodyVolumes } from './volumes';
  * How far humeral rotation can be read off an elbow bent `flex` radians:
  * nothing below fifteen degrees, fully by forty-five.
  */
-function rotationTrust(flex: number): number {
+export function rotationTrust(flex: number): number {
   return THREE.MathUtils.clamp((flex - 0.26) / 0.52, 0, 1);
 }
 
@@ -415,6 +416,11 @@ export class ArmAnatomy {
     // joint over its stop, and that is the trade being made. The panel reports
     // it, so a pose bought at that price is visible rather than silent.
     this.body.clear(u, l, h, this.lateral);
+  }
+
+  /** The face's skin, for the fingers. See `FaceSurface`. */
+  get face(): FaceSurface | null {
+    return this.body.head?.face ?? null;
   }
 
   /** Move a world point out to the body's surface, in place. See `BodyVolumes.surface`. */

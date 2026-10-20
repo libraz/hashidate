@@ -1,0 +1,213 @@
+import * as THREE from 'three';
+import { partSkin } from './volume';
+
+/**
+ * The face as a finger meets it: the head's skin, kept vertex by vertex.
+ *
+ * The head volume is a radius per band and bearing about one axis. That is the
+ * right shape for an arm swinging past a skull and the wrong one for a finger,
+ * which travels a few millimetres off the skin: under the jaw and in the hollow
+ * of a cheek lie inside the radius the chin or the cheekbone sets at that
+ * bearing, and a finger laid along the face read as half a head deep. So the
+ * fingers are tested against the skin itself, measured once at load in the
+ * head bone's frame — whatever face the avatar has.
+ *
+ * Inside or out is read off the nearest vertex's normal, which holds near the
+ * surface, where the question is asked; nothing here claims a distance deep in
+ * the skull. The normal is the surface's own, from its triangles: an anime face
+ * carries normals edited toward the front for its shading, and by those a hand
+ * cupped behind the ear read as three centimetres inside the cheek.
+ */
+
+/** Hash cell, metres. About a fingertip's breadth: a query reads 27 cells. */
+const CELL = 0.02;
+/** Cells out to look before calling a point nowhere near the face. */
+const REACH = 3;
+
+const _p = new THREE.Vector3();
+const _n = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+const _at = new THREE.Vector3();
+const ONE = new THREE.Vector3(1, 1, 1);
+
+/** World to the head's own frame, in metres: its position and turn, not its scale. */
+function headFrame(bone: THREE.Bone, out: THREE.Matrix4): THREE.Matrix4 {
+  bone.updateWorldMatrix(true, false);
+  return out.compose(bone.getWorldPosition(_at), bone.getWorldQuaternion(_q), ONE).invert();
+}
+
+const key = (x: number, y: number, z: number) => ((x + 512) * 1024 + (y + 512)) * 1024 + (z + 512);
+
+/**
+ * The skin of one primitive as a surface: which vertices are on it and the
+ * normal its triangles give each. The skin is the primitive's largest connected
+ * piece; the rest are eyelash and brow cards, open planes with no inside.
+ */
+function shell(geometry: THREE.BufferGeometry) {
+  const pos = geometry.attributes.position;
+  // Welded by position first: a UV seam splits a vertex, and is not a cut in the skin.
+  const weld = new Map<string, number>();
+  const id = new Int32Array(pos.count);
+  for (let i = 0; i < pos.count; i++) {
+    const k = `${pos.getX(i).toFixed(5)},${pos.getY(i).toFixed(5)},${pos.getZ(i).toFixed(5)}`;
+    let w = weld.get(k);
+    if (w === undefined) {
+      w = weld.size;
+      weld.set(k, w);
+    }
+    id[i] = w;
+  }
+  const n = weld.size;
+  const up = Int32Array.from({ length: n }, (_, i) => i);
+  const find = (a: number): number => {
+    let r = a;
+    while (up[r] !== r) {
+      up[r] = up[up[r]];
+      r = up[r];
+    }
+    return r;
+  };
+  const index = geometry.index;
+  const corners = index ? index.count : pos.count;
+  const at = (c: number) => (index ? index.getX(c) : c);
+  const nrm = new Float32Array(n * 3);
+  const A = new THREE.Vector3();
+  const B = new THREE.Vector3();
+  const C = new THREE.Vector3();
+  for (let t = 0; t + 2 < corners; t += 3) {
+    const v = [at(t), at(t + 1), at(t + 2)];
+    A.fromBufferAttribute(pos, v[0]);
+    B.fromBufferAttribute(pos, v[1]).sub(A);
+    C.fromBufferAttribute(pos, v[2]).sub(A);
+    // Area-weighted, by the winding glTF gives a front face.
+    B.cross(C);
+    for (let e = 0; e < 3; e++) {
+      const a = id[v[e]];
+      up[find(a)] = find(id[v[(e + 1) % 3]]);
+      nrm[a * 3] += B.x;
+      nrm[a * 3 + 1] += B.y;
+      nrm[a * 3 + 2] += B.z;
+    }
+  }
+  const size = new Map<number, number>();
+  for (let w = 0; w < n; w++) size.set(find(w), (size.get(find(w)) ?? 0) + 1);
+  let skin = -1;
+  for (const [r, c] of size) if (skin < 0 || c > (size.get(skin) ?? 0)) skin = r;
+  return {
+    has: (i: number) => find(id[i]) === skin,
+    normal: (i: number, out: THREE.Vector3) =>
+      out.set(nrm[id[i] * 3], nrm[id[i] * 3 + 1], nrm[id[i] * 3 + 2]).normalize(),
+  };
+}
+
+export class FaceSurface {
+  private readonly cells = new Map<number, number[]>();
+  private readonly toHead = new THREE.Matrix4();
+  private readonly turn = new THREE.Quaternion();
+
+  private constructor(
+    private readonly bone: THREE.Bone,
+    private readonly pos: Float32Array,
+    private readonly nrm: Float32Array,
+  ) {
+    for (let i = 0; i < pos.length / 3; i++) {
+      const k = key(
+        Math.floor(pos[i * 3] / CELL),
+        Math.floor(pos[i * 3 + 1] / CELL),
+        Math.floor(pos[i * 3 + 2] / CELL),
+      );
+      const c = this.cells.get(k);
+      if (c) c.push(i);
+      else this.cells.set(k, [i]);
+    }
+  }
+
+  /** Measure the skin carried by `head` and its subtree, at the pose it is in now. */
+  static measure(root: THREE.Object3D | null, head: THREE.Bone, set: Set<THREE.Bone>) {
+    const skin = partSkin(root, set);
+    if (!skin) return null;
+    // The skin proper is the primitive carrying most of the head. The others the
+    // part's mesh brings are eyes and the inside of the mouth, whose normals face
+    // anywhere: nearest to a finger in the cheek, they called it outside.
+    const count = new Map<THREE.SkinnedMesh, number>();
+    skin((_P, mesh) => count.set(mesh, (count.get(mesh) ?? 0) + 1));
+    let face: THREE.SkinnedMesh | null = null;
+    for (const [mesh, n] of count) if (!face || n > (count.get(face) ?? 0)) face = mesh;
+    if (!face) return null;
+    const toHead = headFrame(head, new THREE.Matrix4());
+    const surface = shell(face.geometry);
+    const pos: number[] = [];
+    const nrm: number[] = [];
+    const off = new THREE.Vector3();
+    skin((P, mesh, i) => {
+      if (mesh !== face || !surface.has(i)) return;
+      const at = P.clone().applyMatrix4(toHead);
+      // Skinned the way the position was, so the normal goes through the same
+      // transform: the vertex nudged along its rest normal, and the difference.
+      off.fromBufferAttribute(mesh.geometry.attributes.position, i);
+      off.addScaledVector(surface.normal(i, _n), 1e-3);
+      mesh.applyBoneTransform(i, off);
+      off.applyMatrix4(mesh.matrixWorld).applyMatrix4(toHead).sub(at);
+      if (off.lengthSq() < 1e-16) return;
+      off.normalize();
+      pos.push(at.x, at.y, at.z);
+      nrm.push(off.x, off.y, off.z);
+    });
+    if (!pos.length) return null;
+    return new FaceSurface(head, new Float32Array(pos), new Float32Array(nrm));
+  }
+
+  /** Follow the head to where it is posed now. Call before a run of `shortfall`. */
+  refresh(): void {
+    this.bone.updateWorldMatrix(true, false);
+    this.bone.getWorldQuaternion(this.turn);
+    this.toHead.compose(this.bone.getWorldPosition(_at), this.turn, ONE).invert();
+  }
+
+  /**
+   * How far short of `clear` outside the skin a world point is, in metres,
+   * writing the skin's outward normal there into `outward` (world). Zero when
+   * the point is clear, or nowhere near the face.
+   */
+  shortfall(P: THREE.Vector3, clear: number, outward: THREE.Vector3): number {
+    const p = _p.copy(P).applyMatrix4(this.toHead);
+    const cx = Math.floor(p.x / CELL);
+    const cy = Math.floor(p.y / CELL);
+    const cz = Math.floor(p.z / CELL);
+    let best = Number.POSITIVE_INFINITY;
+    let bi = -1;
+    // Widened only when the near cells are empty: a finger sunk deep in a cheek
+    // is further from the skin than a cell, and that is the finger to move most.
+    for (let r = 1; r <= REACH && bi < 0; r++) {
+      for (let x = cx - r; x <= cx + r; x++) {
+        for (let y = cy - r; y <= cy + r; y++) {
+          for (let z = cz - r; z <= cz + r; z++) {
+            const c = this.cells.get(key(x, y, z));
+            if (!c) continue;
+            for (const i of c) {
+              const dx = p.x - this.pos[i * 3];
+              const dy = p.y - this.pos[i * 3 + 1];
+              const dz = p.z - this.pos[i * 3 + 2];
+              const d = dx * dx + dy * dy + dz * dz;
+              if (d < best) {
+                best = d;
+                bi = i;
+              }
+            }
+          }
+        }
+      }
+    }
+    if (bi < 0) return 0;
+    const nx = this.nrm[bi * 3];
+    const ny = this.nrm[bi * 3 + 1];
+    const nz = this.nrm[bi * 3 + 2];
+    const s =
+      (p.x - this.pos[bi * 3]) * nx +
+      (p.y - this.pos[bi * 3 + 1]) * ny +
+      (p.z - this.pos[bi * 3 + 2]) * nz;
+    if (s >= clear) return 0;
+    outward.set(nx, ny, nz).applyQuaternion(this.turn);
+    return clear - s;
+  }
+}

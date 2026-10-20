@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { BodyFrame, BoneSlot, Profile } from '../types';
+import { FaceSurface } from './face';
 import { TORSO_ARM_START, TORSO_BANDS, TORSO_PASSES, TORSO_SAMPLES, TORSO_SECTORS } from './joints';
 import { type MeasuredVolume, measureVolume, surfaceOf } from './volume';
 
@@ -31,6 +32,8 @@ export interface VolumeFrame {
 /** The head's surface plus the bone and rest axes that carry it each frame. */
 interface HeadMeasurement extends MeasuredVolume {
   bone: THREE.Bone;
+  /** The skin itself, for what passes closer to it than the volume can tell. */
+  face: FaceSurface | null;
   local: { up: THREE.Vector3; right: THREE.Vector3; forward: THREE.Vector3 };
 }
 
@@ -670,6 +673,7 @@ export class BodyVolumes {
     return {
       ...vol,
       bone: head,
+      face: FaceSurface.measure(this.p.root, head, set),
       local: { up: face.up, right: face.right, forward: face.forward },
     };
   }

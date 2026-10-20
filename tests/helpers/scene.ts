@@ -471,6 +471,17 @@ function makeMesh(
   geometry.setAttribute('position', new THREE.BufferAttribute(position, 3));
   geometry.setAttribute('skinIndex', new THREE.BufferAttribute(skinIndex, 4));
   geometry.setAttribute('skinWeight', new THREE.BufferAttribute(skinWeight, 4));
+  // Rings joined into a closed band, wound to face outward, so the skin has a
+  // surface to be inside of.
+  const faces: number[] = [];
+  for (let b = 0; b + 1 < bands; b++) {
+    for (let s = 0; s < sectors; s++) {
+      const i = b * sectors + s;
+      const j = b * sectors + ((s + 1) % sectors);
+      faces.push(i, i + sectors, j, i + sectors, j + sectors, j);
+    }
+  }
+  geometry.setIndex(faces);
 
   if (shapeNames.length) {
     const dictionary: Record<string, number> = {};

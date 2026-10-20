@@ -65,18 +65,28 @@ describe('gesture entrance', () => {
     // Proximo-distal sequencing. Compared as *fractions* of each link's own
     // travel, since the hand covers far more ground than the shoulder and would
     // win an absolute comparison whatever the ordering.
+    //
+    // The shoulder by where the humerus points rather than by its whole turn:
+    // its roll about its own axis is where the elbow folds, so it arrives with
+    // the elbow and says nothing about when the shoulder set out.
     const shoulder = h.profile.bones[`upperArm.${side}`];
+    const elbow = h.profile.bones[`lowerArm.${side}`];
     const hand = h.profile.bones[`hand.${side}`];
-    if (!(shoulder && hand)) throw new Error('synthetic rig is missing an arm');
+    if (!(shoulder && elbow && hand)) throw new Error('synthetic rig is missing an arm');
 
     const at = (bone: THREE.Bone) => {
       bone.updateWorldMatrix(true, false);
       return bone.getWorldQuaternion(new THREE.Quaternion());
     };
+    const humerus = () =>
+      elbow
+        .getWorldPosition(new THREE.Vector3())
+        .sub(shoulder.getWorldPosition(new THREE.Vector3()))
+        .normalize();
 
     h.rig.reset();
     h.body.update(DT);
-    const s0 = at(shoulder);
+    const s0 = humerus();
     const h0 = at(hand);
     h.body.play(FAR, side);
 
@@ -84,7 +94,7 @@ describe('gesture entrance', () => {
     for (let i = 0; i < 60; i++) {
       h.rig.reset();
       h.body.update(DT);
-      turned.push([s0.angleTo(at(shoulder)), h0.angleTo(at(hand))]);
+      turned.push([s0.angleTo(humerus()), h0.angleTo(at(hand))]);
     }
     const total = turned.at(-1);
     if (!total) throw new Error('no frames');
