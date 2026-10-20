@@ -64,8 +64,8 @@ const STORAGE_KEY = 'hashidate.locale';
 const FALLBACK: Locale = 'en';
 
 function fromStorage(): Locale | null {
-  if (typeof localStorage === 'undefined') return null;
   try {
+    if (typeof localStorage === 'undefined') return null;
     const stored = localStorage.getItem(STORAGE_KEY);
     return isLocale(stored) ? stored : null;
   } catch {
@@ -118,12 +118,12 @@ export function getLocale(): Locale {
 export function setLocale(next: Locale): void {
   if (next === current) return;
   current = next;
-  if (typeof localStorage !== 'undefined') {
-    try {
+  try {
+    if (typeof localStorage !== 'undefined') {
       localStorage.setItem(STORAGE_KEY, next);
-    } catch {
-      // Not being able to remember the choice is not a reason to refuse it.
     }
+  } catch {
+    // Not being able to remember the choice is not a reason to refuse it.
   }
   for (const listener of [...listeners]) listener();
 }
