@@ -245,6 +245,10 @@ class BufferTake implements Take {
     return this.reported;
   }
 
+  level(seconds: number): number {
+    return envelopeAt(this.envelope, seconds);
+  }
+
   get amplitude(): number {
     return this.source === null ? 0 : envelopeAt(this.envelope, this.elapsed);
   }

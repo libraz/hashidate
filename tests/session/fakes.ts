@@ -34,6 +34,7 @@ export class FakeTake implements Take {
   playedAt: number | null = null;
   stopped = false;
   amplitude = 1;
+  levelAt: (seconds: number) => number = () => 1;
 
   constructor(
     readonly seconds: number,
@@ -47,6 +48,10 @@ export class FakeTake implements Take {
 
   stop(): void {
     this.stopped = true;
+  }
+
+  level(seconds: number): number {
+    return this.levelAt(seconds);
   }
 
   get elapsed(): number {

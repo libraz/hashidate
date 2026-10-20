@@ -144,6 +144,8 @@ export interface Take {
   readonly elapsed: number;
   /** How loud it is right now, 0..1, normalised against this take's own peak. */
   readonly amplitude: number;
+  /** The take's measured envelope at `seconds`, 0..1, whether or not it is playing; out of range is silence. */
+  level(seconds: number): number;
   play(): void;
   stop(): void;
 }

@@ -342,6 +342,24 @@ describe('envelopeAt', () => {
 });
 
 describe('BrowserVoice with an in-memory Web Audio graph', () => {
+  it('reads the measured envelope at any time, before play and out of range', async () => {
+    const fake = webAudioEnvironment();
+    const take = await fake.voice.prepare('hello');
+    expect(take).not.toBeNull();
+    const envelope = buildEnvelope(fake.decoded.getChannelData(0), fake.decoded.sampleRate);
+
+    expect(take?.elapsed).toBe(0);
+    for (const s of [0, 0.0005, 0.01, fake.decoded.duration / 2]) {
+      expect(take?.level(s)).toBe(envelopeAt(envelope, s));
+    }
+    expect(take?.level(0)).toBeGreaterThan(0.9);
+    expect(take?.level(-0.5)).toBe(0);
+    expect(take?.level(fake.decoded.duration + 10)).toBe(0);
+
+    fake.voice.dispose();
+    fake.output.dispose();
+  });
+
   it('decodes a take, keeps its clock, and routes dry/wet gain into the output bus', async () => {
     const fake = webAudioEnvironment();
     const captured = await fake.voice.captureStream();
