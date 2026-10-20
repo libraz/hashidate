@@ -30,6 +30,8 @@ export interface TuningRange {
   precision: number;
   /** Appended to a readout: `s`, `m`, `m/s²`. Empty for a bare ratio. */
   unit: string;
+  /** Where the control changes nothing, for a multiplier: a fader lights from here. */
+  rest?: number;
 }
 
 /** Idle motion: what the character does when it is doing nothing. */
@@ -135,17 +137,17 @@ export interface Tuning {
  */
 export const TUNING_RANGES = {
   idle: {
-    breathDepth: { min: 0, max: 2, step: 0.01, precision: 2, unit: '' },
+    breathDepth: { min: 0, max: 2, step: 0.01, precision: 2, unit: '', rest: 1 },
     breathPeriod: { min: 2, max: 8, step: 0.1, precision: 1, unit: 's' },
-    idleAmount: { min: 0, max: 2, step: 0.01, precision: 2, unit: '' },
-    weightShift: { min: 0, max: 2, step: 0.01, precision: 2, unit: '' },
-    gazeAmount: { min: 0, max: 2, step: 0.01, precision: 2, unit: '' },
-    eyeLimit: { min: 0.2, max: 2, step: 0.05, precision: 2, unit: '' },
+    idleAmount: { min: 0, max: 2, step: 0.01, precision: 2, unit: '', rest: 1 },
+    weightShift: { min: 0, max: 2, step: 0.01, precision: 2, unit: '', rest: 1 },
+    gazeAmount: { min: 0, max: 2, step: 0.01, precision: 2, unit: '', rest: 1 },
+    eyeLimit: { min: 0.2, max: 2, step: 0.05, precision: 2, unit: '', rest: 1 },
   },
   sway: {
-    stiffness: { min: 0.2, max: 3, step: 0.05, precision: 2, unit: '' },
-    inertia: { min: 0, max: 1.6, step: 0.05, precision: 2, unit: '' },
-    gravity: { min: 0, max: 4, step: 0.1, precision: 1, unit: '' },
+    stiffness: { min: 0.2, max: 3, step: 0.05, precision: 2, unit: '', rest: 1 },
+    inertia: { min: 0, max: 1.6, step: 0.05, precision: 2, unit: '', rest: 1 },
+    gravity: { min: 0, max: 4, step: 0.1, precision: 1, unit: '', rest: 1 },
   },
   hop: {
     // Metres on the wire, because that is the unit the body layer holds it in.

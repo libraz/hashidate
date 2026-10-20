@@ -75,7 +75,14 @@ export function VoiceTab({ snapshot, refresh }: Props) {
     label: string,
     path: string,
     fallback: number,
-    opts: { min: number; max: number; step?: number; precision?: number; unit?: string },
+    opts: {
+      min: number;
+      max: number;
+      step?: number;
+      precision?: number;
+      unit?: string;
+      rest?: number;
+    },
   ) => (
     <ChainSlider
       key={path}
@@ -87,6 +94,7 @@ export function VoiceTab({ snapshot, refresh }: Props) {
       step={opts.step ?? 0.01}
       precision={opts.precision ?? 2}
       unit={opts.unit ?? ''}
+      rest={opts.rest}
       title={path}
     />
   );
@@ -158,7 +166,12 @@ export function VoiceTab({ snapshot, refresh }: Props) {
               unit: t('panel.voice.semitones'),
             })}
             {knob(t('panel.voice.pitchAmount'), 'retune.mix', 1, { min: 0, max: 1 })}
-            {knob(t('panel.voice.formant'), 'formant.factor', 1, { min: 0.5, max: 2, step: 0.01 })}
+            {knob(t('panel.voice.formant'), 'formant.factor', 1, {
+              min: 0.5,
+              max: 2,
+              step: 0.01,
+              rest: 1,
+            })}
             {knob(t('panel.voice.formantAmount'), 'formant.amount', 1, { min: 0, max: 1 })}
             {knob(t('panel.voice.thickness'), 'formant.body', 0, { min: -1, max: 1 })}
             {knob(t('panel.voice.brightness'), 'formant.brightness', 0, { min: -1, max: 1 })}

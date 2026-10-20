@@ -41,6 +41,8 @@ interface Props {
   step?: number;
   precision?: number;
   unit?: string;
+  /** Where the control changes nothing; see `Slider`. */
+  rest?: number;
   /** The dotted path into the configuration, shown on hover. */
   title?: string;
 }
@@ -54,16 +56,20 @@ export function ChainSlider({
   step = 0.01,
   precision = 2,
   unit = '',
+  rest,
   title,
 }: Props) {
   const [local, setLocal] = useState<number | null>(null);
-  /** Every value sent since the last adoption: a report echoing any of them is a drag catching up. */
+  /** Values sent during the current drag; a latest-value acknowledgement releases the drag. */
   const sent = useRef<number[]>([]);
   const lastReported = useRef(reported);
 
   if (!Object.is(lastReported.current, reported)) {
     lastReported.current = reported;
-    if (shouldAdopt(reported, sent.current, step)) {
+    const latest = sent.current.at(-1);
+    // Once the newest send is acknowledged, older echoes must not mask a later preset change.
+    const latestWasAcknowledged = latest !== undefined && !shouldAdopt(reported, [latest], step);
+    if (latestWasAcknowledged || shouldAdopt(reported, sent.current, step)) {
       sent.current = [];
       if (local !== null) setLocal(null);
     }
@@ -78,6 +84,7 @@ export function ChainSlider({
       step={step}
       precision={precision}
       unit={unit}
+      rest={rest}
       title={title}
       onChange={(value) => {
         setLocal(value);
