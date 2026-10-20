@@ -98,6 +98,10 @@ export class SlideStage implements Slides {
   private rect: Rect = { left: 0, top: 0, width: 0, height: 0 };
   /** The device-pixel size the showing canvas was painted at. */
   private drawn: StageSize = { width: 0, height: 0 };
+  /** Bumped when rasterisation starts or a page is painted. */
+  private renderRevision = 0;
+  /** The render revision when the pending resize was first scheduled. */
+  private resizeRevision = 0;
 
   /**
    * The showing page and its neighbors, plus a different page currently wanted.
@@ -401,6 +405,8 @@ export class SlideStage implements Slides {
     if (existing) return existing;
     const source = this.source;
     if (!source) return Promise.resolve(null);
+    // A prefetch can populate the cache at a new resolution without painting.
+    this.renderRevision += 1;
     const pending = source.render(page, this.pixels().width).then(
       (bitmap) => {
         this.forget(page, pending);
@@ -465,6 +471,7 @@ export class SlideStage implements Slides {
     back.style.opacity = '1';
     this.front = 1 - this.front;
     this.revision += 1;
+    this.renderRevision += 1;
   }
 
   /**
@@ -519,12 +526,27 @@ export class SlideStage implements Slides {
     // the layer has now, so there is nothing to redraw and no timer to set.
     if (this.shown === 0) return;
     const pixels = this.pixels();
-    if (pixels.width === this.drawn.width && pixels.height === this.drawn.height) return;
-    if (this.resizeTimer !== null) clearTimeout(this.resizeTimer);
+    if (pixels.width === this.drawn.width && pixels.height === this.drawn.height) {
+      // With no intervening render, returning to the drawn size makes the
+      // pending resize unnecessary. A page turn or prefetch can leave cached
+      // pages at different sizes, so its timer must survive this same-size layout.
+      if (this.resizeTimer !== null && this.resizeRevision === this.renderRevision) {
+        clearTimeout(this.resizeTimer);
+        this.resizeTimer = null;
+      }
+      return;
+    }
+    if (this.resizeTimer !== null) {
+      clearTimeout(this.resizeTimer);
+    } else {
+      // Keep the first revision across reschedules: a render during this
+      // debounce can leave cached pages at a different resolution.
+      this.resizeRevision = this.renderRevision;
+    }
     this.resizeTimer = setTimeout(() => {
       this.resizeTimer = null;
-      // Every cached page is at the old resolution, so this is a new
-      // generation for the same reason a new document is.
+      // A page turn or prefetch during the debounce can leave pages at mixed
+      // resolutions, so discard them before drawing at the settled size.
       this.invalidate();
       void this.settle();
     }, RESIZE_DEBOUNCE);
