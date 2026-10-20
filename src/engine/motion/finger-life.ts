@@ -6,27 +6,20 @@ import { ScalarFollower } from './follow';
  * What a hand does on top of the shape a pose gives it.
  *
  * A pose authors a hand as a constant, and held constant through a gesture it
- * reads as a mitten on a moving arm. Two terms are added after the blend, the
- * way the arm's idle drift is: a slow per-finger drift, and a lag behind the
- * hand's own acceleration — fingers trail the hand that carries them, curling
- * toward the palm when the hand is thrown toward its back and opening when it
- * is thrown toward its palm.
+ * reads as a mitten on a moving arm. Terms added after the blend, the way the
+ * arm's idle drift is:
+ * - drift and breath: slow per-finger wander, and a slight opening on the inhale;
+ * - lag: fingers trail the hand that carries them, curling when it is thrown
+ *   toward its back and fanning across the palm when it swings sideways;
+ * - droop: palm up they fall open a little, palm down they fall in;
+ * - tenodesis: a wrist bending back pulls them in, toward the palm lets them
+ *   open — the change only, since each pose's shape was tuned at its own wrist.
  *
- * The lag's sideways part, across the palm, fans the four fingers toward
- * whichever side the hand left behind — a wave swings in the palm plane, and
- * would otherwise move nothing.
- *
- * Slack fingers also hang: a hand turned palm up lets them fall open a little,
- * and palm down lets them fall in.
- *
- * And they answer the wrist through the long flexor tendons (tenodesis): a wrist
- * bending back pulls them in, one bending toward the palm lets them open. Only
- * the change shows — the shape a pose holds still was tuned at its own wrist
- * angle, and tone restores it once the wrist stops.
- *
- * All of it scales with how slack the finger is. A finger held straight to point or
- * closed into a fist is held there on purpose, and the pointing solver reads
- * its fingertip off that curl.
+ * All of these scale with how slack the finger is: one held straight to point or
+ * closed into a fist is held there on purpose, and the pointing solver reads its
+ * fingertip off that curl. Enslaving is the exception — a finger moving alone
+ * drags its neighbours part of the way whatever their curl, and lets them go once
+ * it arrives.
  */
 
 const FINGERS: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
@@ -104,6 +97,19 @@ const SPLAY_WEIGHT: Record<FingerName, number> = {
   little: 1.1,
 };
 
+/**
+ * How far finger f is carried when finger g moves without it, as a fraction of
+ * g's travel. Half the involuntary motion measured in Häger-Ross & Schieber,
+ * J Neurosci 20 (2000): a performed hand is cleaner than a tested one.
+ */
+const ENSLAVE: Record<FingerName, Partial<Record<FingerName, number>>> = {
+  thumb: {},
+  index: { middle: 0.1, ring: 0.05 },
+  middle: { index: 0.12, ring: 0.2, little: 0.08 },
+  ring: { index: 0.05, middle: 0.2, little: 0.25 },
+  little: { middle: 0.08, ring: 0.22 },
+};
+
 /** 1 for a half-closed finger, 0 for one straight or fully closed. */
 const slack = (v: number): number => {
   const c = THREE.MathUtils.clamp(v, 0, 1);
@@ -146,10 +152,12 @@ const UP = new THREE.Vector3(0, 1, 0);
 const _lateral = new THREE.Vector3();
 const _base = new THREE.Vector3();
 const _forearm = new THREE.Vector3();
+const _pending: Record<FingerName, number> = { thumb: 0, index: 0, middle: 0, ring: 0, little: 0 };
 const _q = new THREE.Quaternion();
 
 export class FingerLife {
   private readonly _motion: Record<Side, HandMotion> = { L: mkMotion(), R: mkMotion() };
+  private readonly _shadow: Partial<Record<Side, Record<FingerName, ScalarFollower>>> = {};
 
   constructor(
     private readonly p: Profile,
@@ -256,5 +264,42 @@ export class FingerLife {
       (DRIFT * idle * (Math.sin(t * 0.7 + ph) + 0.5 * Math.sin(t * 1.3 + 1.7 * ph))) / 1.5;
     const m = this._motion[side];
     return s * (drift - BREATH * breath + m.droop + (m.x + m.teno) * LAG_WEIGHT[f]);
+  }
+
+  /**
+   * Bend each finger's `target` toward its neighbours' remaining travel, in
+   * place. Only the difference carries: a hand closing as a whole drags
+   * nothing, and once every finger has arrived the targets are untouched.
+   *
+   * Travel is read off a shadow of the fingers that follows the uncoupled
+   * targets. Read off the coupled fingers themselves it feeds back, and the
+   * loop leaves a mode that settles several times slower than the follower.
+   */
+  enslave(
+    side: Side,
+    target: Record<FingerName, number>,
+    dt: number,
+    rate: (f: FingerName) => number,
+    amount: number,
+  ): void {
+    let shadow = this._shadow[side];
+    if (!shadow) {
+      shadow = {
+        thumb: new ScalarFollower(target.thumb),
+        index: new ScalarFollower(target.index),
+        middle: new ScalarFollower(target.middle),
+        ring: new ScalarFollower(target.ring),
+        little: new ScalarFollower(target.little),
+      };
+      this._shadow[side] = shadow;
+    }
+    for (const f of FINGERS) _pending[f] = target[f] - shadow[f].step(target[f], dt, rate(f));
+    if (amount <= 0) return;
+    for (const f of FINGERS) {
+      let c = 0;
+      for (const g of FINGERS) c += (ENSLAVE[f][g] ?? 0) * (_pending[g] - _pending[f]);
+      // Dragged, never past the free range: curl 1 is the top of it.
+      target[f] = THREE.MathUtils.clamp(target[f] + amount * c, 0, 1);
+    }
   }
 }

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FIST, OPEN_HAND, SOFT_HAND } from '@/engine/motion/gestures/hands';
+import { FIST, OPEN_HAND, POINT_HAND, SOFT_HAND, THUMB_UP } from '@/engine/motion/gestures/hands';
 import type { FingerName, GestureDef } from '@/engine/types';
 import { DT, type Harness, harness } from './harness';
 
@@ -210,6 +210,30 @@ describe('finger life', () => {
     expect(palmward.mid).toBeLessThan(-0.01);
     expect(Math.abs(back.late)).toBeLessThan(1e-3);
     expect(Math.abs(palmward.late)).toBeLessThan(1e-3);
+  });
+
+  it('keeps a finger closed through a switch between two shapes that close it', () => {
+    h.body.playDef(held(FIST), 'pose', 'R');
+    run(h, 120);
+    const seen = record(h);
+    h.body.playDef(held(THUMB_UP), 'pose', 'R');
+    run(h, 120);
+    const lo = Math.min(FIST.little, THUMB_UP.little);
+    expect(lo - Math.min(...seen.map((c) => c.little))).toBeLessThan(0.01);
+    expect(seen[seen.length - 1].thumb).toBeCloseTo(THUMB_UP.thumb, 2);
+  });
+
+  it('lifts the middle finger part way with an index straightening alone, then lets it go', () => {
+    h.body.playDef(held(FIST), 'pose', 'R');
+    run(h, 120);
+    const seen = record(h);
+    h.body.playDef(held(POINT_HAND), 'pose', 'R');
+    run(h, 180);
+    const lift = POINT_HAND.middle - Math.min(...seen.map((c) => c.middle));
+    expect(lift).toBeGreaterThan(0.025);
+    const last = seen[seen.length - 1];
+    expect(Math.abs(last.middle - POINT_HAND.middle)).toBeLessThan(2e-3);
+    expect(Math.abs(last.index - POINT_HAND.index)).toBeLessThan(2e-3);
   });
 
   it('fans the fingers after a hand swung across the palm', () => {

@@ -91,6 +91,7 @@ const FINGER_STAGGER: Record<FingerName, number> = {
   ring: 0.9,
   little: 0.8,
 };
+const fingerRate = (f: FingerName): number => FINGER_FOLLOW * FINGER_STAGGER[f];
 
 /**
  * How fast the limb follows while a reach is carrying the wrist through the
@@ -1106,9 +1107,13 @@ export class Body {
     }
 
     let kept = 0;
+    // The hand the last gesture left is held until the new one's fingers come
+    // in, so its slot outlives its arm weight; see the finger blend.
+    const handedOver = this._fading[this._fading.length - 1];
+    const holdingHand = !!g?.fingers && this._fingerEnv.entrance < 1;
     for (const f of this._fading) {
       f.w *= Math.exp(-dt * 6);
-      if (f.w < 0.01) {
+      if (f.w < 0.01 && !(holdingHand && f === handedOver)) {
         f.pose = null;
         this._spare.push(f);
         continue;
@@ -1374,6 +1379,14 @@ export class Body {
         if (o.pose?.clasp) held += o.w * (1 - minJerk((1 - o.w) / UNTHREAD));
       }
       const free = Math.max(0, 1 - held);
+      // A switch hands the hand straight over. The outgoing shape fades on the
+      // arm's schedule and the incoming one starts late (FINGER_ONSET); weighted
+      // as they are, the gap between sagged even fist-to-point a quarter open.
+      const handedOver = this._fading[this._fading.length - 1];
+      // Held so that rest shows through only as far as the new gesture's own
+      // exit lets it: (1 - hold)(1 - fw) = 1 - exit.
+      const fx = this._fingerEnv.exit;
+      const handHold = (cf || cfSpread) && fw < 1 ? 1 - (1 - fx) / (1 - fw) : 0;
       this._fingerLife.sense(side, dt);
       for (const f of FINGER_NAMES) {
         let val = BASE_FINGERS[f];
@@ -1384,23 +1397,27 @@ export class Body {
           const oK = minJerk((1 - o.w) / UNTHREAD);
           let pv = o.pose?.fingers?.[side]?.[f];
           if (pv !== undefined && oSpread) pv = claspCurl(side !== oc?.lead, f, pv, oK);
-          if (pv !== undefined) val += (pv - val) * o.w;
+          const ow = o === handedOver ? Math.max(o.w, handHold) : o.w;
+          if (pv !== undefined) val += (pv - val) * ow;
           const pvSpread = oSpread
             ? (oSpread[f] ?? 0) * (1 - oK)
             : o.pose?.fingerSpread?.[side]?.[f];
-          if (pvSpread !== undefined) spreadVal += (pvSpread - spreadVal) * o.w;
+          if (pvSpread !== undefined) spreadVal += (pvSpread - spreadVal) * ow;
         }
         let cv = cf?.[f];
         if (cv !== undefined && cSpread) cv = claspCurl(side !== cc?.lead, f, cv, cK);
         if (cv !== undefined) val += (cv - val) * fw;
         val += this._fingerLife.offset(side, f, val, this.t, idle, br * d, free);
-        spec[f] = this._fingerState[side][f].step(val, dt, FINGER_FOLLOW * FINGER_STAGGER[f]);
+        spec[f] = val;
 
         const cvSpread = cSpread ? (cSpread[f] ?? 0) * (1 - cK) : cfSpread?.[f];
         if (cvSpread !== undefined) spreadVal += (cvSpread - spreadVal) * fw;
         spreadVal += this._fingerLife.spread(side, f, val, free);
         spread[f] = this._fingerSpreadState[side][f].step(spreadVal, dt, FINGER_FOLLOW);
       }
+      const state = this._fingerState[side];
+      this._fingerLife.enslave(side, spec, dt, fingerRate, free);
+      for (const f of FINGER_NAMES) spec[f] = state[f].step(spec[f], dt, fingerRate(f));
       rig.curlHand(side, spec, spread);
     }
   }
