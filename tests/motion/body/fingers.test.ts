@@ -86,7 +86,7 @@ describe('finger life', () => {
   it('drifts a slack hand held still, and only while idle is on', () => {
     h.body.idleAmount = 1;
     h.body.playDef(swung(SOFT_HAND, 0), 'pose', 'R');
-    run(h, 60);
+    run(h, 240);
     const live = record(h);
     run(h, 360);
     expect(range(live.map((c) => c.index))).toBeGreaterThan(0.01);
@@ -94,10 +94,10 @@ describe('finger life', () => {
     vi.restoreAllMocks();
     const still = harness();
     still.body.playDef(swung(SOFT_HAND, 0), 'pose', 'R');
-    run(still, 60);
+    run(still, 240);
     const frozen = record(still);
     run(still, 360);
-    // Not zero: the lag still answers the arm's last creep into the pose.
+    // Not zero: the lag and the wrist still answer the arm's last creep into the pose.
     expect(range(frozen.map((c) => c.index))).toBeLessThan(1e-3);
   });
 
@@ -145,6 +145,44 @@ describe('finger life', () => {
     expect(lead).toBeGreaterThan(0.05);
     const last = seen[seen.length - 1];
     expect(Math.abs(progress(last, 'index') - progress(last, 'little'))).toBeLessThan(0.02);
+  });
+
+  it('curls slack fingers as the wrist bends back, opens them as it bends in, then holds the shape', () => {
+    const bent = (hand: THREE.Vector3): GestureDef => ({
+      label: { en: 'Bend', ja: '曲げ' },
+      group: 'pose',
+      lead: 0.3,
+      hold: 10,
+      sustain: true,
+      build: (t) => ({
+        fingers: { R: SOFT_HAND },
+        arms: {
+          R: {
+            upperArm: V(0.3, -0.9, 0.3),
+            lowerArm: V(0.1, -0.2, 0.95),
+            hand: t > 2 ? hand : V(0.1, -0.2, 0.95),
+            palm: V(0, -1, 0),
+          },
+        },
+      }),
+    });
+    // How far the middle finger sits from where it settles, mid-bend and late.
+    const bend = (hand: THREE.Vector3) => {
+      const k = harness();
+      k.body.playDef(bent(hand), 'pose', 'R');
+      const seen = record(k);
+      run(k, 480);
+      vi.restoreAllMocks();
+      const end = seen[seen.length - 1].middle;
+      return { mid: seen[170].middle - end, late: seen[420].middle - end };
+    };
+    // Palm down: up is back, down is toward the palm.
+    const back = bend(V(0.1, 0.5, 0.85));
+    const palmward = bend(V(0.1, -0.8, 0.55));
+    expect(back.mid).toBeGreaterThan(0.02);
+    expect(palmward.mid).toBeLessThan(-0.01);
+    expect(Math.abs(back.late)).toBeLessThan(1e-3);
+    expect(Math.abs(palmward.late)).toBeLessThan(1e-3);
   });
 
   it('fans the fingers after a hand swung across the palm', () => {

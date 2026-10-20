@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { FingerName, Profile, Side } from '../types';
+import { ScalarFollower } from './follow';
 
 /**
  * What a hand does on top of the shape a pose gives it.
@@ -17,6 +18,11 @@ import type { FingerName, Profile, Side } from '../types';
  *
  * Slack fingers also hang: a hand turned palm up lets them fall open a little,
  * and palm down lets them fall in.
+ *
+ * And they answer the wrist through the long flexor tendons (tenodesis): a wrist
+ * bending back pulls them in, one bending toward the palm lets them open. Only
+ * the change shows — the shape a pose holds still was tuned at its own wrist
+ * angle, and tone restores it once the wrist stops.
  *
  * All of it scales with how slack the finger is. A finger held straight to point or
  * closed into a fist is held there on purpose, and the pointing solver reads
@@ -53,6 +59,15 @@ const DROOP = 0.04;
  * shape is tuned by eye.
  */
 const DROOP_DEAD = 0.35;
+/**
+ * Curl per radian of wrist bend. Relaxed fingers flex roughly a third of a
+ * degree at the knuckle per degree of wrist extension, and curl 1 is about 90°.
+ */
+const TENODESIS = 0.2;
+/** Most the wrist may move a finger either way; approached softly. */
+const TENO_MAX = 0.12;
+/** How fast tone takes the hand back to its shape once the wrist settles: ω ≈ 4, about a second. */
+const TENO_RATE = 2.4;
 /** Splay per metre of sideways lag, radians. */
 const SPLAY_PER_METRE = 3.5;
 /** Most the sideways lag may splay a finger, radians. About eight degrees. */
@@ -61,7 +76,11 @@ const SPLAY_MAX = 0.14;
 const LAG_OMEGA = 22;
 const LAG_ZETA = 0.6;
 
-/** The thumb hangs off the side of the palm and swings least; the little finger, longest from the wrist's axis, most. */
+/**
+ * How freely each finger is carried by the hand's motion and the wrist's bend.
+ * The thumb hangs off the side of the palm and swings least; the little finger,
+ * longest from the wrist's axis, most.
+ */
 const LAG_WEIGHT: Record<FingerName, number> = {
   thumb: 0.4,
   index: 0.8,
@@ -97,6 +116,10 @@ interface HandMotion {
   splay: number;
   /** What gravity does to the curl this frame. */
   droop: number;
+  /** The wrist's flexion, followed slowly: the angle the hand's shape was last held at. */
+  wrist: ScalarFollower;
+  /** What the wrist's bend does to the curl this frame. */
+  teno: number;
 }
 
 const mkMotion = (): HandMotion => ({
@@ -106,6 +129,8 @@ const mkMotion = (): HandMotion => ({
   x: 0,
   splay: 0,
   droop: 0,
+  wrist: new ScalarFollower(0),
+  teno: 0,
 });
 
 const _pos = new THREE.Vector3();
@@ -114,6 +139,7 @@ const _normal = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 const _lateral = new THREE.Vector3();
 const _base = new THREE.Vector3();
+const _forearm = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 
 export class FingerLife {
@@ -131,14 +157,23 @@ export class FingerLife {
   sense(side: Side, dt: number): void {
     const m = this._motion[side];
     const hand = this.p.bones[`hand.${side}`];
+    const elbow = this.p.bones[`lowerArm.${side}`];
     const knuckle = this.p.fingerBones[`middle.${side}`]?.[0];
     const palm = this.palmLocal[side];
-    if (!(hand && knuckle && palm) || dt <= 0) return;
+    if (!(hand && elbow && knuckle && palm) || dt <= 0) return;
 
     knuckle.getWorldPosition(_pos);
-    if (!m.seeded || dt > STALE_DT || m.point.distanceTo(_pos) > TELEPORT) {
+    hand.getWorldQuaternion(_q);
+    _normal.copy(palm).applyQuaternion(_q).normalize();
+    // Flexion toward the palm is positive: a hand bent by θ tips its palm normal
+    // back along the forearm by sin θ.
+    hand.getWorldPosition(_forearm).sub(elbow.getWorldPosition(_base)).normalize();
+    const flex = Math.asin(THREE.MathUtils.clamp(-_forearm.dot(_normal), -1, 1));
+    const reseed = !m.seeded || dt > STALE_DT || m.point.distanceTo(_pos) > TELEPORT;
+    if (reseed) {
       m.point.copy(_pos);
       m.vel.set(0, 0, 0);
+      m.wrist.reset(flex);
       m.seeded = true;
     }
 
@@ -149,8 +184,9 @@ export class FingerLife {
       .divideScalar(1 + 2 * LAG_ZETA * LAG_OMEGA * dt + w2 * dt * dt);
     m.point.addScaledVector(m.vel, dt);
 
-    hand.getWorldQuaternion(_q);
-    _normal.copy(palm).applyQuaternion(_q).normalize();
+    const bend = flex - m.wrist.step(flex, dt, TENO_RATE);
+    m.teno = TENO_MAX * Math.tanh((-TENODESIS * bend) / TENO_MAX);
+
     // Left on the palm side, the hand was thrown toward its back: the fingers
     // fold in after it.
     const up = _normal.dot(UP);
@@ -204,6 +240,6 @@ export class FingerLife {
     const drift =
       (DRIFT * idle * (Math.sin(t * 0.7 + ph) + 0.5 * Math.sin(t * 1.3 + 1.7 * ph))) / 1.5;
     const m = this._motion[side];
-    return s * (drift + m.droop + m.x * LAG_WEIGHT[f]);
+    return s * (drift + m.droop + (m.x + m.teno) * LAG_WEIGHT[f]);
   }
 }
