@@ -218,6 +218,40 @@ describe('ArmAnatomy.measure', () => {
     expect(body.anat.score().rotation).toBe(0);
   });
 
+  it.each<Side>(['L', 'R'])(
+    'reads a raised elbow the shoulder carried up as unrotated, through straight forward (%s)',
+    (side) => {
+      const body = buildBody();
+      // Flexing a bent arm forward with no humeral rotation carries the forearm
+      // with it: forward when hanging, up at horizontal, back over the shoulder.
+      for (let deg = 0; deg <= 120; deg += 2) {
+        const phi = (deg * Math.PI) / 180;
+        const u = swung(body.down, body.fwd, phi);
+        const bend = swung(body.fwd, body.up, phi);
+        const l = swung(u, bend, 1.0);
+        const m = body.anat.measure(side, u, l, l, null);
+        expect(Math.abs(m.rotation), `${deg} degrees of flexion`).toBeLessThan(NEAR_ZERO);
+      }
+    },
+  );
+
+  it.each<Side>(['L', 'R'])(
+    'keeps an outward rotation outward as the arm lifts past the horizontal (%s)',
+    (side) => {
+      const body = buildBody();
+      const out = body.outward(side);
+      for (let deg = 0; deg <= 150; deg += 2) {
+        const theta = (deg * Math.PI) / 180;
+        const u = swung(body.down, out, theta);
+        // The outside of the arm, carried up with it.
+        const outside = swung(out, body.up, theta);
+        const l = swung(u, swung(body.fwd, outside, 0.5), 1.0);
+        const m = body.anat.measure(side, u, l, l, null);
+        expect(m.rotation, `${deg} degrees of abduction`).toBeCloseTo(0.5, 6);
+      }
+    },
+  );
+
   it('scores an unconstrained wrist as pure flexion and a stated palm as a split', () => {
     const body = buildBody();
     const fore = body.down;

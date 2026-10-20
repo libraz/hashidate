@@ -183,31 +183,42 @@ export class ArmAnatomy {
 
   /**
    * Zero-rotation reference for the humerus: the direction the elbow points
-   * when the arm is neutral, which is forward.
+   * when the arm is neutral, which is forward on a hanging arm.
    *
-   * Degenerates when the arm itself points forward, and then falls back to
-   * down. Rotation about a swinging axis is path-dependent in general — the
-   * same end pose is reachable with different accumulated twist — so this is a
-   * reference, not a measurement of how the arm got there. For bounding a pose
-   * that is the right thing: what matters is whether the elbow ends up
-   * somewhere a shoulder can put it.
+   * In front of the shoulder it is where the shoulder carries that forward
+   * elbow on swinging straight to `u`: up at a horizontal flexion, back over
+   * the shoulder above it. Projecting forward onto the arm's normal plane
+   * instead flips half a turn as the arm passes straight forward, and every
+   * hand brought to the face read as rotated past its stop and was whipped
+   * sideways on the way in. Behind the shoulder it is still that projection,
+   * which matches how an elbow is taken back and has its own flip only straight
+   * behind, past the elevation ceiling. The two agree on the frontal plane, and
+   * the one singular direction left is straight up.
+   *
+   * Rotation about a swinging axis is path-dependent in general, so this is a
+   * reference rather than a measurement of how the arm got there.
    */
   private humeralRef(u: THREE.Vector3): THREE.Vector3 {
     const r = this._ref.copy(this.fwd);
-    r.addScaledVector(u, -r.dot(u));
-    if (r.lengthSq() < 0.04) {
-      r.copy(this.up).negate();
-      r.addScaledVector(u, -r.dot(u));
+    const ahead = u.dot(this.fwd);
+    const lift = 1 - u.dot(this.up);
+    if (ahead > 0 && lift > 1e-6) {
+      r.addScaledVector(u, -ahead / lift).addScaledVector(this.up, ahead / lift);
     }
+    r.addScaledVector(u, -r.dot(u));
+    if (r.lengthSq() < 1e-8) r.copy(this.up);
     return r.normalize();
   }
 
-  /** Orthonormal partner to `ref` in the plane normal to `u`, toward outside. */
+  /**
+   * Orthonormal partner to `ref` in the plane normal to `u`, toward outside.
+   *
+   * Handed rather than projected off the lateral axis, which lies in that plane
+   * once the arm is out at the side and flips the sign of every rotation above it.
+   */
   private lateralPerp(u: THREE.Vector3, ref: THREE.Vector3): THREE.Vector3 {
-    const p = this._perp.copy(this.lateral);
-    p.addScaledVector(u, -p.dot(u));
-    p.addScaledVector(ref, -p.dot(ref));
-    if (p.lengthSq() < 1e-10) p.crossVectors(u, ref);
+    const p = this._perp.crossVectors(ref, u);
+    if (this._h.crossVectors(this.up, this.fwd).dot(this.lateral) < 0) p.negate();
     return p.normalize();
   }
 
@@ -252,11 +263,7 @@ export class ArmAnatomy {
     // straight arm — there is no bend to point anywhere — and reported as
     // neutral there rather than as noise.
     const ref = this.humeralRef(u);
-    const perp = this._perp.copy(this.lateral);
-    perp.addScaledVector(u, -perp.dot(u));
-    perp.addScaledVector(ref, -perp.dot(ref));
-    if (perp.lengthSq() < 1e-10) perp.crossVectors(u, ref);
-    perp.normalize();
+    const perp = this.lateralPerp(u, ref);
     // How much the measurement can be trusted: nothing below 15 degrees of
     // elbow bend, fully by 45.
     m.rotationRead = THREE.MathUtils.clamp((m.elbow - 0.26) / 0.52, 0, 1);

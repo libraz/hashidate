@@ -1,7 +1,8 @@
+import type * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { gestureEntries } from '@/engine/motion';
 import type { Side } from '@/engine/types';
-import { DT, harness, wristOf } from './harness';
+import { canonicalDirection, DT, harness, wristOf } from './harness';
 
 /**
  * That the anatomical limiter cannot teleport a hand.
@@ -97,6 +98,37 @@ describe('the anatomical limiter', () => {
       expect(over).toEqual([]);
     },
     SLOW,
+  );
+
+  it.each<Side>(['L', 'R'])(
+    'raises an elbow past straight forward without the limiter swinging the forearm (%s)',
+    (side) => {
+      // Both carry the upper arm up through straight forward with the elbow
+      // bent toward the face. The fastest the movement itself turns a forearm
+      // is under twelve radians a second; pinned at the slew's fourteen is the
+      // clamp chasing a stop that jumped.
+      for (const id of ['catPaw', 'pawBounce']) {
+        const h = harness();
+        h.rig.reset();
+        h.body.update(DT);
+        h.body.play(id, side);
+        let prev: Record<Side, THREE.Vector3 | null> = { L: null, R: null };
+        let worst = 0;
+        for (let i = 0; i < 90; i++) {
+          h.rig.reset();
+          h.body.update(DT);
+          const next: Record<Side, THREE.Vector3 | null> = { L: null, R: null };
+          for (const s of ['L', 'R'] as Side[]) {
+            const fore = canonicalDirection(h, s, `lowerArm.${s}`, `hand.${s}`);
+            const p = prev[s];
+            if (p) worst = Math.max(worst, fore.angleTo(p) / DT);
+            next[s] = fore;
+          }
+          prev = next;
+        }
+        expect(worst, id).toBeLessThan(12);
+      }
+    },
   );
 
   it('still lets every held pose arrive inside its own entrance', () => {
