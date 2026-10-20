@@ -7,6 +7,14 @@ import { clampDof, elevationCeiling } from './strain';
 import { BodyVolumes } from './volumes';
 
 /**
+ * How far humeral rotation can be read off an elbow bent `flex` radians:
+ * nothing below fifteen degrees, fully by forty-five.
+ */
+function rotationTrust(flex: number): number {
+  return THREE.MathUtils.clamp((flex - 0.26) / 0.52, 0, 1);
+}
+
+/**
  * Measurement and limiting for one arm.
  *
  * Holds its scratch vectors because it runs twice a frame for hours; the
@@ -266,7 +274,7 @@ export class ArmAnatomy {
     const perp = this.lateralPerp(u, ref);
     // How much the measurement can be trusted: nothing below 15 degrees of
     // elbow bend, fully by 45.
-    m.rotationRead = THREE.MathUtils.clamp((m.elbow - 0.26) / 0.52, 0, 1);
+    m.rotationRead = rotationTrust(m.elbow);
     const bend = this._bend.copy(l);
     bend.addScaledVector(u, -bend.dot(u));
     if (m.rotationRead > 0 && bend.lengthSq() > 1e-10) {
@@ -447,7 +455,12 @@ export class ArmAnatomy {
       bend.normalize();
       const rot = Math.atan2(bend.dot(perp), bend.dot(ref));
       const cf = clampDof(flex, L.elbow.dofs.flexion);
-      const cr = clampDof(rot, L.shoulder.dofs.rotation);
+      // The stops close in over the band the reading is trusted over. Applied
+      // whole the moment the bend crossed it, they swung the forearm a quarter
+      // turn in one frame on every reach that lifted out of a hanging arm.
+      const [lo, hi] = L.shoulder.dofs.rotation.max;
+      const open = 1 - rotationTrust(cf);
+      const cr = THREE.MathUtils.clamp(rot, lo - (Math.PI + lo) * open, hi + (Math.PI - hi) * open);
       if (cf !== flex || cr !== rot) {
         flex = cf;
         bend.copy(ref).multiplyScalar(Math.cos(cr)).addScaledVector(perp, Math.sin(cr));

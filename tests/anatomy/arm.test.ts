@@ -320,6 +320,31 @@ describe('ArmAnatomy.clamp', () => {
     expect(hand.distanceTo(once[2])).toBeLessThan(IDEMPOTENT);
   });
 
+  it('brings the rotation stop in as the elbow bends rather than at one angle', () => {
+    const body = buildBody();
+    const anat = body.anat;
+    anat.clearArm();
+    // Bent back and inward from a hanging arm: well past the inward stop, and
+    // only readable once the elbow carries enough bend to read it from.
+    const inward = body.outward('L').negate();
+    const bend = swung(body.fwd.clone().negate(), inward, 0.6);
+    const stop = JOINTS.shoulder.dofs.rotation.max[0];
+    let prev: THREE.Vector3 | null = null;
+    let worst = 0;
+    for (let flex = 0.1; flex <= 1.2; flex += 0.01) {
+      const upper = body.down.clone();
+      const fore = swung(upper, bend, flex);
+      const hand = fore.clone();
+      anat.clamp('L', upper, fore, hand, null);
+      if (prev) worst = Math.max(worst, fore.angleTo(prev));
+      prev = fore;
+      if (flex > 0.8)
+        expect(anat.measure('L', upper, fore, hand, null).rotation).toBeCloseTo(stop, 6);
+    }
+    // The input moves a hundredth of a radian a step.
+    expect(worst).toBeLessThan(0.03);
+  });
+
   it('leaves a pose already inside the stops untouched', () => {
     const body = buildBody();
     body.anat.clearArm();
