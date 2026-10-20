@@ -73,7 +73,7 @@ export function lineEditorKeyAction({
   ctrlKey: boolean;
   isComposing: boolean;
 }): 'submit' | 'cancel' | null {
-  if (key === 'Enter' && (metaKey || ctrlKey)) return 'submit';
+  if (key === 'Enter' && (metaKey || ctrlKey) && !isComposing) return 'submit';
   if (key === 'Escape' && !isComposing) return 'cancel';
   return null;
 }
