@@ -36,6 +36,9 @@ const TURN_GAP = 0.28;
  */
 const VOICE_WAIT = 5;
 
+// A script queues ahead of a run's end; a reply being composed arrives over a second after it.
+const RUN_GAP = 1.0;
+
 /** The wait `VOICE_WAIT` allows one turn. */
 const voiceWait = (turn: Turn): number =>
   VOICE_WAIT + textToVisemes(turn.reading ?? turn.text).duration;
@@ -85,6 +88,10 @@ export class TurnQueue {
   private _paused = false;
 
   private _gap = 0;
+  /** Seconds of `update` so far; queue entries and run ends are stamped on it. */
+  private _clock = 0;
+  /** When the last run of speech ended, or null when none has or one was interrupted. */
+  private _runEndAt: number | null = null;
   /** The queue head currently waiting on its voice, how long it has waited, and may. */
   private _waiting: { turn: Turn; seconds: number; limit: number } | null = null;
   /**
@@ -222,6 +229,7 @@ export class TurnQueue {
       // Absent means "still being made". A session with no voice, and a turn
       // with no words in it, are settled as null right away so nothing waits.
       ...(this.voice && line.text ? {} : { take: null }),
+      queuedAt: this._clock,
     };
     if (this.voice && line.text) this.synthesise(turn, this.voice);
     return turn;
@@ -395,6 +403,8 @@ export class TurnQueue {
     this.queue.length = 0;
     this.d.mouth.stop();
     this.d.body.stopGesture();
+    // A line cut off ends its run: whatever is said next is a new turn.
+    this._runEndAt = null;
     if (this.turn) {
       const id = this.turn.id;
       this.release(this.turn);
@@ -424,7 +434,12 @@ export class TurnQueue {
    * stillness would be kept.
    */
   get busy(): boolean {
-    return !!this.turn || (this.queue.length > 0 && !this.paused) || this.d.mouth.speaking;
+    return !!this.turn || this.lineBehind || this.d.mouth.speaking;
+  }
+
+  /** A line is waiting that will play next. A held queue's lines are not. */
+  private get lineBehind(): boolean {
+    return this.queue.length > 0 && !this.paused;
   }
 
   /**
@@ -467,6 +482,7 @@ export class TurnQueue {
 
   update(dt: number): void {
     if (this._disposed) return;
+    this._clock += dt;
     const d = this.d;
 
     if (this.turn) {
@@ -481,6 +497,8 @@ export class TurnQueue {
         d.mouth.sync(take.elapsed);
         d.mouth.setAmplitude(take.amplitude);
       }
+      // A line queued behind this one mid-way keeps the run open past its end.
+      d.speechCloses = !this.lineBehind;
       // Cues ride the mouth's own clock rather than a clock of the session's,
       // so they stay attached to the line: text estimate or real audio, the cue
       // lands at the same point in the sentence.
@@ -493,6 +511,8 @@ export class TurnQueue {
         this.release(done);
         this.turn = null;
         this._gap = TURN_GAP;
+        // A turn with no words is a cue carrier and does not end a run.
+        if (done.text) this._runEndAt = this._clock;
         this.events.emit('turn.end', { turn: done.id });
         if (!this.queue.length) this.events.emit('queue.empty', {});
       }
@@ -564,10 +584,18 @@ export class TurnQueue {
     // would inherit whatever the last take's envelope stopped on — a mouth a
     // third open for a whole turn, with nothing near the cause to explain it.
     if (!turn.take) d.mouth.setAmplitude(1);
+    // Measured from when the line was queued, so a slow synthesis is not a break in the run.
+    d.speechOpens = this._runEndAt === null || turn.queuedAt - this._runEndAt >= RUN_GAP;
+    d.speechCloses = !this.lineBehind;
     // A turn with no text has no mouth to wait on, so the end check finds the
     // mouth idle and closes it on the next frame — and releases what it put up
     // like any other turn, so a pose meant to stay needs `hold`.
-    const seconds = turn.text ? d.speak(turn.text, turn.reading, turn.take?.seconds) : 0;
+    const take = turn.take;
+    const seconds = turn.text
+      ? d.speak(turn.text, turn.reading, take?.seconds, {
+          level: take ? (s) => take.level(s) : undefined,
+        })
+      : 0;
     if (turn.take) {
       d.mouth.sync(turn.take.elapsed);
       d.mouth.setAmplitude(turn.take.amplitude);

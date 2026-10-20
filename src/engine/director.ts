@@ -10,7 +10,7 @@
  */
 
 import type * as THREE from 'three';
-import type { BlinkContext, ExpressionPreset, MouthViseme } from './face';
+import type { BlinkContext, ExpressionPreset, MouthViseme, VisemeTrack } from './face';
 import {
   Blink,
   buildIdleFaces,
@@ -23,7 +23,7 @@ import {
   scaleTrack,
   textToVisemes,
 } from './face';
-import { Body, HOPS, type HopDef, type PointCommand } from './motion';
+import { Body, HeadBeats, HOPS, type HopDef, type PointCommand, planHeadBeats } from './motion';
 import {
   holdsUntilReleased,
   type PerformanceDef,
@@ -49,6 +49,12 @@ import type {
 export interface DirectorContext {
   /** Where the gaze chain is aimed, in world space. */
   headWorldTarget?: THREE.Vector3 | null;
+}
+
+/** What `speak` may know about a line beyond its words. */
+export interface SpeakOptions {
+  /** The take's measured envelope at a time in the line; sets which commas carry a nod. */
+  level?: (seconds: number) => number;
 }
 
 const pickOne = <T>(xs: T[]): T => xs[Math.floor(Math.random() * xs.length)];
@@ -113,6 +119,12 @@ export function chooseAutoAct(
   return rows[Math.floor(random() * rows.length)];
 }
 
+/** Where a track's last mora ends, or 0 for a track with none. */
+function spokenEnd({ events }: VisemeTrack): number {
+  const last = events[events.length - 1];
+  return last ? last.t + last.dur : 0;
+}
+
 /** What the current state asks the authored-face channel for, and how strongly. */
 interface WantedPreset {
   id: string;
@@ -142,6 +154,11 @@ export class Director {
   emotionRate: number;
 
   useArkit: boolean;
+
+  /** The line starts a run of speech rather than continuing one. Written by the turn queue. */
+  speechOpens = true;
+  /** Nothing is queued behind the line, so the run ends with it. Written by the turn queue. */
+  speechCloses = true;
 
   readonly presets: ExpressionPreset[];
   readonly presetById: Map<string, ExpressionPreset>;
@@ -205,6 +222,11 @@ export class Director {
   private readonly _composed: Record<string, number> = {};
   private readonly _blinkCtx: BlinkContext = { speaking: false, suppressed: false };
   private readonly _want: WantedPreset = { id: '', w: 0 };
+
+  /** The current line's phrase-final nods. */
+  private readonly _beats = new HeadBeats();
+  /** A plan was started and has not yet been cut by its track ending. */
+  private _beatsLive = false;
 
   /**
    * `avatar` defaults to the profile's own descriptor rather than to an empty
@@ -412,9 +434,23 @@ export class Director {
    * stretched onto the real length, which is what makes the mouth stop when the
    * voice does instead of a quarter-second early on every turn.
    */
-  speak(text: string, reading?: string, seconds?: number): number {
+  speak(text: string, reading?: string, seconds?: number, opts: SpeakOptions = {}): number {
     const track = textToVisemes(reading ?? text);
-    return this.mouth.schedule(seconds === undefined ? track : scaleTrack(track, seconds));
+    const scheduled = seconds === undefined ? track : scaleTrack(track, seconds);
+    // A reading is usually unpunctuated kana, so it borrows the text's breaks,
+    // placed by share of the spoken span: the last one has to land on the last
+    // mora's end to still read as the line's end.
+    if (reading !== undefined && !scheduled.breaks.length) {
+      const written = textToVisemes(text);
+      const tEndT = spokenEnd(written);
+      const tEndR = spokenEnd(scheduled);
+      if (tEndT > 0 && tEndR > 0) {
+        scheduled.breaks = written.breaks.map((b) => ({ kind: b.kind, t: (b.t * tEndR) / tEndT }));
+      }
+    }
+    this._beats.start(planHeadBeats(scheduled, { level: opts.level, closes: this.speechCloses }));
+    this._beatsLive = true;
+    return this.mouth.schedule(scheduled);
   }
 
   /**
@@ -581,6 +617,18 @@ export class Director {
     // stutter with the syllables.
     this.body.speaking = this.mouth.speaking;
     this.body.speechEnergy = this.mouth.busy * (0.6 + 0.4 * this.mouth.openness);
+    // Nods run on the mouth's clock. A track gone — ended or interrupted — drops
+    // the nods not yet begun; one already in the head finishes on its own.
+    const track = this.mouth.track;
+    if (this._beatsLive && !track) {
+      this._beats.cut();
+      this._beatsLive = false;
+    }
+    if (track) this._beats.sync(this.mouth.time);
+    this.body.speechNod = this._beats.update(dt);
+    this.body.speechRemaining = track ? Math.max(0, track.duration - this.mouth.time) : 0;
+    this.body.speechOpens = this.speechOpens;
+    this.body.speechCloses = this.speechCloses;
 
     this.autopilot(dt);
 

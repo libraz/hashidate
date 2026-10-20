@@ -27,6 +27,8 @@ export interface PostureInput {
   t: number;
   speaking: boolean;
   speechEnergy: number;
+  /** Phrase-final nod this frame, rad; positive pitches the head down. */
+  nod: number;
   breathPeriod: number;
   breathDepth: number;
   weightShift: number;
@@ -204,6 +206,9 @@ export class IdlePosture {
       );
       rig.addOffset('chest', -0.008 * talk * Math.sin(s.t * 2.31 + 0.5), 0, 0);
     }
+    // Phrase-final nod; the head carries most of it, the split set by eye.
+    rig.addOffset('head', 0.7 * s.nod, 0, 0);
+    rig.addOffset('neck', 0.3 * s.nod, 0, 0);
 
     this._terms.br = br;
     this._terms.d = d;

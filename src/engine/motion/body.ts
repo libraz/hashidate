@@ -10,6 +10,7 @@ import type {
   Pose,
   Profile,
   Side,
+  SpineOffsets,
   SpineSlot,
   Vec3Tuple,
 } from '../types';
@@ -19,7 +20,7 @@ import { gestureDef } from './custom';
 import { FingerLife } from './finger-life';
 import { DirFollower, OMEGA_PER_RATE, ScalarFollower } from './follow';
 import { CharacterFrame, sideMirror } from './frame';
-import { Gaze, HEAD_OMEGA } from './gaze';
+import { Gaze, HEAD_OMEGA, type SpeechGaze } from './gaze';
 import { BASE_FINGERS, BASE_PALM, BASE_POSE, pointHand } from './gestures';
 import { OPEN_HAND } from './gestures/hands';
 import { CROUCH_T, type HopSpec, type JumpArc, planJump, sampleJump } from './jump';
@@ -200,6 +201,9 @@ const mkOutgoing = (g: ActiveGesture): Outgoing => ({
   arm: { L: null, R: null },
 });
 
+/** Whether a pose writes the head or the neck. */
+const touchesHead = (s: SpineOffsets | undefined): boolean => !!s && ('head' in s || 'neck' in s);
+
 /** Scratch for the girdle turn gathered across gesture slots. */
 const _girdleTurn = new THREE.Vector3();
 const _girdleDir = new THREE.Vector3();
@@ -329,6 +333,14 @@ export class Body {
 
   speaking: boolean;
   speechEnergy: number;
+  /** Phrase-final nod this frame, rad, positive down. */
+  speechNod: number;
+  /** Seconds of the current line still to play. */
+  speechRemaining: number;
+  /** The line starts a run of speech rather than continuing one. */
+  speechOpens: boolean;
+  /** Nothing is queued behind the line, so the run ends with it. */
+  speechCloses: boolean;
 
   gesture: ActiveGesture | null;
   blend: number;
@@ -426,6 +438,13 @@ export class Body {
   private readonly _posture = new IdlePosture();
   /** The posture's per-frame input and the arms' idle terms, refilled rather than rebuilt. */
   private readonly _postureIn: PostureInput;
+  /** The gaze's per-frame view of the line, refilled rather than rebuilt. */
+  private readonly _speech: SpeechGaze = {
+    speaking: false,
+    remaining: 0,
+    opens: true,
+    closes: true,
+  };
   private readonly _idleEnv: IdleEnv = { br: 0, d: 0, armDrift: 0, dt: 0 };
   /** What one arm of a pose actually asks for. See `resolve.ts`. */
   private readonly _arm: ArmResolver;
@@ -454,6 +473,10 @@ export class Body {
     // Set per frame by the director from the mouth layer.
     this.speaking = false;
     this.speechEnergy = 0;
+    this.speechNod = 0;
+    this.speechRemaining = 0;
+    this.speechOpens = true;
+    this.speechCloses = true;
 
     // The current gesture, and `_fading` for whatever is on its way out, so a
     // switch crossfades instead of cutting.
@@ -550,6 +573,7 @@ export class Body {
       t: 0,
       speaking: false,
       speechEnergy: 0,
+      nod: 0,
       breathPeriod: this.breathPeriod,
       breathDepth: this.breathDepth,
       weightShift: this.weightShift,
@@ -1126,6 +1150,11 @@ export class Body {
     }
     this._fading.length = kept;
 
+    // A gesture that moves the head or neck owns it: the nod gives way by the
+    // gesture's own weight, keyed on which slots it writes rather than their values.
+    let w = this.gesture && touchesHead(g?.spine) ? this.blend : 0;
+    for (const f of this._fading) if (touchesHead(f.pose?.spine)) w = Math.max(w, f.w);
+
     // Everything a standing body does on its own — breathing, the weight
     // shift, the hop's fold through the trunk, the head's drift. See
     // `posture.ts`. The hop is advanced first because the fold reads its
@@ -1136,6 +1165,7 @@ export class Body {
     pin.t = this.t;
     pin.speaking = this.speaking;
     pin.speechEnergy = this.speechEnergy;
+    pin.nod = this.speechNod * (1 - w);
     pin.breathPeriod = this.breathPeriod;
     pin.breathDepth = this.breathDepth;
     pin.weightShift = this.weightShift;
@@ -1162,7 +1192,12 @@ export class Body {
     }
 
     // --- gaze -------------------------------------------------------------
-    this._gaze.update(dt, this.t);
+    const speech = this._speech;
+    speech.speaking = this.speaking;
+    speech.remaining = this.speechRemaining;
+    speech.opens = this.speechOpens;
+    speech.closes = this.speechCloses;
+    this._gaze.update(dt, this.t, speech);
     this.saccade = this._gaze.saccade;
     aimGaze(
       rig,

@@ -173,4 +173,6 @@ export interface Turn extends TurnRequest {
    * of a run, rather than between every line.
    */
   take?: Take | null;
+  /** When the line entered the queue, on the queue's own clock: where a run of speech breaks. */
+  queuedAt: number;
 }

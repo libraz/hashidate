@@ -35,6 +35,7 @@ function postureHarness(breathDepth = BREATH_DEPTH) {
     t: 0,
     speaking: false,
     speechEnergy: 0,
+    nod: 0,
     breathPeriod: 4.2,
     breathDepth,
     weightShift: 0,
