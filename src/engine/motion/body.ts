@@ -39,6 +39,11 @@ import { FINGER_ONSET, LINK_ONSET, minJerk, onset, reachEnvelope, UNTHREAD } fro
  */
 
 const ARM_SLOTS: ArmSlot[] = ['shoulder', 'upperArm', 'lowerArm', 'hand'];
+/** The link each slot hangs from when poses are blended. See `composeArmTarget`. */
+const ARM_PARENT: Partial<Record<ArmSlot, 'upperArm' | 'lowerArm'>> = {
+  lowerArm: 'upperArm',
+  hand: 'lowerArm',
+};
 const FINGER_NAMES: FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
 
 /**
@@ -356,6 +361,10 @@ export class Body {
   private _armDirs: Record<Side, Record<ArmSlot, Vec3Tuple>>;
   private _armWorld: Record<Side, Record<ArmSlot, Vec3Tuple>>;
   private _armVec: Record<Side, Record<ArmSlot, THREE.Vector3>>;
+  /** `_armVec` before breathing and drift, which is what a child link is carried by. */
+  private _armBlend: Record<Side, Record<ArmSlot, THREE.Vector3>>;
+  private readonly _carryDir = new THREE.Vector3();
+  private readonly _carryQ = new THREE.Quaternion();
   private _armState: Record<Side, Record<ArmSlot, DirFollower>>;
   private _fingerSpec: Record<Side, Record<FingerName, number>>;
   private _fingerState: Record<Side, Record<FingerName, ScalarFollower>>;
@@ -490,6 +499,7 @@ export class Body {
     this._armDirs = { L: mkDirs(), R: mkDirs() };
     this._armWorld = { L: mkDirs(), R: mkDirs() };
     this._armVec = { L: mkVecs(), R: mkVecs() }; // composed target for this frame
+    this._armBlend = { L: mkVecs(), R: mkVecs() };
     this._armState = { L: mkState(this._rest), R: mkState(this._rest) }; // what the arm is actually doing
     this._fingerSpec = { L: { ...BASE_FINGERS }, R: { ...BASE_FINGERS } };
     this._fingerState = {
@@ -673,17 +683,34 @@ export class Body {
     cDir: THREE.Vector3 | undefined,
     cw: number,
     outgoing: boolean,
+    cParent?: THREE.Vector3,
   ): THREE.Vector3 {
-    const v = this._armVec[side][slot].copy(this._rest[slot]);
+    // A forearm or hand is blended as it hangs from its parent, not as a
+    // direction of its own. Two poses' forearms lerped in character space while
+    // their upper arms lerp too turn the elbow's bend plane about the humerus,
+    // and a folded elbow hands most of that turn to the palm: leaving the cheek
+    // for a wave asked the forearm for ninety degrees of roll a frame.
+    const parent = ARM_PARENT[slot];
+    const to = parent ? this._armBlend[side][parent] : null;
+    const carry = (dir: THREE.Vector3, from: THREE.Vector3 | undefined): THREE.Vector3 => {
+      const d = this._carryDir.copy(dir);
+      if (to && from) d.applyQuaternion(this._carryQ.setFromUnitVectors(from, to));
+      return d;
+    };
+    const parentOf = (arm: ResolvedArm | null | undefined) => (parent ? arm?.[parent] : undefined);
+    const v = this._armVec[side][slot].copy(
+      carry(this._rest[slot], parent ? this._rest[parent] : undefined),
+    );
     // Outgoing first, then incoming: the incoming gesture takes over as its
     // blend rises, and the two never both sit at full weight.
     if (outgoing) {
       for (const f of this._fading) {
         const pDir = slot === 'shoulder' ? f.pose?.arms?.[side]?.shoulder : f.arm[side]?.[slot];
-        if (pDir) v.lerp(pDir, f.w).normalize();
+        if (pDir) v.lerp(carry(pDir, parentOf(f.arm[side])), f.w).normalize();
       }
     }
-    if (cDir) v.lerp(cDir, cw).normalize();
+    if (cDir) v.lerp(carry(cDir, cParent), cw).normalize();
+    this._armBlend[side][slot].copy(v);
 
     // Breathing and idle drift are added *after* the gesture blend, not before
     // it. Folding them into the base pose means a gesture at full strength
@@ -1243,13 +1270,16 @@ export class Body {
       for (const slot of ARM_SLOTS) {
         if (slot === 'shoulder') continue;
         const carried = back !== null || (travelling && slot !== 'hand');
+        const src = back ?? cArm;
+        const parent = ARM_PARENT[slot];
         const v = this.composeArmTarget(
           slot,
           side,
           env,
-          (back ?? cArm)?.[slot],
+          src?.[slot],
           back ? 1 : carried ? this._armEnv[slot].exit : plain(this._armEnv[slot]),
           !carried,
+          parent ? src?.[parent] : undefined,
         );
         this.followArm(slot, side, v, dt, carried ? TRAVEL_FOLLOW : ARM_FOLLOW);
         this.axes.tupleToWorld(worldDirs[slot], dirs[slot], side, mirror, frameReady);
