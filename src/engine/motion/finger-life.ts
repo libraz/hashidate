@@ -11,6 +11,10 @@ import type { FingerName, Profile, Side } from '../types';
  * toward the palm when the hand is thrown toward its back and opening when it
  * is thrown toward its palm.
  *
+ * The lag's sideways part, across the palm, fans the four fingers toward
+ * whichever side the hand left behind — a wave swings in the palm plane, and
+ * would otherwise move nothing.
+ *
  * Both scale with how slack the finger is. A finger held straight to point or
  * closed into a fist is held there on purpose, and the pointing solver reads
  * its fingertip off that curl.
@@ -38,6 +42,10 @@ const LAG_MAX = 0.15;
 const TELEPORT = 0.3;
 /** A frame this long is a tab coming back, not motion. */
 const STALE_DT = 0.1;
+/** Splay per metre of sideways lag, radians. */
+const SPLAY_PER_METRE = 3.5;
+/** Most the sideways lag may splay a finger, radians. About eight degrees. */
+const SPLAY_MAX = 0.14;
 /** The fingers' own spring: about 3.5 Hz, a little under critical so a stop leaves a small follow-through. */
 const LAG_OMEGA = 22;
 const LAG_ZETA = 0.6;
@@ -45,6 +53,15 @@ const LAG_ZETA = 0.6;
 /** The thumb hangs off the side of the palm and swings least; the little finger, longest from the wrist's axis, most. */
 const LAG_WEIGHT: Record<FingerName, number> = {
   thumb: 0.4,
+  index: 0.8,
+  middle: 1,
+  ring: 1.05,
+  little: 1.1,
+};
+
+/** The thumb's splay carries it across the palm, a different motion; it takes none. */
+const SPLAY_WEIGHT: Record<FingerName, number> = {
+  thumb: 0,
   index: 0.8,
   middle: 1,
   ring: 1.05,
@@ -65,6 +82,8 @@ interface HandMotion {
   seeded: boolean;
   /** The lag this frame, in curl. */
   x: number;
+  /** The sideways lag this frame, in splay radians. */
+  splay: number;
 }
 
 const mkMotion = (): HandMotion => ({
@@ -72,11 +91,14 @@ const mkMotion = (): HandMotion => ({
   vel: new THREE.Vector3(),
   seeded: false,
   x: 0,
+  splay: 0,
 });
 
 const _pos = new THREE.Vector3();
 const _off = new THREE.Vector3();
 const _normal = new THREE.Vector3();
+const _lateral = new THREE.Vector3();
+const _base = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 
 export class FingerLife {
@@ -98,7 +120,6 @@ export class FingerLife {
     const palm = this.palmLocal[side];
     if (!(hand && knuckle && palm) || dt <= 0) return;
 
-    knuckle.updateWorldMatrix(true, false);
     knuckle.getWorldPosition(_pos);
     if (!m.seeded || dt > STALE_DT || m.point.distanceTo(_pos) > TELEPORT) {
       m.point.copy(_pos);
@@ -117,8 +138,36 @@ export class FingerLife {
     _normal.copy(palm).applyQuaternion(_q).normalize();
     // Left on the palm side, the hand was thrown toward its back: the fingers
     // fold in after it.
-    const lag = LAG_PER_METRE * _off.copy(m.point).sub(_pos).dot(_normal);
+    _off.copy(m.point).sub(_pos);
+    const lag = LAG_PER_METRE * _off.dot(_normal);
     m.x = LAG_MAX * Math.tanh(lag / LAG_MAX);
+
+    // Across the palm, read off where the knuckles actually are this frame.
+    const index = this.p.fingerBones[`index.${side}`]?.[0];
+    const little = this.p.fingerBones[`little.${side}`]?.[0];
+    m.splay = 0;
+    if (index && little) {
+      little.getWorldPosition(_lateral);
+      _lateral.sub(index.getWorldPosition(_base));
+      _lateral.addScaledVector(_normal, -_lateral.dot(_normal));
+      if (_lateral.lengthSq() > 1e-12) {
+        // Left on the little-finger side, the hand went toward the thumb: the
+        // fingers fan back after it.
+        const sideways = SPLAY_PER_METRE * _off.dot(_lateral.normalize());
+        m.splay = SPLAY_MAX * Math.tanh(sideways / SPLAY_MAX);
+      }
+    }
+  }
+
+  /**
+   * Splay to add to finger `f` whose blended curl is `curl`, radians.
+   *
+   * A closed finger has no room to fan, so this falls with the curl rather
+   * than with slack: a straight finger swings sideways most freely of all.
+   */
+  spread(side: Side, f: FingerName, curl: number, amount: number): number {
+    const free = (1 - THREE.MathUtils.clamp(curl, 0, 1)) * amount;
+    return free * this._motion[side].splay * SPLAY_WEIGHT[f];
   }
 
   /**

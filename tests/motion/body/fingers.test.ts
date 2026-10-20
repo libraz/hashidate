@@ -94,6 +94,19 @@ describe('finger life', () => {
     }
   });
 
+  it('fans the fingers after a hand swung across the palm', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const spreads: number[] = [];
+    const curl = h.rig.curlHand.bind(h.rig);
+    vi.spyOn(h.rig, 'curlHand').mockImplementation((side, spec, spread) => {
+      if (side === 'R') spreads.push(spread?.middle ?? 0);
+      curl(side, spec, spread);
+    });
+    h.body.play('wave', 'R');
+    run(h, 150);
+    expect(range(spreads.slice(60))).toBeGreaterThan(0.02);
+  });
+
   it('leaves a finger held straight or closed on purpose where it was put', () => {
     const shape: Record<FingerName, number> = {
       thumb: 0,

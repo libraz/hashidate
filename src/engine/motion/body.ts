@@ -1386,6 +1386,7 @@ export class Body {
 
         const cvSpread = cSpread ? (cSpread[f] ?? 0) * (1 - cK) : cfSpread?.[f];
         if (cvSpread !== undefined) spreadVal += (cvSpread - spreadVal) * fw;
+        spreadVal += this._fingerLife.spread(side, f, val, free);
         spread[f] = this._fingerSpreadState[side][f].step(spreadVal, dt, FINGER_FOLLOW);
       }
       rig.curlHand(side, spec, spread);
