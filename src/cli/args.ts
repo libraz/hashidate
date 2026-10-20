@@ -28,6 +28,10 @@ export function takeBase(argv: string[]): { base: string; rest: string[] } {
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
+    if (token === '--') {
+      rest.push(...argv.slice(i));
+      break;
+    }
     if (token === '--base') {
       const value = argv[i + 1];
       if (value === undefined) fail('--base needs a URL');
@@ -52,6 +56,10 @@ export function takeBase(argv: string[]): { base: string; rest: string[] } {
 export function expandGreedy(args: string[], flag: string): string[] {
   const out: string[] = [];
   for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === '--') {
+      out.push(...args.slice(i));
+      break;
+    }
     out.push(args[i]);
     if (args[i] !== flag) continue;
     for (let taken = 0; i + 1 < args.length && !args[i + 1].startsWith('-'); taken += 1) {
@@ -69,7 +77,9 @@ export function expandGreedy(args: string[], flag: string): string[] {
  * one is rewritten to the `1` that the server reads as that default.
  */
 export function normaliseWait(args: string[]): string[] {
+  const terminator = args.indexOf('--');
   return args.map((token, i) => {
+    if (terminator !== -1 && i > terminator) return token;
     if (token !== '--wait') return token;
     const next = args[i + 1];
     return next !== undefined && NUMBER.test(next) ? token : '--wait=1';
