@@ -33,9 +33,16 @@ export interface VisemeEvent {
   dur: number;
 }
 
-/** A whole line's worth of events, plus the estimated time to speak it. */
+/** A phrase boundary the text marks: when the punctuation is reached, and how strong it is. */
+export interface VisemeBreak {
+  t: number;
+  kind: 'minor' | 'major' | 'question';
+}
+
+/** A whole line's worth of events and phrase breaks, plus the estimated time to speak it. */
 export interface VisemeTrack {
   events: VisemeEvent[];
+  breaks: VisemeBreak[];
   duration: number;
 }
 
@@ -149,7 +156,19 @@ export function textToVisemes(
 ): VisemeTrack {
   const src = toHiragana(text);
   const out: VisemeEvent[] = [];
+  const breaks: VisemeBreak[] = [];
   let t = 0;
+  // Event count when the last break was placed; punctuation with nothing spoken since folds.
+  let breakMark = 0;
+
+  const markBreak = (kind: VisemeBreak['kind']): void => {
+    if (out.length > breakMark) {
+      breaks.push({ t, kind });
+      breakMark = out.length;
+    } else if (kind === 'question' && breaks.length) {
+      breaks[breaks.length - 1].kind = 'question';
+    }
+  };
 
   for (const ch of src) {
     if (ch === 'っ') {
@@ -164,10 +183,12 @@ export function textToVisemes(
       continue;
     }
     if (/[、,]/.test(ch)) {
+      markBreak('minor');
       t += pause * 0.7;
       continue;
     }
     if (/[。.!?！？\n…⋯—–]/.test(ch)) {
+      markBreak(/[?？]/.test(ch) ? 'question' : 'major');
       t += pause;
       continue;
     }
@@ -203,7 +224,7 @@ export function textToVisemes(
     out.push({ v, t, dur: mora * (v === 'n' ? 0.8 : 1) });
     t += mora * (v === 'n' ? 0.8 : 1);
   }
-  return { events: out, duration: t };
+  return { events: out, breaks, duration: t };
 }
 
 /**
@@ -224,10 +245,11 @@ export function scaleTrack(track: VisemeTrack, seconds: number): VisemeTrack {
   // A line with no morae in it — punctuation, or nothing at all — has no shape
   // to stretch. It gets the measured length and an empty track, which is a
   // mouth that stays shut for exactly as long as the audio lasts.
-  if (!(track.duration > 0 && seconds > 0)) return { events: [], duration: seconds };
+  if (!(track.duration > 0 && seconds > 0)) return { events: [], breaks: [], duration: seconds };
   const k = seconds / track.duration;
   return {
     events: track.events.map((ev) => ({ v: ev.v, t: ev.t * k, dur: ev.dur * k })),
+    breaks: track.breaks.map((b) => ({ t: b.t * k, kind: b.kind })),
     duration: seconds,
   };
 }

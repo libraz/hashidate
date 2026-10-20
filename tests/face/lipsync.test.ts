@@ -281,13 +281,89 @@ describe('textToVisemes / duration', () => {
   });
 
   it('returns an empty track for empty text', () => {
-    expect(textToVisemes('')).toEqual({ events: [], duration: 0 });
+    expect(textToVisemes('')).toEqual({ events: [], breaks: [], duration: 0 });
   });
 
   it('returns no events for a line that is only punctuation, but still takes time', () => {
     const track = textToVisemes('、。');
     expect(track.events).toEqual([]);
     expect(track.duration).toBeCloseTo(PAUSE * 0.7 + PAUSE, 12);
+  });
+});
+
+describe('textToVisemes / phrase breaks', () => {
+  const end = (text: string): number => {
+    const last = textToVisemes(text).events.at(-1);
+    return last ? last.t + last.dur : 0;
+  };
+
+  it.each([
+    ['、', 'minor'],
+    [',', 'minor'],
+    ['。', 'major'],
+    ['.', 'major'],
+    ['!', 'major'],
+    ['！', 'major'],
+    ['\n', 'major'],
+    ['…', 'major'],
+    ['⋯', 'major'],
+    ['—', 'major'],
+    ['–', 'major'],
+    ['?', 'question'],
+    ['？', 'question'],
+  ] as const)('marks %j as a %s break at the end of the spoken text', (glyph, kind) => {
+    const { breaks } = textToVisemes(`あい${glyph}`);
+    expect(breaks).toHaveLength(1);
+    expect(breaks[0].kind).toBe(kind);
+    expect(breaks[0].t).toBeCloseTo(end('あい'), 12);
+  });
+
+  it('places each break at the clock where its glyph is reached', () => {
+    const track = textToVisemes('あ、い。う？');
+    expect(track.breaks.map((b) => b.kind)).toEqual(['minor', 'major', 'question']);
+    expect(track.breaks[0].t).toBeCloseTo(MORA, 12);
+    expect(track.breaks[1].t).toBeCloseTo(MORA + PAUSE * 0.7 + MORA, 12);
+    expect(track.breaks[2].t).toBeCloseTo(MORA + PAUSE * 0.7 + MORA + PAUSE + MORA, 12);
+  });
+
+  it('counts the time a sokuon adds before the punctuation', () => {
+    const { breaks } = textToVisemes('あっ、');
+    expect(breaks).toHaveLength(1);
+    expect(breaks[0].t).toBeCloseTo(MORA + MORA * 0.6, 12);
+  });
+
+  it('counts the time a space adds, and does not treat the space as a break', () => {
+    const { breaks } = textToVisemes('あ 、');
+    expect(breaks).toHaveLength(1);
+    expect(breaks[0].kind).toBe('minor');
+    expect(breaks[0].t).toBeCloseTo(MORA + MORA * 0.4, 12);
+    expect(textToVisemes('あ い').breaks).toEqual([]);
+  });
+
+  it('has no breaks for a line without punctuation', () => {
+    expect(textToVisemes('あいうえお').breaks).toEqual([]);
+  });
+
+  it('makes no break for punctuation before anything is spoken', () => {
+    expect(textToVisemes('、あ').breaks).toEqual([]);
+    expect(textToVisemes('。。？').breaks).toEqual([]);
+  });
+
+  it('folds punctuation that follows a break with nothing spoken in between', () => {
+    const { breaks } = textToVisemes('あ。」。');
+    expect(breaks).toHaveLength(1);
+    expect(breaks[0]).toEqual({ t: expect.closeTo(MORA, 12), kind: 'major' });
+  });
+
+  it('upgrades the previous break to a question when ? follows it directly', () => {
+    const { breaks } = textToVisemes('あ！？');
+    expect(breaks).toHaveLength(1);
+    expect(breaks[0].kind).toBe('question');
+    expect(breaks[0].t).toBeCloseTo(MORA, 12);
+  });
+
+  it('does not downgrade a question when a weaker mark follows it', () => {
+    expect(textToVisemes('あ？。').breaks.map((b) => b.kind)).toEqual(['question']);
   });
 });
 
@@ -502,8 +578,24 @@ describe('scaleTrack', () => {
     // Punctuation only. There is nothing to distribute, and the honest answer
     // is a mouth that stays closed for exactly as long as the take lasts rather
     // than one that invents a shape to fill it.
-    expect(scaleTrack(textToVisemes('。。'), 1.5)).toEqual({ events: [], duration: 1.5 });
-    expect(scaleTrack(textToVisemes(''), 2)).toEqual({ events: [], duration: 2 });
+    expect(scaleTrack(textToVisemes('。。'), 1.5)).toEqual({
+      events: [],
+      breaks: [],
+      duration: 1.5,
+    });
+    expect(scaleTrack(textToVisemes(''), 2)).toEqual({ events: [], breaks: [], duration: 2 });
+  });
+
+  it('stretches break times by the same factor as the events', () => {
+    const estimate = textToVisemes('あ、い。う？');
+    const scaled = scaleTrack(estimate, 10);
+    const k = 10 / estimate.duration;
+    expect(scaled.breaks).toHaveLength(estimate.breaks.length);
+    expect(scaled.breaks.length).toBeGreaterThan(0);
+    for (const [i, b] of scaled.breaks.entries()) {
+      expect(b.kind).toBe(estimate.breaks[i].kind);
+      expect(b.t).toBeCloseTo(estimate.breaks[i].t * k, 12);
+    }
   });
 });
 

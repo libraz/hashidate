@@ -18,7 +18,14 @@ export {
   EMOTION_LABELS,
   EMOTIONS,
 } from './emotions';
-export type { MouthViseme, MouthWeights, VisemeEvent, VisemeOptions, VisemeTrack } from './lipsync';
+export type {
+  MouthViseme,
+  MouthWeights,
+  VisemeBreak,
+  VisemeEvent,
+  VisemeOptions,
+  VisemeTrack,
+} from './lipsync';
 export { Mouth, scaleTrack, textToVisemes } from './lipsync';
 export type { ExpressionPreset, LidClosure } from './presets';
 export { buildIdleFaces, buildOverlays, buildPresets } from './presets';
