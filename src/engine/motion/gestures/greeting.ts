@@ -70,11 +70,11 @@ export const GREETING = {
   bow: {
     label: { en: 'Bow', ja: 'ぺこり' },
     group: 'greeting',
-    // Short, because the speed is the gesture. The release ramp is `lead × 1.25`,
-    // so this is down in a fifth of a second, a beat at the bottom, and back up
-    // in a quarter — about six tenths of a second end to end.
-    lead: 0.2,
-    hold: 0.16,
+    // Short, because the speed is the gesture, but not snapped: down in 0.2 s
+    // read as the head being yanked. The release ramp is `lead × 1.25`, so this
+    // is down in 0.3 s, a beat at the bottom, and up in 0.38 s.
+    lead: 0.3,
+    hold: 0.2,
     build(_t, v) {
       // A bob, not a bow.
       //
@@ -82,12 +82,13 @@ export const GREETING = {
       // and that depth it read as neither: too shallow to be a formal bow, too
       // slow to be a greeting, and the head never left the range the idle moves
       // it through anyway. What makes a ぺこり is where the angle sits and how
-      // fast it arrives — nearly all of it in the neck, and there in a fifth of
-      // a second. The head drops about forty degrees all told.
+      // fast it arrives — most of it in the neck, quickly. The head drops about
+      // thirty degrees all told; forty-four, nearly all in the neck, read as the
+      // head snapping down rather than a greeting.
       //
-      // The trunk still moves, a little. A head that pitches on a still body is
-      // a nod; the few degrees at the chest are what make it the whole character
-      // bobbing rather than just the face.
+      // The trunk carries about a third of it. A head that pitches on a still
+      // body is a nod; the chest is what makes it the whole character bobbing
+      // rather than just the face.
       //
       // The head also turns very slightly as it goes. Perfectly square is the
       // difference between a character and a mechanism, and this is the one
@@ -100,10 +101,10 @@ export const GREETING = {
         },
         SOFT_HAND,
         {
-          head: [0.4, 0.05 * v.side, 0.06 * v.side],
-          neck: [0.22, 0.03 * v.side, 0.03 * v.side],
-          chest: [0.1, 0, 0],
-          spine: [0.05, 0, 0],
+          head: [0.22, 0.05 * v.side, 0.06 * v.side],
+          neck: [0.12, 0.03 * v.side, 0.03 * v.side],
+          chest: [0.11, 0, 0],
+          spine: [0.06, 0, 0],
         },
       );
     },
