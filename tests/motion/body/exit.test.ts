@@ -82,4 +82,24 @@ describe('gesture exit', () => {
       expect(lowest).toBeGreaterThanOrEqual(floor);
     },
   );
+
+  // Carrying the folded forearm toward the resting bend, which leans in toward
+  // the thigh, swept the waving hand across the belly on its way down.
+  it.each<Side>(['L', 'R'])('brings a waving hand down in front, not across (%s)', (side) => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const h = harness();
+    const reach = () => canonicalDirection(h, side, `upperArm.${side}`, `hand.${side}`);
+    frame(h);
+    const rest = reach().x;
+
+    h.body.playDef(GESTURES.wave, 'wave', side);
+    for (let i = 0; i < 60; i++) frame(h);
+    h.body.stopGesture();
+    let inmost = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < 60 * 3; i++) {
+      frame(h);
+      inmost = Math.min(inmost, reach().x);
+    }
+    expect(inmost).toBeGreaterThanOrEqual(rest * 0.5);
+  });
 });

@@ -160,6 +160,7 @@ export class ArmResolver {
   private readonly _bendFrom = new THREE.Vector3();
   private readonly _bendRest = new THREE.Vector3();
   private readonly _bendX = new THREE.Vector3();
+  private readonly _bendFwd = new THREE.Vector3();
 
   /** The leader's posed hand, and where the follower goes against it. */
   private readonly _claspLeader: ClaspLeader = {
@@ -246,16 +247,22 @@ export class ArmResolver {
     const U = out.upperArm.copy(from.upperArm).applyQuaternion(swingE);
     const bendFrom = this.bendOf(this._bendFrom, from.upperArm, from.lowerArm);
     const bendRest = this.bendOf(this._bendRest, rest.upperArm, rest.lowerArm);
+    const open = minJerk(onset(u, EXTEND_ONSET));
     if (bendFrom && bendRest) {
       bendFrom.applyQuaternion(swingE);
       // From the resting upper arm to the current one: swingE · swing⁻¹.
       bendRest.applyQuaternion(this._swingR.copy(swing).invert().premultiply(swingE));
+      // A folded forearm comes down in front of the body. The resting bend leans
+      // toward the thigh, and aimed at while folded it swept the hand across the
+      // belly; it takes over as the elbow opens.
+      const fwd = this._bendFwd.set(0, 0, 1).addScaledVector(U, -U.z);
+      if (fwd.lengthSq() > 1e-4) bendRest.lerp(fwd.normalize(), 1 - open).normalize();
     }
     const bend = bendFrom ?? bendRest;
 
     const foldFrom = from.upperArm.angleTo(from.lowerArm);
     const foldRest = rest.upperArm.angleTo(rest.lowerArm);
-    const fold = foldFrom + (foldRest - foldFrom) * minJerk(onset(u, EXTEND_ONSET));
+    const fold = foldFrom + (foldRest - foldFrom) * open;
 
     if (bend) {
       if (bendFrom && bendRest) {
