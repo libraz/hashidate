@@ -319,7 +319,23 @@ export function buildRig(opts: RigOptions = {}): SyntheticRig {
   }
 
   const deltas = opts.deltas ?? {};
-  meshes.set('Face', makeMesh('Face', skeleton, head, faceShapes, root, scale, deltas));
+  // A head the size of the face frame drawn through it: ears at 1.25 IPD, the
+  // chin 1.85 IPD below the eyes, the crown bone on top. Wider than that and a
+  // hand placed on a face anchor measures as inside the head.
+  const headY = head.getWorldPosition(new THREE.Vector3()).y;
+  const ipd = 2 * S.eyeOut;
+  meshes.set(
+    'Face',
+    makeMesh('Face', skeleton, head, faceShapes, root, scale, deltas, {
+      rx: 1.25 * ipd,
+      rz: S.eyeFwd + 0.55 * ipd,
+      top: headY + S.headToCrown,
+      bottom: headY + S.eyeUp - 1.85 * ipd,
+    }),
+  );
+  // The trunk is measured between the hips and the shoulders, so that is the
+  // height the body's ring has to cover.
+  const shoulder = bones.get(naming.upperArm('R')) ?? chest;
   meshes.set(
     'Body',
     makeMesh(
@@ -330,6 +346,12 @@ export function buildRig(opts: RigOptions = {}): SyntheticRig {
       root,
       scale,
       deltas,
+      {
+        rx: 0.11,
+        rz: 0.11 * 0.62,
+        top: shoulder.getWorldPosition(new THREE.Vector3()).y,
+        bottom: hips.getWorldPosition(new THREE.Vector3()).y,
+      },
     ),
   );
   for (const g of opts.garments ?? []) {
@@ -384,6 +406,14 @@ export function addBoneChain(rig: SyntheticRig, opts: SyntheticChainOptions): st
   return names;
 }
 
+/** An elliptic ring's half-widths across and fore-aft, and the world heights it runs between. */
+interface RingShape {
+  rx: number;
+  rz: number;
+  top: number;
+  bottom: number;
+}
+
 /**
  * A skinned mesh whose vertices sit in a ring around one bone.
  *
@@ -391,6 +421,12 @@ export function addBoneChain(rig: SyntheticRig, opts: SyntheticChainOptions): st
  * and for the morph routing to have somewhere to land. Weighted entirely to one
  * bone, because the measurement filters on the *dominant* bone and a blended
  * seam vertex is not evidence about where a surface is.
+ *
+ * As many sectors as the measurement bins, and rows close enough to fill most
+ * of its height bands over the trunk's fixed hips-to-shoulders range. Sparser
+ * than that the measurement rejects the ring and falls back to a round
+ * cylinder sized off the shoulders — twice as deep as this ellipse, with every
+ * forearm brought to the face reading as inside it.
  */
 function makeMesh(
   name: string,
@@ -400,11 +436,10 @@ function makeMesh(
   root: THREE.Object3D,
   scale: number,
   deltas: Record<string, number> = {},
+  shape: RingShape | null = null,
 ): THREE.SkinnedMesh {
-  const bands = 8;
-  const sectors = 12;
-  const radius = 0.11 / scale;
-  const height = 0.3 / scale;
+  const bands = 16;
+  const sectors = 16;
   const count = bands * sectors;
 
   const position = new Float32Array(count * 3);
@@ -413,15 +448,20 @@ function makeMesh(
   const boneIndex = skeleton.bones.indexOf(bone);
 
   const origin = bone.getWorldPosition(new THREE.Vector3());
+  // A chest is wider than it is deep, which is the whole reason the volume is
+  // measured per sector rather than taken as one radius; unshaped, a garment
+  // ring takes that chest's proportions 0.3 m about its bone.
+  const rx = (shape?.rx ?? 0.11) / scale;
+  const rz = (shape?.rz ?? 0.11 * 0.62) / scale;
+  const top = (shape?.top ?? origin.y + 0.15) / scale;
+  const bottom = (shape?.bottom ?? origin.y - 0.15) / scale;
   for (let b = 0; b < bands; b++) {
     for (let s = 0; s < sectors; s++) {
       const i = b * sectors + s;
       const a = (s / sectors) * Math.PI * 2;
-      // A chest is wider than it is deep, which is the whole reason the volume
-      // is measured per sector rather than taken as one radius.
-      position[i * 3] = origin.x / scale + Math.cos(a) * radius;
-      position[i * 3 + 1] = origin.y / scale + (b / (bands - 1) - 0.5) * height;
-      position[i * 3 + 2] = origin.z / scale + Math.sin(a) * radius * 0.62;
+      position[i * 3] = origin.x / scale + Math.cos(a) * rx;
+      position[i * 3 + 1] = bottom + (b / (bands - 1)) * (top - bottom);
+      position[i * 3 + 2] = origin.z / scale + Math.sin(a) * rz;
       skinIndex[i * 4] = boneIndex;
       skinWeight[i * 4] = 1;
     }

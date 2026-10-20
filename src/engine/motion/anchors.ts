@@ -28,6 +28,10 @@ export class ReachAnchors {
   private readonly _travelS = new THREE.Vector3();
   private readonly _travelA = new THREE.Vector3();
   private readonly _travelB = new THREE.Vector3();
+  private readonly _travelM = new THREE.Vector3();
+  private readonly _travelL = new THREE.Vector3();
+  private readonly _travelP = new THREE.Vector3();
+  private readonly _travelQ = new THREE.Vector3();
 
   constructor(
     private readonly p: Profile,
@@ -88,7 +92,7 @@ export class ReachAnchors {
    * the numbers say something an author can picture: an elbow hanging beside
    * the ribs is roughly one upper arm below the shoulder whatever the pose is
    * doing, whereas the same place named from the sternum moves as the character
-   * leans. See `Rig.poleAngle` for why this is a point and not an angle.
+   * leans. See `poleAngle` in the rig for why this is a point and not an angle.
    */
   pole(pole: Vec3Tuple, side: Side): THREE.Vector3 | null {
     const span = this.p.body?.span;
@@ -157,10 +161,21 @@ export class ReachAnchors {
    * than through. The result is still a straight line wherever the two ends sit
    * at a similar distance from the shoulder, which is the case the minimum-jerk
    * model was measured on.
+   *
+   * The arc is the shortest one, except where that runs behind the body. A
+   * hand at the hip going to behind the ear is nearly a half turn away, the
+   * plane of the shortest arc is then decided by whichever end sits a few
+   * centimetres further back, and the wrist was carried round the back with
+   * the arm half folded — a forearm bent backward past the shoulder's whole
+   * range, which the limiter answered by flipping it. The back is somewhere a
+   * hand goes and never somewhere it passes through, so an arc that would dip
+   * further behind the shoulder than either of its ends is drawn out to the
+   * side instead, and the hand comes up as a lateral raise.
    */
   travel(target: THREE.Vector3, from: THREE.Vector3, side: Side, e: number): void {
     const upper = this.p.bones[`upperArm.${side}`];
-    if (!upper) {
+    const anat = this.rig.anat;
+    if (!(upper && anat.update())) {
       target.lerpVectors(from, target, e);
       return;
     }
@@ -177,18 +192,42 @@ export class ReachAnchors {
     a.divideScalar(ra);
     b.divideScalar(rb);
 
-    const angle = Math.acos(THREE.MathUtils.clamp(a.dot(b), -1, 1));
-    const sin = Math.sin(angle);
-    // Nothing to swing through, or the two bearings are opposed and every arc
-    // between them is as good as any other. Easing the distance alone is the
-    // whole answer in the first case and no worse than a guess in the second.
-    if (sin > 1e-6) {
-      a.multiplyScalar(Math.sin((1 - e) * angle) / sin).addScaledVector(
-        b,
-        Math.sin(e * angle) / sin,
-      );
-      a.normalize();
+    const mid = this._travelM.addVectors(a, b);
+    const behind =
+      mid.lengthSq() > 1e-12 &&
+      mid.normalize().dot(anat.fwd) < Math.min(a.dot(anat.fwd), b.dot(anat.fwd));
+    if (behind) {
+      // The same bulge mirrored to the front of the body: a spherical Bezier
+      // drawn toward the arc's midpoint reflected through the frontal plane,
+      // so the bearing turns smoothly rather than cornering at a via point.
+      const via = this._travelL.copy(mid).addScaledVector(anat.fwd, -2 * mid.dot(anat.fwd));
+      const p = slerp(this._travelP, a, via, e);
+      const q = slerp(this._travelQ, via, b, e);
+      slerp(a, p, q, e);
+    } else {
+      slerp(a, a, b, e);
     }
     target.copy(S).addScaledVector(a, ra + (rb - ra) * e);
   }
+}
+
+/**
+ * Spherical interpolation of two unit vectors, into `out`.
+ *
+ * Nothing to swing through, or the two are opposed and every arc between them
+ * is as good as any other: `from` is handed back as it stands, which is the
+ * whole answer in the first case and no worse than a guess in the second.
+ */
+function slerp(
+  out: THREE.Vector3,
+  from: THREE.Vector3,
+  to: THREE.Vector3,
+  e: number,
+): THREE.Vector3 {
+  const angle = Math.acos(THREE.MathUtils.clamp(from.dot(to), -1, 1));
+  const sin = Math.sin(angle);
+  if (sin <= 1e-6) return out.copy(from);
+  const wa = Math.sin((1 - e) * angle) / sin;
+  const wb = Math.sin(e * angle) / sin;
+  return out.copy(from).multiplyScalar(wa).addScaledVector(to, wb).normalize();
 }

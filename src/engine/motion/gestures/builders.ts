@@ -89,6 +89,11 @@ export const both = (
  * is removed, so how far out the point sits changes nothing. Numbers are in
  * body spans anyway, so they stay readable next to the offsets.
  *
+ * The pole is where the elbow goes unless the body is in the way. A hand
+ * brought inside the shoulder line pulls the nearest point on its elbow circle
+ * into the chest, and a pole honoured exactly put it there; the elbow search
+ * holds the elbow at the pole and moves it only out of the trunk.
+ *
  * Leaving it out is allowed and means "search the circle for the least strained
  * elbow". That is a poor default for anything near the face: the cost surface
  * has two near-level minima for most face-height targets, so the arm picks a

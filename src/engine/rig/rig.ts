@@ -15,7 +15,7 @@ import { Hands } from './hands';
 import { GroundedLegs } from './legs';
 import { type PointRequest, PointSolver } from './point';
 import type { ArmSolution, ReachLinks } from './reach';
-import { poleAngle, solveReach } from './reach';
+import { solveReach } from './reach';
 import { type OffsetSlot, SpineOffsets } from './spine';
 
 /**
@@ -865,14 +865,18 @@ export class Rig {
    * a different elbow for every gesture that uses it. Every face-touching pose
    * in the table carried the same -0.3, which put the elbow in front of the
    * chest for a hand going to the crown and folded the arm across the face.
+   *
+   * `pole` is a world point the elbow is drawn toward, as the gesture table
+   * states one; without it the search predicts its own. See `ElbowSearch`.
    */
   solveReachNatural(
     side: Side,
     targetWorld: THREE.Vector3,
     handDir: THREE.Vector3 | null,
     out: ArmSolution,
+    pole: THREE.Vector3 | null = null,
   ): ArmSolution | null {
-    return this.elbow.search(side, targetWorld, handDir, null, out) !== null ? out : null;
+    return this.elbow.search(side, targetWorld, handDir, null, out, pole) !== null ? out : null;
   }
 
   /**
@@ -894,15 +898,6 @@ export class Rig {
     out: ReachLinks,
   ): ReachLinks | null {
     return solveReach(this.p, this.joints, this.anat, side, targetWorld, elbowAngle, out);
-  }
-
-  /**
-   * Where on the elbow circle a pole *point* puts the elbow, in radians, or
-   * null where the pole sits on the reach line and says nothing. See
-   * `reach.ts`.
-   */
-  poleAngle(side: Side, targetWorld: THREE.Vector3, poleWorld: THREE.Vector3): number | null {
-    return poleAngle(this.p, this.anat, side, targetWorld, poleWorld);
   }
 
   /** Curl a finger. See `Hands.curlFinger`. */

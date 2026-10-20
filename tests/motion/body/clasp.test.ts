@@ -4,6 +4,7 @@ import { FINGER_WIDTH, INTERLACE_GAP } from '@/engine/anatomy';
 import { Body } from '@/engine/motion/body';
 import { type ClaspLeader, type ClaspPlacement, placeFollower } from '@/engine/motion/clasp';
 import { GESTURES } from '@/engine/motion/gestures';
+import { HANDOVER_ONSET } from '@/engine/motion/timing';
 import { buildProfile } from '@/engine/profile';
 import { Rig } from '@/engine/rig';
 import type { FingerName, GestureDef, Side } from '@/engine/types';
@@ -168,14 +169,23 @@ describe.each(SIDES)('handsClasp, lead %s', (lead) => {
     const h = harness();
     h.rig.reset();
     h.body.update(DT);
+    const from = wristOf(h.profile, lead);
     h.body.play('handsClasp', lead);
     const upper = (s: Side) => canonicalDirection(h, s, `upperArm.${s}`, `lowerArm.${s}`);
-    let worst = 0;
-    for (let i = 0; i < 30; i++) {
+    const track: { wrist: THREE.Vector3; apart: number }[] = [];
+    for (let i = 0; i < 120; i++) {
       h.rig.reset();
       h.body.update(DT);
-      worst = Math.max(worst, upper(lead).angleTo(upper(follow)));
+      track.push({ wrist: wristOf(h.profile, lead), apart: upper(lead).angleTo(upper(follow)) });
     }
+    // Up to the handover only: past it the follower takes its own interlaced
+    // place, which is not the leader's mirror by design.
+    const to = track[track.length - 1].wrist;
+    const rising = track.filter(
+      (f) => 1 - f.wrist.distanceTo(to) / from.distanceTo(to) < HANDOVER_ONSET,
+    );
+    expect(rising.length).toBeGreaterThan(10);
+    const worst = Math.max(...rising.map((f) => f.apart));
     expect(worst).toBeLessThanOrEqual(THREE.MathUtils.degToRad(5));
   });
 

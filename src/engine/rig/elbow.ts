@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import type { ArmAnatomy } from '../anatomy';
+import { type ArmAnatomy, contactCost } from '../anatomy';
 import type { Profile, Side } from '../types';
-import { type ArmSolution, poleAngle, type ReachLinks } from './reach';
+import { type ArmSolution, type ReachLinks, reachRef, swivelOf } from './reach';
 
 /**
  * Where the elbow goes.
@@ -117,11 +117,15 @@ export interface ElbowContext {
 }
 
 export class ElbowSearch {
-  // Scratch for the elbow prior. Held apart from the solver's own, which is
-  // live across the whole of a fingertip solve while the prior is computed
-  // inside it.
+  // Scratch for the reach line and the elbow prior. Held apart from the
+  // solver's own, which is live across the whole of a fingertip solve while
+  // these are computed inside it.
+  private readonly _lineS = new THREE.Vector3();
+  private readonly _lineN = new THREE.Vector3();
   private readonly _priorPole = new THREE.Vector3();
-  private readonly _priorDir = new THREE.Vector3();
+  private readonly _swivelW = new THREE.Vector3();
+  private readonly _swivelRef = new THREE.Vector3();
+  private readonly _swivelBi = new THREE.Vector3();
   private readonly _cand: ReachLinks = {
     upperArm: new THREE.Vector3(),
     lowerArm: new THREE.Vector3(),
@@ -146,9 +150,19 @@ export class ElbowSearch {
    * thing when the hand's direction is not decided until the elbow is.
    * `palmN` likewise: null means the palm is free to roll.
    *
-   * `out` carries the slot's own elbow state in `swivel`, so two slots solving
-   * one side in a frame do not pull a shared elbow between them. Unset, the
-   * answer is taken outright, which is what a probe solve wants.
+   * `pole` is a world point the elbow is drawn toward, as the gesture table
+   * states one. It replaces the predicted elbow as the prior, and it silences
+   * every strain term but the body: an authored pole was placed by eye against
+   * a render, and the inside of the chest is the one thing a render does not
+   * show. Solved at the pole outright, a hand brought inside the shoulder line
+   * had its elbow in the chest and left the limiter to lift it out, part by
+   * part and a frame at a time; scored on strain as well, the search moved
+   * elbows the author had placed — the hand behind the ear by a forearm's
+   * length — because the stop the pole leans on reads as a cost.
+   *
+   * `out` carries the slot's own elbow state in `swivelDir`, so two slots
+   * solving one side in a frame do not pull a shared elbow between them. Zero,
+   * the answer is taken outright, which is what a probe solve wants.
    *
    * Returns the winning cost, or null if the target cannot be solved at all.
    */
@@ -158,26 +172,38 @@ export class ElbowSearch {
     handDir: THREE.Vector3 | null,
     palmN: THREE.Vector3 | null,
     out: ArmSolution,
+    pole: THREE.Vector3 | null = null,
   ): number | null {
     const cand = this._cand;
-    const prev = out.swivel;
     this.ctx.armContext(side);
+    const line = this.line(side, wristTarget);
+    const prev = line ? this.remembered(out) : undefined;
     // Computed before the sweep, not inside it: the prior is a function of the
     // target, and the target does not change while the circle is being sampled.
-    const prior = this.predict(side, wristTarget);
+    const poleA =
+      pole && line
+        ? swivelOf(this.anat, this._lineN, this._swivelW.copy(pole).sub(this._lineS))
+        : null;
+    // A pole on the reach line says nothing, and the frame is searched as a
+    // pose with no pole; the slot's elbow memory carries it across either way.
+    // Holding the pole's rule there instead, with no strain scored, hung the
+    // forearm bent backward until the pole came off the line and flipped it.
+    const authored = poleA !== null;
+    const prior = authored ? poleA : line ? this.predict(side) : null;
     const score = (angle: number): number => {
       if (!this.ctx.solveReach(side, wristTarget, angle, cand)) return Number.POSITIVE_INFINITY;
       this.anat.measure(side, cand.upperArm, cand.lowerArm, handDir ?? cand.lowerArm, palmN, 0);
+      const strain = authored ? contactCost(this.anat.m) : this.anat.cost();
       if (prior !== null) {
         // Cosine rather than a squared difference so the penalty wraps with the
         // circle: the angle is periodic, and a difference of just under a turn
         // is a small move and must not be charged as a large one.
-        return this.anat.cost() + ELBOW_PRIOR * (1 - Math.cos(angle - prior));
+        return strain + ELBOW_PRIOR * (1 - Math.cos(angle - prior));
       }
       // Continuity, so a target drifting between two equally comfortable elbow
       // positions does not flip between them.
       const d = angle - (prev ?? 0);
-      return this.anat.cost() + SWIVEL_INERTIA * (1 - Math.cos(d));
+      return strain + SWIVEL_INERTIA * (1 - Math.cos(d));
     };
 
     const step = (Math.PI * 2) / SWIVEL_SAMPLES;
@@ -234,15 +260,56 @@ export class ElbowSearch {
     }
 
     if (!this.ctx.solveReach(side, wristTarget, settled, out)) return null;
-    out.swivel = settled;
+    if (line) this.remember(out, settled);
     return bestC;
   }
 
   /**
-   * Where the elbow belongs for a wrist at `wristTarget`, as an angle on the
-   * elbow circle. Null on a rig whose body frame or arm the profile could not
+   * The reach line for this solve — shoulder in `_lineS`, unit bearing in
+   * `_lineN` — or false where the rig has no arm or body frame to draw it in.
+   */
+  private line(side: Side, wristTarget: THREE.Vector3): boolean {
+    const upper = this.p.bones?.[`upperArm.${side}`];
+    if (!(upper && this.anat.update())) return false;
+    upper.updateWorldMatrix(true, false);
+    const S = upper.getWorldPosition(this._lineS);
+    const n = this._lineN.copy(wristTarget).sub(S);
+    if (n.lengthSq() < 1e-10) return false;
+    n.normalize();
+    return true;
+  }
+
+  /** The slot's remembered elbow as an angle on this frame's circle, if it has one. */
+  private remembered(out: ArmSolution): number | undefined {
+    const d = out.swivelDir;
+    if (d.lengthSq() === 0) return undefined;
+    const anat = this.anat;
+    const w = this._swivelW
+      .copy(anat.right)
+      .multiplyScalar(d.x)
+      .addScaledVector(anat.up, d.y)
+      .addScaledVector(anat.fwd, d.z);
+    return swivelOf(anat, this._lineN, w) ?? undefined;
+  }
+
+  /** Record the elbow's standoff direction at `angle`, in the body frame. */
+  private remember(out: ArmSolution, angle: number): void {
+    const anat = this.anat;
+    const n = this._lineN;
+    const ref = reachRef(anat, n, this._swivelRef);
+    const bi = this._swivelBi.copy(n).cross(ref);
+    const w = this._swivelW
+      .copy(ref)
+      .multiplyScalar(Math.cos(angle))
+      .addScaledVector(bi, Math.sin(angle));
+    out.swivelDir.set(w.dot(anat.right), w.dot(anat.up), w.dot(anat.fwd));
+  }
+
+  /**
+   * Where the elbow belongs for a wrist on the current reach line, as an angle
+   * on the elbow circle. Null on a rig whose body frame the profile could not
    * resolve, and where the predicted pole lands on the reach line and therefore
-   * says nothing — see `poleAngle`.
+   * says nothing — see `swivelOf`.
    *
    * Predicted as a *point* and converted, rather than as an angle directly. The
    * angle is measured about the shoulder-to-wrist line, and that line swings
@@ -253,17 +320,11 @@ export class ElbowSearch {
    *
    * See `ELBOW_PRIOR` for what the coefficients mean.
    */
-  private predict(side: Side, wristTarget: THREE.Vector3): number | null {
+  private predict(side: Side): number | null {
     const span = this.p.body?.span;
-    const upper = this.p.bones?.[`upperArm.${side}`];
     const anat = this.anat;
-    if (!(span && upper && anat.update())) return null;
-
-    upper.updateWorldMatrix(true, false);
-    const S = upper.getWorldPosition(this._priorPole);
-    const u = this._priorDir.copy(wristTarget).sub(S);
-    if (u.lengthSq() < 1e-10) return null;
-    u.normalize();
+    if (!span) return null;
+    const u = this._lineN;
 
     // The hand's bearing from the shoulder, resolved in the body's own frame so
     // it survives the character leaning or turning. `s` mirrors the lateral
@@ -281,12 +342,13 @@ export class ElbowSearch {
     const pu = ELBOW_POLE_UP + ELBOW_POLE_UP_RISE * up;
     const pf = ELBOW_POLE_FWD + ELBOW_POLE_FWD_REACH * Math.max(0, fwd);
 
-    // `S` is `_priorPole`, which becomes the pole itself from here.
+    // The pole as an offset from the shoulder, which is all `swivelOf` needs.
     this._priorPole
+      .set(0, 0, 0)
       .addScaledVector(anat.right, po * s * span)
       .addScaledVector(anat.up, pu * span)
       .addScaledVector(anat.fwd, pf * span);
 
-    return poleAngle(this.p, anat, side, wristTarget, this._priorPole);
+    return swivelOf(anat, u, this._priorPole);
   }
 }

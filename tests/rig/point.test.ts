@@ -74,6 +74,7 @@ const solution = (): ArmSolution => ({
   palm: new THREE.Vector3(),
   tip: new THREE.Vector3(),
   twist: 0,
+  swivelDir: new THREE.Vector3(),
 });
 
 const wristOf = (arm: Arm, out: ArmSolution): THREE.Vector3 =>

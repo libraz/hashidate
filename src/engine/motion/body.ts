@@ -849,7 +849,7 @@ export class Body {
     let worst = 0;
     for (const side of ['L', 'R'] as const) {
       const mirror = sideMirror(side);
-      this._probeReach[side].swivel = undefined;
+      this._probeReach[side].swivelDir.set(0, 0, 0);
       const arm = this._arm.resolve(pose, side, mirror, this._probeReach, 1);
       if (!arm) continue;
       for (const slot of ARM_SLOTS) {
@@ -909,8 +909,8 @@ export class Body {
       this._fading.push(out);
     }
     // A new slot's elbow starts at its own answer; see `ElbowSearch.search`.
-    this._curReach.L.swivel = undefined;
-    this._curReach.R.swivel = undefined;
+    this._curReach.L.swivelDir.set(0, 0, 0);
+    this._curReach.R.swivelDir.set(0, 0, 0);
     this._curReach.L.clasp = false;
     this._curReach.R.clasp = false;
     this.gesture = null;

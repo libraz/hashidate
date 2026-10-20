@@ -112,7 +112,7 @@ export function cost(m: ArmMeasurement, limits: JointTable, strain: ArmStrain): 
   // single joint reaching its stop — so wherever the whole elbow circle was
   // penetrating, which is the case that matters, the search was choosing on
   // the joint terms and was very nearly blind to depth.
-  if (m.torso > 0) total += BODY_HIT + BODY_DEPTH * m.torso;
+  total += contactCost(m);
   // Gravity: zero for an arm hanging, half at horizontal, one overhead.
   //
   // Charged from hanging and not from horizontal, which is the version this
@@ -138,6 +138,11 @@ export function cost(m: ArmMeasurement, limits: JointTable, strain: ArmStrain): 
   // weight the search still took the trade.
   total += INBOARD_COST * m.inboard * m.inboard;
   return total;
+}
+
+/** What being inside the body costs on its own; `cost` says why it has a step and a slope. */
+export function contactCost(m: ArmMeasurement): number {
+  return m.torso > 0 ? BODY_HIT + BODY_DEPTH * m.torso : 0;
 }
 
 /** A readable snapshot, for the panel. Allocates; not for the frame loop. */

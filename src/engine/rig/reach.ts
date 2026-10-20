@@ -23,6 +23,7 @@ const _reachT = new THREE.Vector3();
 const _poleS = new THREE.Vector3();
 const _poleN = new THREE.Vector3();
 const _poleW = new THREE.Vector3();
+const _swivelW = new THREE.Vector3();
 const _poleR = new THREE.Vector3();
 const _poleB = new THREE.Vector3();
 // How far off the reach line a pole has to sit before it means anything —
@@ -54,10 +55,17 @@ export interface ArmSolution extends ReachLinks {
   twist: number;
   /** Cost of the winning elbow, from a fingertip solve. */
   strain?: number;
-  /** Last elbow angle a pole point resolved to, held across a frame where it cannot. */
-  poleA?: number;
-  /** Where the elbow search left this slot's elbow; unset until its first solve. */
-  swivel?: number;
+  /**
+   * Where the elbow search left this slot's elbow: the direction it stands off
+   * the reach line, in the body frame (right, up, forward). Zero until the
+   * slot's first solve.
+   *
+   * A direction rather than the swivel angle. The angle is measured from
+   * `reachRef`, which changes its reference as the reach nears forward, and an
+   * angle remembered across that change names a different elbow in the next
+   * frame — the arm then swung a quarter turn to reach it.
+   */
+  swivelDir: THREE.Vector3;
   /** Set when the follower hand of a clasp was solved here rather than a plain reach. */
   clasp?: boolean;
 }
@@ -221,18 +229,28 @@ export function poleAngle(
   const n = _poleN.copy(targetWorld).sub(S);
   if (n.lengthSq() < 1e-10) return null;
   n.normalize();
-  const w = _poleW.copy(poleWorld).sub(S);
+  return swivelOf(anat, n, _poleW.copy(poleWorld).sub(S));
+}
+
+/**
+ * The swivel angle of a direction `w` about the unit reach line `n`, in the
+ * shared reference, or null where `w` lies too close to the line to say.
+ *
+ * Shared by the pole conversion and by the elbow search reading back where it
+ * left the elbow, so a point and a remembered direction agree on where zero is.
+ */
+export function swivelOf(anat: ArmAnatomy, n: THREE.Vector3, w: THREE.Vector3): number | null {
   const len = w.length();
   if (len < 1e-6) return null;
-  w.addScaledVector(n, -w.dot(n));
+  const r = _swivelW.copy(w).addScaledVector(n, -w.dot(n));
   // The residue as a fraction of the offset is the sine of the angle between
   // the pole and the reach, so this rejects near-parallel as well as parallel.
   // A bare length test does not: the residue of a long, almost-collinear
   // offset is still long, and the direction it points is noise. That is the
   // hole the earlier pole-as-vector attempt fell through.
-  if (w.length() / len < POLE_MIN_SINE) return null;
-  w.normalize();
+  if (r.length() / len < POLE_MIN_SINE) return null;
+  r.normalize();
   const ref = reachRef(anat, n, _poleR);
   const bi = _poleB.copy(n).cross(ref);
-  return Math.atan2(w.dot(bi), w.dot(ref));
+  return Math.atan2(r.dot(bi), r.dot(ref));
 }

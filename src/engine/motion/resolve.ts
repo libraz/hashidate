@@ -88,6 +88,7 @@ export function mkReachScratch(): Record<Side, ArmSolution> {
     palm: new THREE.Vector3(),
     tip: new THREE.Vector3(),
     twist: 0,
+    swivelDir: new THREE.Vector3(),
   });
   return { L: mk(), R: mk() };
 }
@@ -551,23 +552,16 @@ export class ArmResolver {
       : null;
 
     // A pole point is the preferred way to state the elbow, and the only one
-    // that stays meaningful while the hand is travelling. `elbow` remains for a
-    // pose that wants the raw angle, and a pose that states neither falls back
-    // to searching the circle for the least strained place to put it.
+    // that stays meaningful while the hand is travelling. It goes through the
+    // elbow search, which holds the elbow there unless the body is in the way:
+    // solved at the pole outright, every hand brought inside the shoulder line
+    // put its elbow in the chest and left the limiter to lift it out, part by
+    // part and a frame at a time. `elbow` remains for a pose that wants the raw
+    // angle, and a pose that states neither is searched from the predicted
+    // elbow instead.
     const poleW = r.pole ? this.anchors.pole(r.pole, side) : null;
-    const poleA = poleW ? this.rig.poleAngle(side, target, poleW) : null;
     let solved = false;
-    if (poleA !== null) {
-      out.poleA = poleA;
-      solved = !!this.rig.solveReach(side, target, poleA, out);
-    } else if (r.pole && out.poleA !== undefined) {
-      // The pole crossed the reach line, where it says nothing about the elbow.
-      // Holding the last angle rides through; recomputing from the noise, or
-      // dropping to a different rule for a frame, both show as a snap. The slot
-      // is reused by successive gestures, so this can be a stale angle on the
-      // first frame of a new one — a frame of the wrong elbow, and not a jump.
-      solved = !!this.rig.solveReach(side, target, out.poleA, out);
-    } else if (r.elbow !== undefined) {
+    if (!poleW && r.elbow !== undefined) {
       // Authored in character terms, so the two arms mirror. A rotation about a
       // mirrored axis runs the other way; this is axial, not the lateral sign
       // used to project point bearings and directions.
@@ -578,7 +572,7 @@ export class ArmResolver {
         out,
       );
     } else {
-      solved = !!this.rig.solveReachNatural(side, target, hint, out);
+      solved = !!this.rig.solveReachNatural(side, target, hint, out, poleW);
     }
     if (!solved) return pose?.arms?.[side] ?? null;
 

@@ -389,15 +389,15 @@ describe('ArmAnatomy.clamp', () => {
 
     const shoulder = swung(body.anat.right, body.down, 0.3);
     expect(makeVolumes().clear(shoulder, null, null, lateral)).toBe(true);
-    expect(shoulder.x).toBeCloseTo(0.09412242595804733, 12);
-    expect(shoulder.y).toBeCloseTo(-0.9955606304649517, 12);
+    expect(shoulder.x).toBeCloseTo(0.38325925651165155, 12);
+    expect(shoulder.y).toBeCloseTo(-0.9236408080515586, 12);
 
     const forearm = swung(body.anat.right, body.down, 0.8);
     const forearmUpper = body.down.clone();
     expect(makeVolumes().clear(forearmUpper, forearm, null, lateral)).toBe(true);
     expect(forearmUpper.distanceTo(body.down)).toBeLessThan(EXACT);
-    expect(forearm.x).toBeCloseTo(0.17015888529355686, 12);
-    expect(forearm.y).toBeCloseTo(-0.9854166396786965, 12);
+    expect(forearm.x).toBeCloseTo(0.4849895736464871, 12);
+    expect(forearm.y).toBeCloseTo(-0.8745199331371462, 12);
 
     const handUpper = body.down.clone();
     const handForearm = swung(body.anat.right, body.down, 0.3);
@@ -406,8 +406,8 @@ describe('ArmAnatomy.clamp', () => {
     expect(handUpper.distanceTo(body.down)).toBeLessThan(EXACT);
     expect(handForearm.x).toBeCloseTo(0.955336489125606, 12);
     expect(handForearm.y).toBeCloseTo(-0.29552020666133955, 12);
-    expect(hand.x).toBeCloseTo(0.9999999999824337, 12);
-    expect(hand.y).toBeCloseTo(-0.0000059272894388501754, 12);
+    expect(hand.x).toBeCloseTo(0.9999999997684746, 12);
+    expect(hand.y).toBeCloseTo(-0.00002151861722310047, 12);
   });
 });
 
@@ -476,7 +476,7 @@ describe('ArmAnatomy.cost', () => {
       return { cost: body.anat.cost(), depth: body.anat.m.torso };
     };
 
-    const shallow = cost(0.13);
+    const shallow = cost(0.25);
     const deep = cost(1);
     // Genuinely shallow against genuinely buried, rather than two saturated readings.
     expect(shallow.depth).toBeGreaterThan(0);
