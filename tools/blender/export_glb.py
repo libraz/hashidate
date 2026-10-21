@@ -14,9 +14,11 @@ keep_groups (list), keep_groups_by_mesh (object of lists, optional), keep_names
 import bpy
 import json
 import mathutils
+import numpy as np
 import os
 import re
 import sys
+import tempfile
 
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 
@@ -280,11 +282,28 @@ print(f"@@@ textures relinked={relinked} missing={sorted(set(miss))}")
 # are on disk next to it, named after the material, so the mapping is stated in
 # the profile and wired here.
 #
-# Alpha is connected as well, and the material marked as blended. The runtime
-# turns that into an alpha test (see materials.ts); what it cannot do is invent
-# transparency for a material that arrived opaque, and without it every
-# alpha-cut piece — lashes, hair cards, the highlights over the iris — renders
-# as an opaque rectangle.
+# Alpha is connected as well, and the material marked as blended, when the
+# image has any. The runtime turns that into an alpha test (see materials.ts);
+# what it cannot do is invent transparency for a material that arrived opaque,
+# and without it every alpha-cut piece — lashes, hair cards, the highlights over
+# the iris — renders as an opaque rectangle. An image with none stays opaque,
+# so skin and cloth keep early depth rejection instead of an alpha test.
+OPAQUE_ALPHA = 1.0 - 0.5 / 255
+_alpha_by_image = {}
+
+
+def carries_alpha(image):
+    """Whether any texel is less than opaque; a four-channel file may have none."""
+    if image.name not in _alpha_by_image:
+        found = False
+        if image.channels == 4:
+            px = np.empty(len(image.pixels), dtype=np.float32)
+            image.pixels.foreach_get(px)
+            found = bool((px[3::4] < OPAQUE_ALPHA).any())
+        _alpha_by_image[image.name] = found
+    return _alpha_by_image[image.name]
+
+
 def wire_texture(mat, path):
     mat.use_nodes = True
     nt = mat.node_tree
@@ -298,8 +317,9 @@ def wire_texture(mat, path):
     tex = nt.nodes.new("ShaderNodeTexImage")
     tex.image = bpy.data.images.load(path, check_existing=True)
     nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
-    if "Alpha" in bsdf.inputs:
-        nt.links.new(tex.outputs["Alpha"], bsdf.inputs["Alpha"])
+    if "Alpha" not in bsdf.inputs or not carries_alpha(tex.image):
+        return
+    nt.links.new(tex.outputs["Alpha"], bsdf.inputs["Alpha"])
     # The attribute that carries this was renamed across Blender versions.
     for attr, value in (("surface_render_method", "BLENDED"), ("blend_method", "BLEND")):
         if hasattr(mat, attr):
@@ -382,6 +402,50 @@ for ob in [o for o in bpy.data.objects if o.type == "MESH"]:
 if over:
     print(f"@@@ WARNING more than 4 bone weights on some vertices (truncated to 4): {over}")
 
+# --- images: lossy only where the eye is the judge
+#
+# The exporter's image format is one setting for the whole file, and "AUTO"
+# keeps each image in the format of the file behind it. So base-colour images
+# are re-encoded to lossy WebP here, and every other map — normal, roughness,
+# masks, where a compression block is a shading error rather than a soft texel —
+# leaves as the lossless PNG it was read from. A base colour reached through
+# anything but a direct link is not found and stays PNG: size, not quality.
+BASE_COLOR_QUALITY = 85
+
+
+def base_color_images():
+    found = {}
+    for mat in bpy.data.materials:
+        if not mat.use_nodes or mat.node_tree is None:
+            continue
+        for link in mat.node_tree.links:
+            im = getattr(link.from_node, "image", None)
+            if (link.to_node.type == "BSDF_PRINCIPLED" and link.to_socket.identifier == "Base Color"
+                    and link.from_node.type == "TEX_IMAGE" and im is not None
+                    and im.source == "FILE" and im.packed_file is None):
+                found[im.name] = im
+    return list(found.values())
+
+
+def encode_lossy(image, path):
+    """Re-encode an image to lossy WebP at `path` and point it there."""
+    # The same copy-and-save the glTF exporter uses for its own temporary images.
+    copy = image.copy()
+    try:
+        try:
+            copy.update()
+            copy.scale(*image.size)
+        except RuntimeError:
+            pass
+        copy.filepath_raw = path
+        copy.file_format = "WEBP"
+        copy.save(quality=BASE_COLOR_QUALITY)
+    finally:
+        bpy.data.images.remove(copy)
+    image.filepath = path
+    image.reload()
+
+
 kw = dict(
     filepath=dst,
     export_format="GLB",
@@ -393,9 +457,13 @@ kw = dict(
     export_yup=True,
     export_apply=False,
 )
-try:
-    bpy.ops.export_scene.gltf(**kw, export_image_format="WEBP", export_image_quality=85)
-except TypeError:
-    print("@@@ WARNING exporter rejected WEBP options; textures fall back to PNG")
-    bpy.ops.export_scene.gltf(**kw)
+# The WebP copies only have to outlive the export, which embeds their bytes.
+with tempfile.TemporaryDirectory() as lossy_dir:
+    lossy = []
+    for i, im in enumerate(base_color_images()):
+        encode_lossy(im, os.path.join(lossy_dir, f"{i:03d}.webp"))
+        lossy.append(im.name)
+    print(f"@@@ base colour as lossy WebP: {lossy}")
+    bpy.ops.export_scene.gltf(**kw, export_image_format="AUTO",
+                              export_image_quality=BASE_COLOR_QUALITY)
 print(f"@@@ EXPORTED {dst} {os.path.getsize(dst)} bytes")
