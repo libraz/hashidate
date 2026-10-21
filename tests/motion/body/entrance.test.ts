@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { JOINTS } from '@/engine/anatomy';
-import { GESTURES } from '@/engine/motion/gestures';
+import { BASE_POSE, GESTURES } from '@/engine/motion/gestures';
 import type { BoneSlot, GestureDef, Side } from '@/engine/types';
 import { DT, FAR, type Harness, harness, speeds, spreadGesture, wristOf } from './harness';
 
@@ -19,6 +19,70 @@ describe('gesture entrance', () => {
   let h: Harness;
   beforeEach(() => {
     h = harness();
+  });
+
+  it('keeps doze easing in through its authored 1.5-second lead', () => {
+    h.body.play('doze');
+    const lead = h.body.gesture?.lead ?? 0;
+    expect(lead).toBeGreaterThanOrEqual(GESTURES.doze.lead);
+
+    // At 0.95 seconds the pose is still easing in; by its authored end it has
+    // reached full weight. The regression made it reach full weight too early,
+    // against the authored minimum.
+    for (let i = 0; i < 57; i++) {
+      h.rig.reset();
+      h.body.update(DT);
+    }
+    expect(h.body.blend).toBeLessThan(1);
+
+    for (let i = 57; i < 90; i++) {
+      h.rig.reset();
+      h.body.update(DT);
+    }
+    expect(h.body.blend).toBeCloseTo(1, 6);
+  });
+
+  it('preserves a custom authored lead above the distance-extension cap', () => {
+    const slow: GestureDef = {
+      label: { en: 'Slow pose', ja: 'ゆっくりしたポーズ' },
+      group: 'pose',
+      lead: 1.25,
+      hold: 1,
+      sustain: true,
+      build: () => ({}),
+    };
+
+    h.body.playDef(slow, 'slow');
+
+    expect(h.body.gesture?.lead).toBe(1.25);
+  });
+
+  it('caps a short authored lead after deriving its distance extension', () => {
+    const oppositeRest: GestureDef = {
+      label: { en: 'Opposite rest', ja: '反対の休止姿勢' },
+      group: 'pose',
+      lead: 0.2,
+      hold: 1,
+      sustain: true,
+      build: () => ({
+        arms: {
+          L: {
+            upperArm: BASE_POSE.upperArm.clone().negate(),
+            lowerArm: BASE_POSE.lowerArm.clone().negate(),
+            hand: BASE_POSE.hand.clone().negate(),
+          },
+          R: {
+            upperArm: BASE_POSE.upperArm.clone().negate(),
+            lowerArm: BASE_POSE.lowerArm.clone().negate(),
+            hand: BASE_POSE.hand.clone().negate(),
+          },
+        },
+      }),
+    };
+    h.body.playDef(oppositeRest, 'opposite-rest');
+
+    const lead = h.body.gesture?.lead ?? 0;
+    expect(lead).toBe(0.95);
   });
 
   it('sets out from rest', () => {

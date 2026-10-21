@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { smoothstep } from '@/engine/motion/idle';
-import { FINGER_ONSET, LINK_ONSET, minJerk, onset, reachEnvelope } from '@/engine/motion/timing';
+import {
+  FINGER_ONSET,
+  heldTime,
+  LINK_ONSET,
+  minJerk,
+  onset,
+  reachEnvelope,
+} from '@/engine/motion/timing';
 
 /**
  * The time course of a deliberate movement.
@@ -161,5 +168,20 @@ describe('onset table', () => {
       expect(delay).toBeGreaterThanOrEqual(0);
       expect(delay).toBeLessThan(0.4);
     }
+  });
+});
+
+describe('heldTime', () => {
+  it('starts at zero and clamps the legacy clock before the authored lead', () => {
+    expect(heldTime(-1, 0)).toBe(0);
+    expect(heldTime(0.2, 0.48)).toBe(0);
+    expect(heldTime(0.48, 0.48)).toBe(0);
+    expect(heldTime(0.78, 0.48)).toBeCloseTo(0.3, 12);
+    expect(heldTime(0.2, 0)).toBeCloseTo(0.2, 12);
+  });
+
+  it('uses the actual slot clock when one is supplied', () => {
+    expect(heldTime(40, 0.48, { entrance: 0, held: 0 })).toBe(0);
+    expect(heldTime(40, 0.48, { entrance: 1, held: 0.27 })).toBe(0.27);
   });
 });

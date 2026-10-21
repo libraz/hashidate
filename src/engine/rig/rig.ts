@@ -7,6 +7,7 @@ import {
   rollRoom,
   rotationTrust,
 } from '../anatomy';
+import type { HandSensePose } from '../motion/finger-life';
 import type {
   ArmSlot,
   FingerName,
@@ -17,7 +18,17 @@ import type {
   Side,
   Vec3Tuple,
 } from '../types';
+import type { ArmConfiguration, ArmForwardContext, ArmForwardResult } from './arm-configuration';
+import { PRONATION_SPLIT } from './arm-configuration';
+import {
+  ArmDriver,
+  type ArmDriverAcceptedSnapshot,
+  FRAME_TOLERANCE,
+  positiveConformalScale,
+} from './arm-driver';
+import type { ArmPathPlanOutput } from './arm-path';
 import { ElbowSearch } from './elbow';
+import { FINGER_TIP_EXTENSION } from './hand-geometry';
 import { Hands } from './hands';
 import { GroundedLegs } from './legs';
 import { type PointRequest, PointSolver } from './point';
@@ -128,6 +139,105 @@ interface PalmSpec {
   weight: number;
 }
 
+type BodySnapshotSlot = 'hips' | 'spine' | 'chest' | 'neck' | 'head' | 'shoulder.L' | 'shoulder.R';
+
+const BODY_SNAPSHOT_SLOTS: readonly BodySnapshotSlot[] = [
+  'hips',
+  'spine',
+  'chest',
+  'neck',
+  'head',
+  'shoulder.L',
+  'shoulder.R',
+];
+
+/** The small body context reconstructed for each arm feasibility sample. */
+export interface RigBodyPoseSnapshot {
+  readonly slots: Partial<Record<BodySnapshotSlot, THREE.Quaternion>>;
+  readonly hipsPosition: THREE.Vector3;
+  rise: number;
+}
+
+export interface ArmFrameSideCommit {
+  readonly output: ArmPathPlanOutput;
+  readonly context: ArmForwardContext;
+  readonly curls: FingerSpec;
+  readonly spread: FingerSpec;
+}
+
+/** One side of the default pose Body may install before its first frame. */
+export interface StandingArmPose {
+  readonly shoulder: THREE.Vector3;
+  readonly upperArm: THREE.Vector3;
+  readonly lowerArm: THREE.Vector3;
+  readonly hand: THREE.Vector3;
+  readonly palm: THREE.Vector3;
+  readonly curls: FingerSpec;
+  readonly spread: FingerSpec;
+}
+
+/** The last displayed arm frame, in the character coordinates Body follows. */
+export interface AcceptedArmState {
+  readonly directions: Record<ArmSlot, Vec3Tuple>;
+  readonly palm: Vec3Tuple;
+  readonly curls: Record<FingerName, number>;
+  readonly spread: Record<FingerName, number>;
+  forearmRoll: number;
+}
+
+function makeAcceptedArmState(): AcceptedArmState {
+  return {
+    directions: {
+      shoulder: [0, 0, 0],
+      upperArm: [0, 0, 0],
+      lowerArm: [0, 0, 0],
+      hand: [0, 0, 0],
+    },
+    palm: [0, 0, 0],
+    curls: { thumb: 0, index: 0, middle: 0, ring: 0, little: 0 },
+    spread: { thumb: 0, index: 0, middle: 0, ring: 0, little: 0 },
+    forearmRoll: 0,
+  };
+}
+
+interface MutableArmForwardContext {
+  side: Side;
+  shoulder: THREE.Vector3;
+  upperLength: number;
+  lowerLength: number;
+  up: THREE.Vector3;
+  right: THREE.Vector3;
+  forward: THREE.Vector3;
+  upperParentWorld: THREE.Quaternion;
+}
+
+interface ArmFrameCarrier {
+  readonly object: THREE.Object3D;
+  readonly scale: number;
+}
+
+interface ArmFrameSnapshot {
+  readonly carriers: ArmFrameCarrier[];
+  valid: boolean;
+}
+
+function makeArmFrameSnapshot(): ArmFrameSnapshot {
+  return { carriers: [], valid: false };
+}
+
+function makeArmContext(side: Side): MutableArmForwardContext {
+  return {
+    side,
+    shoulder: new THREE.Vector3(),
+    upperLength: 0,
+    lowerLength: 0,
+    up: new THREE.Vector3(),
+    right: new THREE.Vector3(),
+    forward: new THREE.Vector3(),
+    upperParentWorld: new THREE.Quaternion(),
+  };
+}
+
 const _palmSpec: PalmSpec = {
   local: new THREE.Vector3(),
   target: new THREE.Vector3(),
@@ -149,34 +259,6 @@ const _palmSpec: PalmSpec = {
  * which. See `anatomy/` for the model and for why it carries two bands rather
  * than one bound.
  */
-
-/**
- * How the roll that turns the palm to face somewhere is split up the arm.
- *
- * Three joints turn a palm over, and only one of them is below the elbow.
- * Rotating the humerus about its own axis carries the whole limb round; the
- * radius crossing the ulna adds pronation; the wrist itself contributes nothing
- * at all — it has no axial degree of freedom, and what a rig puts on the hand
- * bone is pronation rendered in the wrong place, because the skeleton has no
- * twist bone to put it on.
- *
- * Spending them in that order matters, and getting it wrong is what this used to
- * do. Charging the whole roll to forearm and wrist gave a hand reaching for the
- * mouth 150 degrees of pronation against a limit of 80 — nearly twice the range
- * a forearm has, while the shoulder above it sat unrotated with its own range
- * untouched. Skin weighted across a joint twisted that far collapses to zero
- * volume, so it does not merely look wrong: the wrist disappears.
- *
- * The shoulder is asked first, then the forearm, and the wrist takes only the
- * share of the forearm's pronation that has to be rendered above the joint for
- * the twist to reach the hand.
- *
- * PRONATION_SPLIT is a rendering choice, not an anatomical one: both parts are
- * the same rotation, and the measurement reports their sum as pronation. A real
- * forearm twists progressively along its length, so the lower bone taking the
- * larger share is what looks right.
- */
-const PRONATION_SPLIT = 0.4; // of the total pronation, the share on the hand
 
 /**
  * Below this the elbow is bent far enough that humeral rotation swings the
@@ -236,13 +318,34 @@ export class Rig {
 
   set limitsEnabled(on: boolean) {
     if (on === this._limitsEnabled) return;
-    this._limitsEnabled = on;
-    // The slew below carries the limiter's own output from frame to frame, and
-    // the frames while it was off are not part of that history: switching it
-    // back on with a stale hold would crawl the arm back from wherever the
-    // unbounded pose had left it.
+    if (!on) {
+      this._limitsEnabled = false;
+      this.invalidateArmContinuation();
+      return;
+    }
+
+    // Rotations and translation preserve the captured anatomy. A live scale,
+    // reflection or shear does not, so keep the legacy path until that metric
+    // returns to the one the arm calibration describes.
+    if (!this.bothArmFramesSupported()) {
+      this._limitsEnabled = true;
+      this.invalidateArmContinuation();
+      return;
+    }
+
+    // The diagnostic path can leave a pose outside the hard box or inside the
+    // body. Preflight every supported side before exposing constrained mode;
+    // a failed re-seed must leave the displayed and accepted poses untouched.
+    if (!this.reseedConstrainedArms()) {
+      this._limitsEnabled = false;
+      this.invalidateArmContinuation();
+      throw new Error('Could not restore a feasible arm pose; anatomical limits remain disabled.');
+    }
+    this._limitsEnabled = true;
+    this._armContinuationReady = true;
     this._heldLimit.L = false;
     this._heldLimit.R = false;
+    this._externalArmRevision++;
   }
 
   private _limitsEnabled = true;
@@ -278,14 +381,6 @@ export class Rig {
   };
   /** Roll the last palm solve asked for. */
   private _roll = 0;
-  /** The hand direction and palm the last `aimArm` was asked for, in world space. */
-  private readonly _askedHand: Record<
-    Side,
-    { point: THREE.Vector3; palm: THREE.Vector3; set: boolean }
-  > = {
-    L: { point: new THREE.Vector3(), palm: new THREE.Vector3(), set: false },
-    R: { point: new THREE.Vector3(), palm: new THREE.Vector3(), set: false },
-  };
   /** Each hand's fingers as last posed, in its own frame. See `fingerShape`. */
   private readonly _fingerShape: Record<Side, THREE.Vector3[]> = { L: [], R: [] };
   /** The humerus's front at rest, in its own space: the way the elbow folds. */
@@ -307,9 +402,85 @@ export class Rig {
     L: new THREE.Vector3(),
     R: new THREE.Vector3(),
   };
+  private readonly _armDrivers: Record<Side, ArmDriver | null> = { L: null, R: null };
+  private readonly _armFrameSnapshots: Record<Side, ArmFrameSnapshot> = {
+    L: makeArmFrameSnapshot(),
+    R: makeArmFrameSnapshot(),
+  };
+  private _armContinuationReady = false;
+  private readonly _armContexts: Record<Side, MutableArmForwardContext> = {
+    L: makeArmContext('L'),
+    R: makeArmContext('R'),
+  };
+  private readonly _acceptedHandPose: Record<Side, HandSensePose | null> = { L: null, R: null };
+  private readonly _acceptedArmState: Record<Side, AcceptedArmState> = {
+    L: makeAcceptedArmState(),
+    R: makeAcceptedArmState(),
+  };
+  private readonly _bodyInitializationState: Record<Side, AcceptedArmState> = {
+    L: makeAcceptedArmState(),
+    R: makeAcceptedArmState(),
+  };
+  private readonly _posedCurls: Record<Side, Record<FingerName, number>> = {
+    L: { thumb: 0, index: 0, middle: 0, ring: 0, little: 0 },
+    R: { thumb: 0, index: 0, middle: 0, ring: 0, little: 0 },
+  };
+  private readonly _posedSpread: Record<Side, Record<FingerName, number>> = {
+    L: { thumb: 0, index: 0, middle: 0, ring: 0, little: 0 },
+    R: { thumb: 0, index: 0, middle: 0, ring: 0, little: 0 },
+  };
+  private readonly _acceptedBodyPose: RigBodyPoseSnapshot;
+  private readonly _proposedBodyPose: RigBodyPoseSnapshot;
+  private _externalArmRevision = 0;
+  private _standingBootstrapClaimed = false;
+  private _acceptedRise = 0;
+  private readonly _actualUpper = new THREE.Vector3();
+  private readonly _actualLower = new THREE.Vector3();
+  private readonly _actualHand = new THREE.Vector3();
+  private readonly _actualPalm = new THREE.Vector3();
+  private readonly _applyParentQ = new THREE.Quaternion();
+  private readonly _applyLocalQ = new THREE.Quaternion();
+  private readonly _applyTargetQ = new THREE.Quaternion();
+  private readonly _applySwingQ = new THREE.Quaternion();
+  private readonly _measureQ = new THREE.Quaternion();
+  private readonly _measureA = new THREE.Vector3();
+  private readonly _measureB = new THREE.Vector3();
+  private readonly _measureC = new THREE.Vector3();
+  private readonly _staticUpper = new THREE.Vector3();
+  private readonly _staticLower = new THREE.Vector3();
+  private readonly _staticHand = new THREE.Vector3();
+  private readonly _staticPalm = new THREE.Vector3();
+  private readonly _staticBoundedConfiguration: ArmConfiguration = {
+    shoulderPlane: 0,
+    shoulderLift: 0,
+    humeralRotation: 0,
+    elbowFlex: 0,
+    forearmRoll: 0,
+    wristFlex: 0,
+    wristDev: 0,
+  };
+  private readonly _staticQ = new Float64Array(7);
+  private readonly _handPoseScratch: Record<Side, HandSensePose> = {
+    L: {
+      knuckle: new THREE.Vector3(),
+      palm: new THREE.Vector3(),
+      forearm: new THREE.Vector3(),
+      index: new THREE.Vector3(),
+      little: new THREE.Vector3(),
+    },
+    R: {
+      knuckle: new THREE.Vector3(),
+      palm: new THREE.Vector3(),
+      forearm: new THREE.Vector3(),
+      index: new THREE.Vector3(),
+      little: new THREE.Vector3(),
+    },
+  };
 
   constructor(profile: Profile) {
     this.p = profile;
+    profile.root.updateWorldMatrix(true, true);
+    this.captureArmFrameMetrics();
 
     const all = [...Object.values(profile.bones), ...Object.values(profile.fingerBones).flat()];
     for (const b of all) this.rest.set(b, b.quaternion.clone());
@@ -351,6 +522,52 @@ export class Rig {
       if (front.lengthSq() > 1e-8)
         this._humeralFront[side] = front.normalize().applyQuaternion(q.invert());
     }
+
+    this._acceptedBodyPose = this.makeBodyPoseSnapshot();
+    this._proposedBodyPose = this.makeBodyPoseSnapshot();
+    this.captureBodyPose(this._acceptedBodyPose, 0);
+    this.captureBodyPose(this._proposedBodyPose, 0);
+    for (const side of ['L', 'R'] as Side[]) {
+      const palmLocal = this.palmLocal[side];
+      const humeralFront = this._humeralFront[side];
+      if (!(palmLocal && humeralFront)) continue;
+      const driver = ArmDriver.create({
+        profile,
+        side,
+        joints: this.joints,
+        rest: this.rest,
+        fingerAxes: this.hands.axis,
+        fingerSplayAxes: this.hands.splayAxis,
+        palmLocal,
+        radialSign: this.anat.radialSign[side],
+        humeralFront,
+        anatomy: this.anat,
+        fingerClearance: this.fingerClearance(side),
+      });
+      if (!driver) continue;
+      const context = this.armForwardContext(side);
+      if (!(context && this.readActualArmPose(side))) continue;
+      if (
+        !driver.seedFromPose(
+          context,
+          this._actualUpper,
+          this._actualLower,
+          this._actualHand,
+          this._actualPalm,
+        )
+      )
+        continue;
+      this._armDrivers[side] = driver;
+      this._acceptedHandPose[side] = this.captureHandPose(side);
+      this.foreRoll[side] = driver.acceptedConfiguration.forearmRoll;
+      this.captureAcceptedArmState(
+        side,
+        driver.acceptedForward,
+        this._posedCurls[side],
+        this._posedSpread[side],
+      );
+    }
+    this._armContinuationReady = this.bothArmFramesSupported();
   }
 
   /** Curl axis per finger bone, in that bone's own space. */
@@ -366,6 +583,371 @@ export class Rig {
   /** Palm normal in hand-bone space. */
   get palmLocal(): Partial<Record<Side, THREE.Vector3>> {
     return this.hands.palmLocal;
+  }
+
+  get externalArmRevision(): number {
+    return this._externalArmRevision;
+  }
+
+  acceptedArmState(side: Side): Readonly<AcceptedArmState> {
+    return this._acceptedArmState[side];
+  }
+
+  /**
+   * Install the default standing pose once, before the first Body frame.
+   *
+   * This is deliberately a paired static endpoint transaction: no clock or
+   * follower has advanced yet, and a partial shoulder/arm pair would make the
+   * first displayed pose depend on which side happened to validate first.
+   */
+  bootstrapStandingPose(poses: Record<Side, StandingArmPose>): boolean {
+    if (this._standingBootstrapClaimed) return false;
+    this._standingBootstrapClaimed = true;
+    if (!(this._externalArmRevision === 0 && this._limitsEnabled && this.bothArmFramesSupported()))
+      return false;
+
+    const shoulders: Record<Side, THREE.Quaternion | null> = {
+      L: this.p.bones['shoulder.L']?.quaternion.clone() ?? null,
+      R: this.p.bones['shoulder.R']?.quaternion.clone() ?? null,
+    };
+    let committed = false;
+    try {
+      for (const side of ['L', 'R'] as Side[]) {
+        const pose = poses[side];
+        if (
+          !(
+            [pose.shoulder, pose.upperArm, pose.lowerArm, pose.hand, pose.palm].every(
+              (direction) =>
+                Number.isFinite(direction.x) &&
+                Number.isFinite(direction.y) &&
+                Number.isFinite(direction.z) &&
+                direction.lengthSq() > 1e-12,
+            ) &&
+            FINGER_NAMES.every((finger) => Number.isFinite(pose.curls[finger])) &&
+            FINGER_NAMES.every((finger) => Number.isFinite(pose.spread[finger]))
+          )
+        ) {
+          return false;
+        }
+        if (!this.canWriteArm(side)) return false;
+      }
+
+      // Both clavicles change the shoulder origins, so stage both before
+      // capturing either FK context.
+      this.aimShoulder('L', poses.L.shoulder);
+      this.aimShoulder('R', poses.R.shoulder);
+      this.p.root.updateMatrixWorld(true);
+
+      const plans: Partial<Record<Side, ArmFrameSideCommit>> = {};
+      for (const side of ['L', 'R'] as Side[]) {
+        const pose = poses[side];
+        const driver = this._armDrivers[side];
+        const context = this.armForwardContext(side);
+        if (!(driver && context)) return false;
+
+        driver.captureVolumeFrame();
+        const request = driver.composeRequest(
+          context,
+          pose.upperArm,
+          pose.lowerArm,
+          pose.hand,
+          pose.palm,
+          1,
+          0,
+          pose.curls,
+          pose.spread,
+          false,
+        );
+        if (
+          !(
+            request.palm &&
+            driver.configurationFromPose(
+              context,
+              pose.upperArm,
+              pose.lowerArm,
+              pose.hand,
+              request.palm,
+            )
+          )
+        ) {
+          return false;
+        }
+
+        let output = driver.output;
+        if (!driver.validateLockedPose(driver.targetQ, context, pose.curls, pose.spread, output)) {
+          const bounded = driver.boundConfiguration(
+            driver.targetConfiguration,
+            this._staticBoundedConfiguration,
+          );
+          driver.configurationToQ(bounded, this._staticQ);
+          driver.requestForConfiguration(bounded, context, pose.curls, pose.spread);
+          if (!driver.restoreEndpointFrom(this._staticQ, context, 0, false)) return false;
+          output = driver.output;
+        }
+        plans[side] = { output, context, curls: pose.curls, spread: pose.spread };
+      }
+
+      const left = plans.L;
+      const right = plans.R;
+      if (!(left && right && this.commitArmFrame({ L: left, R: right }, this._acceptedRise)))
+        return false;
+
+      for (const side of ['L', 'R'] as Side[]) {
+        const driver = this._armDrivers[side];
+        if (!driver) return false;
+        driver.requestRollHistory = driver.acceptedConfiguration.forearmRoll;
+      }
+      this.captureBodyPose(this._proposedBodyPose, this._acceptedRise);
+      committed = true;
+      return true;
+    } finally {
+      if (!committed) {
+        for (const side of ['L', 'R'] as Side[]) {
+          const shoulder = this.p.bones[`shoulder.${side}`];
+          const prior = shoulders[side];
+          if (shoulder && prior) shoulder.quaternion.copy(prior);
+        }
+        this.p.root.updateMatrixWorld(true);
+        this.anat.update();
+      }
+    }
+  }
+
+  /** Read the authoritative accepted pose, or measure the live legacy pose. */
+  armStateForBodyInitialization(side: Side): Readonly<AcceptedArmState> {
+    if (this._limitsEnabled && this._armContinuationReady && this.armFrameSupported(side))
+      return this._acceptedArmState[side];
+
+    const out = this._bodyInitializationState[side];
+    for (const slot of ['shoulder', 'upperArm', 'lowerArm', 'hand'] as const) {
+      const direction = out.directions[slot];
+      direction[0] = 0;
+      direction[1] = 0;
+      direction[2] = 0;
+    }
+    out.palm[0] = 0;
+    out.palm[1] = 0;
+    out.palm[2] = 0;
+    if (this.readActualArmPose(side)) {
+      this.toAcceptedCharacter(out.directions.upperArm, this._actualUpper, side);
+      this.toAcceptedCharacter(out.directions.lowerArm, this._actualLower, side);
+      this.toAcceptedCharacter(out.directions.hand, this._actualHand, side);
+      this.toAcceptedCharacter(out.palm, this._actualPalm, side);
+      const shoulder = this.p.bones[`shoulder.${side}`];
+      if (shoulder) {
+        this._staticUpper
+          .copy(this.p.restDir[`shoulder.${side}`])
+          .applyQuaternion(shoulder.getWorldQuaternion(this._measureQ))
+          .normalize();
+        this.toAcceptedCharacter(out.directions.shoulder, this._staticUpper, side);
+      }
+    }
+    for (const finger of FINGER_NAMES) {
+      out.curls[finger] = this._posedCurls[side][finger];
+      out.spread[finger] = this._posedSpread[side][finger];
+    }
+    out.forearmRoll = this.foreRoll[side];
+    return out;
+  }
+
+  armDriver(side: Side): ArmDriver | null {
+    return this._armDrivers[side];
+  }
+
+  private captureArmFrameMetrics(): void {
+    const chest = this.p.bones.chest ?? this.p.bones.spine ?? this.p.bones.hips;
+    const head = this.p.bones.head ?? this.p.bones.neck;
+    for (const side of ['L', 'R'] as Side[]) {
+      const snapshot = this._armFrameSnapshots[side];
+      const upper = this.p.bones[`upperArm.${side}`];
+      const lower = this.p.bones[`lowerArm.${side}`];
+      const hand = this.p.bones[`hand.${side}`];
+      if (!(upper?.parent && upper && lower && hand)) continue;
+      const candidates = [upper.parent, upper, lower, hand, chest, head];
+      for (const object of candidates) {
+        if (!object || snapshot.carriers.some((carrier) => carrier.object === object)) continue;
+        object.updateWorldMatrix(true, false);
+        const scale = positiveConformalScale(object.matrixWorld);
+        if (scale === null) {
+          snapshot.valid = false;
+          snapshot.carriers.length = 0;
+          break;
+        }
+        snapshot.carriers.push({ object, scale });
+      }
+      snapshot.valid = snapshot.carriers.length > 0;
+    }
+  }
+
+  private armFrameSupportedFromUpdatedRoot(side: Side): boolean {
+    const snapshot = this._armFrameSnapshots[side];
+    if (!(this._armDrivers[side] && snapshot.valid && snapshot.carriers.length > 0)) return false;
+    for (const carrier of snapshot.carriers) {
+      carrier.object.updateWorldMatrix(true, false);
+      const scale = positiveConformalScale(carrier.object.matrixWorld);
+      if (
+        scale === null ||
+        Math.abs(scale - carrier.scale) > Math.max(scale, carrier.scale) * FRAME_TOLERANCE
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private armFrameSupported(side: Side): boolean {
+    this.p.root.updateWorldMatrix(true, false);
+    return this.armFrameSupportedFromUpdatedRoot(side);
+  }
+
+  private constrainedSideSupported(side: Side): boolean {
+    if (!this._limitsEnabled) return false;
+    if (this.armFrameSupported(side)) return true;
+    this.invalidateArmContinuation();
+    return false;
+  }
+
+  private bothArmFramesSupported(): boolean {
+    this.p.root.updateWorldMatrix(true, false);
+    return this.armFrameSupportedFromUpdatedRoot('L') && this.armFrameSupportedFromUpdatedRoot('R');
+  }
+
+  private invalidateArmContinuation(): void {
+    if (!this._armContinuationReady) return;
+    this._armContinuationReady = false;
+    this._heldLimit.L = false;
+    this._heldLimit.R = false;
+    this._rollHeld.L.fore = 0;
+    this._rollHeld.L.humeral = 0;
+    this._rollHeld.L.set = false;
+    this._rollHeld.R.fore = 0;
+    this._rollHeld.R.humeral = 0;
+    this._rollHeld.R.set = false;
+    this._roll = 0;
+  }
+
+  /** Body uses one shared support decision for both arms at the start of a frame. */
+  beginBodyArmFrame(): boolean {
+    if (!(this._limitsEnabled && this.bothArmFramesSupported())) {
+      this.invalidateArmContinuation();
+      return false;
+    }
+    return this._armContinuationReady;
+  }
+
+  /** Re-seed only after a complete legacy frame has been rendered. */
+  finishLegacyBodyFrame(rise: number): void {
+    if (!(this._limitsEnabled && this.bothArmFramesSupported())) {
+      this.invalidateArmContinuation();
+      return;
+    }
+    if (this._armContinuationReady || !this.reseedConstrainedArms(rise)) return;
+    this._armContinuationReady = true;
+    this._externalArmRevision++;
+  }
+
+  /** Refresh and return this side's reusable FK frame. */
+  armForwardContext(side: Side): ArmForwardContext | null {
+    const upper = this.p.bones[`upperArm.${side}`];
+    const parent = upper?.parent;
+    const upperLength = this.p.limb?.[`upper.${side}`] ?? 0;
+    const lowerLength = this.p.limb?.[`lower.${side}`] ?? 0;
+    if (!(upper && parent && upperLength > 0 && lowerLength > 0 && this.anat.update())) return null;
+    this.p.root.updateMatrixWorld(true);
+    if (!this.armContext(side)) return null;
+    upper.updateWorldMatrix(true, false);
+    parent.updateWorldMatrix(true, false);
+    const context = this._armContexts[side];
+    upper.getWorldPosition(context.shoulder);
+    context.upperLength = upperLength;
+    context.lowerLength = lowerLength;
+    context.up.copy(this.anat.up);
+    context.right.copy(this.anat.right);
+    context.forward.copy(this.anat.fwd);
+    context.upperParentWorld.copy(parent.getWorldQuaternion(this._applyParentQ));
+    return context;
+  }
+
+  /** Capture the once-followed body context that candidate arms will use. */
+  captureProposedBodyContext(rise: number): void {
+    this.captureBodyPose(this._proposedBodyPose, rise);
+  }
+
+  /** Rebuild one common-alpha body sample and its deterministic leg contact. */
+  applyBodyContext(alpha: number): number {
+    const a = this._acceptedBodyPose;
+    const b = this._proposedBodyPose;
+    const blend = THREE.MathUtils.clamp(alpha, 0, 1);
+    for (const slot of BODY_SNAPSHOT_SLOTS) {
+      const bone = this.p.bones[slot];
+      const qa = a.slots[slot];
+      const qb = b.slots[slot];
+      if (!(bone && qa && qb)) continue;
+      this._applyTargetQ.copy(qb);
+      bone.quaternion.copy(qa).slerp(this._applyTargetQ, blend);
+    }
+    const hips = this.p.bones.hips;
+    if (hips) hips.position.lerpVectors(a.hipsPosition, b.hipsPosition, blend);
+    const rise = THREE.MathUtils.lerp(a.rise, b.rise, blend);
+    this.p.root.updateMatrixWorld(true);
+    this.plantLegs(rise);
+    this.p.root.updateMatrixWorld(true);
+    this.anat.update();
+    return rise;
+  }
+
+  /** Stage a solver output without changing accepted arm or finger history. */
+  stageArmOutput(
+    side: Side,
+    output: ArmPathPlanOutput,
+    curls: FingerSpec,
+    spread: FingerSpec,
+  ): boolean {
+    return this.stageArmForward(side, output.forward, curls, spread);
+  }
+
+  stageArmForward(
+    side: Side,
+    forward: ArmForwardResult,
+    curls: FingerSpec,
+    spread: FingerSpec,
+  ): boolean {
+    if (!this.canWriteArm(side)) return false;
+    this.writeArmForward(side, forward);
+    this.hands.curlHand(side, curls, spread);
+    this.copyPosedFingerSpec(side, curls, spread);
+    this.p.root.updateMatrixWorld(true);
+    return true;
+  }
+
+  /** Apply and accept both sides only after the common-alpha frame is complete. */
+  commitArmFrame(plans: Record<Side, ArmFrameSideCommit>, rise: number): boolean {
+    for (const side of ['L', 'R'] as Side[]) if (!this.canWriteArm(side)) return false;
+    for (const side of ['L', 'R'] as Side[]) {
+      const plan = plans[side];
+      this.writeArmForward(side, plan.output.forward);
+      this.hands.curlHand(side, plan.curls, plan.spread);
+      this.copyPosedFingerSpec(side, plan.curls, plan.spread);
+      this.p.root.updateMatrixWorld(true);
+    }
+    for (const side of ['L', 'R'] as Side[]) {
+      const plan = plans[side];
+      const driver = this._armDrivers[side];
+      if (!driver) return false;
+      driver.accept(plan.output.q, plan.context, plan.curls, plan.spread);
+      this.foreRoll[side] = driver.acceptedConfiguration.forearmRoll;
+      this.upperRoll[side] = 0;
+      this.noteFingers(side);
+      this._acceptedHandPose[side] = this.captureHandPose(side);
+      this.captureAcceptedArmState(side, driver.acceptedForward, plan.curls, plan.spread);
+    }
+    this.captureBodyPose(this._acceptedBodyPose, rise);
+    this._acceptedRise = rise;
+    return true;
+  }
+
+  lastAcceptedHandPose(side: Side): Readonly<HandSensePose> | null {
+    return this._acceptedHandPose[side];
   }
 
   /** Total pronation, both bones. */
@@ -385,6 +967,173 @@ export class Rig {
   reset(): void {
     for (const [bone, q] of this.rest) bone.quaternion.copy(q);
     this.spine.clear();
+    for (const side of ['L', 'R'] as Side[]) {
+      for (const finger of FINGER_NAMES) {
+        this._posedCurls[side][finger] = 0;
+        this._posedSpread[side][finger] = 0;
+      }
+    }
+  }
+
+  private makeBodyPoseSnapshot(): RigBodyPoseSnapshot {
+    const slots: RigBodyPoseSnapshot['slots'] = {};
+    for (const slot of BODY_SNAPSHOT_SLOTS) {
+      if (this.p.bones[slot]) slots[slot] = new THREE.Quaternion();
+    }
+    return { slots, hipsPosition: new THREE.Vector3(), rise: 0 };
+  }
+
+  private captureBodyPose(out: RigBodyPoseSnapshot, rise: number): void {
+    for (const slot of BODY_SNAPSHOT_SLOTS) {
+      const bone = this.p.bones[slot];
+      const target = out.slots[slot];
+      if (bone && target) target.copy(bone.quaternion);
+    }
+    const hips = this.p.bones.hips;
+    if (hips) out.hipsPosition.copy(hips.position);
+    out.rise = rise;
+  }
+
+  private canWriteArm(side: Side): boolean {
+    return !!(
+      this._armDrivers[side] &&
+      this.p.bones[`upperArm.${side}`] &&
+      this.p.bones[`lowerArm.${side}`] &&
+      this.p.bones[`hand.${side}`]
+    );
+  }
+
+  private writeWorldRotation(bone: THREE.Bone, world: THREE.Quaternion): void {
+    const parent = bone.parent;
+    if (parent) {
+      parent.updateWorldMatrix(true, false);
+      parent.getWorldQuaternion(this._applyParentQ);
+      this._applyLocalQ.copy(this._applyParentQ).invert().multiply(world);
+      bone.quaternion.copy(this._applyLocalQ);
+    } else {
+      bone.quaternion.copy(world);
+    }
+    bone.updateWorldMatrix(false, true);
+  }
+
+  private writeArmForward(side: Side, forward: ArmForwardResult): void {
+    const upper = this.p.bones[`upperArm.${side}`];
+    const lower = this.p.bones[`lowerArm.${side}`];
+    const hand = this.p.bones[`hand.${side}`];
+    if (!(upper && lower && hand)) return;
+    this.writeWorldRotation(upper, forward.upperWorld);
+    this.writeWorldRotation(lower, forward.lowerWorld);
+    this.writeWorldRotation(hand, forward.handWorld);
+  }
+
+  private readActualArmPose(side: Side): boolean {
+    const upper = this.p.bones[`upperArm.${side}`];
+    const lower = this.p.bones[`lowerArm.${side}`];
+    const hand = this.p.bones[`hand.${side}`];
+    const palm = this.palmLocal[side];
+    if (!(upper && lower && hand && palm)) return false;
+    this.p.root.updateMatrixWorld(true);
+    this._actualUpper
+      .copy(this.p.restDir[`upperArm.${side}`])
+      .applyQuaternion(upper.getWorldQuaternion(this._measureQ))
+      .normalize();
+    this._actualLower
+      .copy(this.p.restDir[`lowerArm.${side}`])
+      .applyQuaternion(lower.getWorldQuaternion(this._measureQ))
+      .normalize();
+    this._actualHand
+      .copy(this.p.restDir[`hand.${side}`])
+      .applyQuaternion(hand.getWorldQuaternion(this._measureQ))
+      .normalize();
+    this._actualPalm
+      .copy(palm)
+      .applyQuaternion(hand.getWorldQuaternion(this._measureQ))
+      .normalize();
+    return true;
+  }
+
+  private captureHandPose(side: Side): HandSensePose | null {
+    const hand = this.p.bones[`hand.${side}`];
+    const elbow = this.p.bones[`lowerArm.${side}`];
+    const palmLocal = this.palmLocal[side];
+    const knuckle = this.p.fingerBones[`middle.${side}`]?.[0];
+    const index = this.p.fingerBones[`index.${side}`]?.[0];
+    const little = this.p.fingerBones[`little.${side}`]?.[0];
+    if (!(hand && elbow && palmLocal && knuckle && index && little)) return null;
+    this.p.root.updateMatrixWorld(true);
+    const out = this._handPoseScratch[side];
+    knuckle.getWorldPosition(out.knuckle);
+    hand.getWorldQuaternion(this._measureQ);
+    out.palm.copy(palmLocal).applyQuaternion(this._measureQ).normalize();
+    hand.getWorldPosition(out.forearm);
+    elbow.getWorldPosition(this._measureA);
+    out.forearm.sub(this._measureA).normalize();
+    index.getWorldPosition(out.index as THREE.Vector3);
+    little.getWorldPosition(out.little as THREE.Vector3);
+    return out;
+  }
+
+  private toAcceptedCharacter(out: Vec3Tuple, value: THREE.Vector3, side: Side): void {
+    if (this.anat.update()) {
+      const lateral = side === 'R' ? 1 : -1;
+      out[0] = value.dot(this.anat.right) * lateral;
+      out[1] = value.dot(this.anat.up);
+      out[2] = value.dot(this.anat.fwd);
+    } else {
+      const lateral = side === 'L' ? this.p.sideSign : -this.p.sideSign;
+      out[0] = value.x * lateral;
+      out[1] = value.y;
+      out[2] = value.z;
+    }
+    const length = Math.hypot(out[0], out[1], out[2]);
+    if (length > 1e-12) {
+      out[0] /= length;
+      out[1] /= length;
+      out[2] /= length;
+    }
+  }
+
+  private captureAcceptedArmState(
+    side: Side,
+    forward: ArmForwardResult | null,
+    curls: FingerSpec,
+    spread: FingerSpec,
+  ): boolean {
+    const state = this._acceptedArmState[side];
+    if (forward) {
+      this.toAcceptedCharacter(state.directions.upperArm, forward.u, side);
+      this.toAcceptedCharacter(state.directions.lowerArm, forward.l, side);
+      this.toAcceptedCharacter(state.directions.hand, forward.h, side);
+      this.toAcceptedCharacter(state.palm, forward.palm, side);
+    } else {
+      if (!this.readActualArmPose(side)) return false;
+      this.toAcceptedCharacter(state.directions.upperArm, this._actualUpper, side);
+      this.toAcceptedCharacter(state.directions.lowerArm, this._actualLower, side);
+      this.toAcceptedCharacter(state.directions.hand, this._actualHand, side);
+      this.toAcceptedCharacter(state.palm, this._actualPalm, side);
+    }
+    const shoulder = this.p.bones[`shoulder.${side}`];
+    if (shoulder) {
+      this._staticUpper
+        .copy(this.p.restDir[`shoulder.${side}`])
+        .applyQuaternion(shoulder.getWorldQuaternion(this._measureQ))
+        .normalize();
+      this.toAcceptedCharacter(state.directions.shoulder, this._staticUpper, side);
+    }
+    for (const finger of FINGER_NAMES) {
+      state.curls[finger] = curls[finger] ?? 0;
+      state.spread[finger] = spread[finger] ?? 0;
+    }
+    state.forearmRoll =
+      this._armDrivers[side]?.acceptedConfiguration.forearmRoll ?? this.foreRoll[side];
+    return true;
+  }
+
+  private copyPosedFingerSpec(side: Side, curls: FingerSpec, spread: FingerSpec): void {
+    for (const finger of FINGER_NAMES) {
+      this._posedCurls[side][finger] = curls[finger] ?? 0;
+      this._posedSpread[side][finger] = spread[finger] ?? 0;
+    }
   }
 
   /** Accumulate a small additive rotation on a spine-chain slot (radians). */
@@ -606,6 +1355,235 @@ export class Rig {
     );
   }
 
+  private seedDriverFromActual(side: Side, context: ArmForwardContext, driver: ArmDriver): boolean {
+    if (!this.readActualArmPose(side)) return false;
+    if (
+      !driver.seedFromPose(
+        context,
+        this._actualUpper,
+        this._actualLower,
+        this._actualHand,
+        this._actualPalm,
+      )
+    ) {
+      return false;
+    }
+    driver.accept(driver.acceptedQ, context, this._posedCurls[side], this._posedSpread[side]);
+    return true;
+  }
+
+  private restoreDriverAfterRejectedStatic(
+    driver: ArmDriver,
+    snapshot: ArmDriverAcceptedSnapshot,
+  ): void {
+    driver.restoreAcceptedState(snapshot);
+  }
+
+  private staticPlan(driver: ArmDriver, context: ArmForwardContext): ArmPathPlanOutput | null {
+    if (
+      !driver.configurationFromPose(
+        context,
+        this._staticUpper,
+        this._staticLower,
+        this._staticHand,
+        driver.request.palm,
+      )
+    ) {
+      return null;
+    }
+    let output = driver.planFrom(driver.acceptedQ, context, 0, false);
+    if (output.status !== 'blocked') return output;
+    // A static pose has no temporal path promise; if the optimization cannot
+    // move, test the exact inverse request as a complete endpoint.
+    if (!driver.restoreEndpointFrom(driver.targetQ, context, 0, false)) return null;
+    output = driver.output;
+    return output;
+  }
+
+  private commitStaticArm(
+    side: Side,
+    output: ArmPathPlanOutput,
+    context: ArmForwardContext,
+    curls: FingerSpec,
+    spread: FingerSpec,
+    bumpRevision = true,
+  ): void {
+    const driver = this._armDrivers[side];
+    if (!driver) return;
+    this.writeArmForward(side, output.forward);
+    this.hands.curlHand(side, curls, spread);
+    this.copyPosedFingerSpec(side, curls, spread);
+    this.p.root.updateMatrixWorld(true);
+    driver.accept(output.q, context, curls, spread);
+    this.foreRoll[side] = driver.acceptedConfiguration.forearmRoll;
+    this.upperRoll[side] = 0;
+    this.noteFingers(side);
+    this._acceptedHandPose[side] = this.captureHandPose(side);
+    this.captureAcceptedArmState(side, driver.acceptedForward, curls, spread);
+    this.captureBodyPose(this._acceptedBodyPose, this._acceptedRise);
+    if (bumpRevision) this._externalArmRevision++;
+  }
+
+  private tryStaticAimArm(
+    side: Side,
+    dirs: Record<ArmSlot, Vec3Tuple>,
+    twist: number,
+    palmTarget: Vec3Tuple | null,
+    palmWeight: number,
+  ): boolean {
+    const driver = this._armDrivers[side];
+    if (!driver) return false;
+    const driverSnapshot = driver.captureAcceptedState();
+    const clavicle = this.p.bones[`shoulder.${side}`];
+    const priorClavicle = clavicle?.quaternion.clone() ?? null;
+    this.aimShoulder(side, dirs.shoulder);
+    const context = this.armForwardContext(side);
+    if (!(context && this.seedDriverFromActual(side, context, driver))) {
+      if (clavicle && priorClavicle) clavicle.quaternion.copy(priorClavicle);
+      this.p.root.updateMatrixWorld(true);
+      this.restoreDriverAfterRejectedStatic(driver, driverSnapshot);
+      return false;
+    }
+
+    this._staticUpper.set(...dirs.upperArm).normalize();
+    this._staticLower.set(...dirs.lowerArm).normalize();
+    this._staticHand.set(...dirs.hand).normalize();
+    this._staticPalm.set(0, 0, 0);
+    const targetPalm = palmTarget
+      ? this._staticPalm.set(palmTarget[0], palmTarget[1], palmTarget[2]).normalize()
+      : null;
+    driver.captureVolumeFrame();
+    const priorRoll = driver.requestRollHistory;
+    driver.composeRequest(
+      context,
+      this._staticUpper,
+      this._staticLower,
+      this._staticHand,
+      targetPalm,
+      palmWeight,
+      twist,
+      this._posedCurls[side],
+      this._posedSpread[side],
+    );
+    const output = this.staticPlan(driver, context);
+    if (!output) {
+      driver.requestRollHistory = priorRoll;
+      if (clavicle && priorClavicle) clavicle.quaternion.copy(priorClavicle);
+      this.p.root.updateMatrixWorld(true);
+      this.restoreDriverAfterRejectedStatic(driver, driverSnapshot);
+      return false;
+    }
+    this.commitStaticArm(side, output, context, this._posedCurls[side], this._posedSpread[side]);
+    return true;
+  }
+
+  private tryStaticHand(side: Side, curls: FingerSpec, spread: FingerSpec): boolean {
+    const driver = this._armDrivers[side];
+    if (!driver) return false;
+    const driverSnapshot = driver.captureAcceptedState();
+    const context = this.armForwardContext(side);
+    if (!(context && this.seedDriverFromActual(side, context, driver))) {
+      this.restoreDriverAfterRejectedStatic(driver, driverSnapshot);
+      return false;
+    }
+    driver.captureVolumeFrame();
+    driver.requestForConfiguration(driver.acceptedConfiguration, context, curls, spread);
+    const output = driver.planFrom(driver.acceptedQ, context, 0, false);
+    if (
+      output.status === 'blocked' &&
+      !driver.restoreEndpointFrom(driver.acceptedQ, context, 0, false)
+    ) {
+      this.restoreDriverAfterRejectedStatic(driver, driverSnapshot);
+      return false;
+    }
+    this.commitStaticArm(side, driver.output, context, curls, spread);
+    return true;
+  }
+
+  private noteExternalArmEdit(side: Side): void {
+    if (!this.captureAcceptedArmState(side, null, this._posedCurls[side], this._posedSpread[side]))
+      return;
+    this._acceptedHandPose[side] = this.captureHandPose(side);
+    this.captureBodyPose(this._acceptedBodyPose, this._acceptedRise);
+    this._externalArmRevision++;
+  }
+
+  private reseedConstrainedArms(rise = this._acceptedRise): boolean {
+    const snapshots: Partial<Record<Side, ArmDriverAcceptedSnapshot>> = {};
+    const pending: Array<{
+      side: Side;
+      driver: ArmDriver;
+      context: ArmForwardContext;
+      output: ArmPathPlanOutput;
+      curls: FingerSpec;
+      spread: FingerSpec;
+    }> = [];
+
+    for (const side of ['L', 'R'] as Side[]) {
+      const driver = this._armDrivers[side];
+      if (driver) snapshots[side] = driver.captureAcceptedState();
+    }
+
+    for (const side of ['L', 'R'] as Side[]) {
+      const driver = this._armDrivers[side];
+      const context = this.armForwardContext(side);
+      if (!driver) continue;
+      if (!(context && this.seedDriverFromActual(side, context, driver))) {
+        this.restoreReseedSnapshots(snapshots);
+        return false;
+      }
+      driver.captureVolumeFrame();
+      const bounded = driver.boundConfiguration(
+        driver.acceptedConfiguration,
+        this._staticBoundedConfiguration,
+      );
+      driver.configurationToQ(bounded, this._staticQ);
+      driver.requestForConfiguration(
+        bounded,
+        context,
+        this._posedCurls[side],
+        this._posedSpread[side],
+      );
+      const valid = driver.validateLockedPose(
+        this._staticQ,
+        context,
+        this._posedCurls[side],
+        this._posedSpread[side],
+        driver.output,
+      );
+      const endpointValid = valid || driver.restoreEndpointFrom(this._staticQ, context, 0, false);
+      if (!endpointValid) {
+        this.restoreReseedSnapshots(snapshots);
+        return false;
+      }
+      pending.push({
+        side,
+        driver,
+        context,
+        output: driver.output,
+        curls: this._posedCurls[side],
+        spread: this._posedSpread[side],
+      });
+    }
+
+    this._acceptedRise = rise;
+    for (const plan of pending) {
+      this.commitStaticArm(plan.side, plan.output, plan.context, plan.curls, plan.spread, false);
+      plan.driver.requestRollHistory = plan.driver.acceptedConfiguration.forearmRoll;
+    }
+    return true;
+  }
+
+  private restoreReseedSnapshots(
+    snapshots: Partial<Record<Side, ArmDriverAcceptedSnapshot>>,
+  ): void {
+    for (const side of ['L', 'R'] as Side[]) {
+      const driver = this._armDrivers[side];
+      const snapshot = snapshots[side];
+      if (driver && snapshot) driver.restoreAcceptedState(snapshot);
+    }
+  }
+
   /**
    * Pose one arm. `dirs` holds world-space unit directions keyed by chain slot;
    * omitted slots keep their rest orientation relative to the parent.
@@ -617,14 +1595,24 @@ export class Rig {
     palmTarget: Vec3Tuple | null = null,
     palmWeight = 1,
   ): void {
+    if (this.constrainedSideSupported(side)) {
+      this.tryStaticAimArm(side, dirs, twist, palmTarget, palmWeight);
+      return;
+    }
+    this.aimArmLegacy(side, dirs, twist, palmTarget, palmWeight);
+    this.noteExternalArmEdit(side);
+  }
+
+  /** Legacy single-chain path, used only when limiting is explicitly disabled or unsupported. */
+  aimArmLegacy(
+    side: Side,
+    dirs: Record<ArmSlot, Vec3Tuple>,
+    twist = 0,
+    palmTarget: Vec3Tuple | null = null,
+    palmWeight = 1,
+  ): void {
     const { bones, restDir } = this.p;
     const palmLocal = this.palmLocal[side];
-    const asked = this._askedHand[side];
-    asked.set = !!(dirs.hand && palmTarget);
-    if (dirs.hand && palmTarget) {
-      asked.point.set(dirs.hand[0], dirs.hand[1], dirs.hand[2]);
-      asked.palm.set(palmTarget[0], palmTarget[1], palmTarget[2]);
-    }
     let palm: PalmSpec | null = null;
     if (palmTarget && palmWeight > 1e-3 && palmLocal) {
       _palmSpec.local = palmLocal;
@@ -1034,15 +2022,42 @@ export class Rig {
 
   /** Curl a finger. See `Hands.curlFinger`. */
   curlFinger(name: FingerName, side: Side, amount: number): void {
-    this.hands.curlFinger(name, side, amount);
+    if (this.constrainedSideSupported(side)) {
+      const curls = { ...this._posedCurls[side], [name]: amount };
+      this.tryStaticHand(side, curls, this._posedSpread[side]);
+      return;
+    }
+    this.curlFingerLegacy(name, side, amount);
+    this._posedCurls[side][name] = amount;
+    this.noteExternalArmEdit(side);
   }
 
   curlHand(side: Side, spec: FingerSpec, spread: FingerSpec = {}): void {
+    if (this.constrainedSideSupported(side)) {
+      this.tryStaticHand(side, spec, spread);
+      return;
+    }
+    this.curlHandLegacy(side, spec, spread);
+    this.noteExternalArmEdit(side);
+  }
+
+  /** Legacy direct finger write, used by Body only for an explicit limiter opt-out. */
+  curlFingerLegacy(name: FingerName, side: Side, amount: number): void {
+    this.hands.curlFinger(name, side, amount);
+  }
+
+  /** Legacy direct hand write, used by Body only for an explicit limiter opt-out. */
+  curlHandLegacy(side: Side, spec: FingerSpec, spread: FingerSpec = {}): void {
+    for (const finger of FINGER_NAMES) _fSpec[finger] = spec[finger] ?? 0;
     this.hands.curlHand(side, spec, spread);
-    // Before the clearance bends any: the shape the pose asked for is the one
-    // it will ask for again wherever the hand is placed next.
+    // Before clearance bends any: record the uncropped shape in the frame the
+    // reached hand actually carries wherever it is placed next.
     this.noteFingers(side);
     this.clearFingers(side, spec, spread);
+    // `clearFingers` can bend the fingers farther or straighten them to keep
+    // their tips off the face. Preserve the final rendered controls for the
+    // next constrained re-seed, rather than the values before clearance.
+    this.copyPosedFingerSpec(side, _fSpec, spread);
   }
 
   /** How far off the skin a finger's bones are held: half its thickness, from the knuckle pitch. */
@@ -1052,10 +2067,13 @@ export class Rig {
 
   /**
    * The hand's finger joints and tips as last posed, in the frame of the
-   * pointing direction and palm the arm was asked for (see `handFrame`): where
-   * a hand asked for that puts its fingers, for placing it somewhere it has not
-   * been yet. The asked frame rather than the reached one, so the turn the
-   * roll budget and the wrist's limits put between them comes along too.
+   * pointing direction and palm it actually reached (see `handFrame`): where
+   * a hand puts its fingers, for placing it somewhere it has not been yet. A
+   * roll budget and wrist limits can leave the hand short of the request;
+   * measuring the bones in that requested frame makes the recorded shape
+   * depend on how much the pose was clamped. `clearFace` feeds that shape into
+   * the next frame's wrist target, so the mismatch feeds back into the arm and
+   * made face poses depend on the update rate.
    */
   fingerShape(side: Side): readonly THREE.Vector3[] {
     return this._fingerShape[side];
@@ -1065,15 +2083,13 @@ export class Rig {
     const hand = this.p.bones[`hand.${side}`];
     const palm = this.palmLocal[side];
     if (!(hand && palm)) return;
-    const asked = this._askedHand[side];
-    if (asked.set) {
-      _fG.copy(asked.point);
-      _fN.copy(asked.palm);
-    } else {
-      hand.getWorldQuaternion(_fParent);
-      _fG.copy(this.p.restDir[`hand.${side}`]).applyQuaternion(_fParent);
-      _fN.copy(palm).applyQuaternion(_fParent);
-    }
+    // The fingers are where the reached bones put them, even if the requested
+    // direction and palm could not pass the wrist limits. Using the request as
+    // the inverse frame made this shape carry the clamp error into `clearFace`
+    // and feed it back into the next hand placement.
+    hand.getWorldQuaternion(_fParent);
+    _fG.copy(this.p.restDir[`hand.${side}`]).applyQuaternion(_fParent);
+    _fN.copy(palm).applyQuaternion(_fParent);
     const F = handFrame(_fG, _fN, _fFrame);
     if (!F) return;
     F.transpose();
@@ -1103,7 +2119,10 @@ export class Rig {
     }
     if (chain.length < 2) return false;
     chain[i - 1].getWorldPosition(out);
-    out.addScaledVector(_fT.subVectors(out, chain[i - 2].getWorldPosition(_fU)), 0.75);
+    out.addScaledVector(
+      _fT.subVectors(out, chain[i - 2].getWorldPosition(_fU)),
+      FINGER_TIP_EXTENSION,
+    );
     return true;
   }
 

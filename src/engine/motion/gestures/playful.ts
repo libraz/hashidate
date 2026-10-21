@@ -1,4 +1,5 @@
 import type { GestureDef, ReachSpec } from '../../types';
+import { heldTime } from '../timing';
 import { V } from './base';
 import { both, one, reachBoth } from './builders';
 import { OPEN_HAND, PAW, PEACE_HAND, PEACE_PALM, PEACE_SPREAD, POINT_HAND } from './hands';
@@ -16,12 +17,12 @@ export const PLAYFUL = {
     group: 'playful',
     lead: 0.5,
     hold: 2.5,
-    build(t, _v) {
+    build(t, _v, phase) {
       // The hands begin closer to the eyes, then open sideways to reveal the
       // face. The poles keep both elbows stable while the hands travel.
       // Let the covering hands arrive before revealing the face. Starting the
       // opening during the entrance skipped the visible hide-and-reveal beat.
-      const k = ease(t - 1, 0.8);
+      const k = ease(heldTime(t, 0.5, phase) - 0.5, 0.8);
       return reachBoth(
         {
           // Start near the inner edge of each cheek to cover the eyes, then
@@ -91,12 +92,13 @@ export const PLAYFUL = {
     group: 'playful',
     lead: 0.42,
     hold: 2.1,
-    build(t, v) {
+    build(t, v, phase) {
       // Each paw has its own body reach so the two rise and fall opposite one
       // another. Begin the bounce after arrival so its downward half-cycle
       // cannot overfold an elbow during the entrance. Lower wrists leave the
       // eyes visible even with the validation avatar's long sleeves.
-      const s = Math.sin(t * 4.5 * v.rate) * 0.05 * v.scale * ease(t - 1, 0.4);
+      const s =
+        Math.sin(t * 4.5 * v.rate) * 0.05 * v.scale * ease(heldTime(t, 0.42, phase) - 0.58, 0.4);
       const paw = (vertical: number): ReachSpec => ({
         space: 'body',
         at: 'sternum',

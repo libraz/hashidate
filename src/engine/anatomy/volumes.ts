@@ -29,6 +29,43 @@ export interface VolumeFrame {
   fwd: THREE.Vector3;
 }
 
+/** A caller-owned copy of a body's position and axes for one solver pass. */
+export type VolumePose = VolumeFrame;
+
+/** The torso and head frames captured together before a clearance query batch. */
+export interface BodyVolumeFrame {
+  torso: VolumePose | null;
+  head: VolumePose | null;
+}
+
+/** Signed radial clearance from one measured body volume, in world metres. */
+export interface BodyClearance {
+  surface: 'torso' | 'head';
+  /** False when the volume is absent or the point is outside its measured height. */
+  valid: boolean;
+  /** Negative inside the existing one-percent contact tolerance. */
+  distance: number;
+  /** Outward radial direction in world space, including on the volume axis. */
+  normal: THREE.Vector3;
+}
+
+/** The existing tolerance used by torsoDepth to ignore a barely buried pose. */
+const TORSO_DEPTH_TOLERANCE = 0.01;
+
+function makeVolumePose(): VolumePose {
+  return {
+    O: new THREE.Vector3(),
+    up: new THREE.Vector3(),
+    right: new THREE.Vector3(),
+    fwd: new THREE.Vector3(),
+  };
+}
+
+/** Make a reusable output frame for `captureVolumeFrame`. */
+export function makeBodyVolumeFrame(): BodyVolumeFrame {
+  return { torso: makeVolumePose(), head: makeVolumePose() };
+}
+
 /** The head's surface plus the bone and rest axes that carry it each frame. */
 interface HeadMeasurement extends MeasuredVolume {
   bone: THREE.Bone;
@@ -84,6 +121,15 @@ export class BodyVolumes {
   private readonly _elbow = new THREE.Vector3();
   private readonly _wrist = new THREE.Vector3();
   private readonly _radial = new THREE.Vector3();
+
+  private static makeClearance(surface: BodyClearance['surface']): BodyClearance {
+    return {
+      surface,
+      valid: false,
+      distance: Number.POSITIVE_INFINITY,
+      normal: new THREE.Vector3(),
+    };
+  }
 
   /**
    * The three world-frame vectors are the *live* ones the caller refreshes each
@@ -153,6 +199,90 @@ export class BodyVolumes {
     h.fwd.copy(h.local.forward).applyQuaternion(hq);
     h.right.copy(h.local.right).applyQuaternion(hq);
     h.bone.getWorldPosition(h.O);
+  }
+
+  /** Copy this frame's measured body poses into reusable caller-owned storage. */
+  captureVolumeFrame(out: BodyVolumeFrame): BodyVolumeFrame {
+    if (this.torso) {
+      let torso = out.torso;
+      if (!torso) {
+        torso = makeVolumePose();
+        out.torso = torso;
+      }
+      torso.O.copy(this._trunkFrame.O);
+      torso.up.copy(this._trunkFrame.up);
+      torso.right.copy(this._trunkFrame.right);
+      torso.fwd.copy(this._trunkFrame.fwd);
+    } else out.torso = null;
+    const head = this.head;
+    if (head) {
+      let target = out.head;
+      if (!target) {
+        target = makeVolumePose();
+        out.head = target;
+      }
+      target.O.copy(head.O);
+      target.up.copy(head.up);
+      target.right.copy(head.right);
+      target.fwd.copy(head.fwd);
+    } else out.head = null;
+    return out;
+  }
+
+  /**
+   * Sample signed clearances against the captured torso and head surfaces.
+   * The measured radial tables stay on this instance; `frame` supplies only
+   * the immutable position and axes for this batch.
+   */
+  sampleVolumeClearances(
+    frame: BodyVolumeFrame,
+    P: THREE.Vector3,
+    out: BodyClearance[],
+  ): BodyClearance[] {
+    if (!(out[0]?.surface === 'torso' && out[1]?.surface === 'head')) {
+      out[0] = BodyVolumes.makeClearance('torso');
+      out[1] = BodyVolumes.makeClearance('head');
+    }
+    out.length = 2;
+
+    this.sampleClearance('torso', this.torso, frame.torso, P, out[0]);
+    this.sampleClearance('head', this.head, frame.head, P, out[1]);
+    return out;
+  }
+
+  private sampleClearance(
+    surface: BodyClearance['surface'],
+    vol: MeasuredVolume | null,
+    pose: VolumePose | null,
+    P: THREE.Vector3,
+    result: BodyClearance,
+  ): void {
+    result.surface = surface;
+    result.valid = false;
+    result.distance = Number.POSITIVE_INFINITY;
+    result.normal.set(0, 0, 0);
+    if (!(vol && pose)) return;
+
+    const rel = this._rel.copy(P).sub(pose.O);
+    const h = rel.dot(pose.up);
+    if (h > vol.top || h < vol.bottom) return;
+
+    this._radial.copy(rel).addScaledVector(pose.up, -h);
+    const r = this._radial.length();
+    const R = surfaceOf(
+      vol,
+      h,
+      Math.atan2(this._radial.dot(pose.fwd), this._radial.dot(pose.right)),
+    );
+    result.valid = true;
+    result.distance = r - R * (1 - TORSO_DEPTH_TOLERANCE);
+    if (r > 1e-9) {
+      result.normal.copy(this._radial).divideScalar(r);
+    } else {
+      result.normal.copy(pose.fwd);
+      if (result.normal.lengthSq() > 1e-18) result.normal.normalize();
+      else result.normal.set(0, 0, 1);
+    }
   }
 
   /**
@@ -273,7 +403,7 @@ export class BodyVolumes {
     // A pose the clamp has pushed out sits exactly on the surface, and floating
     // point leaves it a hair inside. Without a tolerance every such pose is
     // reported as a contact, at a depth of zero.
-    return w.depth > 0.01 ? w.depth : 0;
+    return w.depth > TORSO_DEPTH_TOLERANCE ? w.depth : 0;
   }
 
   /**

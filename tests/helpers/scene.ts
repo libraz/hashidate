@@ -1,5 +1,12 @@
 import * as THREE from 'three';
-import type { AvatarDescriptor } from '@/engine/types';
+import type { AvatarDescriptor, FingerName, Vec3Tuple } from '@/engine/types';
+
+interface FingerGeometryOverride {
+  /** Additional hand-local offset for the proximal bone. */
+  rootOffset?: Vec3Tuple;
+  /** Additional parent-local offsets for the proximal, intermediate, and distal bones. */
+  segmentOffsets?: readonly Vec3Tuple[];
+}
 
 /**
  * A synthetic avatar, built in code.
@@ -32,6 +39,8 @@ export interface RigOptions {
   armatureScale?: number;
   /** Include finger chains. Off produces a rig whose hands never curl. */
   fingers?: boolean;
+  /** Optional asymmetric finger geometry for calibrating hand-local solvers. */
+  fingerGeometry?: Partial<Record<FingerName, FingerGeometryOverride>>;
   /** Include the optional bilateral hip-to-toe leg chains. */
   legs?: boolean;
   /** Include eye bones. Without them the profile cannot build a face frame. */
@@ -285,14 +294,18 @@ export function buildRig(opts: RigOptions = {}): SyntheticRig {
     for (const [fi, f] of FINGERS.entries()) {
       // Fanned across the palm so the curl axes are not degenerate.
       const spread = (fi - 2) * 0.012;
+      const geometry = opts.fingerGeometry?.[f.toLowerCase() as FingerName];
       let parent: THREE.Object3D = hand;
       for (let i = 0; i < 3; i++) {
+        const segmentOffset = geometry?.segmentOffsets?.[i];
+        const rootOffset = i === 0 ? geometry?.rootOffset : undefined;
         parent = add(
           naming.finger(f, side, i),
           parent,
-          sign * (i === 0 ? S.handToProximal : S.phalanx),
-          0,
-          i === 0 ? spread : 0,
+          sign * (i === 0 ? S.handToProximal : S.phalanx) +
+            sign * ((rootOffset?.[0] ?? 0) + (segmentOffset?.[0] ?? 0)),
+          (rootOffset?.[1] ?? 0) + (segmentOffset?.[1] ?? 0),
+          (i === 0 ? spread : 0) + (rootOffset?.[2] ?? 0) + (segmentOffset?.[2] ?? 0),
         );
       }
     }

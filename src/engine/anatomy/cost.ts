@@ -30,7 +30,7 @@ export function armDegrees(value: number): number {
 export function score(m: ArmMeasurement, limits: JointTable, out: ArmStrain): ArmStrain {
   const L = limits;
   const s = out;
-  s.elevation = elevationStrain(m.elevation, elevationCeiling(m.plane));
+  s.elevation = elevationStrain(m.elevation, elevationCeiling(m.plane, L.shoulder.elevation));
   // Humeral rotation is read off where the elbow points, so a straight elbow
   // does not measure it: there is no bend to point anywhere, and what is left
   // is the direction of a vector that is almost entirely rounding error. This
@@ -100,7 +100,7 @@ export function cost(m: ArmMeasurement, limits: JointTable, strain: ArmStrain): 
     excessOf(m.wristFlex, L.wrist.dofs.flexion) +
     excessOf(m.wristDev, L.wrist.dofs.deviation) +
     excessOf(m.rotation, L.shoulder.dofs.rotation) * m.rotationRead;
-  const ceil = elevationCeiling(m.plane);
+  const ceil = elevationCeiling(m.plane, L.shoulder.elevation);
   if (m.elevation > ceil.max) over += (m.elevation - ceil.max) / Math.PI;
   total += 8 * over;
   // Being inside the body: a flat charge that outbids any joint, plus a slope
@@ -153,7 +153,7 @@ export function report(
   seen: { torso: boolean; arm: boolean },
 ): JointReading[] {
   const s = score(m, limits, strain);
-  const ceil = elevationCeiling(m.plane);
+  const ceil = elevationCeiling(m.plane, limits.shoulder.elevation);
   // `measured: false` marks a quantity that exists but is not determined by
   // the current pose — the plane of a hanging arm, the rotation of a straight
   // one. Showing a zone for those would be reporting noise as a judgement.

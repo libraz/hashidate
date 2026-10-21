@@ -1,4 +1,4 @@
-import type { JointDof, JointSpec, StrainZone } from '../types';
+import type { ElevationRow, JointDof, JointSpec, StrainZone } from '../types';
 import { D, ELEVATION } from './joints';
 
 /**
@@ -72,13 +72,16 @@ export function rollRoom(used: number, d: JointDof): [number, number] {
 }
 
 /** Interpolate the elevation ceiling for a plane angle, in radians. */
-export function elevationCeiling(plane: number): ElevationCeiling {
+export function elevationCeiling(
+  plane: number,
+  rows: ElevationRow[] = ELEVATION,
+): ElevationCeiling {
   let deg = (plane / D) % 360;
   if (deg > 180) deg -= 360;
   if (deg < -180) deg += 360;
-  for (let i = 1; i < ELEVATION.length; i++) {
-    const a = ELEVATION[i - 1];
-    const b = ELEVATION[i];
+  for (let i = 1; i < rows.length; i++) {
+    const a = rows[i - 1];
+    const b = rows[i];
     if (deg <= b[0]) {
       const t = (deg - a[0]) / (b[0] - a[0]);
       return {
@@ -87,7 +90,7 @@ export function elevationCeiling(plane: number): ElevationCeiling {
       };
     }
   }
-  const last = ELEVATION[ELEVATION.length - 1];
+  const last = rows[rows.length - 1];
   return { free: last[1] * D, max: last[2] * D };
 }
 

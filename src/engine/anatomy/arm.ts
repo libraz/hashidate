@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import type { BodyFrame, JointReading, JointTable, Profile, Side } from '../types';
+import { humeralReference, lateralReference } from './arm-frame';
 import { cost, report, score } from './cost';
 import type { FaceSurface } from './face';
 import { JOINTS } from './joints';
 import type { ArmMeasurement, ArmStrain } from './measurement';
 import { clampDof, elevationCeiling } from './strain';
-import { BodyVolumes } from './volumes';
+import { type BodyClearance, type BodyVolumeFrame, BodyVolumes } from './volumes';
 
 /**
  * How far humeral rotation can be read off an elbow bent `flex` radians:
@@ -191,47 +192,6 @@ export class ArmAnatomy {
   }
 
   /**
-   * Zero-rotation reference for the humerus: the direction the elbow points
-   * when the arm is neutral, which is forward on a hanging arm.
-   *
-   * In front of the shoulder it is where the shoulder carries that forward
-   * elbow on swinging straight to `u`: up at a horizontal flexion, back over
-   * the shoulder above it. Projecting forward onto the arm's normal plane
-   * instead flips half a turn as the arm passes straight forward, and every
-   * hand brought to the face read as rotated past its stop and was whipped
-   * sideways on the way in. Behind the shoulder it is still that projection,
-   * which matches how an elbow is taken back and has its own flip only straight
-   * behind, past the elevation ceiling. The two agree on the frontal plane, and
-   * the one singular direction left is straight up.
-   *
-   * Rotation about a swinging axis is path-dependent in general, so this is a
-   * reference rather than a measurement of how the arm got there.
-   */
-  private humeralRef(u: THREE.Vector3): THREE.Vector3 {
-    const r = this._ref.copy(this.fwd);
-    const ahead = u.dot(this.fwd);
-    const lift = 1 - u.dot(this.up);
-    if (ahead > 0 && lift > 1e-6) {
-      r.addScaledVector(u, -ahead / lift).addScaledVector(this.up, ahead / lift);
-    }
-    r.addScaledVector(u, -r.dot(u));
-    if (r.lengthSq() < 1e-8) r.copy(this.up);
-    return r.normalize();
-  }
-
-  /**
-   * Orthonormal partner to `ref` in the plane normal to `u`, toward outside.
-   *
-   * Handed rather than projected off the lateral axis, which lies in that plane
-   * once the arm is out at the side and flips the sign of every rotation above it.
-   */
-  private lateralPerp(u: THREE.Vector3, ref: THREE.Vector3): THREE.Vector3 {
-    const p = this._perp.crossVectors(ref, u);
-    if (this._h.crossVectors(this.up, this.fwd).dot(this.lateral) < 0) p.negate();
-    return p.normalize();
-  }
-
-  /**
    * Measure one arm from its three world directions.
    *
    * `palmN` is the palm normal — needed to tell wrist flexion from deviation,
@@ -271,8 +231,8 @@ export class ArmAnatomy {
     // Humeral rotation, read off where the elbow points. Meaningless on a
     // straight arm — there is no bend to point anywhere — and reported as
     // neutral there rather than as noise.
-    const ref = this.humeralRef(u);
-    const perp = this.lateralPerp(u, ref);
+    const ref = humeralReference(u, this.up, this.fwd, this._ref);
+    const perp = lateralReference(u, ref, this.up, this.fwd, this.lateral, this._perp);
     // How much the measurement can be trusted: nothing below 15 degrees of
     // elbow bend, fully by 45.
     m.rotationRead = rotationTrust(m.elbow);
@@ -388,7 +348,7 @@ export class ArmAnatomy {
 
     // --- shoulder: how far it may lift, in the plane it lifted in -----------
     const sh = this.shoulder(side, u);
-    const ceil = elevationCeiling(sh.plane);
+    const ceil = elevationCeiling(sh.plane, this.limits.shoulder.elevation);
     if (sh.theta > ceil.max) {
       const p = sh.plane;
       const st = Math.sin(ceil.max);
@@ -428,6 +388,20 @@ export class ArmAnatomy {
     return this.body.surface(P);
   }
 
+  /** Capture the current trunk and head frames for one clearance query batch. */
+  captureVolumeFrame(out: BodyVolumeFrame): BodyVolumeFrame {
+    return this.body.captureVolumeFrame(out);
+  }
+
+  /** Sample signed torso and head clearances against a previously captured frame. */
+  sampleVolumeClearances(
+    frame: BodyVolumeFrame,
+    P: THREE.Vector3,
+    out: BodyClearance[],
+  ): BodyClearance[] {
+    return this.body.sampleVolumeClearances(frame, P, out);
+  }
+
   /**
    * Re-run the hand's escape alone, after something downstream has moved it.
    *
@@ -454,8 +428,8 @@ export class ArmAnatomy {
   /** Bound the elbow's flexion, and the direction it bent in, in place. */
   private clampElbow(u: THREE.Vector3, l: THREE.Vector3): void {
     const L = this.limits;
-    const ref = this.humeralRef(u);
-    const perp = this.lateralPerp(u, ref);
+    const ref = humeralReference(u, this.up, this.fwd, this._ref);
+    const perp = lateralReference(u, ref, this.up, this.fwd, this.lateral, this._perp);
     let flex = Math.acos(THREE.MathUtils.clamp(u.dot(l), -1, 1));
     const bend = this._bend.copy(l);
     bend.addScaledVector(u, -bend.dot(u));

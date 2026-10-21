@@ -134,6 +134,15 @@ interface HandMotion {
   teno: number;
 }
 
+/** Actual geometry from the last displayed arm/finger frame. */
+export interface HandSensePose {
+  readonly knuckle: THREE.Vector3;
+  readonly palm: THREE.Vector3;
+  readonly forearm: THREE.Vector3;
+  readonly index: THREE.Vector3 | null;
+  readonly little: THREE.Vector3 | null;
+}
+
 const mkMotion = (): HandMotion => ({
   point: new THREE.Vector3(),
   vel: new THREE.Vector3(),
@@ -168,20 +177,27 @@ export class FingerLife {
    * Read the posed hand and advance its lag. Call once per side per frame,
    * after the arm is aimed and before the fingers are curled.
    */
-  sense(side: Side, dt: number): void {
+  sense(side: Side, dt: number, pose?: HandSensePose | null): void {
     const m = this._motion[side];
+    if (pose === null) return;
     const hand = this.p.bones[`hand.${side}`];
     const elbow = this.p.bones[`lowerArm.${side}`];
     const knuckle = this.p.fingerBones[`middle.${side}`]?.[0];
     const palm = this.palmLocal[side];
-    if (!(hand && elbow && knuckle && palm) || dt <= 0) return;
-
-    knuckle.getWorldPosition(_pos);
-    hand.getWorldQuaternion(_q);
-    _normal.copy(palm).applyQuaternion(_q).normalize();
+    if (dt <= 0) return;
+    if (pose) {
+      _pos.copy(pose.knuckle);
+      _normal.copy(pose.palm).normalize();
+      _forearm.copy(pose.forearm).normalize();
+    } else {
+      if (!(hand && elbow && knuckle && palm)) return;
+      knuckle.getWorldPosition(_pos);
+      hand.getWorldQuaternion(_q);
+      _normal.copy(palm).applyQuaternion(_q).normalize();
+      hand.getWorldPosition(_forearm).sub(elbow.getWorldPosition(_base)).normalize();
+    }
     // Flexion toward the palm is positive: a hand bent by θ tips its palm normal
     // back along the forearm by sin θ.
-    hand.getWorldPosition(_forearm).sub(elbow.getWorldPosition(_base)).normalize();
     const flex = Math.asin(THREE.MathUtils.clamp(-_forearm.dot(_normal), -1, 1));
     const reseed = !m.seeded || dt > STALE_DT || m.point.distanceTo(_pos) > TELEPORT;
     if (reseed) {
@@ -213,9 +229,13 @@ export class FingerLife {
     const index = this.p.fingerBones[`index.${side}`]?.[0];
     const little = this.p.fingerBones[`little.${side}`]?.[0];
     m.splay = 0;
-    if (index && little) {
-      little.getWorldPosition(_lateral);
-      _lateral.sub(index.getWorldPosition(_base));
+    if ((pose && pose.index && pose.little) || (!pose && index && little)) {
+      if (pose?.index && pose.little) {
+        _lateral.subVectors(pose.little, pose.index);
+      } else if (index && little) {
+        little.getWorldPosition(_lateral);
+        _lateral.sub(index.getWorldPosition(_base));
+      }
       _lateral.addScaledVector(_normal, -_lateral.dot(_normal));
       if (_lateral.lengthSq() > 1e-12) {
         // Left on the little-finger side, the hand went toward the thumb: the

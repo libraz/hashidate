@@ -10,6 +10,7 @@ import { Rig } from '@/engine/rig';
 import type { FingerName, GestureDef, Side } from '@/engine/types';
 import { buildRig } from '../../helpers/scene';
 import { canonicalDirection, DT, type Harness, harness, wristOf } from './harness';
+import { observeAcceptedHands } from './observe-accepted';
 
 /**
  * The interlaced clasp, measured on the posed bones of the synthetic rig.
@@ -193,10 +194,10 @@ describe.each(SIDES)('handsClasp, lead %s', (lead) => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const h = harness();
     const seen: Record<Side, { index: number; spread: number }[]> = { L: [], R: [] };
-    const curl = h.rig.curlHand.bind(h.rig);
-    vi.spyOn(h.rig, 'curlHand').mockImplementation((side, spec, spread) => {
-      seen[side].push({ index: spec.index ?? 0, spread: spread?.index ?? 0 });
-      curl(side, spec, spread);
+    observeAcceptedHands(h, (frame) => {
+      for (const side of SIDES) {
+        seen[side].push({ index: frame[side].curls.index, spread: frame[side].spread.index });
+      }
     });
     settle(h, lead);
     h.body.stopGesture();

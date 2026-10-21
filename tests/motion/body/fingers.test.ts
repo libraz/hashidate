@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FIST, OPEN_HAND, POINT_HAND, SOFT_HAND, THUMB_UP } from '@/engine/motion/gestures/hands';
 import type { FingerName, GestureDef } from '@/engine/types';
 import { DT, type Harness, harness } from './harness';
+import { observeAcceptedHands } from './observe-accepted';
 
 /**
  * The hand a pose authors is a shape, not a freeze: slack fingers drift while
@@ -15,10 +16,8 @@ const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z).normal
 /** Record the right hand's curls, one entry per frame. */
 const record = (h: Harness): Record<FingerName, number>[] => {
   const seen: Record<FingerName, number>[] = [];
-  const curl = h.rig.curlHand.bind(h.rig);
-  vi.spyOn(h.rig, 'curlHand').mockImplementation((side, spec, spread) => {
-    if (side === 'R') seen.push({ ...(spec as Record<FingerName, number>) });
-    curl(side, spec, spread);
+  observeAcceptedHands(h, (frame) => {
+    seen.push(frame.R.curls);
   });
   return seen;
 };
@@ -97,6 +96,7 @@ describe('finger life', () => {
     run(still, 240);
     const frozen = record(still);
     run(still, 360);
+    expect(frozen.length).toBeGreaterThan(0);
     // Not zero: the lag and the wrist still answer the arm's last creep into the pose.
     expect(range(frozen.map((c) => c.index))).toBeLessThan(1e-3);
   });
@@ -239,10 +239,8 @@ describe('finger life', () => {
   it('fans the fingers after a hand swung across the palm', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const spreads: number[] = [];
-    const curl = h.rig.curlHand.bind(h.rig);
-    vi.spyOn(h.rig, 'curlHand').mockImplementation((side, spec, spread) => {
-      if (side === 'R') spreads.push(spread?.middle ?? 0);
-      curl(side, spec, spread);
+    observeAcceptedHands(h, (frame) => {
+      spreads.push(frame.R.spread.middle);
     });
     h.body.play('wave', 'R');
     run(h, 150);
@@ -262,6 +260,7 @@ describe('finger life', () => {
     run(h, 60);
     const seen = record(h);
     run(h, 120);
+    expect(seen.length).toBeGreaterThan(0);
     for (const f of Object.keys(shape) as FingerName[]) {
       for (const c of seen) expect(Math.abs(c[f] - shape[f])).toBeLessThan(1e-3);
     }

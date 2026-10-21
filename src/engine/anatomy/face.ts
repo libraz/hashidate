@@ -32,6 +32,13 @@ const _q = new THREE.Quaternion();
 const _at = new THREE.Vector3();
 const ONE = new THREE.Vector3(1, 1, 1);
 
+/** Signed local plane sample and its outward normal in world coordinates. */
+export interface FaceSurfaceSample {
+  distance: number;
+  normal: THREE.Vector3;
+  valid: boolean;
+}
+
 /** World to the head's own frame, in metres: its position and turn, not its scale. */
 function headFrame(bone: THREE.Bone, out: THREE.Matrix4): THREE.Matrix4 {
   bone.updateWorldMatrix(true, false);
@@ -104,8 +111,19 @@ function shell(geometry: THREE.BufferGeometry) {
 
 export class FaceSurface {
   private readonly cells = new Map<number, number[]>();
+  private minCellX = Number.POSITIVE_INFINITY;
+  private minCellY = Number.POSITIVE_INFINITY;
+  private minCellZ = Number.POSITIVE_INFINITY;
+  private maxCellX = Number.NEGATIVE_INFINITY;
+  private maxCellY = Number.NEGATIVE_INFINITY;
+  private maxCellZ = Number.NEGATIVE_INFINITY;
   private readonly toHead = new THREE.Matrix4();
   private readonly turn = new THREE.Quaternion();
+  private readonly cachedSample: FaceSurfaceSample = {
+    distance: 0,
+    normal: new THREE.Vector3(),
+    valid: false,
+  };
 
   private constructor(
     private readonly bone: THREE.Bone,
@@ -113,11 +131,16 @@ export class FaceSurface {
     private readonly nrm: Float32Array,
   ) {
     for (let i = 0; i < pos.length / 3; i++) {
-      const k = key(
-        Math.floor(pos[i * 3] / CELL),
-        Math.floor(pos[i * 3 + 1] / CELL),
-        Math.floor(pos[i * 3 + 2] / CELL),
-      );
+      const x = Math.floor(pos[i * 3] / CELL);
+      const y = Math.floor(pos[i * 3 + 1] / CELL);
+      const z = Math.floor(pos[i * 3 + 2] / CELL);
+      const k = key(x, y, z);
+      this.minCellX = Math.min(this.minCellX, x);
+      this.minCellY = Math.min(this.minCellY, y);
+      this.minCellZ = Math.min(this.minCellZ, z);
+      this.maxCellX = Math.max(this.maxCellX, x);
+      this.maxCellY = Math.max(this.maxCellY, y);
+      this.maxCellZ = Math.max(this.maxCellZ, z);
       const c = this.cells.get(k);
       if (c) c.push(i);
       else this.cells.set(k, [i]);
@@ -159,7 +182,7 @@ export class FaceSurface {
     return new FaceSurface(head, new Float32Array(pos), new Float32Array(nrm));
   }
 
-  /** Follow the head to where it is posed now. Call before a run of `shortfall`. */
+  /** Follow the head to where it is posed now. Call before a run of face queries. */
   refresh(): void {
     this.bone.updateWorldMatrix(true, false);
     this.bone.getWorldQuaternion(this.turn);
@@ -167,9 +190,20 @@ export class FaceSurface {
   }
 
   /**
-   * How far short of `clear` outside the skin a world point is, in metres,
-   * writing the skin's outward normal there into `outward` (world). Zero when
-   * the point is clear, or nowhere near the face.
+   * How far short of `clear` outside the skin a world point is, in metres.
+   * Writes the outward normal only for a positive shortfall; clear and invalid
+   * points retain the old no-write behavior.
+   */
+  shortfall(P: THREE.Vector3, clear: number, outward: THREE.Vector3): number {
+    this.sample(P, this.cachedSample);
+    if (!this.cachedSample.valid || this.cachedSample.distance >= clear) return 0;
+    outward.copy(this.cachedSample.normal);
+    return clear - this.cachedSample.distance;
+  }
+
+  /**
+   * Signed local averaged-plane distance in metres and its outward world
+   * normal. Invalid samples reset the output to neutral values.
    *
    * Read off the vertices round the point rather than the nearest one alone,
    * each weighted down to nothing at a radius: the nearest vertex changes
@@ -177,11 +211,25 @@ export class FaceSurface {
    * it did, and a hand placed by that distance jerked with it. The radius
    * grows with the distance to the skin, so the reading stays smooth deep in.
    */
-  shortfall(P: THREE.Vector3, clear: number, outward: THREE.Vector3): number {
+  sample(P: THREE.Vector3, out: FaceSurfaceSample): void {
+    out.distance = 0;
+    out.normal.set(0, 0, 0);
+    out.valid = false;
     const p = _p.copy(P).applyMatrix4(this.toHead);
     const cx = Math.floor(p.x / CELL);
     const cy = Math.floor(p.y / CELL);
     const cz = Math.floor(p.z / CELL);
+    // The nearest-vertex search cannot find a cell beyond this exact reach cube.
+    if (
+      cx + REACH < this.minCellX ||
+      cx - REACH > this.maxCellX ||
+      cy + REACH < this.minCellY ||
+      cy - REACH > this.maxCellY ||
+      cz + REACH < this.minCellZ ||
+      cz - REACH > this.maxCellZ
+    ) {
+      return;
+    }
     let best = Number.POSITIVE_INFINITY;
     let bi = -1;
     // Widened only when the near cells are empty: a finger sunk deep in a cheek
@@ -195,10 +243,13 @@ export class FaceSurface {
         }
       });
     }
-    if (bi < 0) return 0;
+    if (bi < 0) return;
     const R = Math.max(SMOOTH, 2 * Math.sqrt(best));
     // Too far off the skin to gather round: its nearest vertex's plane says it.
-    if (R > REACH * CELL) return this.planeShortfall(p, bi, clear, outward);
+    if (R > REACH * CELL) {
+      this.planeSample(p, bi, out);
+      return;
+    }
     const R2 = R * R;
     let sum = 0;
     let weight = 0;
@@ -221,19 +272,14 @@ export class FaceSurface {
       _n.y += w * ny;
       _n.z += w * nz;
     });
-    if (!(weight > 0)) return 0;
+    if (!(weight > 0) || _n.lengthSq() < 1e-12) return;
     const s = sum / weight;
-    if (s >= clear || _n.lengthSq() < 1e-12) return 0;
-    outward.copy(_n).normalize().applyQuaternion(this.turn);
-    return clear - s;
+    out.distance = s;
+    out.normal.copy(_n).normalize().applyQuaternion(this.turn);
+    out.valid = true;
   }
 
-  private planeShortfall(
-    p: THREE.Vector3,
-    i: number,
-    clear: number,
-    outward: THREE.Vector3,
-  ): number {
+  private planeSample(p: THREE.Vector3, i: number, out: FaceSurfaceSample): void {
     const nx = this.nrm[i * 3];
     const ny = this.nrm[i * 3 + 1];
     const nz = this.nrm[i * 3 + 2];
@@ -241,9 +287,12 @@ export class FaceSurface {
       (p.x - this.pos[i * 3]) * nx +
       (p.y - this.pos[i * 3 + 1]) * ny +
       (p.z - this.pos[i * 3 + 2]) * nz;
-    if (s >= clear) return 0;
-    outward.set(nx, ny, nz).applyQuaternion(this.turn);
-    return clear - s;
+    const lengthSq = nx * nx + ny * ny + nz * nz;
+    if (lengthSq < 1e-12) return;
+    out.distance = s;
+    // Keep the captured Float32 normal: the former fallback wrote it unscaled.
+    out.normal.set(nx, ny, nz).applyQuaternion(this.turn);
+    out.valid = true;
   }
 
   private dist2(p: THREE.Vector3, i: number): number {

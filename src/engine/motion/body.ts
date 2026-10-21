@@ -1,10 +1,13 @@
 import * as THREE from 'three';
-import type { ArmSolution, Rig } from '../rig';
+import type { ArmSolution } from '../rig';
+import { LIMIT_SLEW } from '../rig/arm-driver';
+import type { ArmFrameSideCommit, Rig, StandingArmPose } from '../rig/rig';
 import type {
   ArmSlot,
   FingerName,
   FingerSpec,
   GestureDef,
+  GesturePhase,
   GestureVariation,
   PointSpec,
   Pose,
@@ -124,6 +127,9 @@ const LOOK_FOLLOW = HEAD_OMEGA / OMEGA_PER_RATE;
  */
 const SIDES: readonly Side[] = ['L', 'R'];
 
+/** The travel probe samples the authored opening before playback has begun. */
+const PROBE_PHASE: GesturePhase = Object.freeze({ entrance: 0, held: 0 });
+
 /** The arm loop's order for a clasp: the lead hand first, so the follower reads it posed. */
 const ORDER_L: readonly Side[] = ['L', 'R'];
 const ORDER_R: readonly Side[] = ['R', 'L'];
@@ -173,6 +179,8 @@ export interface ActiveGesture {
   speed: number;
   /** Seconds of entrance, this playback's own — see `LEAD_PER_RAD`. */
   lead: number;
+  /** This playback's own entrance and post-arrival clock, passed to `build`. */
+  phase: { entrance: number; held: number };
   /** Playback time the exit starts at: the end of the hold, or a held pose's release. */
   exitAt: number;
   /** Entrance progress, 0..1, at the moment it was let go; the entrance holds there while the exit runs. */
@@ -215,6 +223,61 @@ interface IdleEnv {
   armDrift: number;
   dt: number;
 }
+
+interface ArmBridgeSideSample {
+  q: Float64Array;
+  upperLocal: THREE.Quaternion;
+  lowerLocal: THREE.Quaternion;
+  handLocal: THREE.Quaternion;
+  points: THREE.Vector3[];
+  torsoLocal: THREE.Vector3[];
+  headLocal: THREE.Vector3[];
+  hasTorso: boolean;
+  hasHead: boolean;
+}
+
+interface ArmBridgeSample {
+  s: number;
+  side: Record<Side, ArmBridgeSideSample>;
+}
+
+interface ArmFrameWork {
+  contextRetries: number;
+  armStepRetries: number;
+  bridgeSamples: number;
+  solverCalls: number;
+  solverIterations: number;
+  environmentBatches: number;
+}
+
+function makeArmBridgeSideSample(pointCount: number): ArmBridgeSideSample {
+  return {
+    q: new Float64Array(7),
+    upperLocal: new THREE.Quaternion(),
+    lowerLocal: new THREE.Quaternion(),
+    handLocal: new THREE.Quaternion(),
+    points: Array.from({ length: pointCount }, () => new THREE.Vector3()),
+    torsoLocal: Array.from({ length: pointCount }, () => new THREE.Vector3()),
+    headLocal: Array.from({ length: pointCount }, () => new THREE.Vector3()),
+    hasTorso: false,
+    hasHead: false,
+  };
+}
+
+function makeArmBridgeSample(pointCounts: Record<Side, number>): ArmBridgeSample {
+  return {
+    s: 0,
+    side: {
+      L: makeArmBridgeSideSample(pointCounts.L),
+      R: makeArmBridgeSideSample(pointCounts.R),
+    },
+  };
+}
+
+const ARM_BRIDGE_STARTS = [0, 0.25, 0.5, 0.75, 1] as const;
+const ARM_BRIDGE_MAX_DEPTH = 8;
+const ARM_BRIDGE_MAX_SAMPLES = 96;
+const ARM_STEP_BACKTRACKS = [1, 0.5, 0.25, 0.125, 0.0625, 0.03125] as const;
 
 /**
  * The two halves of a gesture's envelope, kept apart rather than multiplied.
@@ -386,6 +449,45 @@ export class Body {
   private _armDirs: Record<Side, Record<ArmSlot, Vec3Tuple>>;
   private _armWorld: Record<Side, Record<ArmSlot, Vec3Tuple>>;
   private _armVec: Record<Side, Record<ArmSlot, THREE.Vector3>>;
+  private _armWorldVec: Record<Side, Record<ArmSlot, THREE.Vector3>>;
+  private readonly _palmWorldVector: Record<Side, THREE.Vector3> = {
+    L: new THREE.Vector3(),
+    R: new THREE.Vector3(),
+  };
+  private readonly _transactionCurls: Record<Side, Record<FingerName, number>>;
+  private readonly _transactionSpread: Record<Side, Record<FingerName, number>>;
+  private readonly _bridgeCurls: Record<Side, Record<FingerName, number>>;
+  private readonly _bridgeSpread: Record<Side, Record<FingerName, number>>;
+  private readonly _bridgeSamples: ArmBridgeSample[];
+  private _bridgeSampleCount = 0;
+  private _bridgeAlpha = 1;
+  private _bridgeResolution = Number.POSITIVE_INFINITY;
+  private readonly _bridgeRel = new THREE.Vector3();
+  private readonly _armFrameWork: ArmFrameWork = {
+    contextRetries: 0,
+    armStepRetries: 0,
+    bridgeSamples: 0,
+    solverCalls: 0,
+    solverIterations: 0,
+    environmentBatches: 0,
+  };
+  private readonly _acceptedTuple: Record<
+    Side,
+    Record<'upperArm' | 'lowerArm' | 'hand', Vec3Tuple>
+  > = {
+    L: { upperArm: [0, 0, 0], lowerArm: [0, 0, 0], hand: [0, 0, 0] },
+    R: { upperArm: [0, 0, 0], lowerArm: [0, 0, 0], hand: [0, 0, 0] },
+  };
+  private readonly _frameCommit: Record<Side, ArmFrameSideCommit | null> = { L: null, R: null };
+  private readonly _fullArmQ: Record<Side, Float64Array> = {
+    L: new Float64Array(7),
+    R: new Float64Array(7),
+  };
+  private readonly _betaArmQ: Record<Side, Float64Array> = {
+    L: new Float64Array(7),
+    R: new Float64Array(7),
+  };
+  private _bridgeFailure: 'speed' | 'geometry' = 'geometry';
   /** `_armVec` before breathing and drift, which is what a child link is carried by. */
   private _armBlend: Record<Side, Record<ArmSlot, THREE.Vector3>>;
   private readonly _carryDir = new THREE.Vector3();
@@ -448,6 +550,7 @@ export class Body {
   private readonly _idleEnv: IdleEnv = { br: 0, d: 0, armDrift: 0, dt: 0 };
   /** What one arm of a pose actually asks for. See `resolve.ts`. */
   private readonly _arm: ArmResolver;
+  private _lastExternalArmRevision = 0;
 
   /** Joint strain from the last fingertip solve, per arm. */
   get pointStrain(): Record<Side, number> {
@@ -535,6 +638,18 @@ export class Body {
     this._armDirs = { L: mkDirs(), R: mkDirs() };
     this._armWorld = { L: mkDirs(), R: mkDirs() };
     this._armVec = { L: mkVecs(), R: mkVecs() }; // composed target for this frame
+    this._armWorldVec = { L: mkVecs(), R: mkVecs() };
+    this._transactionCurls = { L: mkFingerSpread(), R: mkFingerSpread() };
+    this._transactionSpread = { L: mkFingerSpread(), R: mkFingerSpread() };
+    this._bridgeCurls = { L: mkFingerSpread(), R: mkFingerSpread() };
+    this._bridgeSpread = { L: mkFingerSpread(), R: mkFingerSpread() };
+    const bridgePointCounts = {
+      L: rig.armDriver('L')?.output.points.length ?? 0,
+      R: rig.armDriver('R')?.output.points.length ?? 0,
+    };
+    this._bridgeSamples = Array.from({ length: ARM_BRIDGE_MAX_SAMPLES }, () =>
+      makeArmBridgeSample(bridgePointCounts),
+    );
     this._armBlend = { L: mkVecs(), R: mkVecs() };
     this._armState = { L: mkState(this._rest), R: mkState(this._rest) }; // what the arm is actually doing
     this._fingerSpec = { L: { ...BASE_FINGERS }, R: { ...BASE_FINGERS } };
@@ -544,7 +659,6 @@ export class Body {
     };
     this._fingerSpreadSpec = { L: mkFingerSpread(), R: mkFingerSpread() };
     this._fingerSpreadState = { L: mkFingerSpreadState(), R: mkFingerSpreadState() };
-    this._fingerLife = new FingerLife(profile, rig.palmLocal);
     const spreadFor = (side: Side, role: 'lead' | 'follow') => {
       const m = claspMeasure(profile.limb, side);
       return m ? claspSpread(m, role, mkFingerSpread()) : null;
@@ -585,6 +699,12 @@ export class Body {
       rise: 0,
       load: 0,
     };
+
+    this.bootstrapStandingPose();
+    this.seedArmFollowersFromRig();
+    this._lastExternalArmRevision = rig.externalArmRevision;
+    // Finger life must see the bootstrapped hand on its first sensor read.
+    this._fingerLife = new FingerLife(profile, rig.palmLocal);
   }
 
   /**
@@ -866,6 +986,7 @@ export class Body {
    */
   playDef(def: GestureDef, id: string, side?: Side): void {
     if (!def) return;
+    this.syncExternalArmRevision();
     // Hand the outgoing gesture on so it fades out while the new one fades in.
     // Dropping it outright leaves the standing blend weight pointing at a
     // completely different pose, and the arms teleport on the switch frame —
@@ -884,9 +1005,11 @@ export class Body {
       // from the slide, the one it used on the line before.
       side: side === undefined ? (Math.random() < 0.5 ? -1 : 1) : sideMirror(side),
     };
-    // Capped: past about a second an entrance stops reading as deliberate and
-    // starts reading as slow, however far the arm has to go.
-    const lead = Math.min(0.95, Math.max(def.lead, this.travel(def, v) * LEAD_PER_RAD));
+    // The distance-derived extension is capped: past about a second an
+    // entrance stops reading as deliberate and starts reading as slow,
+    // however far the arm has to go. The authored lead remains a floor — doze
+    // deliberately takes 1.5 seconds so its entrance reads as falling asleep.
+    const lead = Math.max(def.lead, Math.min(0.95, this.travel(def, v) * LEAD_PER_RAD));
     this.gesture = {
       def,
       id,
@@ -895,6 +1018,7 @@ export class Body {
       released: false,
       speed: 0.93 + Math.random() * 0.14,
       lead,
+      phase: { entrance: 0, held: 0 },
       exitAt: lead + def.hold,
       releasedIn: 1,
     };
@@ -913,7 +1037,7 @@ export class Body {
 
   /** Largest angle any arm has to cover to reach the gesture's opening pose. */
   private travel(def: GestureDef, v: GestureVariation): number {
-    const pose = def.build(0, v);
+    const pose = def.build(0, v, PROBE_PHASE);
     let worst = 0;
     for (const side of ['L', 'R'] as const) {
       const mirror = sideMirror(side);
@@ -1052,15 +1176,529 @@ export class Body {
     return this._posture.breath;
   }
 
+  private resetArmFrameWork(): void {
+    this._armFrameWork.contextRetries = 0;
+    this._armFrameWork.armStepRetries = 0;
+    this._armFrameWork.bridgeSamples = 0;
+    this._armFrameWork.solverCalls = 0;
+    this._armFrameWork.solverIterations = 0;
+    this._armFrameWork.environmentBatches = 0;
+  }
+
+  private bootstrapStandingPose(): void {
+    const frameReady = this.axes.ready();
+    const poseFor = (side: Side): StandingArmPose => {
+      const world = (slot: ArmSlot) =>
+        this.axes.toWorld(
+          new THREE.Vector3(),
+          this._rest[slot],
+          side,
+          sideMirror(side),
+          frameReady,
+        );
+      return {
+        shoulder: world('shoulder'),
+        upperArm: world('upperArm'),
+        lowerArm: world('lowerArm'),
+        hand: world('hand'),
+        palm: this.axes.toWorld(new THREE.Vector3(), BASE_PALM, side, sideMirror(side), frameReady),
+        curls: { ...BASE_FINGERS },
+        spread: mkFingerSpread(),
+      };
+    };
+    this.rig.bootstrapStandingPose({ L: poseFor('L'), R: poseFor('R') });
+  }
+
+  /** Seed the followers once from the pose they will actually continue from. */
+  private seedArmFollowersFromRig(): void {
+    const frameReady = this.axes.ready();
+    for (const side of ['L', 'R'] as Side[]) {
+      const accepted = this.rig.armStateForBodyInitialization(side);
+      const tuple = this._acceptedTuple[side];
+      let stanceReady = true;
+      for (const slot of ARM_SLOTS) {
+        const source = accepted.directions[slot];
+        const length = Math.hypot(source[0], source[1], source[2]);
+        if (!(Number.isFinite(length) && length > 1e-12)) {
+          if (slot !== 'shoulder') stanceReady = false;
+          continue;
+        }
+        const state = this._armState[side][slot];
+        state.reset(this._carryDir.set(source[0], source[1], source[2]));
+        const target = this._armDirs[side][slot];
+        target[0] = source[0] / length;
+        target[1] = source[1] / length;
+        target[2] = source[2] / length;
+      }
+      if (stanceReady) {
+        for (const slot of ['upperArm', 'lowerArm', 'hand'] as const) {
+          const target = tuple[slot];
+          const source = this._armDirs[side][slot];
+          target[0] = source[0];
+          target[1] = source[1];
+          target[2] = source[2];
+        }
+        this._arm.note(side, tuple.upperArm, tuple.lowerArm, tuple.hand);
+      }
+      const palm = accepted.palm;
+      const palmLength = Math.hypot(palm[0], palm[1], palm[2]);
+      if (Number.isFinite(palmLength) && palmLength > 1e-12) {
+        this._palm[side].reset(this._carryDir.set(palm[0], palm[1], palm[2]));
+        this._palmOut[side][0] = palm[0] / palmLength;
+        this._palmOut[side][1] = palm[1] / palmLength;
+        this._palmOut[side][2] = palm[2] / palmLength;
+      }
+      if (Number.isFinite(accepted.forearmRoll)) {
+        this._twist[side].reset(accepted.forearmRoll / this.axes.axialMirror(side, frameReady));
+      }
+      for (const finger of FINGER_NAMES) {
+        const curl = accepted.curls[finger];
+        if (Number.isFinite(curl)) {
+          this._fingerSpec[side][finger] = curl;
+          this._fingerState[side][finger].reset(curl);
+        }
+        const spread = accepted.spread[finger];
+        if (Number.isFinite(spread)) {
+          this._fingerSpreadSpec[side][finger] = spread;
+          this._fingerSpreadState[side][finger].reset(spread);
+        }
+      }
+    }
+  }
+
+  private syncExternalArmRevision(): void {
+    const revision = this.rig.externalArmRevision;
+    if (revision === this._lastExternalArmRevision) return;
+    this.seedArmFollowersFromRig();
+    this._lastExternalArmRevision = revision;
+  }
+
+  private recordArmSolve(output: { iterations: number; environmentBatches: number }): void {
+    this._armFrameWork.solverCalls++;
+    this._armFrameWork.solverIterations += output.iterations;
+    this._armFrameWork.environmentBatches += output.environmentBatches;
+  }
+
   /** Advance one gesture slot and return its pose. */
   private advance(slot: ActiveGesture, dt: number): Pose {
     slot.time += dt;
-    return slot.def.build(slot.time * slot.speed, slot.v);
+    slot.phase.entrance = slot.lead <= 0 ? 1 : Math.min(1, Math.max(0, slot.time / slot.lead));
+    slot.phase.held = Math.max(0, slot.time - slot.lead) * slot.speed;
+    return slot.def.build(slot.time * slot.speed, slot.v, slot.phase);
+  }
+
+  private commitArmTransaction(dt: number): void {
+    const rig = this.rig;
+    rig.captureProposedBodyContext(this._rise);
+    const rollComposed: Record<Side, boolean> = { L: false, R: false };
+    let committed = false;
+    for (let attempt = 0; attempt <= 6; attempt++) {
+      if (attempt > 0) this._armFrameWork.contextRetries++;
+      const alpha = attempt === 0 ? 1 : attempt === 6 ? 0 : 2 ** -attempt;
+      const candidateRise = rig.applyBodyContext(alpha);
+      this._bridgeAlpha = alpha;
+      this._bridgeSampleCount = 0;
+      const leftDriver = rig.armDriver('L');
+      const rightDriver = rig.armDriver('R');
+      if (!(leftDriver && rightDriver)) continue;
+      this._bridgeResolution = Math.min(leftDriver.sweepResolution, rightDriver.sweepResolution);
+      const frameReady = this.axes.ready();
+      let feasible = true;
+      for (const side of ['L', 'R'] as Side[]) {
+        const driver = rig.armDriver(side);
+        const context = rig.armForwardContext(side);
+        if (!(driver && context)) {
+          feasible = false;
+          break;
+        }
+        driver.captureVolumeFrame();
+
+        const directions = this._armDirs[side];
+        const upper = this._armWorldVec[side].upperArm.fromArray(directions.upperArm).normalize();
+        const lower = this._armWorldVec[side].lowerArm.fromArray(directions.lowerArm).normalize();
+        const hand = this._armWorldVec[side].hand.fromArray(directions.hand).normalize();
+        this.axes.toWorld(upper, upper, side, sideMirror(side), frameReady);
+        this.axes.toWorld(lower, lower, side, sideMirror(side), frameReady);
+        this.axes.toWorld(hand, hand, side, sideMirror(side), frameReady);
+
+        const palm = this._palmWorldVector[side].fromArray(this._palmOut[side]).normalize();
+        this.axes.toWorld(palm, palm, side, sideMirror(side), frameReady);
+        for (const finger of FINGER_NAMES) {
+          const from = driver.acceptedCurls[finger] ?? 0;
+          const to = this._fingerSpec[side][finger] ?? 0;
+          this._transactionCurls[side][finger] = from + (to - from) * alpha;
+          const fromSpread = driver.acceptedSpread[finger] ?? 0;
+          const toSpread = this._fingerSpreadSpec[side][finger] ?? 0;
+          this._transactionSpread[side][finger] = fromSpread + (toSpread - fromSpread) * alpha;
+        }
+
+        const twist = this._twist[side].value * this.axes.axialMirror(side, frameReady);
+        driver.composeRequest(
+          context,
+          upper,
+          lower,
+          hand,
+          palm,
+          this._palmW[side].value,
+          twist,
+          this._transactionCurls[side],
+          this._transactionSpread[side],
+          !rollComposed[side],
+        );
+        rollComposed[side] = true;
+
+        let output = driver.plan(context, dt);
+        this.recordArmSolve(output);
+        if (output.status === 'blocked') {
+          if (!driver.restoreEndpoint(context, dt, true)) {
+            this.recordArmSolve(driver.output);
+            feasible = false;
+            break;
+          }
+          this.recordArmSolve(driver.output);
+          output = driver.output;
+        }
+        this._frameCommit[side] = {
+          output,
+          context,
+          curls: this._transactionCurls[side],
+          spread: this._transactionSpread[side],
+        };
+        this._fullArmQ[side].set(output.q);
+      }
+      if (!feasible) continue;
+      const left = this._frameCommit.L;
+      const right = this._frameCommit.R;
+      if (!(left && right)) continue;
+
+      for (let backtrack = 0; backtrack < ARM_STEP_BACKTRACKS.length; backtrack++) {
+        const beta = ARM_STEP_BACKTRACKS[backtrack];
+        if (beta === undefined) continue;
+        if (beta < 1 && !this.evaluateArmCandidate(alpha, beta)) {
+          feasible = false;
+          break;
+        }
+
+        if (this.validateArmBridge(alpha, dt)) {
+          if (!rig.commitArmFrame({ L: left, R: right }, candidateRise)) {
+            feasible = false;
+            break;
+          }
+
+          const acceptedFrameReady = this.axes.ready();
+          for (const side of ['L', 'R'] as Side[]) {
+            const driver = rig.armDriver(side);
+            if (!driver) continue;
+            const accepted = this._armWorldVec[side];
+            this.axes.toCharacter(
+              accepted.upperArm,
+              driver.acceptedForward.u,
+              side,
+              acceptedFrameReady,
+            );
+            this.axes.toCharacter(
+              accepted.lowerArm,
+              driver.acceptedForward.l,
+              side,
+              acceptedFrameReady,
+            );
+            this.axes.toCharacter(
+              accepted.hand,
+              driver.acceptedForward.h,
+              side,
+              acceptedFrameReady,
+            );
+            const tuple = this._acceptedTuple[side];
+            tuple.upperArm[0] = accepted.upperArm.x;
+            tuple.upperArm[1] = accepted.upperArm.y;
+            tuple.upperArm[2] = accepted.upperArm.z;
+            tuple.lowerArm[0] = accepted.lowerArm.x;
+            tuple.lowerArm[1] = accepted.lowerArm.y;
+            tuple.lowerArm[2] = accepted.lowerArm.z;
+            tuple.hand[0] = accepted.hand.x;
+            tuple.hand[1] = accepted.hand.y;
+            tuple.hand[2] = accepted.hand.z;
+            this._arm.note(side, tuple.upperArm, tuple.lowerArm, tuple.hand);
+          }
+          committed = true;
+          break;
+        }
+
+        if (this._bridgeFailure !== 'speed' || backtrack + 1 === ARM_STEP_BACKTRACKS.length) {
+          feasible = false;
+          break;
+        }
+        this._armFrameWork.armStepRetries++;
+      }
+      if (committed) break;
+      if (!feasible) continue;
+    }
+
+    if (!committed) {
+      rig.applyBodyContext(0);
+      for (const side of ['L', 'R'] as Side[]) {
+        const driver = rig.armDriver(side);
+        const context = rig.armForwardContext(side);
+        if (driver && context) {
+          const acceptedForward = driver.refreshAcceptedForward(context);
+          rig.stageArmForward(side, acceptedForward, driver.acceptedCurls, driver.acceptedSpread);
+        }
+      }
+    }
+  }
+
+  /** Evaluate a shared beta-scaled arm increment against the unchanged request. */
+  private evaluateArmCandidate(alpha: number, beta: number): boolean {
+    if (this._bridgeSampleCount >= ARM_BRIDGE_MAX_SAMPLES) {
+      this._bridgeFailure = 'geometry';
+      return false;
+    }
+    this._bridgeSampleCount++;
+    this._armFrameWork.bridgeSamples++;
+    this.rig.applyBodyContext(alpha);
+    let valid = true;
+    for (const side of ['L', 'R'] as Side[]) {
+      const driver = this.rig.armDriver(side);
+      const plan = this._frameCommit[side];
+      const context = this.rig.armForwardContext(side);
+      if (!(driver && plan && context)) {
+        valid = false;
+        continue;
+      }
+      driver.captureVolumeFrame();
+      const q = this._betaArmQ[side];
+      const full = this._fullArmQ[side];
+      for (let i = 0; i < q.length; i++) {
+        q[i] = driver.acceptedQ[i] + (full[i] - driver.acceptedQ[i]) * beta;
+      }
+      if (!driver.validateLockedPose(q, context, plan.curls, plan.spread, driver.output)) {
+        this.recordArmSolve(driver.output);
+        valid = false;
+        continue;
+      }
+      this.recordArmSolve(driver.output);
+    }
+    if (!valid) this._bridgeFailure = 'geometry';
+    return valid;
+  }
+
+  private validateArmBridge(alpha: number, dt: number): boolean {
+    const left = this.rig.armDriver('L');
+    const right = this.rig.armDriver('R');
+    if (!(left && right)) {
+      this._bridgeFailure = 'geometry';
+      return false;
+    }
+    this._bridgeAlpha = alpha;
+    this._bridgeResolution = Math.min(left.sweepResolution, right.sweepResolution);
+    this._bridgeFailure = 'geometry';
+
+    let valid = true;
+    let restored = false;
+    try {
+      let previous: ArmBridgeSample | null = null;
+      for (const s of ARM_BRIDGE_STARTS) {
+        const sample = this.sampleArmBridge(s);
+        if (!(sample && (!previous || this.refineArmBridge(previous, sample, 0, dt)))) {
+          valid = false;
+          break;
+        }
+        previous = sample;
+      }
+    } finally {
+      restored = this.restoreArmBridgeContext(alpha);
+    }
+    if (!restored) this._bridgeFailure = 'geometry';
+    return valid && restored;
+  }
+
+  private restoreArmBridgeContext(alpha: number): boolean {
+    this.rig.applyBodyContext(alpha);
+    for (const side of ['L', 'R'] as Side[]) {
+      const driver = this.rig.armDriver(side);
+      const plan = this._frameCommit[side];
+      const context = this.rig.armForwardContext(side);
+      if (!(driver && plan && context)) return false;
+      driver.captureVolumeFrame();
+      // `context` is Rig's reusable per-side record, so the existing commit
+      // already points at this refreshed final candidate context.
+    }
+    return true;
+  }
+
+  private sampleArmBridge(s: number): ArmBridgeSample | null {
+    if (this._bridgeSampleCount >= ARM_BRIDGE_MAX_SAMPLES) {
+      this._bridgeFailure = 'geometry';
+      return null;
+    }
+    const sample = this._bridgeSamples[this._bridgeSampleCount++];
+    if (!sample) return null;
+    this._armFrameWork.bridgeSamples++;
+    sample.s = s;
+    this.rig.applyBodyContext(this._bridgeAlpha * s);
+
+    for (const side of ['L', 'R'] as Side[]) {
+      const driver = this.rig.armDriver(side);
+      const endpoint = this._frameCommit[side];
+      const context = this.rig.armForwardContext(side);
+      if (!(driver && endpoint && context)) return null;
+      driver.captureVolumeFrame();
+
+      const state = sample.side[side];
+      for (let i = 0; i < state.q.length; i++) {
+        state.q[i] = driver.acceptedQ[i] + (endpoint.output.q[i] - driver.acceptedQ[i]) * s;
+      }
+      for (const finger of FINGER_NAMES) {
+        const fromCurl = driver.acceptedCurls[finger] ?? 0;
+        const toCurl = endpoint.curls[finger] ?? 0;
+        this._bridgeCurls[side][finger] = fromCurl + (toCurl - fromCurl) * s;
+        const fromSpread = driver.acceptedSpread[finger] ?? 0;
+        const toSpread = endpoint.spread[finger] ?? 0;
+        this._bridgeSpread[side][finger] = fromSpread + (toSpread - fromSpread) * s;
+      }
+      const valid = driver.validateLockedPose(
+        state.q,
+        context,
+        this._bridgeCurls[side],
+        this._bridgeSpread[side],
+      );
+      this.recordArmSolve(driver.bridgeOutput);
+      if (!valid) {
+        this._bridgeFailure = 'geometry';
+        return null;
+      }
+
+      const output = driver.bridgeOutput;
+      state.upperLocal.copy(output.forward.upperLocal);
+      state.lowerLocal.copy(output.forward.lowerLocal);
+      state.handLocal.copy(output.forward.handLocal);
+      for (let i = 0; i < output.points.length; i++)
+        state.points[i]?.copy(output.points[i].position);
+      state.hasTorso = this.copyBridgeFrameCoordinates(
+        output.points,
+        driver.volumeFrame.torso,
+        state.torsoLocal,
+      );
+      state.hasHead = this.copyBridgeFrameCoordinates(
+        output.points,
+        driver.volumeFrame.head,
+        state.headLocal,
+      );
+      if (state.points.length !== output.points.length) {
+        this._bridgeFailure = 'geometry';
+        return null;
+      }
+    }
+    return sample;
+  }
+
+  private copyBridgeFrameCoordinates(
+    points: readonly { position: THREE.Vector3 }[],
+    frame: { O: THREE.Vector3; up: THREE.Vector3; right: THREE.Vector3; fwd: THREE.Vector3 } | null,
+    out: THREE.Vector3[],
+  ): boolean {
+    if (!frame || out.length !== points.length) return false;
+    for (let i = 0; i < points.length; i++) {
+      const point = points[i];
+      const target = out[i];
+      if (!(point && target)) return false;
+      this._bridgeRel.subVectors(point.position, frame.O);
+      target.set(
+        this._bridgeRel.dot(frame.right),
+        this._bridgeRel.dot(frame.up),
+        this._bridgeRel.dot(frame.fwd),
+      );
+    }
+    return true;
+  }
+
+  private refineArmBridge(
+    from: ArmBridgeSample,
+    to: ArmBridgeSample,
+    depth: number,
+    dt: number,
+  ): boolean {
+    if (!this.armBridgeStepWithinBudget(from, to, dt)) return false;
+    if (this.armBridgeTravel(from, to) <= this._bridgeResolution) return true;
+    if (depth >= ARM_BRIDGE_MAX_DEPTH) {
+      this._bridgeFailure = 'geometry';
+      return false;
+    }
+    const middle = this.sampleArmBridge((from.s + to.s) / 2);
+    if (
+      !(
+        middle &&
+        this.armBridgeStepWithinBudget(from, middle, dt) &&
+        this.armBridgeStepWithinBudget(middle, to, dt)
+      )
+    )
+      return false;
+    return (
+      this.refineArmBridge(from, middle, depth + 1, dt) &&
+      this.refineArmBridge(middle, to, depth + 1, dt)
+    );
+  }
+
+  private armBridgeStepWithinBudget(
+    from: ArmBridgeSample,
+    to: ArmBridgeSample,
+    dt: number,
+  ): boolean {
+    const deltaS = to.s - from.s;
+    const allowance = LIMIT_SLEW * Math.max(0, dt) * deltaS + Math.sqrt(Number.EPSILON);
+    let within = true;
+    for (const side of ['L', 'R'] as Side[]) {
+      const a = from.side[side];
+      const b = to.side[side];
+      for (const dof of [5, 6]) {
+        if (Math.abs(b.q[dof] - a.q[dof]) > allowance) within = false;
+      }
+      if (
+        a.upperLocal.angleTo(b.upperLocal) > allowance ||
+        a.lowerLocal.angleTo(b.lowerLocal) > allowance ||
+        a.handLocal.angleTo(b.handLocal) > allowance
+      ) {
+        within = false;
+      }
+    }
+    if (!within) this._bridgeFailure = 'speed';
+    return within;
+  }
+
+  private armBridgeTravel(from: ArmBridgeSample, to: ArmBridgeSample): number {
+    let maximum = 0;
+    for (const side of ['L', 'R'] as Side[]) {
+      const a = from.side[side];
+      const b = to.side[side];
+      if (a.points.length !== b.points.length) return Number.POSITIVE_INFINITY;
+      for (let i = 0; i < a.points.length; i++) {
+        const aPoint = a.points[i];
+        const bPoint = b.points[i];
+        if (!(aPoint && bPoint)) return Number.POSITIVE_INFINITY;
+        maximum = Math.max(maximum, aPoint.distanceTo(bPoint));
+        if (a.hasTorso !== b.hasTorso || a.hasHead !== b.hasHead) return Number.POSITIVE_INFINITY;
+        if (a.hasTorso) {
+          const aLocal = a.torsoLocal[i];
+          const bLocal = b.torsoLocal[i];
+          if (!(aLocal && bLocal)) return Number.POSITIVE_INFINITY;
+          maximum = Math.max(maximum, aLocal.distanceTo(bLocal));
+        }
+        if (a.hasHead) {
+          const aLocal = a.headLocal[i];
+          const bLocal = b.headLocal[i];
+          if (!(aLocal && bLocal)) return Number.POSITIVE_INFINITY;
+          maximum = Math.max(maximum, aLocal.distanceTo(bLocal));
+        }
+      }
+    }
+    return maximum;
   }
 
   update(dt: number, ctx?: BodyContext): void {
     const headWorldTarget = ctx?.headWorldTarget ?? null;
+    this.syncExternalArmRevision();
     this.t += dt;
+    this.resetArmFrameWork();
     const { rig, p } = this;
     // The rig's anatomical limiter is the one thing below this line with a
     // speed of its own — see `Rig.slew` — and this is where it learns the frame.
@@ -1213,6 +1851,7 @@ export class Body {
     // Spine offsets change the body frame. Resolve it once here, after commit,
     // so every direction sent to Rig in this frame uses the same live basis.
     const frameReady = rig.anat.update();
+    const armTransaction = rig.beginBodyArmFrame();
 
     // --- arms -------------------------------------------------------------
     const armDrift = 0.016 * idle;
@@ -1335,6 +1974,7 @@ export class Body {
         );
         this.followArm(slot, side, v, dt, carried ? TRAVEL_FOLLOW : ARM_FOLLOW);
         this.axes.tupleToWorld(worldDirs[slot], dirs[slot], side, mirror, frameReady);
+        this.axes.toWorld(this._armWorldVec[side][slot], dirs[slot], side, mirror, frameReady);
       }
 
       // The wrist's own channels ride the hand link's envelope: a palm roll and
@@ -1373,6 +2013,7 @@ export class Body {
         mirror,
         frameReady,
       );
+      this._palmWorldVector[side].fromArray(palmWorld);
 
       // BASE_PALM describes an arm hanging at the side, and only that. A pose
       // that raises the hand and states no palm of its own must not be held to
@@ -1388,14 +2029,16 @@ export class Body {
       if (cArm && !cArm.palm) hold -= cw;
       const palmW = Math.max(0, this._palmW[side].step(Math.max(0, hold), dt, ARM_FOLLOW));
 
-      rig.aimArm(
-        side,
-        worldDirs,
-        this._twist[side].value * this.axes.axialMirror(side, frameReady),
-        palmWorld,
-        palmW,
-      );
-      this._arm.note(side, dirs.upperArm, dirs.lowerArm, dirs.hand);
+      if (!armTransaction) {
+        rig.aimArmLegacy(
+          side,
+          worldDirs,
+          this._twist[side].value * this.axes.axialMirror(side, frameReady),
+          palmWorld,
+          palmW,
+        );
+        this._arm.note(side, dirs.upperArm, dirs.lowerArm, dirs.hand);
+      }
 
       const cf = g?.fingers?.[side];
       const cfSpread = g?.fingerSpread?.[side];
@@ -1422,7 +2065,7 @@ export class Body {
       // exit lets it: (1 - hold)(1 - fw) = 1 - exit.
       const fx = this._fingerEnv.exit;
       const handHold = (cf || cfSpread) && fw < 1 ? 1 - (1 - fx) / (1 - fw) : 0;
-      this._fingerLife.sense(side, dt);
+      this._fingerLife.sense(side, dt, armTransaction ? rig.lastAcceptedHandPose(side) : undefined);
       for (const f of FINGER_NAMES) {
         let val = BASE_FINGERS[f];
         let spreadVal = 0;
@@ -1453,7 +2096,47 @@ export class Body {
       const state = this._fingerState[side];
       this._fingerLife.enslave(side, spec, dt, fingerRate, free);
       for (const f of FINGER_NAMES) spec[f] = state[f].step(spec[f], dt, fingerRate(f));
-      rig.curlHand(side, spec, spread);
+      if (armTransaction) {
+        const driver = rig.armDriver(side);
+        if (cc && side === cc.lead && driver) {
+          const context = rig.armForwardContext(side);
+          if (context) {
+            driver.captureVolumeFrame();
+            driver.composeRequest(
+              context,
+              this._armWorldVec[side].upperArm,
+              this._armWorldVec[side].lowerArm,
+              this._armWorldVec[side].hand,
+              this._palmWorldVector[side],
+              palmW,
+              this._twist[side].value * this.axes.axialMirror(side, frameReady),
+              spec,
+              spread,
+              false,
+            );
+            const provisional = driver.plan(context, dt);
+            this.recordArmSolve(provisional);
+            if (provisional.status === 'blocked' && !driver.restoreEndpoint(context, dt, true)) {
+              this.recordArmSolve(driver.output);
+              // Keep the last committed leader visible to the clasp resolver.
+              rig.stageArmForward(
+                side,
+                driver.acceptedForward,
+                driver.acceptedCurls,
+                driver.acceptedSpread,
+              );
+            } else {
+              if (provisional.status === 'blocked') this.recordArmSolve(driver.output);
+              rig.stageArmOutput(side, provisional, spec, spread);
+            }
+          }
+        }
+      } else {
+        rig.curlHandLegacy(side, spec, spread);
+      }
     }
+
+    if (armTransaction) this.commitArmTransaction(dt);
+    else rig.finishLegacyBodyFrame(this._rise);
   }
 }

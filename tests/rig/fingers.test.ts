@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { fingerCurl, JOINTS } from '@/engine/anatomy';
 import { buildProfile } from '@/engine/profile';
 import { Rig, solveFingerAxes } from '@/engine/rig';
+import { type ArmConfiguration, forwardArm } from '@/engine/rig/arm-configuration';
 import type { FingerName, Profile, Side } from '@/engine/types';
 import { buildRig } from '../helpers/scene';
 
@@ -45,6 +46,72 @@ function buildRolledHands(): { profile: Profile; rig: Rig } {
   built.root.updateMatrixWorld(true);
   const profile = buildProfile(built.root, built.descriptor);
   return { profile, rig: new Rig(profile) };
+}
+
+function aimedFingerShape(
+  configuration: ArmConfiguration,
+  palmOffset: number,
+): {
+  shape: THREE.Vector3[];
+  axis: THREE.Vector3;
+  palm: THREE.Vector3;
+  askedAxis: THREE.Vector3;
+  askedPalm: THREE.Vector3;
+  endpointValid: boolean;
+  endpointViolation: number;
+} {
+  const { profile, rig } = buildHands();
+  const driver = rig.armDriver('R');
+  const context = rig.armForwardContext('R');
+  if (!(driver && context)) throw new Error('synthetic rig has no calibrated right arm');
+  const target = forwardArm(configuration, driver.calibration, context, driver.targetForward);
+  // Keep immutable requests because the driver reuses its FK scratch buffers.
+  const upper = target.u.clone();
+  const lower = target.l.clone();
+  const handTarget = target.h.clone();
+  const palmTarget = target.palm.clone().applyAxisAngle(target.h, palmOffset).normalize();
+  rig.aimArm(
+    'R',
+    {
+      shoulder: [upper.x, upper.y, upper.z],
+      upperArm: [upper.x, upper.y, upper.z],
+      lowerArm: [lower.x, lower.y, lower.z],
+      hand: [handTarget.x, handTarget.y, handTarget.z],
+    },
+    0,
+    [palmTarget.x, palmTarget.y, palmTarget.z],
+  );
+  profile.root.updateMatrixWorld(true);
+
+  const hand = need(profile.bones['hand.R'], 'hand.R');
+  const curls = { thumb: 0.4, index: 0.7, middle: 0.55, ring: 0.35, little: 0.2 };
+  const spread = { index: 0.25, ring: -0.15 };
+  rig.curlHand('R', curls, spread);
+  hand.updateWorldMatrix(true, false);
+  const world = hand.getWorldQuaternion(new THREE.Quaternion());
+  const axis = profile.restDir['hand.R'].clone().applyQuaternion(world).normalize();
+  const palm = need(rig.palmLocal.R, 'palmLocal.R').clone().applyQuaternion(world).normalize();
+  const finalContext = rig.armForwardContext('R');
+  if (!finalContext) throw new Error('synthetic rig lost its right-arm context');
+  driver.captureVolumeFrame();
+  driver.requestForConfiguration(driver.acceptedConfiguration, finalContext, curls, spread);
+  const endpointValid = driver.validateLockedPose(
+    driver.acceptedQ,
+    finalContext,
+    curls,
+    spread,
+    driver.bridgeOutput,
+  );
+
+  return {
+    shape: rig.fingerShape('R').map((point) => point.clone()),
+    axis,
+    palm,
+    askedAxis: handTarget,
+    askedPalm: palmTarget,
+    endpointValid,
+    endpointViolation: driver.bridgeOutput.maxViolation,
+  };
 }
 
 /** The palm normal in world space, for a hand that has not been posed. */
@@ -269,6 +336,44 @@ describe('curlFinger', () => {
 });
 
 describe('curlHand', () => {
+  it('records a curled hand in its reached frame when constraints change the request', () => {
+    const base: ArmConfiguration = {
+      shoulderPlane: 0,
+      shoulderLift: 0.4,
+      humeralRotation: 0,
+      elbowFlex: 0.8,
+      forearmRoll: 0,
+      wristFlex: 0.1,
+      wristDev: -0.1,
+    };
+    const first = aimedFingerShape(base, 1);
+    const second = aimedFingerShape(
+      { ...base, shoulderPlane: 0.5, shoulderLift: 0.3, elbowFlex: 0.9 },
+      -1,
+    );
+
+    // Positive controls: these are distinct reached hand orientations, and
+    // each reached hand/palm frame differs from its requested frame. The shape
+    // below must not inherit either discrepancy from the requested frame cache.
+    expect(first.axis.angleTo(second.axis)).toBeGreaterThan(0.25);
+    const frameError = (capture: ReturnType<typeof aimedFingerShape>) =>
+      Math.max(capture.axis.angleTo(capture.askedAxis), capture.palm.angleTo(capture.askedPalm));
+    expect(frameError(first)).toBeGreaterThan(0.05);
+    expect(frameError(second)).toBeGreaterThan(0.05);
+    expect(first.shape.length).toBeGreaterThan(10);
+    expect(second.shape.length).toBe(first.shape.length);
+    expect(first.endpointValid).toBe(true);
+    expect(second.endpointValid).toBe(true);
+    expect(first.endpointViolation).toBeLessThanOrEqual(2e-10);
+    expect(second.endpointViolation).toBeLessThanOrEqual(2e-10);
+
+    const worst = Math.max(...first.shape.map((point, i) => point.distanceTo(second.shape[i])));
+    expect(
+      worst,
+      `largest canonical finger-shape point differs by ${worst.toFixed(6)} m`,
+    ).toBeLessThan(1e-6);
+  });
+
   it('drives each named finger and leaves the unnamed ones at rest', () => {
     const { profile, rig } = buildHands();
     rig.reset();

@@ -1,4 +1,5 @@
 import type { GestureDef } from '../../types';
+import { heldTime } from '../timing';
 import { V } from './base';
 import type { ArmPose } from './builders';
 import { reach, reachBoth } from './builders';
@@ -17,11 +18,12 @@ export const AFFECTION = {
     group: 'affection',
     lead: 0.48,
     hold: 1.8,
-    build(t, v) {
+    build(t, v, phase) {
       // The hand starts soft beside the mouth and opens as the kiss leaves.
       // It stays below eye level, with a pole because this is a face reach.
-      const depart = ease(t - 0.68, 0.68);
-      const open = ease(t - 0.8, 0.34);
+      const held = heldTime(t, 0.48, phase);
+      const depart = ease(held - 0.2, 0.68);
+      const open = ease(held - 0.32, 0.34);
       const fingers = mixHand(SOFT_HAND, OPEN_HAND, open);
       return reach(
         v,
@@ -65,10 +67,10 @@ export const AFFECTION = {
     group: 'affection',
     lead: 0.52,
     hold: 2.0,
-    build(t, v) {
+    build(t, v, phase) {
       // The same heart hand shape travels from the sternum toward the viewer.
       // Smooth distance easing keeps the hands from jumping away together.
-      const offer = ease(t - 0.72, 0.7);
+      const offer = ease(heldTime(t, 0.52, phase) - 0.2, 0.7);
       const pulse = Math.sin(t * 2.2 * v.rate) * 0.018 * v.scale * ease(t, 0.45);
       return reachBoth(
         {

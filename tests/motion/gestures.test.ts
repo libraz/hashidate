@@ -15,6 +15,7 @@ import { BODY_ANCHORS, FACE_ANCHORS } from '@/engine/profile';
 import type {
   FingerName,
   GestureDef,
+  GesturePhase,
   GestureVariation,
   Pose,
   ReachSpec,
@@ -136,6 +137,65 @@ describe('GESTURES_BY_GROUP', () => {
   it('files each id under its own group', () => {
     for (const entry of GESTURES_BY_GROUP) {
       for (const id of entry.ids) expect(TABLE[id].group).toBe(entry.key);
+    }
+  });
+});
+
+describe('phase-aware submovements', () => {
+  const at = (id: GestureId, t: number, held: number): Pose =>
+    TABLE[id].build(t, RIGHT, { entrance: 1, held });
+  const offset = (pose: Pose, side: Side) => pose.reach?.[side]?.offset;
+
+  it('waits for the kiss to arrive before the hand departs and opens', () => {
+    const resting = at('blowKiss', 100, 0);
+    const beforeDeparture = at('blowKiss', 100, 0.19);
+    const beforeOpening = at('blowKiss', 100, 0.31);
+    const departure = at('blowKiss', 100, 0.54);
+    const opening = at('blowKiss', 100, 0.66);
+
+    expect(offset(beforeDeparture, 'R')).toEqual(offset(resting, 'R'));
+    expect(beforeOpening.fingers?.R).toEqual(resting.fingers?.R);
+    expect(offset(departure, 'R')?.[2]).toBeGreaterThan(offset(resting, 'R')?.[2] ?? 0);
+    expect(opening.fingers?.R).not.toEqual(resting.fingers?.R);
+  });
+
+  it('waits for the heart offer to arrive before moving it forward', () => {
+    const resting = at('heartOffer', 100, 0);
+    const beforeOffer = at('heartOffer', 100, 0.19);
+    const offering = at('heartOffer', 100, 0.55);
+
+    expect(offset(beforeOffer, 'R')).toEqual(offset(resting, 'R'));
+    expect(offset(offering, 'R')?.[2]).toBeGreaterThan(offset(resting, 'R')?.[2] ?? 0);
+  });
+
+  it('holds peekaboo closed through the reveal beat', () => {
+    const hidden = at('peekaboo', 100, 0);
+    const beforeReveal = at('peekaboo', 100, 0.49);
+    const reveal = at('peekaboo', 100, 0.9);
+
+    expect(offset(beforeReveal, 'R')).toEqual(offset(hidden, 'R'));
+    expect(offset(reveal, 'R')?.[0]).toBeGreaterThan(offset(hidden, 'R')?.[0] ?? 0);
+  });
+
+  it('waits until the paws have arrived before bouncing', () => {
+    const hidden = at('pawBounce', 100, 0.57);
+    const bouncing = at('pawBounce', 100, 0.8);
+
+    expect(offset(bouncing, 'R')?.[1]).not.toBe(offset(hidden, 'R')?.[1]);
+  });
+
+  it('keeps the authored build clock available when phase is omitted', () => {
+    const variation: GestureVariation = { rate: 1, scale: 1, side: 1 };
+    const phase: GesturePhase = { entrance: 0, held: 0 };
+    for (const id of ['blowKiss', 'heartOffer', 'peekaboo', 'pawBounce'] as const) {
+      for (const t of [0, 0.25, 0.5, 0.9, 1.5, 2.5]) {
+        const legacy = TABLE[id].build(t, variation);
+        const explicitFallback = TABLE[id].build(t, variation, {
+          entrance: phase.entrance,
+          held: Math.max(0, t - TABLE[id].lead),
+        });
+        expect(legacy).toEqual(explicitFallback);
+      }
     }
   });
 });

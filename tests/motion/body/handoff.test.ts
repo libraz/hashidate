@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GestureDef, Side } from '@/engine/types';
 import { DT, type Harness, harness } from './harness';
+import { observeAcceptedHands } from './observe-accepted';
 
 /**
  * How a gesture leaves.
@@ -166,10 +167,8 @@ describe('variation scale', () => {
     vi.spyOn(Math, 'random').mockReturnValue(r);
     const h = harness();
     const curls: number[][] = [];
-    const curl = h.rig.curlHand.bind(h.rig);
-    vi.spyOn(h.rig, 'curlHand').mockImplementation((side, spec, spread) => {
-      if (side === 'R') curls.push(Object.values(spec).map(Number));
-      curl(side, spec, spread);
+    observeAcceptedHands(h, (frame) => {
+      curls.push(Object.values(frame.R.curls));
     });
     h.body.playDef(def, 'pose', 'R');
     for (let i = 0; i < 120; i++) step(h);
@@ -191,6 +190,7 @@ describe('variation scale', () => {
 
   it('never curls a finger past what the pose authored', () => {
     const { curls } = settleWith(0.999, fist);
+    expect(curls.length).toBeGreaterThan(0);
     expect(Math.max(...curls.flat())).toBeLessThanOrEqual(1 + 1e-9);
   });
 

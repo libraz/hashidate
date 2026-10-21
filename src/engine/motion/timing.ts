@@ -1,4 +1,4 @@
-import type { ArmSlot } from '../types';
+import type { ArmSlot, GesturePhase } from '../types';
 
 /**
  * The time course of a deliberate movement.
@@ -36,6 +36,16 @@ export const minJerk = (x: number): number => {
   if (x >= 1) return 1;
   return x * x * x * (10 + x * (-15 + 6 * x));
 };
+
+/**
+ * Seconds since the authored lead finished, in the motion's own clock.
+ *
+ * Runtime playback supplies the slot's actual lead, which may be longer than
+ * the authored floor because of arm travel. Direct `build(t, v)` calls have no
+ * slot phase, so retain their authored-lead timing and clamp it at zero.
+ */
+export const heldTime = (t: number, authoredLead: number, phase?: GesturePhase): number =>
+  phase?.held ?? Math.max(0, t - authoredLead);
 
 /**
  * Where the primary submovement ends and the correction begins, and how far

@@ -16,6 +16,23 @@ const _q = new THREE.Quaternion();
 
 const FINGERS: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
 
+/** Compose the bind rotation with the same optional splay-then-curl order everywhere. */
+export function composeFingerRotation(
+  out: THREE.Quaternion,
+  rest: THREE.Quaternion,
+  curlAxis: THREE.Vector3,
+  curl: number,
+  splayAxis: THREE.Vector3 | undefined,
+  spread: number,
+  scratch: THREE.Quaternion,
+): THREE.Quaternion {
+  out.copy(rest);
+  if (splayAxis && spread !== 0) {
+    out.multiply(scratch.setFromAxisAngle(splayAxis, spread));
+  }
+  return out.multiply(scratch.setFromAxisAngle(curlAxis, curl));
+}
+
 export class Hands {
   /** Curl axis per finger bone, in that bone's own space. */
   readonly axis: Map<THREE.Bone, THREE.Vector3>;
@@ -57,9 +74,15 @@ export class Hands {
       const bone = chain[i];
       const axis = this.axis.get(bone);
       if (!axis) continue;
-      bone.quaternion
-        .copy(this.restOf(bone))
-        .multiply(_q.setFromAxisAngle(axis, fingerCurl(joints, i, amount)));
+      composeFingerRotation(
+        bone.quaternion,
+        this.restOf(bone),
+        axis,
+        fingerCurl(joints, i, amount),
+        undefined,
+        0,
+        _q,
+      );
     }
   }
 
@@ -72,16 +95,14 @@ export class Hands {
         const bone = chain[i];
         const curlAxis = this.axis.get(bone);
         if (!curlAxis) continue;
-        bone.quaternion.copy(this.restOf(bone));
-        if (i === 0) {
-          const splayAxis = this.splayAxis.get(bone);
-          const splay = spread[f] ?? 0;
-          if (splayAxis && splay !== 0) {
-            bone.quaternion.multiply(_q.setFromAxisAngle(splayAxis, splay));
-          }
-        }
-        bone.quaternion.multiply(
-          _q.setFromAxisAngle(curlAxis, fingerCurl(joints, i, spec[f] ?? 0)),
+        composeFingerRotation(
+          bone.quaternion,
+          this.restOf(bone),
+          curlAxis,
+          fingerCurl(joints, i, spec[f] ?? 0),
+          i === 0 ? this.splayAxis.get(bone) : undefined,
+          i === 0 ? (spread[f] ?? 0) : 0,
+          _q,
         );
       }
     }

@@ -72,6 +72,7 @@ export type {
   FingerSpec,
   GestureDef,
   GestureGroup,
+  GesturePhase,
   GestureVariation,
   PerformanceGroup,
   PointSpec,

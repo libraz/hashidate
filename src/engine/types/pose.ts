@@ -122,6 +122,14 @@ export interface GestureVariation {
   side: number;
 }
 
+/** The playback's entrance and time since it reached the pose. */
+export interface GesturePhase {
+  /** Progress through the slot's actual entrance, from 0 to 1. */
+  readonly entrance: number;
+  /** Seconds since that entrance completed, advanced by the playback speed. */
+  readonly held: number;
+}
+
 export type GestureGroup =
   | 'reaction'
   | 'greeting'
@@ -165,5 +173,10 @@ export interface GestureDef {
   hold: number;
   /** A pose that holds until released rather than running out on its own. */
   sustain?: boolean;
-  build(t: number, v: GestureVariation): Pose;
+  /**
+   * Build one pose. `t` remains the continuous playback clock; `phase` lets a
+   * submovement wait for the slot's distance-derived entrance and its own beat.
+   * Optional so direct table sampling and custom motions keep their old shape.
+   */
+  build(t: number, v: GestureVariation, phase?: GesturePhase): Pose;
 }
