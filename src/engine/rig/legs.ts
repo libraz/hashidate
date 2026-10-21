@@ -15,6 +15,8 @@ interface LegState {
   /** Full root-relative rest matrix, retaining affine scale/shear context. */
   footRestRootMatrix: THREE.Matrix4;
   toeRestQ: THREE.Quaternion | null;
+  /** Solved foot rotation in the metric frame, settled before any bone is written. */
+  footTargetQ: THREE.Quaternion;
   upperRestDir: THREE.Vector3;
   lowerRestDir: THREE.Vector3;
   /** Foot origin in profile-root coordinates; this is the ground anchor. */
@@ -92,7 +94,6 @@ export class GroundedLegs {
   private readonly parentInverseQ = new THREE.Quaternion();
   private readonly aimDeltaQ = new THREE.Quaternion();
   private readonly aimQ = new THREE.Quaternion();
-  private readonly footTargetQ = new THREE.Quaternion();
   private readonly decomposePosition = new THREE.Vector3();
   private readonly decomposeScale = new THREE.Vector3();
   private readonly forwardMetric = new THREE.Matrix4();
@@ -270,6 +271,7 @@ export class GroundedLegs {
         lowerRestQ,
         footRestRootMatrix: footRootMatrix,
         toeRestQ,
+        footTargetQ: new THREE.Quaternion(),
         upperRestDir,
         lowerRestDir,
         anchorRoot: foot.getWorldPosition(new THREE.Vector3()).applyMatrix4(rootInverse),
@@ -377,6 +379,21 @@ export class GroundedLegs {
     if (!(this.kneeSolution(this.legs.L, delta) && this.kneeSolution(this.legs.R, delta)))
       return false;
 
+    // Preserve the foot's orientation relative to the profile root. Decompose
+    // only after composing the full affine chain: multiplying two separately
+    // decomposed quaternions loses the interaction between a nested metric
+    // frame's non-uniform scale and a tilted foot.
+    for (const side of SIDES) {
+      const state = this.legs[side];
+      this.footTargetMetric.copy(this.rootMetricFrame).multiply(state.footRestRootMatrix);
+      this.footTargetMetric.decompose(
+        this.decomposePosition,
+        state.footTargetQ,
+        this.decomposeScale,
+      );
+      if (!validQuaternion(state.footTargetQ)) return false;
+    }
+
     // Everything above this point is validation and geometry. Apply the one
     // common translation, then aim parent-first so every child reads the new
     // parent matrix rather than a stale one.
@@ -394,22 +411,11 @@ export class GroundedLegs {
       this.aimBone(state.lower, state.lowerRestQ, state.lowerRestDir, solution.lowerDir);
       state.lower.updateWorldMatrix(false, true);
 
-      // Preserve the foot's orientation relative to the profile root. The
-      // optional toe retains its local rest rotation and therefore follows the
-      // foot without acquiring an extra aim.
-      // Decompose only after composing the full affine chain. Multiplying two
-      // separately decomposed quaternions loses the interaction between a
-      // nested metric frame's non-uniform scale and a tilted foot.
-      this.footTargetMetric.copy(this.rootMetricFrame).multiply(state.footRestRootMatrix);
-      this.footTargetMetric.decompose(
-        this.decomposePosition,
-        this.footTargetQ,
-        this.decomposeScale,
-      );
-      if (!validQuaternion(this.footTargetQ)) return false;
+      // The optional toe retains its local rest rotation and therefore follows
+      // the foot without acquiring an extra aim.
       this.parentMetricQuaternion(state.foot, this.parentQ);
       this.parentInverseQ.copy(this.parentQ).invert();
-      state.foot.quaternion.copy(this.parentInverseQ).multiply(this.footTargetQ).normalize();
+      state.foot.quaternion.copy(this.parentInverseQ).multiply(state.footTargetQ).normalize();
       state.foot.updateWorldMatrix(false, true);
       if (state.toe && state.toeRestQ) {
         state.toe.quaternion.copy(state.toeRestQ);

@@ -442,3 +442,37 @@ describe('GroundedLegs', () => {
     }
   });
 });
+
+describe('GroundedLegs failure', () => {
+  it('leaves every bone as posed when a foot target fails after both reaches solve', () => {
+    const { profile, solver } = setup();
+    const slots: BoneSlot[] = [
+      'hips',
+      'upperLeg.L',
+      'lowerLeg.L',
+      'foot.L',
+      'upperLeg.R',
+      'lowerLeg.R',
+      'foot.R',
+    ];
+    // Lower the root so the hips must drop and the left leg must re-aim.
+    profile.root.position.y -= 0.03;
+    profile.root.updateMatrixWorld(true);
+    const posed = new Map(slots.map((slot) => [slot, bone(profile, slot).quaternion.clone()]));
+    const hipsAt = bone(profile, 'hips').position.clone();
+    const legs = (
+      solver as unknown as { legs: Record<Side, { footRestRootMatrix: THREE.Matrix4 }> }
+    ).legs;
+    legs.R.footRestRootMatrix.elements.fill(Number.NaN);
+
+    expect(solver.apply(0)).toBe(false);
+
+    expect(bone(profile, 'hips').position.equals(hipsAt)).toBe(true);
+    for (const slot of slots) {
+      expect(
+        bone(profile, slot).quaternion.equals(posed.get(slot) ?? new THREE.Quaternion()),
+        slot,
+      ).toBe(true);
+    }
+  });
+});
