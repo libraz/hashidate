@@ -3,7 +3,7 @@ import type { LabelledId } from '@/engine/types';
 import type { Localized } from '@/i18n/locale';
 import { rebindEnvironment, type StudioEnvironment } from '../environment';
 import { SceneryAssets } from './assets';
-import type { BuiltBackdrop, Pattern } from './patterns';
+import type { BuiltBackdrop, Grade, Pattern } from './patterns';
 import { PATTERNS } from './patterns';
 import type { TextureBin } from './textures';
 
@@ -26,10 +26,14 @@ import type { TextureBin } from './textures';
  *
  * ## What else it has to put back
  *
- * Tone mapping, exposure, fog, the environment map and the scene background are
- * all renderer- or scene-wide, all changed here, and all captured on the way in
- * and restored on the way out. Missing one is not a visual bug in the room; it
- * is a visual bug in the *next* thing rendered, which is much harder to trace.
+ * Fog, the environment map and the scene background are all scene-wide, all
+ * changed here, and all captured on the way in and restored on the way out.
+ * Missing one is not a visual bug in the room; it is a visual bug in the *next*
+ * thing rendered, which is much harder to trace.
+ *
+ * Tone mapping and exposure are not captured but declared: the default rig has
+ * a `Grade` of its own, the same shape a room's is, and the one applied is
+ * whichever rig is lit.
  *
  * ## Shadows
  *
@@ -49,10 +53,18 @@ interface Mounted {
   textures: TextureBin;
 }
 
-/** What the renderer and scene looked like before any of this touched them. */
+/**
+ * The default rig's grade.
+ *
+ * The rooms' tone mapping, so the avatar keeps its grade when a room is
+ * suspended or cleared. The rig's lights peak under the 0.76 shoulder, so only
+ * the toe applies: a 0.04 linear offset. Exposure 1.1 keeps skin within one
+ * level of the untone-mapped render; 1.15 clips highlights by 6 levels.
+ */
+export const DEFAULT_GRADE: Grade = { toneMapping: THREE.NeutralToneMapping, exposure: 1.1 };
+
+/** What the scene looked like before any of this touched it. */
 interface Baseline {
-  toneMapping: THREE.ToneMapping;
-  exposure: number;
   background: THREE.Scene['background'];
   environment: THREE.Scene['environment'];
   environmentIntensity: number;
@@ -117,13 +129,12 @@ export class BackdropStage {
     // still borrow the same runtime-owned texture as the room panes.
     this.scenery = new SceneryAssets(() => this.environment.texture);
     this.baseline = {
-      toneMapping: renderer.toneMapping,
-      exposure: renderer.toneMappingExposure,
       background: scene.background,
       environment: scene.environment,
       environmentIntensity: scene.environmentIntensity,
       fog: scene.fog,
     };
+    this.applyGrade(DEFAULT_GRADE);
     renderer.shadowMap.enabled = true;
     // `PCFShadowMap`, not `PCFSoftShadowMap`, which three deprecated in 0.185 —
     // it silently falls back to this one and warns. Worth having rather than
@@ -272,12 +283,12 @@ export class BackdropStage {
     // clear colour is never seen. It is set to the fog colour anyway, because
     // "never" here means "until somebody drags the orbit control past a wall".
     this.scene.background = new THREE.Color(built.fog ? built.fog.color : 0x0f1115);
-    this.renderer.toneMapping = built.toneMapping;
-    this.renderer.toneMappingExposure = built.exposure;
+    this.applyGrade(built);
   }
 
   /**
-   * Take it out of the scene and give the six captured values back.
+   * Take it out of the scene, give the four captured values back and return to
+   * the default rig's grade.
    *
    * Idempotent, because the two callers overlap: a room cleared while it is
    * suspended has already been lowered, and every step here is a restore rather
@@ -300,9 +311,13 @@ export class BackdropStage {
     if (!this.suspended) this.scene.background = this.baseline.background;
     this.scene.environment = this.baseline.environment;
     this.scene.environmentIntensity = this.baseline.environmentIntensity;
-    this.renderer.toneMapping = this.baseline.toneMapping;
-    this.renderer.toneMappingExposure = this.baseline.exposure;
+    this.applyGrade(DEFAULT_GRADE);
     for (const light of this.defaultLights) light.visible = true;
+  }
+
+  private applyGrade(grade: Grade): void {
+    this.renderer.toneMapping = grade.toneMapping;
+    this.renderer.toneMappingExposure = grade.exposure;
   }
 
   /**

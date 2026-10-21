@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
-import { BackdropStage } from '@/viewer/scene/backdrop';
+import { BackdropStage, DEFAULT_GRADE } from '@/viewer/scene/backdrop';
 import { fbm, mulberry32 } from '@/viewer/scene/backdrop/noise';
 import { ROOM, WINDOW } from '@/viewer/scene/backdrop/parts';
 import { PATTERNS } from '@/viewer/scene/backdrop/patterns';
@@ -73,6 +73,32 @@ describe('the pattern table', () => {
   it('keeps the ids unique, since the picker resolves by them', () => {
     const ids = PATTERNS.map((p) => p.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('shadow-casting lights in the rooms', () => {
+  it('give every shadow-casting light the same depth bias', () => {
+    for (const pattern of PATTERNS) {
+      const bin: THREE.Texture[] = [];
+      const { root } = pattern.build(bin);
+      const casters: Array<THREE.DirectionalLight | THREE.SpotLight | THREE.PointLight> = [];
+      root.traverse((o) => {
+        if (
+          (o instanceof THREE.DirectionalLight ||
+            o instanceof THREE.SpotLight ||
+            o instanceof THREE.PointLight) &&
+          o.castShadow
+        ) {
+          casters.push(o);
+        }
+      });
+      expect(casters.length, pattern.id).toBeGreaterThan(0);
+      for (const light of casters) {
+        expect(light.shadow.bias, `${pattern.id} ${light.type}`).toBe(-0.0004);
+        expect(light.shadow.normalBias, `${pattern.id} ${light.type}`).toBe(0.03);
+      }
+      for (const texture of bin) texture.dispose();
+    }
   });
 });
 
@@ -324,6 +350,22 @@ describe('putting the room away for a document', () => {
     const mounted = captured(s);
     s.backdrop.resume();
     expect(captured(s)).toEqual(mounted);
+  });
+
+  it('keeps the tone mapping when the default rig comes back', () => {
+    // A room suspended for a slide hands the avatar to the default rig; a
+    // different curve there is a visible jump in the avatar's grade.
+    const s = mountable();
+    expect(s.renderer.toneMapping).toBe(DEFAULT_GRADE.toneMapping);
+    expect(s.renderer.toneMappingExposure).toBe(DEFAULT_GRADE.exposure);
+    for (const pattern of PATTERNS) {
+      s.backdrop.setBackdrop(pattern.id);
+      expect(s.renderer.toneMapping, pattern.id).toBe(DEFAULT_GRADE.toneMapping);
+      s.backdrop.suspend();
+      expect(s.renderer.toneMapping, pattern.id).toBe(DEFAULT_GRADE.toneMapping);
+      expect(s.renderer.toneMappingExposure, pattern.id).toBe(DEFAULT_GRADE.exposure);
+      s.backdrop.resume();
+    }
   });
 
   it('gives the flat background back when nothing was standing', () => {

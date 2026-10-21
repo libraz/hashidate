@@ -44,10 +44,14 @@ import { pbrMaps, type TextureBin } from './textures';
  * haloes the outline.
  */
 
-export interface BuiltBackdrop {
-  root: THREE.Group;
+/** How the renderer maps a lit scene to the screen. Each room declares one, and so does the default rig. */
+export interface Grade {
   toneMapping: THREE.ToneMapping;
   exposure: number;
+}
+
+export interface BuiltBackdrop extends Grade {
+  root: THREE.Group;
   /** Ambient contribution for the room's PBR materials. Toon is unaffected. */
   environmentIntensity: number;
   fog: THREE.Fog | null;
@@ -503,6 +507,7 @@ const night: Pattern = {
     monitor.castShadow = true;
     monitor.shadow.mapSize.set(2048, 2048);
     monitor.shadow.normalBias = 0.03;
+    monitor.shadow.bias = -0.0004;
     root.add(monitor, monitor.target);
 
     // The lamp, as a light rather than as a mesh. Short range and quadratic

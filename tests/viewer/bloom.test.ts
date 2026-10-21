@@ -1,7 +1,13 @@
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { BLOOM_DEFAULTS } from '@/engine/types';
-import { type BloomPipeline, type BloomPipelineFactory, BloomStage } from '@/viewer/scene/bloom';
+import {
+  type BloomPipeline,
+  type BloomPipelineFactory,
+  BloomStage,
+  drawWithCompensatedBackground,
+  neutralInverse,
+} from '@/viewer/scene/bloom';
 
 /** The raw GL calls the direct path may make, in order. */
 type GlCall = [string, ...unknown[]];
@@ -190,5 +196,82 @@ describe('BloomStage output alpha', () => {
     expect(gl).toEqual([]);
     stage.setOpaque(false);
     expect(pipelines[0].setOpaque).toHaveBeenLastCalledWith(false);
+  });
+});
+
+/** A transcription of three's NeutralToneMapping for one colour. */
+function neutral(c: [number, number, number], exposure: number): [number, number, number] {
+  const startCompression = 0.8 - 0.04;
+  const desaturation = 0.15;
+  const v = c.map((x) => x * exposure);
+  const x = Math.min(...v);
+  const offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
+  const w = v.map((y) => y - offset);
+  const peak = Math.max(...w);
+  if (peak < startCompression) return w as [number, number, number];
+  const d = 1 - startCompression;
+  const newPeak = 1 - (d * d) / (peak + d - startCompression);
+  const g = 1 - 1 / (desaturation * (peak - newPeak) + 1);
+  return w.map((y) => {
+    const scaled = (y * newPeak) / peak;
+    return scaled + (newPeak - scaled) * g;
+  }) as [number, number, number];
+}
+
+describe('background compensation', () => {
+  const colors = [0x0f1115, 0x131a2a, 0x8e97a0, 0x000000, 0x010203, 0x202020, 0x050a30];
+
+  it('inverts the Neutral tone map for flat and room colours', () => {
+    for (const hex of colors) {
+      for (const exposure of [1, 1.1, 0.8]) {
+        const source = new THREE.Color(hex);
+        const out = new THREE.Color();
+        expect(neutralInverse(source, exposure, out), hex.toString(16)).toBe(true);
+        const back = neutral([out.r, out.g, out.b], exposure);
+        expect(back[0]).toBeCloseTo(source.r, 6);
+        expect(back[1]).toBeCloseTo(source.g, 6);
+        expect(back[2]).toBeCloseTo(source.b, 6);
+      }
+    }
+  });
+
+  it('leaves a background that reaches the shoulder uncompensated', () => {
+    expect(neutralInverse(new THREE.Color(0xffffff), 1, new THREE.Color())).toBe(false);
+  });
+
+  it('swaps the background for the draw and restores the original object', () => {
+    const renderer = {
+      toneMapping: THREE.NeutralToneMapping,
+      toneMappingExposure: 1.1,
+    } as unknown as THREE.WebGLRenderer;
+    const scene = new THREE.Scene();
+    const flat = new THREE.Color(0x0f1115);
+    scene.background = flat;
+    let during: THREE.Color | null = null;
+    drawWithCompensatedBackground(renderer, scene, () => {
+      during = scene.background as THREE.Color;
+    });
+    expect(scene.background).toBe(flat);
+    expect(flat.getHex()).toBe(0x0f1115);
+    expect(during).not.toBeNull();
+    expect(during).not.toBe(flat);
+    expect((during as unknown as THREE.Color).r).toBeGreaterThan(flat.r);
+  });
+
+  it('leaves the background alone without Neutral tone mapping or a Color', () => {
+    const scene = new THREE.Scene();
+    const flat = new THREE.Color(0x0f1115);
+    scene.background = flat;
+    const seen: unknown[] = [];
+    const none = { toneMapping: THREE.NoToneMapping, toneMappingExposure: 1 };
+    drawWithCompensatedBackground(none as unknown as THREE.WebGLRenderer, scene, () =>
+      seen.push(scene.background),
+    );
+    scene.background = null;
+    const neutralRenderer = { toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1 };
+    drawWithCompensatedBackground(neutralRenderer as unknown as THREE.WebGLRenderer, scene, () =>
+      seen.push(scene.background),
+    );
+    expect(seen).toEqual([flat, null]);
   });
 });

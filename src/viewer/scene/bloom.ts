@@ -163,6 +163,71 @@ function fillAlpha(renderer: THREE.WebGLRenderer): void {
   renderer.state.buffers.color.reset();
 }
 
+// Neutral tone mapping's StartCompression: below it the curve is only the toe offset.
+const NEUTRAL_SHOULDER = 0.8 - 0.04;
+
+const compensated = new THREE.Color();
+let cacheKey: [number, number, number, number] | null = null;
+let cacheValid = false;
+
+/**
+ * Writes into `out` the linear colour that three's Neutral tone map turns back
+ * into `source` at `exposure`, and returns whether one exists. A target whose
+ * peak reaches the shoulder is refused rather than approximated.
+ */
+export function neutralInverse(source: THREE.Color, exposure: number, out: THREE.Color): boolean {
+  const peak = Math.max(source.r, source.g, source.b);
+  if (!(exposure > 0) || peak >= NEUTRAL_SHOULDER) return false;
+  const low = Math.min(source.r, source.g, source.b);
+  // The toe maps a minimum m below 0.08 to 6.25 m^2, so the offset it removed is m - low.
+  const offset = low < 0.04 ? 0.4 * Math.sqrt(Math.max(low, 0)) - low : 0.04;
+  out.setRGB(
+    (source.r + offset) / exposure,
+    (source.g + offset) / exposure,
+    (source.b + offset) / exposure,
+  );
+  return true;
+}
+
+/**
+ * Draws with a flat background pre-compensated for the output pass's tone map.
+ * Without bloom three writes a Color background as an untouched clear; here the
+ * output pass would tone map it, so it is replaced for the draw and restored.
+ */
+export function drawWithCompensatedBackground(
+  renderer: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  draw: () => void,
+): void {
+  const original = scene.background;
+  if (!(original instanceof THREE.Color) || renderer.toneMapping !== THREE.NeutralToneMapping) {
+    draw();
+    return;
+  }
+  const exposure = renderer.toneMappingExposure;
+  const key = cacheKey;
+  if (
+    !key ||
+    key[0] !== original.r ||
+    key[1] !== original.g ||
+    key[2] !== original.b ||
+    key[3] !== exposure
+  ) {
+    cacheKey = [original.r, original.g, original.b, exposure];
+    cacheValid = neutralInverse(original, exposure, compensated);
+  }
+  if (!cacheValid) {
+    draw();
+    return;
+  }
+  scene.background = compensated;
+  try {
+    draw();
+  } finally {
+    scene.background = original;
+  }
+}
+
 function bounded(value: number, range: { min: number; max: number }): number {
   if (!Number.isFinite(value)) return range.min;
   return Math.min(range.max, Math.max(range.min, value));
@@ -239,6 +304,7 @@ function createBloomPipeline(
   // size; setSize converts the current CSS size to physical pixels.
   composer.setSize(size.width, size.height);
   let pixelRatio = renderer.getPixelRatio();
+  const draw = () => composer.render();
 
   return {
     target,
@@ -246,7 +312,7 @@ function createBloomPipeline(
       // Keep the pass current if its caller changes the scene or camera.
       renderPass.scene = nextScene;
       renderPass.camera = nextCamera;
-      composer.render();
+      drawWithCompensatedBackground(renderer, nextScene, draw);
     },
     resize(width, height) {
       // The composer keeps the ratio it was built with; a window moved to
