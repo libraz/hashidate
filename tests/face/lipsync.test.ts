@@ -16,7 +16,14 @@ const PAUSE = 0.22;
 /** Every vowel a track may carry, in the order the fallback path cycles them. */
 const VOWELS: VisemeName[] = ['a', 'i', 'u', 'e', 'o'];
 
-const vowels = (text: string): VisemeName[] => textToVisemes(text).events.map((e) => e.v);
+/** A bilabial mora's lips-shut lead-in: an `n` event much shorter than a spoken ん. */
+const isClosure = (e: { v: VisemeName; dur: number }): boolean => e.v === 'n' && e.dur < MORA * 0.5;
+
+/** The reading of a line, without the lead-in closures bilabials carry. */
+const vowels = (text: string): VisemeName[] =>
+  textToVisemes(text)
+    .events.filter((e) => !isClosure(e))
+    .map((e) => e.v);
 
 /** Run the mouth for `seconds`, calling `onFrame` after every step. */
 function drive(mouth: Mouth, seconds: number, dt: number, onFrame?: (m: Mouth) => void): void {
@@ -364,6 +371,82 @@ describe('textToVisemes / phrase breaks', () => {
 
   it('does not downgrade a question when a weaker mark follows it', () => {
     expect(textToVisemes('あ？。').breaks.map((b) => b.kind)).toEqual(['question']);
+  });
+});
+
+describe('textToVisemes / bilabial closure', () => {
+  it.each(['ま', 'み', 'ぶ', 'べ', 'ぱ', 'ぽ'])(
+    'shuts the lips before %s, then voices it',
+    (kana) => {
+      const { events, duration } = textToVisemes(kana);
+      expect(events).toHaveLength(2);
+      expect(events[0].v).toBe('n');
+      expect(events[0].t).toBe(0);
+      expect(events[0].dur).toBeCloseTo(0.05, 12);
+      expect(events[1].t).toBeCloseTo(events[0].dur, 12);
+      // The closure comes out of the mora, so the total does not move.
+      expect(events[1].t + events[1].dur).toBeCloseTo(MORA, 12);
+      expect(duration).toBeCloseTo(MORA, 12);
+    },
+  );
+
+  it('leaves non-bilabial morae alone', () => {
+    expect(textToVisemes('かさた').events).toHaveLength(3);
+  });
+
+  it('lets a preceding ん stand in for the closure', () => {
+    const { events } = textToVisemes('んま');
+    expect(events.map((e) => e.v)).toEqual(['n', 'a']);
+  });
+
+  it('keeps the glide, long vowel and sokuon rules working around a closure', () => {
+    const glide = textToVisemes('みゃ').events;
+    expect(glide.map((e) => e.v)).toEqual(['n', 'a']);
+    const long = textToVisemes('まー').events;
+    expect(long[1].dur).toBeCloseTo(MORA - 0.05 + MORA * 0.8, 12);
+    const sok = textToVisemes('あっぱ');
+    expect(sok.events.map((e) => e.v)).toEqual(['a', 'n', 'a']);
+    expect(sok.events[1].t).toBeCloseTo(MORA + MORA * 0.6, 12);
+    expect(sok.duration).toBeCloseTo(MORA * 2 + MORA * 0.6, 12);
+  });
+
+  it('closes the mouth on screen before ま, where a bare vowel would stay open', () => {
+    const mouth = new Mouth();
+    mouth.speak('あま');
+    let closure = 0;
+    drive(mouth, 0.3, 1 / 120, (m) => {
+      closure = Math.max(closure, m.weights.n);
+    });
+    expect(closure).toBeGreaterThan(0.3);
+  });
+});
+
+describe('Mouth / repeated vowels', () => {
+  it('dips between two identical vowels instead of holding one', () => {
+    const mouth = new Mouth();
+    mouth.speak('ああ');
+    let peak1 = 0;
+    let dip = Number.POSITIVE_INFINITY;
+    let rose = false;
+    drive(mouth, 0.4, 1 / 240, (m) => {
+      const w = m.weights.a;
+      if (m.time < MORA - 0.02) peak1 = Math.max(peak1, w);
+      else if (m.time < MORA + 0.03) dip = Math.min(dip, w);
+      else if (m.time > MORA + 0.06 && w > dip + 0.1) rose = true;
+    });
+    expect(peak1).toBeGreaterThan(0.75);
+    expect(dip).toBeLessThan(peak1 * 0.8);
+    expect(rose).toBe(true);
+  });
+
+  it('does not dip across a pause between identical vowels', () => {
+    const mouth = new Mouth();
+    mouth.speak('あ、あ');
+    let min = 1;
+    drive(mouth, 0.2, 1 / 240, (m) => {
+      if (m.time > 0.08 && m.time < MORA - 0.01) min = Math.min(min, m.weights.a);
+    });
+    expect(min).toBeGreaterThan(0.8);
   });
 });
 

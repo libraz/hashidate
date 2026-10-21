@@ -136,6 +136,15 @@ const KANA_VOWEL: Record<string, VisemeName> = {
   ょ: 'o',
 };
 
+/** Morae that start with the lips pressed together: ま, ば and ぱ rows. */
+const BILABIAL = /[まみむめもばびぶべぼぱぴぷぺぽ]/;
+
+/** How long the lips stay shut before a bilabial mora, in seconds. Taken out of that mora's own hold. */
+const CLOSURE = 0.05;
+
+/** Largest gap, in seconds, at which two events still count as back to back. */
+const ADJACENT = 0.01;
+
 const VOWEL_OPEN: Record<VisemeName, number> = {
   a: 1.0,
   i: 0.35,
@@ -221,8 +230,17 @@ export function textToVisemes(
       out[out.length - 1].v = v;
       continue;
     }
-    out.push({ v, t, dur: mora * (v === 'n' ? 0.8 : 1) });
-    t += mora * (v === 'n' ? 0.8 : 1);
+    const dur = mora * (v === 'n' ? 0.8 : 1);
+    // `n` is the lips-shut shape. A ん before a bilabial already supplies it.
+    const closed = BILABIAL.test(ch) && out[out.length - 1]?.v !== 'n';
+    if (closed) {
+      const shut = Math.min(CLOSURE, dur * 0.4);
+      out.push({ v: 'n', t, dur: shut });
+      out.push({ v, t: t + shut, dur: dur - shut });
+    } else {
+      out.push({ v, t, dur });
+    }
+    t += dur;
   }
   return { events: out, breaks, duration: t };
 }
@@ -328,12 +346,22 @@ export class Mouth {
       this.time += dt;
       const PRE = 0.045;
       const POST = 0.055;
-      for (const ev of this.track.events) {
+      const events = this.track.events;
+      for (let i = 0; i < events.length; i++) {
+        const ev = events[i];
+        // Back-to-back events of one shape would max-merge into a held vowel.
+        // Dropping the lead-in and the tail between them lets the target dip.
+        const prev = events[i - 1];
+        const next = events[i + 1];
+        const pre =
+          prev && prev.v === ev.v && Math.abs(prev.t + prev.dur - ev.t) < ADJACENT ? 0 : PRE;
+        const post =
+          next && next.v === ev.v && Math.abs(ev.t + ev.dur - next.t) < ADJACENT ? 0 : POST;
         const rel = this.time - ev.t;
-        if (rel < -PRE || rel > ev.dur + POST) continue;
+        if (rel < -pre || rel > ev.dur + post) continue;
         // Attack into the mora, release out of it; overlapping events blend.
-        const a = Math.min(1, Math.max(0, (rel + PRE) / 0.06));
-        const r = Math.min(1, Math.max(0, (ev.dur + POST - rel) / 0.075));
+        const a = Math.min(1, Math.max(0, (rel + pre) / 0.06));
+        const r = Math.min(1, Math.max(0, (ev.dur + post - rel) / 0.075));
         target[ev.v] = Math.max(target[ev.v] ?? 0, Math.min(a, r));
       }
       // Adjacent morae overlap during the crossfade. Two vowel shapes at full
