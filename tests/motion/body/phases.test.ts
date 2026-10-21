@@ -115,7 +115,7 @@ describe('gesture slot phase clock', () => {
         const incoming: GestureDef = {
           label: { en: 'Incoming', ja: '次のポーズ' },
           group: 'pose',
-          lead: 0.1,
+          lead: 0.2,
           hold: 1,
           build(t, _v, phase?: GesturePhase) {
             incomingSamples.push({ t, phase: phase ? { ...phase } : undefined, movement: 0 });
@@ -152,9 +152,42 @@ describe('gesture slot phase clock', () => {
         .find((sample) => sample.phase && sample.phase.held > oldBefore);
       expect(oldAfter).toBeDefined();
       if (interruption === 'handoff') {
-        expect(incomingSamples[0]?.phase?.entrance).toBeCloseTo(DT / 0.1, 10);
+        expect(incomingSamples[0]?.phase?.entrance).toBeCloseTo(DT / 0.2, 10);
         expect(incomingSamples[0]?.phase?.held).toBe(0);
       }
     },
   );
+});
+
+describe('subfloor authored phase clock', () => {
+  it('uses the actual entrance for phase and starts held time only after it ends', () => {
+    const h = harness();
+    h.rig.limitsEnabled = false;
+    const samples: BuildSample[] = [];
+    const def: GestureDef = {
+      label: { en: 'Short entrance', ja: '短い入り' },
+      group: 'pose',
+      lead: 0,
+      hold: 2,
+      sustain: true,
+      build(t, _v, phase) {
+        samples.push({ t, phase: phase ? { ...phase } : undefined, movement: 0 });
+        return {};
+      },
+    };
+    h.body.playDef(def, 'subfloor');
+    const slot = h.body.gesture;
+    if (!slot) throw new Error('gesture did not start');
+    expect(slot.lead).toBeGreaterThan(0);
+    samples.length = 0;
+    for (let frame = 0; frame < 20; frame++) step(h);
+    expect(samples.some((sample) => sample.phase && sample.phase.entrance < 1)).toBe(true);
+    expect(samples.some((sample) => sample.phase && sample.phase.held > 0)).toBe(true);
+    for (const sample of samples) {
+      if (!sample.phase) throw new Error('missing phase');
+      const elapsed = sample.t / slot.speed;
+      expect(sample.phase.entrance).toBeCloseTo(Math.min(1, elapsed / slot.lead), 10);
+      expect(sample.phase.held).toBeCloseTo(Math.max(0, elapsed - slot.lead) * slot.speed, 10);
+    }
+  });
 });

@@ -283,13 +283,17 @@ describe('spine switch envelope', () => {
     for (const angle of track(h, 30, headAngle)) expect(angle).toBeCloseTo(0.2, 10);
   });
 
-  it('accepts an instantaneous entrance without a non-finite spine rotation', () => {
+  it('accepts a zero lead without a non-finite spine rotation, entering over the floor', () => {
     const h = held(0.2);
     h.body.playDef(headPose(0.1, 0), 'instant');
-    for (const angle of track(h, 5, headAngle)) {
+    const seen = track(h, 30, headAngle);
+    for (const angle of seen) {
       expect(Number.isFinite(angle)).toBe(true);
-      expect(angle).toBeCloseTo(0.1, 10);
+      expect(angle).toBeGreaterThanOrEqual(0.1 - 1e-10);
+      expect(angle).toBeLessThanOrEqual(0.2 + 1e-10);
     }
+    expect(seen[0]).toBeGreaterThan(0.1 + 1e-3);
+    expect(seen.at(-1)).toBeCloseTo(0.1, 10);
   });
 
   it('advances an outgoing pose once per frame and retires it after stopping during a long switch', () => {

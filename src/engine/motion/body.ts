@@ -19,7 +19,7 @@ import type {
 } from '../types';
 import { ReachAnchors } from './anchors';
 import { claspMeasure, claspSpread } from './clasp';
-import { gestureDef } from './custom';
+import { gestureDef, SPINE_SLOTS } from './custom';
 import { FingerLife } from './finger-life';
 import { DirFollower, OMEGA_PER_RATE, ScalarFollower } from './follow';
 import { CharacterFrame, sideMirror } from './frame';
@@ -147,6 +147,15 @@ const ORDER_R: readonly Side[] = ['R', 'L'];
  * that something is machine-driven — people take longer over longer reaches.
  */
 const LEAD_PER_RAD = 0.32;
+
+/**
+ * Shortest entrance any playback gets: `nod`'s, the briefest the built-in table
+ * uses, so no built-in moves. A loaded motion may state 0, and spine offsets
+ * have no follower — a zero lead there is a one-frame snap in and out.
+ * Measured zero-lead head handoff: 0.2 to 0.1 radians in its first 60 Hz frame.
+ * The nod-derived floor needs a render check.
+ */
+const LEAD_FLOOR = 0.12;
 
 /**
  * A fingertip aim as a caller states it: angles in **degrees**, because the
@@ -544,6 +553,8 @@ export class Body {
   /** `_armVec` before breathing and drift, which is what a child link is carried by. */
   private _armBlend: Record<Side, Record<ArmSlot, THREE.Vector3>>;
   private readonly _carryDir = new THREE.Vector3();
+  private readonly _spineTravel = new THREE.Vector3();
+  private readonly _spineFrom = new THREE.Vector3();
   private readonly _carryQ = new THREE.Quaternion();
   private _armState: Record<Side, Record<ArmSlot, DirFollower>>;
   private _fingerSpec: Record<Side, Record<FingerName, number>>;
@@ -1103,7 +1114,7 @@ export class Body {
     // entrance stops reading as deliberate and starts reading as slow,
     // however far the arm has to go. The authored lead remains a floor — doze
     // deliberately takes 1.5 seconds so its entrance reads as falling asleep.
-    const lead = Math.max(def.lead, Math.min(0.95, this.travel(def, v) * LEAD_PER_RAD));
+    const lead = Math.max(def.lead, LEAD_FLOOR, Math.min(0.95, this.travel(def, v) * LEAD_PER_RAD));
     for (const f of this._spineFading) f.spineStart = f.spineWeight;
     for (const f of this._fading) for (const slot of ARM_SLOTS) f.armStart[slot] = f.armW[slot];
     while (this._fading.length > MAX_FADING) this.foldFading();
@@ -1134,10 +1145,23 @@ export class Body {
     this._exiting = false;
   }
 
-  /** Largest angle any arm has to cover to reach the gesture's opening pose. */
+  /** Largest angle any arm link or spine slot has to cover to reach the gesture's opening pose. */
   private travel(def: GestureDef, v: GestureVariation): number {
     const pose = def.build(0, v, PROBE_PHASE);
     let worst = 0;
+    // The spine on screen is the outgoing slots' offsets at their weights.
+    for (const slot of SPINE_SLOTS) {
+      const d = this._spineTravel.set(0, 0, 0);
+      const to = pose.spine?.[slot];
+      if (to) d.set(to[0], to[1], to[2]);
+      for (const f of this._spineFading) {
+        const from = (f.pose ?? f.g.def.build(f.g.time * f.g.speed, f.g.v, f.g.phase)).spine?.[
+          slot
+        ];
+        if (from) d.addScaledVector(this._spineFrom.fromArray(from), -f.spineWeight);
+      }
+      worst = Math.max(worst, d.length());
+    }
     for (const side of SIDES) {
       const mirror = sideMirror(side);
       this._probeReach[side].swivelDir.set(0, 0, 0);
