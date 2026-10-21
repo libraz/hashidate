@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { FingerName, Profile, Side } from '../types';
+import { FINGER_NAMES } from '../types';
 import { ScalarFollower } from './follow';
 
 /**
@@ -21,8 +22,6 @@ import { ScalarFollower } from './follow';
  * drags its neighbours part of the way whatever their curl, and lets them go once
  * it arrives.
  */
-
-const FINGERS: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
 
 /** Curl the idle drift can add either way, at full slack. About five degrees at the knuckle. */
 const DRIFT = 0.05;
@@ -291,7 +290,7 @@ export class FingerLife {
   ): number {
     const s = slack(curl) * amount;
     if (s <= 0) return 0;
-    const i = FINGERS.indexOf(f);
+    const i = FINGER_NAMES.indexOf(f);
     // Neighbouring fingers drift near but not in step; a hand whose fingers
     // move together reads as one part flexing.
     const ph = i * 0.7 + (side === 'L' ? 0 : 2.3);
@@ -328,11 +327,11 @@ export class FingerLife {
       };
       this._shadow[side] = shadow;
     }
-    for (const f of FINGERS) _pending[f] = target[f] - shadow[f].step(target[f], dt, rate(f));
+    for (const f of FINGER_NAMES) _pending[f] = target[f] - shadow[f].step(target[f], dt, rate(f));
     if (amount <= 0) return;
-    for (const f of FINGERS) {
+    for (const f of FINGER_NAMES) {
       let c = 0;
-      for (const g of FINGERS) c += (ENSLAVE[f][g] ?? 0) * (_pending[g] - _pending[f]);
+      for (const g of FINGER_NAMES) c += (ENSLAVE[f][g] ?? 0) * (_pending[g] - _pending[f]);
       // Dragged, never past the free range: curl 1 is the top of it.
       target[f] = THREE.MathUtils.clamp(target[f] + amount * c, 0, 1);
     }

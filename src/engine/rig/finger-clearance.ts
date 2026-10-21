@@ -10,8 +10,9 @@ import * as THREE from 'three';
 import type { ArmAnatomy } from '../anatomy';
 import { JOINTS } from '../anatomy';
 import type { FingerSpec, Profile, Side } from '../types';
+import { FINGER_NAMES } from '../types';
 import { FINGER_TIP_EXTENSION } from './hand-geometry';
-import { FINGER_NAMES, type Hands } from './hands';
+import type { Hands } from './hands';
 
 const _hfY = new THREE.Vector3();
 const _hfZ = new THREE.Vector3();

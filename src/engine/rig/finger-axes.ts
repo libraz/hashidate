@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { restPalmNormals } from '../anatomy/palm-frame';
-import type { FingerName, Profile, Side } from '../types';
+import { FINGER_NAMES, type Profile, type Side } from '../types';
 
 /**
  * Finger hinge axes, derived from the rest pose.
@@ -11,8 +11,6 @@ import type { FingerName, Profile, Side } from '../types';
  */
 
 const SIDES: readonly Side[] = ['L', 'R'];
-const FINGERS: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
-
 /** What the rig keeps from the rest-pose hand. */
 export interface FingerAxes {
   /** Curl axis per finger bone, in that bone's own space. */
@@ -67,7 +65,7 @@ export function solveFingerAxes(p: Profile): FingerAxes {
       else towardLittle = null;
     }
 
-    for (const f of FINGERS) {
+    for (const f of FINGER_NAMES) {
       const chain = fingerBones[`${f}.${side}`];
       if (!chain) continue;
       for (let i = 0; i < chain.length; i++) {

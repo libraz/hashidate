@@ -104,6 +104,7 @@ export type {
   VisemeName,
   VrmEmotionName,
 } from './primitives';
+export { FINGER_NAMES } from './primitives';
 export type {
   ArkitSupport,
   ArmTwistBinding,

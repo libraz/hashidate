@@ -15,6 +15,7 @@ import type {
   SpineSlot,
   Vec3Tuple,
 } from '../types';
+import { FINGER_NAMES } from '../types';
 import { slerpDir } from './follow';
 import { GESTURES, isBuiltInGestureName } from './gestures';
 
@@ -102,7 +103,6 @@ export interface MotionDef {
 }
 
 const ARM_SLOTS: ArmSlot[] = ['shoulder', 'upperArm', 'lowerArm', 'hand'];
-const FINGER_NAMES: FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
 /** The spine chain root to head, the order every per-slot walk takes. */
 export const SPINE_SLOTS: readonly SpineSlot[] = ['hips', 'spine', 'chest', 'neck', 'head'];
 const SIDES: Side[] = ['L', 'R'];

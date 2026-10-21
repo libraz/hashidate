@@ -14,6 +14,9 @@ export type Side = 'L' | 'R';
 
 export type FingerName = 'thumb' | 'index' | 'middle' | 'ring' | 'little';
 
+/** Every finger, thumb first: the order each per-finger walk takes. */
+export const FINGER_NAMES: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
+
 /** A finger chain, keyed as it is stored on the profile. */
 export type FingerKey = `${FingerName}.${Side}`;
 

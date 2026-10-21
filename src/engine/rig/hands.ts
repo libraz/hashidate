@@ -1,6 +1,13 @@
 import * as THREE from 'three';
 import { fingerCurl } from '../anatomy';
-import type { FingerName, FingerSpec, JointTable, Profile, Side } from '../types';
+import {
+  FINGER_NAMES,
+  type FingerName,
+  type FingerSpec,
+  type JointTable,
+  type Profile,
+  type Side,
+} from '../types';
 import { solveFingerAxes } from './finger-axes';
 
 /**
@@ -14,8 +21,14 @@ import { solveFingerAxes } from './finger-axes';
 
 const _q = new THREE.Quaternion();
 
-/** Every finger, thumb first: the order each per-finger walk takes. */
-export const FINGER_NAMES: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
+/** A fresh all-zero value per finger, keys in `FINGER_NAMES` order. */
+export const mkFingerSpread = (): Record<FingerName, number> => ({
+  thumb: 0,
+  index: 0,
+  middle: 0,
+  ring: 0,
+  little: 0,
+});
 
 /** Compose the bind rotation with the same optional splay-then-curl order everywhere. */
 export function composeFingerRotation(

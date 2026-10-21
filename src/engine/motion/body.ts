@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { ArmSolution } from '../rig';
+import { mkFingerSpread } from '../rig/hands';
 import type { Rig, StandingArmPose } from '../rig/rig';
 import type {
   ArmSlot,
@@ -15,6 +16,7 @@ import type {
   SpineOffsets,
   Vec3Tuple,
 } from '../types';
+import { FINGER_NAMES } from '../types';
 import { type HandControls, ReachAnchors } from './anchors';
 import { ArmTransaction } from './arm-transaction';
 import { claspMeasure, claspSpread } from './clasp';
@@ -49,7 +51,6 @@ const ARM_PARENT: Partial<Record<ArmSlot, 'upperArm' | 'lowerArm'>> = {
   lowerArm: 'upperArm',
   hand: 'lowerArm',
 };
-const FINGER_NAMES: FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
 
 /**
  * Idle drift grows toward the extremity: a shoulder barely moves, a hand is
@@ -338,14 +339,6 @@ const claspCurl = (follower: boolean, f: FingerName, pv: number, k: number): num
   const from = follower && f === 'thumb' ? OPEN_HAND.thumb : pv;
   return from + (OPEN_HAND[f] - from) * k;
 };
-
-const mkFingerSpread = (): Record<FingerName, number> => ({
-  thumb: 0,
-  index: 0,
-  middle: 0,
-  ring: 0,
-  little: 0,
-});
 
 const mkFingerSpreadState = (): Record<FingerName, ScalarFollower> => ({
   thumb: new ScalarFollower(0),

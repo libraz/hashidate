@@ -12,6 +12,7 @@ import type {
   Side,
   Vec3Tuple,
 } from '../types';
+import { FINGER_NAMES } from '../types';
 import { ArmChain } from './arm-chain';
 import type { ArmConfiguration, ArmForwardContext, ArmForwardResult } from './arm-configuration';
 import {
@@ -32,7 +33,7 @@ import {
   sampleHandContact,
   sampleHandGeometry,
 } from './hand-geometry';
-import { FINGER_NAMES, Hands } from './hands';
+import { Hands } from './hands';
 import { GroundedLegs } from './legs';
 import { type PointRequest, PointSolver } from './point';
 import type { ArmSolution, ReachLinks } from './reach';

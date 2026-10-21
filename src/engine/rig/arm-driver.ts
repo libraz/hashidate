@@ -4,6 +4,7 @@ import type { FaceSurfaceSample } from '../anatomy/face';
 import { TORSO_SAMPLES } from '../anatomy/joints';
 import type { BodyClearance, BodyVolumeFrame } from '../anatomy/volumes';
 import type { FingerName, FingerSpec, JointTable, Profile, Side } from '../types';
+import { FINGER_NAMES } from '../types';
 import {
   type ArmCalibration,
   type ArmConfiguration,
@@ -29,7 +30,6 @@ import {
 } from './arm-path';
 import { captureHandGeometry, type HandGeometryCalibration } from './hand-geometry';
 
-const FINGERS: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
 export const FRAME_TOLERANCE = 1e-4;
 /**
  * How fast the limiter's own correction may travel, in radians a second.
@@ -66,7 +66,7 @@ const makeSpec = (): Record<FingerName, number> => ({
 });
 
 function copySpec(source: FingerSpec, target: Record<FingerName, number>): void {
-  for (const finger of FINGERS) target[finger] = source[finger] ?? 0;
+  for (const finger of FINGER_NAMES) target[finger] = source[finger] ?? 0;
 }
 
 /** Return the common scale only when this affine world frame is a proper similarity. */

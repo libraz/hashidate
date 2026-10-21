@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { fingerCurl } from '../anatomy';
 import type { FingerName, FingerSpec, HandContact, JointTable, Profile, Side } from '../types';
+import { FINGER_NAMES } from '../types';
 import { cloneJointTable } from './arm-configuration';
-import { composeFingerRotation, FINGER_NAMES } from './hands';
+import { composeFingerRotation } from './hands';
 
 /** The virtual fingertip carries this much of the final bone past the last joint. */
 export const FINGER_TIP_EXTENSION = 0.75;

@@ -8,22 +8,15 @@ import {
 import type { ArmDriver } from '../rig/arm-driver';
 import { type ArmPathPlanOutput, configurationFromQ } from '../rig/arm-path';
 import { ArmRoute, clampToBox, validationSamples } from '../rig/arm-route';
-import { FINGER_NAMES } from '../rig/hands';
+import { mkFingerSpread } from '../rig/hands';
 import type { Rig } from '../rig/rig';
 import type { ArmSlot, FingerName, FingerSpec, Side, Vec3Tuple } from '../types';
+import { FINGER_NAMES } from '../types';
 import type { ScalarFollower } from './follow';
 import { type CharacterFrame, sideMirror } from './frame';
 import type { ArmResolver } from './resolve';
 
 const SIDES: readonly Side[] = ['L', 'R'];
-
-const mkFingerSpread = (): Record<FingerName, number> => ({
-  thumb: 0,
-  index: 0,
-  middle: 0,
-  ring: 0,
-  little: 0,
-});
 
 /** What one frame's constrained arm commit spent. */
 interface ArmFrameWork {

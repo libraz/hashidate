@@ -13,6 +13,7 @@ import type {
   Vocabulary,
   Voice,
 } from '../types';
+import { FINGER_NAMES } from '../types';
 
 /**
  * What the session can be asked *about*, rather than asked to do.
@@ -94,7 +95,7 @@ export function describe(d: Director, { wardrobe, voice, scenery }: VocabularyCo
       azimuth: [-120, 120],
       elevation: [-70, 110],
       extent: [0.1, 1],
-      finger: ['thumb', 'index', 'middle', 'ring', 'little'],
+      finger: [...FINGER_NAMES],
       note: {
         en: "azimuth 0 is straight ahead, positive toward the character's own right. elevation 0 is shoulder height. extent is a fraction of the arm's full reach.",
         ja: 'azimuth 0 = 正面、+ がキャラクターから見て右。elevation 0 = 肩の高さ。extent は腕の全長に対する割合',
