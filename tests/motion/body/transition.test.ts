@@ -1,7 +1,11 @@
 import * as THREE from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FINGER_WIDTH, JOINTS } from '@/engine/anatomy';
+import { Body } from '@/engine/motion/body';
+import { buildProfile } from '@/engine/profile';
+import { Rig } from '@/engine/rig';
 import type { JointReading, Side } from '@/engine/types';
+import { buildRig } from '../../helpers/scene';
 import { DT, fingerDepth, type Harness, harness } from './harness';
 
 /**
@@ -40,6 +44,46 @@ function across<T = JointReading[]>(
 
 const reading = (frame: JointReading[], id: string) => frame.find((r) => r.id === id);
 
+/** Signed wrist deviation from the actual hand, forearm, and finger-bone directions. */
+function actualWristDeviation(h: Harness): number {
+  const lower = h.profile.bones['lowerArm.R'];
+  const hand = h.profile.bones['hand.R'];
+  const middle = h.profile.fingerBones['middle.R']?.[0];
+  const index = h.profile.fingerBones['index.R']?.[0];
+  const little = h.profile.fingerBones['little.R']?.[0];
+  if (!(lower && hand && middle && index && little))
+    throw new Error('synthetic rig is missing wrist-oracle bones');
+
+  const unit = (vector: THREE.Vector3, label: string): THREE.Vector3 => {
+    const lengthSq = vector.lengthSq();
+    if (
+      !([vector.x, vector.y, vector.z].every(Number.isFinite) && Number.isFinite(lengthSq)) ||
+      lengthSq <= 1e-12
+    ) {
+      throw new Error(`wrist oracle has degenerate ${label}`);
+    }
+    return vector.normalize();
+  };
+  const world = (bone: THREE.Object3D): THREE.Vector3 => {
+    bone.updateWorldMatrix(true, false);
+    return bone.getWorldPosition(new THREE.Vector3());
+  };
+  const lowerToHand = unit(world(hand).sub(world(lower)), 'forearm direction');
+  const handToMiddle = unit(world(middle).sub(world(hand)), 'middle finger direction');
+  const across = world(index).sub(world(little));
+  const palmNormal = unit(handToMiddle.clone().cross(across), 'palm normal');
+  const radial = unit(palmNormal.clone().cross(lowerToHand), 'wrist radial direction');
+  if (radial.dot(across) < 0) radial.negate();
+
+  const cosine = THREE.MathUtils.clamp(lowerToHand.dot(handToMiddle), -1, 1);
+  const tangent = handToMiddle.clone().addScaledVector(lowerToHand, -cosine);
+  const sine = tangent.length();
+  const angle = Math.atan2(sine, cosine);
+  const deviation = sine === 0 ? 0 : angle * tangent.normalize().dot(radial);
+  if (!Number.isFinite(deviation)) throw new Error('wrist oracle produced a non-finite deviation');
+  return deviation;
+}
+
 describe('the path between two poses', () => {
   beforeEach(() => {
     // One-handed poses pick their hand at random; these are written for the right.
@@ -77,15 +121,16 @@ describe('the path between two poses', () => {
     expect(Math.max(...depth)).toBeLessThan(half);
   });
 
-  it('clears the fingers by no more turn of the hand than a wrist deviates comfortably', () => {
+  it('keeps the legacy clearance correction below the comfortable wrist deviation', () => {
     const { free } = JOINTS.wrist.dofs.deviation;
     const h = harness();
+    h.rig.limitsEnabled = false;
     const hand = h.profile.bones['hand.R'];
     if (!hand) throw new Error('rig incomplete');
-    const curl = h.rig.curlHand.bind(h.rig);
+    const curl = h.rig.curlHandLegacy.bind(h.rig);
     const before = new THREE.Quaternion();
     let worst = 0;
-    h.rig.curlHand = (side, spec, spread) => {
+    h.rig.curlHandLegacy = (side, spec, spread) => {
       before.copy(hand.quaternion);
       curl(side, spec, spread);
       if (side === 'R') worst = Math.max(worst, before.angleTo(hand.quaternion));
@@ -102,6 +147,54 @@ describe('the path between two poses', () => {
     expect(worst).toBeGreaterThan(1e-3);
     expect(worst).toBeLessThanOrEqual(free[1] - free[0] + 1e-6);
   });
+
+  it('keeps the constrained hand clear of the face within the signed wrist limits', () => {
+    const h = harness();
+    h.rig.limitsEnabled = true;
+    expect(h.rig.limitsEnabled).toBe(true);
+    expect(h.rig.armDriver('R')).not.toBeNull();
+    const hand = h.profile.bones['hand.R'];
+    if (!hand) throw new Error('rig incomplete');
+
+    const step = () => {
+      h.rig.reset();
+      h.body.update(DT);
+    };
+    step();
+    h.body.play('listen');
+    for (let i = 0; i < 180; i++) step();
+
+    hand.updateWorldMatrix(true, false);
+    const heldWorldOrientation = hand.getWorldQuaternion(new THREE.Quaternion());
+    const clearance = h.rig.fingerClearance('R');
+    expect(clearance).toBeGreaterThan(0);
+    const [minimumDeviation, maximumDeviation] = h.rig.joints.wrist.dofs.deviation.max;
+    const transitionCommits = vi.spyOn(h.rig, 'commitArmFrame');
+    let greatestHandTurn = 0;
+
+    h.body.play('cover');
+    for (let i = 0; i < 60; i++) {
+      step();
+      const deviation = actualWristDeviation(h);
+      expect(Number.isFinite(deviation)).toBe(true);
+      expect(deviation).toBeGreaterThanOrEqual(minimumDeviation - 1e-6);
+      expect(deviation).toBeLessThanOrEqual(maximumDeviation + 1e-6);
+      expect(fingerDepth(h, 'R')).toBeLessThan(clearance);
+
+      hand.updateWorldMatrix(true, false);
+      const currentWorldOrientation = hand.getWorldQuaternion(new THREE.Quaternion());
+      greatestHandTurn = Math.max(
+        greatestHandTurn,
+        heldWorldOrientation.angleTo(currentWorldOrientation),
+      );
+    }
+    expect(
+      transitionCommits.mock.results.some(
+        (result) => result.type === 'return' && result.value === true,
+      ),
+    ).toBe(true);
+    expect(greatestHandTurn).toBeGreaterThan(1e-3);
+  });
 });
 
 describe('the humerus under a bent elbow', () => {
@@ -113,21 +206,33 @@ describe('the humerus under a bent elbow', () => {
   });
 
   it('turns with the arm so the elbow folds about its own hinge', () => {
-    const h = harness();
-    const upper = h.profile.bones['upperArm.R'];
-    const lower = h.profile.bones['lowerArm.R'];
-    const hand = h.profile.bones['hand.R'];
-    const chest = h.profile.bones.chest ?? h.profile.bones.spine;
-    if (!(upper && lower && hand && chest && h.profile.body)) throw new Error('rig incomplete');
+    const built = buildRig();
+    built.root.updateMatrixWorld(true);
+    const profile = buildProfile(built.root, built.descriptor);
+    const rig = new Rig(profile);
+    const upper = profile.bones['upperArm.R'];
+    const lower = profile.bones['lowerArm.R'];
+    const hand = profile.bones['hand.R'];
+    const chest = profile.bones.chest ?? profile.bones.spine;
+    if (!(upper && lower && hand && chest && profile.body)) throw new Error('rig incomplete');
     const wp = (b: THREE.Object3D) => b.getWorldPosition(new THREE.Vector3());
     // The front of the arm at rest, carried in the bone: the way an elbow folds.
-    h.profile.root?.updateMatrixWorld(true);
     const q0 = upper.getWorldQuaternion(new THREE.Quaternion());
     const along0 = wp(lower).sub(wp(upper)).normalize();
-    const front = h.profile.body.forward
+    const front = profile.body.forward
       .clone()
       .applyQuaternion(chest.getWorldQuaternion(new THREE.Quaternion()));
-    front.addScaledVector(along0, -front.dot(along0)).normalize().applyQuaternion(q0.invert());
+    front.addScaledVector(along0, -front.dot(along0));
+    expect([front.x, front.y, front.z].every(Number.isFinite)).toBe(true);
+    expect(front.length()).toBeGreaterThan(1e-6);
+    front.normalize().applyQuaternion(q0.invert());
+
+    const body = new Body(rig, profile);
+    body.breathDepth = 0;
+    body.idleAmount = 0;
+    body.weightShift = 0;
+    body.gazeAmount = 0;
+    const h = { body, profile, rig };
 
     const off: number[] = [];
     for (const g of ['listen', 'pointUp', 'sparkle', 'stretch', 'bothPeace']) {
