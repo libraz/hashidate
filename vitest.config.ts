@@ -12,7 +12,7 @@ export default defineConfig({
       // `lcov` is what Codecov reads; `html` is what a local run is looked at
       // in. The default set adds clover and json, which nothing here consumes.
       reporter: ['text', 'html', 'lcov'],
-      include: ['src/engine/**', 'src/protocol/**', 'src/server/hub.ts'],
+      include: ['src/engine/**', 'src/protocol/**', 'src/server/hub.ts', 'src/server/event-log.ts'],
     },
   },
 });

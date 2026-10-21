@@ -23,11 +23,14 @@ import type { CommandFate } from '../protocol/messages';
 import type { BgmSource } from './bgm';
 import { BgmCoordinator } from './bgm-state';
 import type { DeckSource } from './decks';
+import { EventLog } from './event-log';
 import { type RewindMode, TurnQueue } from './queue';
 import type { AppendResult, OpenOptions, RecordingStore } from './recordings';
 import { type Random, withSide } from './side';
 import type { SpeechSource } from './speech';
 import { Standing } from './standing';
+
+export { ECHO_SECONDS, EVENT_LOG_MAX } from './event-log';
 
 /**
  * Fan-out to connected viewers, plus the last state they reported.
@@ -36,13 +39,6 @@ import { Standing } from './standing';
  * and turn the result back into JSON, which keeps the interesting part — the
  * event log and the waiting — testable without a socket.
  */
-
-/**
- * How many events the log keeps. Long enough that a caller polling once a
- * second never misses one, short enough that a viewer left running overnight
- * does not grow the process.
- */
-export const EVENT_LOG_MAX = 512;
 
 /**
  * How long a reported state stays believable.
@@ -82,26 +78,6 @@ export const RECORD_FLUSH_SECONDS = 6.0;
 
 /** How long an owner-less live renderer may be absent before its take is closed. */
 export const RECORD_ORPHAN_SECONDS = 6.0;
-
-/**
- * How long an event already logged stays the same event when it arrives again.
- *
- * Every renderer reports what it did, and they are all doing the same thing —
- * so one line ending produces a `turn.end` per renderer, a fraction of a second
- * apart. Logged as they arrive, a queue of ten lines reads as thirty turns to
- * an orchestrator polling `/api/events`, and an LLM loop waiting for a line to
- * finish is woken once per renderer instead of once per line.
- *
- * Turn lifecycle events are not timed at all: a turn id names one line once —
- * the queue mints a fresh one for a line put back by a rewind — so its start,
- * end and interrupt are each kept once however far apart renderers report them.
- * See `acceptedTurnEvents`. This window is for the rest: a drop names a set of
- * lines, and the same set can be dropped again later.
- */
-export const ECHO_SECONDS = 2.0;
-
-/** The turn lifecycle events matched by id rather than by `ECHO_SECONDS`. */
-const TURN_EVENTS = new Set<SessionEvent['type']>(['turn.start', 'turn.end', 'turn.interrupted']);
 
 /** The verbs that act on the server's queue, and are applied to it before any renderer. */
 const QUEUE_VERBS = new Set<Command['cmd']>(['say', 'queue', 'clear', 'interrupt']);
@@ -170,32 +146,6 @@ function now(): number {
   return Date.now() / 1000;
 }
 
-/**
- * What an event is about, or null when it is about nothing in particular.
- *
- * Turn lifecycle events, drops and inline cue fires name something worth
- * matching across renderers. `queue.empty` and `queue.replaced` say that a list
- * reached a state rather than that a thing happened to a line, so a second
- * renderer saying it too is left in the log. BGM cue ids are additionally kept
- * beyond the short echo window by `acceptedCueIds` below.
- */
-function eventSubject(event: SessionEvent): string | null {
-  if (event.type === 'cue.fire' && event.cueId !== undefined) {
-    return `cue:${event.cueId}`;
-  }
-  if (event.turn !== undefined) return `turn:${event.turn}`;
-  if (event.turns !== undefined) return `turns:${event.turns.join(',')}`;
-  return null;
-}
-
-/** Add a key to an arrival-ordered set, dropping the oldest past `EVENT_LOG_MAX`. */
-function remember(keys: Set<string>, key: string): void {
-  keys.add(key);
-  if (keys.size <= EVENT_LOG_MAX) return;
-  const oldest = keys.values().next().value;
-  if (oldest !== undefined) keys.delete(oldest);
-}
-
 export class Hub {
   // The original guarded every field here with a re-entrant lock and woke
   // waiters through a condition variable. Node runs one thread and nothing
@@ -210,14 +160,7 @@ export class Hub {
   /** Grace timers for lines whose last known owner disconnected. */
   private readonly onAirTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly waiters = new Set<Waiter>();
-  private readonly events: SessionEvent[] = [];
-  /**
-   * BGM cues are emitted by every renderer, so the event log's short echo
-   * window is not enough to keep a reload from applying one twice. Keep the
-   * accepted cue ids in arrival order and bound the memory like the event log.
-   */
-  private readonly acceptedCueIds = new Set<string>();
-  private seq = 0;
+  private readonly log = new EventLog();
   private state: Partial<SessionState> = {};
   private vocabulary: Partial<Vocabulary> = {};
   private voice: VoiceReport | null = null;
@@ -230,12 +173,6 @@ export class Hub {
   /** Last valid report, including avatar-only heartbeats. */
   private heartbeatAt = 0;
   private stateAt = 0;
-  /**
-   * `type:turn` keys of the lifecycle events already logged, in arrival order
-   * and bounded like the event log. See `ECHO_SECONDS`.
-   */
-  private readonly acceptedTurnEvents = new Set<string>();
-
   /**
    * The pending turns, and the authority on what they are. See `queue.ts`.
    *
@@ -516,14 +453,11 @@ export class Hub {
     }
     this.clearTurnOwners(turnId);
     const at = now();
-    this.seq += 1;
-    this.events.push({ type: 'turn.end', turn: turnId, interrupted: true, seq: this.seq, at });
+    this.log.append({ type: 'turn.end', turn: turnId, interrupted: true }, at);
     // The end this files stands for every renderer's, should one still arrive.
-    remember(this.acceptedTurnEvents, `turn.end:${turnId}`);
+    this.log.markFiled(`turn.end:${turnId}`);
     this.queue.complete(turnId, { interrupted: true });
-    if (this.events.length > EVENT_LOG_MAX) {
-      this.events.splice(0, this.events.length - EVENT_LOG_MAX);
-    }
+    this.log.trim();
     this.observeQueue();
     this.releaseHeld();
     this.wake();
@@ -557,38 +491,6 @@ export class Hub {
   }
 
   /**
-   * Whether another renderer already reported this. See `ECHO_SECONDS`.
-   *
-   * Normal events that name a turn or a set of them are matched here: those are
-   * the ones an orchestrator counts. Inline BGM cues take the stronger bounded
-   * id path in `routeBgmCue`. We scan all recent events about the subject so a
-   * coalesced [start, end] batch cannot hide an earlier same-type event behind
-   * the other type.
-   */
-  private isEcho(event: SessionEvent, at: number): boolean {
-    if (TURN_EVENTS.has(event.type) && event.turn !== undefined) {
-      const key = `${event.type}:${event.turn}`;
-      if (this.acceptedTurnEvents.has(key)) return true;
-      remember(this.acceptedTurnEvents, key);
-      return false;
-    }
-    const subject = eventSubject(event);
-    if (subject === null) return false;
-    for (let i = this.events.length - 1; i >= 0; i -= 1) {
-      const logged = this.events[i];
-      if (eventSubject(logged) !== subject) continue;
-      // A renderer may coalesce [start, end] while another renderer reports
-      // those events separately. Compare both subject *and* type across the
-      // whole short window; looking only at the newest subject lets the
-      // different event type in the batch hide its own duplicate.
-      if (logged.type === event.type && Math.abs(at - (logged.at ?? 0)) < ECHO_SECONDS) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /**
    * Route one inline BGM cue from an audible renderer.
    *
    * A muted preview still runs the same session clock and therefore still
@@ -612,12 +514,10 @@ export class Hub {
     }
 
     const { cueId, cue } = event;
-    if (this.acceptedCueIds.has(cueId)) return true;
-    remember(this.acceptedCueIds, cueId);
+    if (!this.log.claimCue(cueId)) return true;
 
     const at = event.at ?? now();
-    this.seq += 1;
-    this.events.push({ ...event, seq: this.seq, at });
+    this.log.append(event, at);
 
     const command: Command =
       cue.action === 'set'
@@ -640,8 +540,7 @@ export class Hub {
    */
   private foldCue(event: SessionEvent): void {
     if (event.cueId === undefined || event.cue === undefined) return;
-    if (this.acceptedCueIds.has(event.cueId)) return;
-    remember(this.acceptedCueIds, event.cueId);
+    if (!this.log.claimCue(event.cueId)) return;
     this.standing.recordCue(event.cue);
   }
 
@@ -1177,9 +1076,8 @@ export class Hub {
       // turn that has already been filed does not need filing again, and a
       // start already handed off must not fold its line a second time. See
       // `ECHO_SECONDS`.
-      if (this.isEcho(event, at)) continue;
-      this.seq += 1;
-      this.events.push({ ...event, seq: this.seq, at });
+      if (this.log.isEcho(event, at)) continue;
+      this.log.append(event, at);
       // A start is the hand-off from the server's pending list to the
       // renderer-owned on-air set, and the moment what the line leaves behind —
       // its stage and its mood — becomes the setup a later renderer is handed.
@@ -1206,15 +1104,13 @@ export class Hub {
         this.clearTurnOwners(event.turn);
       }
     }
-    if (this.events.length > EVENT_LOG_MAX) {
-      this.events.splice(0, this.events.length - EVENT_LOG_MAX);
-    }
+    this.log.trim();
     // After the events, because every one of them above can be the thing that
     // emptied the queue. See `considerTail`.
     this.observeQueue(previousWork);
     this.releaseHeld();
     this.wake();
-    return this.seq;
+    return this.log.seq;
   }
 
   snapshot(since?: number): Snapshot {
@@ -1223,10 +1119,10 @@ export class Hub {
     return {
       connected: this.clients.size > 0 && heartbeatFresh,
       viewers: this.clients.size,
-      seq: this.seq,
+      seq: this.log.seq,
       state: stateFresh ? this.state : {},
       vocabulary: this.vocabulary,
-      events: since === undefined ? [...this.events] : this.since(since),
+      events: since === undefined ? this.log.entries() : this.since(since),
       avatar: this.avatar,
       // Not gated on `fresh`, unlike the state above. A stale state is a lie
       // about what the avatar is doing right now; the chain and the queue are
@@ -1300,7 +1196,7 @@ export class Hub {
   }
 
   private since(seq: number): SessionEvent[] {
-    return this.events.filter((event) => (event.seq ?? 0) > seq);
+    return this.log.since(seq);
   }
 
   private wake(): void {
