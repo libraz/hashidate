@@ -50,6 +50,18 @@ export interface BodyFrame {
   span?: number | null;
 }
 
+type ArmTwistSlot = 'upperArm.L' | 'upperArm.R' | 'lowerArm.L' | 'lowerArm.R';
+
+/** A validated auxiliary bone beside one canonical arm link. */
+export interface ArmTwistBinding {
+  /** The canonical arm bone that owns both children. */
+  primary: THREE.Bone;
+  /** The next canonical joint in the arm chain. */
+  next: THREE.Bone;
+  /** The direct leaf helper recognized from the avatar's bone names. */
+  helper: THREE.Bone;
+}
+
 export interface BlinkShapes {
   both: string | null;
   L: string | null;
@@ -99,4 +111,6 @@ export interface Profile {
   gaze: GazeLimits;
   /** Present only where the avatar overrides the human joint table. */
   anatomy?: JointTable;
+  /** Validated arm twist helpers, present only when the rig supplies any. */
+  armTwists?: Partial<Record<ArmTwistSlot, ArmTwistBinding>>;
 }

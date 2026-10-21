@@ -104,6 +104,7 @@ export type {
 } from './primitives';
 export type {
   ArkitSupport,
+  ArmTwistBinding,
   BlinkShapes,
   BodyFrame,
   FaceFrame,

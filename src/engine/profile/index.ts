@@ -15,6 +15,7 @@ import type * as THREE from 'three';
 import { same } from '../../i18n/locale';
 import { buildBodyFrame } from '../anatomy';
 import type { AvatarDescriptor, BlinkShapes, Profile, VisemeName, VrmEmotionName } from '../types';
+import { resolveArmTwists } from './arm-twists';
 import {
   buildRestDirections,
   collectBones,
@@ -53,6 +54,8 @@ export function buildProfile(
   const missing: string[] = [];
   const { value: bones, missing: boneGaps } = resolveBones(bonesByName, avatar.bones);
   missing.push(...boneGaps);
+  const { value: armTwists, missing: armTwistGaps } = resolveArmTwists(bonesByName, bones);
+  missing.push(...armTwistGaps);
 
   const { value: fingerBones, missing: fingerGaps } = resolveFingers(bonesByName, avatar.fingers);
   missing.push(...fingerGaps);
@@ -151,6 +154,7 @@ export function buildProfile(
     // empty strings rather than loosening the type every consumer reads.
     avatar: { id: '', label: same(''), url: '', ...avatar },
     bones,
+    ...(Object.keys(armTwists).length > 0 ? { armTwists } : {}),
     fingerBones,
     morphTargets,
     faceMeshes,

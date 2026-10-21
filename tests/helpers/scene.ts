@@ -43,6 +43,8 @@ export interface RigOptions {
   fingerGeometry?: Partial<Record<FingerName, FingerGeometryOverride>>;
   /** Include the optional bilateral hip-to-toe leg chains. */
   legs?: boolean;
+  /** Include the optional bilateral arm twist helpers for profile resolution tests. */
+  armTwistHelpers?: 'twist' | 'rotate';
   /** Include eye bones. Without them the profile cannot build a face frame. */
   eyes?: boolean;
   /** Shape groups to write, as `[groupLabel, shapeNames]`. */
@@ -289,6 +291,21 @@ export function buildRig(opts: RigOptions = {}): SyntheticRig {
     const upper = add(naming.upperArm(side), clav, sign * S.clavicleOut, 0, 0);
     const lower = add(naming.lowerArm(side), upper, sign * S.upperArm, 0, 0);
     const hand = add(naming.hand(side), lower, sign * S.lowerArm, 0, 0);
+
+    if (opts.armTwistHelpers) {
+      const family = opts.armTwistHelpers === 'twist' ? 'twist' : 'Rotate';
+      const addHelper = (primary: THREE.Bone, next: THREE.Bone, name: string) => {
+        const helper = new THREE.Bone();
+        helper.name = name;
+        helper.position.copy(next.position);
+        if (opts.armTwistHelpers === 'rotate') helper.position.multiplyScalar(0.5);
+        helper.rotation.set(0.13, -0.19, 0.07);
+        primary.add(helper);
+        bones.set(name, helper);
+      };
+      addHelper(upper, lower, `UpperArm_${family}_${side}`);
+      addHelper(lower, hand, `LowerArm_${family}_${side}`);
+    }
 
     if (!fingers) continue;
     for (const [fi, f] of FINGERS.entries()) {
