@@ -15,6 +15,7 @@ import type {
   SpineSlot,
   Vec3Tuple,
 } from '../types';
+import { slerpDir } from './follow';
 import { GESTURES, isBuiltInGestureName } from './gestures';
 
 /**
@@ -83,7 +84,7 @@ export interface MotionDef {
   id: string;
   label: Localized;
   group: GestureGroup;
-  /** Seconds of entrance. A floor — the real lead scales with how far the arms travel. */
+  /** Seconds of entrance. A floor — the real lead scales with how far the arms and spine travel. */
   lead: number;
   /** Seconds held at full weight before the exit begins. */
   hold: number;
@@ -102,7 +103,8 @@ export interface MotionDef {
 
 const ARM_SLOTS: ArmSlot[] = ['shoulder', 'upperArm', 'lowerArm', 'hand'];
 const FINGER_NAMES: FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
-const SPINE_SLOTS: SpineSlot[] = ['hips', 'spine', 'chest', 'neck', 'head'];
+/** The spine chain root to head, the order every per-slot walk takes. */
+export const SPINE_SLOTS: readonly SpineSlot[] = ['hips', 'spine', 'chest', 'neck', 'head'];
 const SIDES: Side[] = ['L', 'R'];
 
 /** One authored value and the time at which it applies. */
@@ -136,20 +138,15 @@ const dir = (v: Vec3Tuple): THREE.Vector3 => new THREE.Vector3(v[0], v[1], v[2])
 const mix = (a: number, b: number, u: number): number => a + (b - a) * u;
 
 /**
- * Between two directions, staying a direction.
+ * Between two directions, along the arc. Samples are unit already (see `dir`).
  *
- * Normalise each endpoint before blending rather than slerping: the two are
- * visibly the same below a right angle, which is as far apart as two keyframes
- * of one limb ever are. At the exact midpoint of an opposed pair the component
- * blend cancels; keep the first endpoint there, which is wrong but is still a
- * deterministic direction rather than a zero vector.
+ * Fresh rather than scratch: the same motion can be playing in two gesture
+ * slots at once, and each slot's pose is read after both have been built.
  */
-const mixDir = (a: THREE.Vector3, b: THREE.Vector3, u: number): THREE.Vector3 => {
-  const from = a.clone().normalize();
-  const to = b.clone().normalize();
-  const blended = from.clone().lerp(to, u);
-  return blended.lengthSq() > 0 ? blended.normalize() : from.lengthSq() > 0 ? from : to;
-};
+const mixDir = (a: THREE.Vector3, b: THREE.Vector3, u: number): THREE.Vector3 =>
+  slerpDir(new THREE.Vector3(), a, b, u);
+
+const copyDir = (v: THREE.Vector3): THREE.Vector3 => v.clone();
 
 const mixTuple = (a: Vec3Tuple, b: Vec3Tuple, u: number): Vec3Tuple => [
   mix(a[0], b[0], u),
@@ -277,10 +274,10 @@ function armAt(tracks: ArmTracks, t: number): ArmDirections | null {
   if (!tracks.stated) return null;
   const out: ArmDirections = {};
   for (const slot of ARM_SLOTS) {
-    const value = sampleTrack(tracks.directions[slot], t, mixDir, (item) => item.clone());
+    const value = sampleTrack(tracks.directions[slot], t, mixDir, copyDir);
     if (value !== undefined) out[slot] = value;
   }
-  const palm = sampleTrack(tracks.directions.palm, t, mixDir, (item) => item.clone());
+  const palm = sampleTrack(tracks.directions.palm, t, mixDir, copyDir);
   if (palm !== undefined) out.palm = palm;
   const twist = sampleTrack(tracks.twist, t, mix);
   if (twist !== undefined) out.twist = twist;

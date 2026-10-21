@@ -3,6 +3,7 @@ import { HAND_CONTACT } from '../anatomy';
 import { BODY_ANCHORS, FACE_ANCHORS } from '../profile';
 import { handFrame, type Rig } from '../rig';
 import type { Profile, ReachSpec, Side, Vec3Tuple } from '../types';
+import { slerpDir } from './follow';
 import { type CharacterFrame, sideMirror } from './frame';
 
 /** Halvings that settle how far a target slides out of the face, below a finger's half-thickness. */
@@ -282,11 +283,11 @@ export class ReachAnchors {
       ? this._travelL.copy(mid).addScaledVector(anat.fwd, -2 * mid.dot(anat.fwd))
       : this.clearance(S, a, b, ra, rb);
     if (via) {
-      const p = slerp(this._travelP, a, via, e);
-      const q = slerp(this._travelQ, via, b, e);
-      slerp(a, p, q, e);
+      const p = slerpDir(this._travelP, a, via, e);
+      const q = slerpDir(this._travelQ, via, b, e);
+      slerpDir(a, p, q, e);
     } else {
-      slerp(a, a, b, e);
+      slerpDir(a, a, b, e);
     }
     target.copy(S).addScaledVector(a, ra + (rb - ra) * e);
   }
@@ -315,7 +316,7 @@ export class ReachAnchors {
     let need = 0;
     for (let i = 1; i < TRAVEL_SAMPLES; i++) {
       const t = i / TRAVEL_SAMPLES;
-      const on = slerp(this._travelP, a, b, t);
+      const on = slerpDir(this._travelP, a, b, t);
       const P = this._travelV.copy(S).addScaledVector(on, ra + (rb - ra) * t);
       if (anat.surface(P) <= 0) continue;
       // A control-point move shifts the curve at t by 2t(1-t) of itself.
@@ -330,27 +331,6 @@ export class ReachAnchors {
       }
     }
     if (need <= 0) return null;
-    return slerp(this._travelL, a, b, 0.5).add(push).normalize();
+    return slerpDir(this._travelL, a, b, 0.5).add(push).normalize();
   }
-}
-
-/**
- * Spherical interpolation of two unit vectors, into `out`.
- *
- * Nothing to swing through, or the two are opposed and every arc between them
- * is as good as any other: `from` is handed back as it stands, which is the
- * whole answer in the first case and no worse than a guess in the second.
- */
-function slerp(
-  out: THREE.Vector3,
-  from: THREE.Vector3,
-  to: THREE.Vector3,
-  e: number,
-): THREE.Vector3 {
-  const angle = Math.acos(THREE.MathUtils.clamp(from.dot(to), -1, 1));
-  const sin = Math.sin(angle);
-  if (sin <= 1e-6) return out.copy(from);
-  const wa = Math.sin((1 - e) * angle) / sin;
-  const wb = Math.sin(e * angle) / sin;
-  return out.copy(from).multiplyScalar(wa).addScaledVector(to, wb).normalize();
 }

@@ -45,7 +45,7 @@ export const OMEGA_PER_RATE = 3.89 / Math.LN10;
  * display; the exact step below uses that same expression evaluated at this
  * interval, which keeps the 50 Hz decay rate and makes every other rate match it.
  */
-const REF_DT = 1 / 50;
+export const REF_DT = 1 / 50;
 
 /** The rate the exact step must use so its response equals the tuned one at `REF_DT`. */
 function effectiveOmega(rate: number): number {
@@ -55,6 +55,43 @@ function effectiveOmega(rate: number): number {
 const _axis = new THREE.Vector3();
 const _step = new THREE.Vector3();
 const _perp = new THREE.Vector3();
+const _slerpAxis = new THREE.Vector3();
+
+/**
+ * A perpendicular to the unit vector `dir`, into `out`: the one every turn
+ * through an exactly opposed pair takes, so the choice is the same everywhere.
+ */
+function oppositionAxis(out: THREE.Vector3, dir: THREE.Vector3): THREE.Vector3 {
+  out.set(1, 0, 0);
+  if (Math.abs(dir.x) > 0.9) out.set(0, 1, 0);
+  return out.crossVectors(dir, out).normalize();
+}
+
+/**
+ * Spherical interpolation of two unit vectors, into `out`, which may be `from`.
+ *
+ * Along the arc rather than the chord: blending components and renormalising
+ * matches this below a right angle, and past one sweeps the middle of the span
+ * faster than its ends. An exactly opposed pair has no shortest arc, so it
+ * turns about `oppositionAxis` rather than stalling on `from` and flipping.
+ */
+export function slerpDir(
+  out: THREE.Vector3,
+  from: THREE.Vector3,
+  to: THREE.Vector3,
+  e: number,
+): THREE.Vector3 {
+  const c = THREE.MathUtils.clamp(from.dot(to), -1, 1);
+  const angle = Math.acos(c);
+  const sin = Math.sin(angle);
+  if (sin <= 1e-6) {
+    if (c > 0) return out.copy(from);
+    return out.copy(from).applyAxisAngle(oppositionAxis(_slerpAxis, from), e * Math.PI);
+  }
+  const wa = Math.sin((1 - e) * angle) / sin;
+  const wb = Math.sin(e * angle) / sin;
+  return out.copy(from).multiplyScalar(wa).addScaledVector(to, wb).normalize();
+}
 
 /**
  * A unit direction that follows a unit target.
@@ -93,9 +130,7 @@ export class DirFollower {
       // Exactly opposed. Every axis is a shortest rotation, so any perpendicular
       // will do — and one has to be chosen, because leaving the error at zero
       // parks the direction on the far side of the sphere permanently.
-      _perp.set(1, 0, 0);
-      if (Math.abs(this.dir.x) > 0.9) _perp.set(0, 1, 0);
-      ax.crossVectors(this.dir, _perp).normalize().multiplyScalar(Math.PI);
+      oppositionAxis(ax, this.dir).multiplyScalar(Math.PI);
     } else {
       ax.set(0, 0, 0);
     }

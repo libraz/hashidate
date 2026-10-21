@@ -125,7 +125,9 @@ describe('compileMotion', () => {
     );
     const hand = built.build(0.5, PLAIN).arms?.R?.hand;
     expect(hand?.length()).toBeCloseTo(1);
-    expect(hand?.x).toBeCloseTo(1);
+    // Halfway round, on a fixed great circle, rather than parked on either end.
+    expect(hand?.x).toBeCloseTo(0);
+    expect(built.build(0.5, PLAIN).arms?.R?.hand?.toArray()).toEqual(hand?.toArray());
   });
 
   it('settles on the last frame rather than running past it', () => {
