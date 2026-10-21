@@ -28,7 +28,7 @@ import { OPEN_HAND } from './gestures/hands';
 import { HipsMetric } from './hips-metric';
 import { CROUCH_T, type HopSpec, type JumpArc, planJump, sampleJump } from './jump';
 import { aimEyes, makeGazeFrame, prepareGaze } from './look';
-import { IdlePosture, type PostureInput } from './posture';
+import { type BreathTerms, IdlePosture, type PostureInput } from './posture';
 import { ArmResolver, mkReachScratch, type ResolvedArm } from './resolve';
 import { SpineCarry } from './spine-carry';
 import { FINGER_ONSET, LINK_ONSET, minJerk, onset, reachEnvelope, UNTHREAD } from './timing';
@@ -1317,17 +1317,8 @@ export class Body {
     return slot.def.build(slot.time * slot.speed, slot.v, slot.phase, slot.pose);
   }
 
-  update(dt: number, ctx?: BodyContext): void {
-    const headWorldTarget = ctx?.headWorldTarget ?? null;
-    this.syncExternalArmRevision();
-    this.t += dt;
-    this._transaction.beginFrame();
-    const { rig, p } = this;
-    // The rig's anatomical limiter is the one thing below this line with a
-    // speed of its own — see `Rig.slew` — and this is where it learns the frame.
-    rig.dt = dt;
-
-    // --- gesture envelopes ------------------------------------------------
+  /** Advance the current gesture's envelopes and pose; null when none is playing. */
+  private advanceGesture(dt: number): Pose | null {
     let g: Pose | null = null;
     if (this.gesture) {
       const { def, lead } = this.gesture;
@@ -1392,6 +1383,11 @@ export class Body {
       }
     }
 
+    return g;
+  }
+
+  /** Age the outgoing gestures; returns the slot that holds the hand for the incoming fingers. */
+  private ageOutgoing(dt: number, g: Pose | null): Outgoing | undefined {
     // Restarted switches capture the weights already on screen, including all
     // earlier outgoing slots. Their sum complements the new entrance without
     // pulling a held pose toward rest. This clock also runs after a release.
@@ -1454,6 +1450,12 @@ export class Body {
     }
     this._spineFading.length = kept;
 
+    return handSource;
+  }
+
+  /** Run the standing body and compose the spine; returns the frame's breath terms. */
+  private stepPosture(dt: number, g: Pose | null): BreathTerms {
+    const { rig, p } = this;
     // A gesture that moves the head or neck owns it: the nod gives way by the
     // gesture's own weight, keyed on which slots it writes rather than their values.
     let w = this.gesture && touchesHead(g?.spine) ? this.blend : 0;
@@ -1481,11 +1483,14 @@ export class Body {
     pin.jumpHeight = this.jumpHeight;
     pin.rise = this._rise;
     pin.load = this._load;
-    const { br, d } = this._posture.apply(rig, p, dt, pin);
-    const idle = this.idleAmount;
+    const terms = this._posture.apply(rig, p, dt, pin);
     this._spine.compose(dt, this._spineFading, g?.spine, this.blend);
+    return terms;
+  }
 
-    // --- gaze -------------------------------------------------------------
+  /** Advance the gaze and prepare the eye aim. */
+  private stepGaze(dt: number, headWorldTarget: THREE.Vector3 | null): void {
+    const { rig, p } = this;
     const speech = this._speech;
     speech.speaking = this.speaking;
     speech.remaining = this.speechRemaining;
@@ -1501,6 +1506,151 @@ export class Body {
       headWorldTarget,
       this._gazeFrame,
     );
+  }
+
+  /** Pose one shoulder, with the girdle's say, before its arm is solved. */
+  private poseShoulder(
+    side: Side,
+    g: Pose | null,
+    env: IdleEnv,
+    dt: number,
+    frameReady: boolean,
+    handControls: Record<Side, HandControls> | undefined,
+  ): void {
+    const { rig } = this;
+    const mirror = sideMirror(side);
+    const dirs = this._armDirs[side];
+    const worldDirs = this._armWorld[side];
+    // The shoulder is posed before the arm is solved, not with it. A reach
+    // starts from the upper arm's world position, and posing the shoulder
+    // moves that position — by a quarter of an interpupillary distance on
+    // this rig. Solving first and posing after leaves every reach short by
+    // exactly that, permanently: the shoulder is back at its rest orientation
+    // by the time the next frame solves, so there is nothing to converge on.
+    // Only authored directions are read here; a reach never states a shoulder.
+    const es = this._armEnv.shoulder;
+    const sv = this.composeArmTarget(
+      'shoulder',
+      side,
+      env,
+      g?.arms?.[side]?.shoulder,
+      plain(es),
+      true,
+    );
+
+    // Give the girdle its say before the shoulder is posed. Only for a reach,
+    // and only where the pose has no shoulder of its own to state — a gesture
+    // that says where the shoulder goes means it. Folded into the follower's
+    // target, every slot at its own weight, so the turn arrives and leaves
+    // with the reach rather than on the switch frame.
+    const turn = _girdleTurn.set(0, 0, 0);
+    this.axes.tupleToWorld(worldDirs.shoulder, sv, side, mirror, frameReady);
+    for (const f of this._fading) {
+      this.girdleShare(f.pose, side, f.w, worldDirs.shoulder, turn, frameReady, handControls);
+    }
+    this.girdleShare(g, side, this.blend, worldDirs.shoulder, turn, frameReady, handControls);
+    if (turn.lengthSq() > 0) {
+      rig.turnGirdle(worldDirs.shoulder, turn);
+      this.axes.toCharacter(sv, _girdleDir.fromArray(worldDirs.shoulder), side, frameReady);
+    }
+    this.followArm('shoulder', side, sv, dt, ARM_FOLLOW);
+    this.axes.tupleToWorld(worldDirs.shoulder, dirs.shoulder, side, mirror, frameReady);
+    rig.aimShoulder(side, worldDirs.shoulder);
+  }
+
+  /** Follow one wrist's twist, palm and palm weight; returns the palm weight. */
+  private blendWrist(
+    side: Side,
+    cArm: ResolvedArm | null,
+    dt: number,
+    frameReady: boolean,
+  ): number {
+    const mirror = sideMirror(side);
+    // The wrist's own channels ride the hand link's envelope: a palm roll and
+    // a forearm twist are part of the hand arriving, not of the arm setting
+    // out, and starting them with the shoulder is what made a hand appear to
+    // present itself before it had gone anywhere.
+    //
+    // Not travel-aware, unlike the limb directions in `update`. A palm and a twist
+    // are stated by the pose rather than solved from the target, so there is
+    // nothing about them that the interpolated target has already eased —
+    // taking them at full weight from the first frame would be a step. They
+    // arrive late instead, which is what a wrist does.
+    // As for the limbs: an arm the incoming gesture poses is complemented, and
+    // one it leaves alone goes home on the outgoing decay.
+    const cw = plain(this._armEnv.hand);
+    let twistTarget = 0;
+    for (const f of this._fading) {
+      twistTarget += (f.arm[side]?.twist ?? 0) * (cArm ? f.armW.hand : f.w);
+    }
+    twistTarget += (cArm?.twist ?? 0) * cw;
+    this._twist[side].step(twistTarget, dt, ARM_FOLLOW);
+
+    // Palm direction blends and follows like the limb directions do; see
+    // `composeArmTarget` for the shares.
+    const pt = this._palmTarget.copy(BASE_PALM);
+    if (cArm?.palm) {
+      let pool = 1 - cw;
+      for (const f of this._fading) if (f.arm[side]?.palm) pool -= f.armW.hand;
+      pool = Math.max(0, pool);
+      for (const f of this._fading) {
+        const palm = f.arm[side]?.palm;
+        const share = f.armW.hand;
+        if (!palm || share <= 0) continue;
+        pool += share;
+        slerpDir(pt, pt, this._palmFrom.copy(palm).normalize(), share / pool);
+      }
+      slerpDir(pt, pt, this._palmFrom.copy(cArm.palm).normalize(), cw);
+    } else {
+      for (const f of this._fading) {
+        const palm = f.arm[side]?.palm;
+        if (palm) slerpDir(pt, pt, this._palmFrom.copy(palm).normalize(), f.w);
+      }
+    }
+    const ps = this._palm[side].step(pt, dt, ARM_FOLLOW);
+    const po = this._palmOut[side];
+    // Palm state follows the same canonical frame as the arm directions.
+    po[0] = ps.x;
+    po[1] = ps.y;
+    po[2] = ps.z;
+    this.axes.tupleToWorld(this._palmWorldOut[side], po, side, mirror, frameReady);
+
+    // BASE_PALM describes an arm hanging at the side, and only that. A pose
+    // that raises the hand and states no palm of its own must not be held to
+    // it — keeping a lifted hand rolled as though it were still by the hip
+    // demands most of a half turn, which is where the wrist collapsed. Such a
+    // pose releases the constraint as it blends in and the roll falls back to
+    // whatever the aim itself produces.
+    let hold = 1;
+    for (const f of this._fading) {
+      const arm = f.arm[side];
+      if (arm && !arm.palm) hold -= cArm ? f.armW.hand : f.w;
+    }
+    if (cArm && !cArm.palm) hold -= cw;
+    const palmW = Math.max(0, this._palmW[side].step(Math.max(0, hold), dt, ARM_FOLLOW));
+    return palmW;
+  }
+
+  update(dt: number, ctx?: BodyContext): void {
+    const headWorldTarget = ctx?.headWorldTarget ?? null;
+    this.syncExternalArmRevision();
+    this.t += dt;
+    this._transaction.beginFrame();
+    const { rig, p } = this;
+    // The rig's anatomical limiter is the one thing below this line with a
+    // speed of its own — see `Rig.slew` — and this is where it learns the frame.
+    rig.dt = dt;
+
+    // --- gesture envelopes ------------------------------------------------
+    const g = this.advanceGesture(dt);
+
+    const handSource = this.ageOutgoing(dt, g);
+
+    const { br, d } = this.stepPosture(dt, g);
+    const idle = this.idleAmount;
+
+    // --- gaze -------------------------------------------------------------
+    this.stepGaze(dt, headWorldTarget);
 
     rig.commitSpine();
     // Before the live frame and reach origins are read; springs still see the pose last.
@@ -1542,41 +1692,7 @@ export class Body {
       // gesture is carrying this hand through the room rather than posing it.
       this._arm.clearTravelling(side);
 
-      // The shoulder is posed before the arm is solved, not with it. A reach
-      // starts from the upper arm's world position, and posing the shoulder
-      // moves that position — by a quarter of an interpupillary distance on
-      // this rig. Solving first and posing after leaves every reach short by
-      // exactly that, permanently: the shoulder is back at its rest orientation
-      // by the time the next frame solves, so there is nothing to converge on.
-      // Only authored directions are read here; a reach never states a shoulder.
-      const es = this._armEnv.shoulder;
-      const sv = this.composeArmTarget(
-        'shoulder',
-        side,
-        env,
-        g?.arms?.[side]?.shoulder,
-        plain(es),
-        true,
-      );
-
-      // Give the girdle its say before the shoulder is posed. Only for a reach,
-      // and only where the pose has no shoulder of its own to state — a gesture
-      // that says where the shoulder goes means it. Folded into the follower's
-      // target, every slot at its own weight, so the turn arrives and leaves
-      // with the reach rather than on the switch frame.
-      const turn = _girdleTurn.set(0, 0, 0);
-      this.axes.tupleToWorld(worldDirs.shoulder, sv, side, mirror, frameReady);
-      for (const f of this._fading) {
-        this.girdleShare(f.pose, side, f.w, worldDirs.shoulder, turn, frameReady, handControls);
-      }
-      this.girdleShare(g, side, this.blend, worldDirs.shoulder, turn, frameReady, handControls);
-      if (turn.lengthSq() > 0) {
-        rig.turnGirdle(worldDirs.shoulder, turn);
-        this.axes.toCharacter(sv, _girdleDir.fromArray(worldDirs.shoulder), side, frameReady);
-      }
-      this.followArm('shoulder', side, sv, dt, ARM_FOLLOW);
-      this.axes.tupleToWorld(worldDirs.shoulder, dirs.shoulder, side, mirror, frameReady);
-      rig.aimShoulder(side, worldDirs.shoulder);
+      this.poseShoulder(side, g, env, dt, frameReady, handControls);
 
       for (const f of this._fading) {
         f.arm[side] = this._arm.resolve(
@@ -1651,81 +1767,14 @@ export class Body {
         this.axes.tupleToWorld(worldDirs[slot], dirs[slot], side, mirror, frameReady);
       }
 
-      // The wrist's own channels ride the hand link's envelope: a palm roll and
-      // a forearm twist are part of the hand arriving, not of the arm setting
-      // out, and starting them with the shoulder is what made a hand appear to
-      // present itself before it had gone anywhere.
-      //
-      // Not travel-aware, unlike the limb directions above. A palm and a twist
-      // are stated by the pose rather than solved from the target, so there is
-      // nothing about them that the interpolated target has already eased —
-      // taking them at full weight from the first frame would be a step. They
-      // arrive late instead, which is what a wrist does.
-      // As for the limbs: an arm the incoming gesture poses is complemented, and
-      // one it leaves alone goes home on the outgoing decay.
-      const cw = plain(this._armEnv.hand);
-      let twistTarget = 0;
-      for (const f of this._fading) {
-        twistTarget += (f.arm[side]?.twist ?? 0) * (cArm ? f.armW.hand : f.w);
-      }
-      twistTarget += (cArm?.twist ?? 0) * cw;
-      this._twist[side].step(twistTarget, dt, ARM_FOLLOW);
-
-      // Palm direction blends and follows like the limb directions do; see
-      // `composeArmTarget` for the shares.
-      const pt = this._palmTarget.copy(BASE_PALM);
-      if (cArm?.palm) {
-        let pool = 1 - cw;
-        for (const f of this._fading) if (f.arm[side]?.palm) pool -= f.armW.hand;
-        pool = Math.max(0, pool);
-        for (const f of this._fading) {
-          const palm = f.arm[side]?.palm;
-          const share = f.armW.hand;
-          if (!palm || share <= 0) continue;
-          pool += share;
-          slerpDir(pt, pt, this._palmFrom.copy(palm).normalize(), share / pool);
-        }
-        slerpDir(pt, pt, this._palmFrom.copy(cArm.palm).normalize(), cw);
-      } else {
-        for (const f of this._fading) {
-          const palm = f.arm[side]?.palm;
-          if (palm) slerpDir(pt, pt, this._palmFrom.copy(palm).normalize(), f.w);
-        }
-      }
-      const ps = this._palm[side].step(pt, dt, ARM_FOLLOW);
-      const po = this._palmOut[side];
-      // Palm state follows the same canonical frame as the arm directions.
-      po[0] = ps.x;
-      po[1] = ps.y;
-      po[2] = ps.z;
-      const palmWorld = this.axes.tupleToWorld(
-        this._palmWorldOut[side],
-        po,
-        side,
-        mirror,
-        frameReady,
-      );
-
-      // BASE_PALM describes an arm hanging at the side, and only that. A pose
-      // that raises the hand and states no palm of its own must not be held to
-      // it — keeping a lifted hand rolled as though it were still by the hip
-      // demands most of a half turn, which is where the wrist collapsed. Such a
-      // pose releases the constraint as it blends in and the roll falls back to
-      // whatever the aim itself produces.
-      let hold = 1;
-      for (const f of this._fading) {
-        const arm = f.arm[side];
-        if (arm && !arm.palm) hold -= cArm ? f.armW.hand : f.w;
-      }
-      if (cArm && !cArm.palm) hold -= cw;
-      const palmW = Math.max(0, this._palmW[side].step(Math.max(0, hold), dt, ARM_FOLLOW));
+      const palmW = this.blendWrist(side, cArm, dt, frameReady);
 
       if (!armTransaction) {
         rig.aimArmLegacy(
           side,
           worldDirs,
           this._twist[side].value * this.axes.axialMirror(side, frameReady),
-          palmWorld,
+          this._palmWorldOut[side],
           palmW,
         );
         this._arm.note(side, dirs.upperArm, dirs.lowerArm, dirs.hand);
