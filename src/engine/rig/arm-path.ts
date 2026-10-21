@@ -24,6 +24,11 @@ const MAX_LINE_SEARCHES = 6;
 const MAX_QP_SWEEPS = 12;
 const MAX_SWEEP_DEPTH = 8;
 const MAX_ENVIRONMENT_BATCHES = 96;
+/**
+ * Metres outside the surface a restore aims for. The face field's normal is not
+ * its distance gradient, so aiming at exactly zero only approaches the surface.
+ */
+const RESTORE_MARGIN = 1e-6;
 const DIFFERENCE_SCALE = Math.cbrt(Number.EPSILON);
 const LEXICAL_EPSILON = Number.EPSILON ** (2 / 3);
 const FULL_TURN = 2 * Math.PI;
@@ -1483,7 +1488,7 @@ export class ArmStepSolver {
       const pointIndex = clearance.pointIndex;
       if (pointIndex < 0 || pointIndex >= state.points.length) return false;
       const rowOffset = pointIndex * DIRECTION_COMPONENTS * DOFS;
-      const residual = clearance.distance / this.span;
+      const residual = (clearance.distance - RESTORE_MARGIN) / this.span;
       for (let i = 0; i < DOFS; i++) {
         const ji =
           (clearance.normal.x * this.pointJacobian[rowOffset + i] +

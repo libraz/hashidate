@@ -1,22 +1,25 @@
 /**
- * A planned admissibility correction for one constrained arm.
+ * Per-frame goal tracking for one constrained arm.
  *
- * The follower pipeline still decides where an arm goes, and the analytic
- * inverse turns that into an unconstrained q every frame. This route adds a
- * correction δ(t) in q-space, planned once by projecting the goal with the
- * non-temporal solver and then sampled in closed form: a quintic from the
- * correction's current value and rate to the goal's correction at rest. When a
- * frame cannot be validated, a quartic tail brings the accepted jet to rest.
+ * Each frame the goal is one bounded solver step continuing its own chain
+ * toward the frame's request, or the raw q where that is the same branch. The
+ * command is the goal plus a residual carry: where what is shown and the goal
+ * part — a gesture starts or ends, a recovery lands elsewhere, a stop tail
+ * ends — the gap is carried with its rate and eased out over the lead, as the
+ * spine's carry is.
+ * When a frame cannot be validated, a quartic tail brings the accepted jet to rest.
  *
- * Every curve is a function of elapsed seconds, never integrated per frame, so
- * the same route sampled at any frame rate passes through the same values.
  * All arrays are in the solver's q order, relative to the upper arm's parent.
  */
 
 import type * as THREE from 'three';
-import { type ElevationCeiling, elevationCeiling } from '../anatomy/strain';
 import type { FingerSpec } from '../types';
-import type { ArmCalibration, ArmConfiguration, ArmForwardContext } from './arm-configuration';
+import {
+  type ArmConfiguration,
+  type ArmForwardContext,
+  forwardArm,
+  makeArmForwardResult,
+} from './arm-configuration';
 import { type ArmDriver, LIMIT_SLEW } from './arm-driver';
 import { type ArmPathBounds, configurationFromQ } from './arm-path';
 
@@ -38,15 +41,33 @@ export const MAX_VALIDATION_SAMPLES = 4;
 /** Wrist flexion and deviation in q order, which the slew check rate-limits directly. */
 export const SLEW_WRIST_DOFS = [5, 6] as const;
 
-/** Change below which a projected goal counts as the requested one. */
-const PROJECTION_EPSILON = 1e-6;
-/** Shoulder elevation below which the plane angle carries no pose. */
-const POLE_ELEVATION = 1e-3;
-/** Floor on the goal's elevation sine when weighting the plane correction. */
-const POLE_SINE = 1e-6;
+/**
+ * Share of the slew allowance a slowed step settles for, and the evaluations
+ * its search may spend. The last 2% is not visible; listen into cover needed
+ * at most four evaluations.
+ */
+const SLEW_FILL = 0.98;
+const SLEW_SEARCH = 6;
 
-export type ArmRouteKind = 'goal' | 'live';
-export type ArmRoutePending = 'none' | ArmRouteKind;
+/**
+ * One derivative of the residual carry: a cubic Hermite from `from` at rate
+ * `rate` to rest at zero over `duration`, as the spine's carry eases a cut
+ * rate out. Zero once the duration has passed.
+ */
+export function residualCarry(
+  from: number,
+  rate: number,
+  duration: number,
+  time: number,
+  order: 0 | 1,
+): number {
+  if (!(duration > 0) || time >= duration) return 0;
+  const s = Math.max(0, time) / duration;
+  if (order === 0) {
+    return from * (1 + 2 * s) * (1 - s) * (1 - s) + rate * s * (1 - s) * (1 - s) * duration;
+  }
+  return (from * 6 * s * (s - 1)) / duration + rate * (1 - s) * (1 - 3 * s);
+}
 
 /** The bone rotations the slew check compares; an `ArmForwardResult` provides them. */
 export interface ArmSlewPose {
@@ -59,30 +80,6 @@ export interface ArmSlewPose {
 function difference(a: Float64Array, b: Float64Array, i: number): number {
   const d = a[i] - b[i];
   return i === 0 ? Math.atan2(Math.sin(d), Math.cos(d)) : d;
-}
-
-/**
- * One derivative of the quintic from (d0, v0, 0) at t = 0 to (d1, 0, 0) at
- * `duration`, held at d1 afterwards.
- */
-export function quintic(
-  d0: number,
-  v0: number,
-  d1: number,
-  duration: number,
-  t: number,
-  order: 0 | 1 | 2,
-): number {
-  if (!(duration > 0) || t >= duration) return order === 0 ? d1 : 0;
-  const s = Math.max(0, t);
-  const T = duration;
-  const D = d1 - d0;
-  const c3 = (10 * D - 6 * v0 * T) / (T * T * T);
-  const c4 = (-15 * D + 8 * v0 * T) / (T * T * T * T);
-  const c5 = (6 * D - 3 * v0 * T) / (T * T * T * T * T);
-  if (order === 0) return d0 + s * (v0 + s * s * (c3 + s * (c4 + s * c5)));
-  if (order === 1) return v0 + s * s * (3 * c3 + s * (4 * c4 + s * 5 * c5));
-  return s * (6 * c3 + s * (12 * c4 + s * 20 * c5));
 }
 
 /**
@@ -147,17 +144,10 @@ export function armStepWithinSlew(
   return step / allowance;
 }
 
-/** Correction route for one arm; owned by the body, one per side. */
+/** Goal tracker for one arm; owned by the body, one per side. */
 export class ArmRoute {
-  /** Correction at the route's start, its rate there, and its value at the goal. */
-  readonly d0 = new Float64Array(DOFS);
-  readonly v0 = new Float64Array(DOFS);
-  readonly dGoal = new Float64Array(DOFS);
-  /** Unconstrained goal and its admissible projection, goalRaw + dGoal. */
-  readonly goalRaw = new Float64Array(DOFS);
+  /** Where the solver put this frame's request. */
   readonly goalQ = new Float64Array(DOFS);
-  /** Last accepted unconstrained q. */
-  readonly rawPrev = new Float64Array(DOFS);
   /** Accepted jet. */
   readonly qAcc = new Float64Array(DOFS);
   readonly vAcc = new Float64Array(DOFS);
@@ -166,21 +156,22 @@ export class ArmRoute {
   readonly tail0 = new Float64Array(DOFS);
   readonly tailV = new Float64Array(DOFS);
   readonly tailA = new Float64Array(DOFS);
-  /** Raw q's rate over the last accepted frame. */
-  private readonly rawVelocity = new Float64Array(DOFS);
+  /** The residual carry's start and rate there. */
+  readonly carryFrom = new Float64Array(DOFS);
+  readonly carryRate = new Float64Array(DOFS);
+  /** The goal's rate over the last accepted frame, away from discontinuities. */
+  private readonly goalVelocity = new Float64Array(DOFS);
+  private readonly goalPrev = new Float64Array(DOFS);
 
-  private _elapsed = 0;
-  private _duration = 0;
+  private carryTime = 0;
+  private carryDuration: number;
+  /** A discontinuity is due: the next track restarts the carry from the accepted jet. */
+  private recarry = false;
+  private hasGoalPrev = false;
   private _projected = false;
-  private _stuck = false;
+  private _solved = false;
   private _stopping = false;
-  private _pending: ArmRoutePending = 'none';
-  private pendingDuration = 0;
-  private hasRawPrev = false;
   private tailT = 0;
-  private lastStep = 0;
-  private goalSine = 1;
-  private readonly ceiling: ElevationCeiling = { free: 0, max: 0 };
   private readonly configuration: ArmConfiguration = {
     shoulderPlane: 0,
     shoulderLift: 0,
@@ -190,193 +181,205 @@ export class ArmRoute {
     wristFlex: 0,
     wristDev: 0,
   };
-  private readonly boxed = new Float64Array(DOFS);
-  private readonly restored = new Float64Array(DOFS);
+  private readonly step = new Float64Array(DOFS);
+  private readonly forward = makeArmForwardResult();
+  private readonly goalForward = makeArmForwardResult();
 
-  /** @param leadFloor Shortest correction and stop-tail length, in seconds. */
-  constructor(private readonly leadFloor: number) {}
-
-  get pending(): ArmRoutePending {
-    return this._pending;
+  /** @param leadFloor Shortest carry and stop-tail length, in seconds. */
+  constructor(private readonly leadFloor: number) {
+    this.carryDuration = leadFloor;
   }
 
+  /** The solver moved this frame's goal off the raw q. */
   get projected(): boolean {
     return this._projected;
   }
 
-  /** The last plan could not restore its goal and holds the accepted pose. */
-  get stuck(): boolean {
-    return this._stuck;
+  /** This frame's goal came from a solver call rather than the raw q itself. */
+  get solved(): boolean {
+    return this._solved;
   }
 
   get stopping(): boolean {
     return this._stopping;
   }
 
-  get elapsed(): number {
-    return this._elapsed;
-  }
-
-  get duration(): number {
-    return this._duration;
-  }
-
-  /** Forget the route: `q` is accepted and at rest, with no correction. A pending request survives. */
+  /** Forget the route: `q` is accepted and at rest, with nothing carried. */
   reset(q: Float64Array): void {
     this.qAcc.set(q);
     this.vAcc.fill(0);
     this.aAcc.fill(0);
-    this.rawVelocity.fill(0);
-    this.d0.fill(0);
-    this.v0.fill(0);
-    this.dGoal.fill(0);
-    this.goalRaw.set(q);
     this.goalQ.set(q);
-    this.goalSine = 1;
-    this._elapsed = 0;
-    this._duration = 0;
+    this.carryFrom.fill(0);
+    this.carryRate.fill(0);
+    this.goalVelocity.fill(0);
+    this.carryTime = 0;
+    this.recarry = false;
+    this.hasGoalPrev = false;
     this._projected = false;
-    this._stuck = false;
+    this._solved = false;
     this._stopping = false;
-    this.hasRawPrev = false;
     this.tailT = 0;
-    this.lastStep = 0;
-  }
-
-  /** Ask for a plan over `duration` seconds, run by the next `plan` call. */
-  request(kind: ArmRouteKind, duration: number): void {
-    this._pending = kind;
-    this.pendingDuration = duration;
   }
 
   /**
-   * Project the goal onto the admissible set and start a correction toward it
-   * from the current one. Returns the environment batches spent.
+   * A gesture started, began its exit or ended: carry whatever the goal does
+   * next out over `seconds`.
    */
-  plan(
+  retime(seconds: number): void {
+    this.carryDuration = Math.max(seconds, this.leadFloor);
+    this.recarry = true;
+  }
+
+  /**
+   * Find this frame's goal for the request `driver` holds, whose analytic
+   * inverse is `raw`. One bounded solver step continues the goal's own chain,
+   * as the per-frame solve always has. The raw decomposition replaces it only
+   * when that step is not still travelling and raw is within one frame's slew
+   * of the chain: elsewhere it can be another branch of the same hand, and
+   * switching to it is a jump. Returns the environment batches spent.
+   */
+  track(
     driver: ArmDriver,
     context: ArmForwardContext,
-    rawGoal: Float64Array,
-    rawNow: Float64Array,
+    raw: Float64Array,
     curls: FingerSpec,
     spread: FingerSpec,
+    dt: number,
   ): number {
-    this._pending = 'none';
-    const calibration = driver.calibration;
-
-    // The new correction starts from the current one at the last accepted frame.
-    const reference = this.hasRawPrev ? this.rawPrev : rawNow;
-    let before = 1;
-    if (this._stopping) {
-      for (let i = 0; i < DOFS; i++) {
-        this.d0[i] = difference(this.qAcc, reference, i);
-        this.v0[i] = this.vAcc[i] - this.rawVelocity[i];
-      }
-    } else {
-      before = this.planeWeight(reference, calibration);
-      for (let i = 0; i < DOFS; i++) {
-        const d = this.correction(i, 0);
-        const v = this.correction(i, 1);
-        this.d0[i] = d;
-        this.v0[i] = v;
-      }
+    const planned = driver.planFrom(this.goalQ, context, dt, true);
+    let batches = planned.environmentBatches;
+    let useRaw = planned.status !== 'progress';
+    const bounds = driver.fillBounds(raw, 0, false);
+    for (let i = 0; i < DOFS && useRaw; i++) {
+      useRaw = raw[i] >= bounds.lower[i] && raw[i] <= bounds.upper[i];
     }
-
-    const boxed = clampToBox(rawGoal, driver.fillBounds(rawGoal, 0, false), this.boxed);
-    driver.requestForConfiguration(
-      configurationFromQ(boxed, this.configuration),
-      context,
-      curls,
-      spread,
-    );
-    const valid = driver.validateLockedPose(boxed, context, curls, spread);
-    let batches = driver.bridgeOutput.environmentBatches;
-    let unchanged = valid;
-    for (let i = 0; i < DOFS && unchanged; i++) unchanged = boxed[i] === rawGoal[i];
-
-    let goal: Float64Array = rawGoal;
-    this._stuck = false;
-    if (!unchanged) {
-      driver.requestForConfiguration(
-        configurationFromQ(rawGoal, this.configuration),
+    if (useRaw) {
+      forwardArm(
+        configurationFromQ(this.goalQ, this.configuration),
+        driver.calibration,
         context,
-        curls,
-        spread,
+        this.goalForward,
       );
-      const restored = driver.restoreEndpointFrom(boxed, context, 0, false);
+      forwardArm(
+        configurationFromQ(raw, this.configuration),
+        driver.calibration,
+        context,
+        this.forward,
+      );
+      useRaw = armStepWithinSlew(this.goalQ, this.goalForward, raw, this.forward, dt) <= 1;
+    }
+    if (useRaw) {
+      useRaw = driver.validateLockedPose(raw, context, curls, spread);
+      batches += driver.bridgeOutput.environmentBatches;
+    }
+    this._solved = !useRaw;
+    if (useRaw) {
+      this.goalQ.set(raw);
+    } else if (planned.status !== 'blocked') {
+      this.goalQ.set(planned.q);
+    } else if (driver.restoreEndpointFrom(this.goalQ, context, dt, true)) {
+      // The chain's last goal is not clear in this frame: push it clear first.
       batches += driver.output.environmentBatches;
-      if (restored) {
-        this.restored.set(driver.output.q);
-        const planned = driver.planFrom(this.restored, context, 0, false);
-        batches += planned.environmentBatches;
-        goal = planned.status !== 'blocked' ? planned.q : this.restored;
-      } else {
-        goal = this.qAcc;
-        this._stuck = true;
-      }
+      this.goalQ.set(driver.output.q);
+    } else {
+      batches += driver.output.environmentBatches;
     }
-
-    const elevation = this.elevation(rawGoal, calibration);
-    this.goalSine = Math.max(Math.sin(elevation), POLE_SINE);
     let projected = false;
-    for (let i = 0; i < DOFS; i++) {
-      this.dGoal[i] = difference(goal, rawGoal, i);
-      if (Math.abs(this.dGoal[i]) > PROJECTION_EPSILON) projected = true;
-    }
-    if (elevation < POLE_ELEVATION) this.dGoal[0] = 0;
-    for (let i = 0; i < DOFS; i++) this.goalQ[i] = rawGoal[i] + this.dGoal[i];
-    this.goalRaw.set(rawGoal);
+    for (let i = 0; i < DOFS && !projected; i++) projected = this.goalQ[i] !== raw[i];
     this._projected = projected;
 
-    // The applied plane term is weighted; keep it continuous under the new goal's weight.
-    const after = this.planeWeight(reference, calibration);
-    this.d0[0] = this.unweighted(this.d0[0] * before, after, this.d0[0]);
-    this.v0[0] = this.unweighted(this.v0[0] * before, after, this.v0[0]);
-    this._duration = this.pendingDuration;
-    this._elapsed = 0;
-    this._stopping = false;
+    this.carryTime += Math.max(0, dt);
+    if (this.recarry || this._stopping) {
+      // The carry starts at the last accepted frame, from the accepted jet.
+      for (let i = 0; i < DOFS; i++) {
+        this.carryFrom[i] = difference(this.qAcc, this.goalQ, i);
+        this.carryRate[i] = this.vAcc[i] - this.goalVelocity[i];
+      }
+      this.carryTime = Math.max(0, dt);
+      this.recarry = false;
+      this._stopping = false;
+    }
     return batches;
   }
 
-  /** Move the route's clock on by one frame. */
-  advance(dt: number): void {
-    const step = Math.max(0, dt);
-    this._elapsed += step;
-    if (this._stopping) this.tailT += step;
-    this.lastStep = step;
-  }
-
-  /** Commanded q: the raw pose plus the correction, inside the joint box. */
-  command(rawNow: Float64Array, driver: ArmDriver, out: Float64Array): Float64Array {
-    const weight = this.planeWeight(rawNow, driver.calibration);
-    for (let i = 0; i < DOFS; i++) out[i] = rawNow[i] + this.correction(i, 0);
-    out[0] = rawNow[0] + weight * this.correction(0, 0);
+  /** Commanded q: the goal plus the carry, inside the joint box. */
+  command(driver: ArmDriver, out: Float64Array): Float64Array {
+    for (let i = 0; i < DOFS; i++) {
+      out[i] =
+        this.goalQ[i] +
+        residualCarry(this.carryFrom[i], this.carryRate[i], this.carryDuration, this.carryTime, 0);
+    }
     return clampToBox(out, driver.fillBounds(this.qAcc, 0, false), out);
+  }
+  /**
+   * Shorten the step from the accepted pose to `command`, in place, to within
+   * the slew allowance. Bone angles are not linear in q — rotations about
+   * different axes partly cancel over a long step — so one 1/k scale lands
+   * over; the share is searched instead (regula falsi, Illinois). Returns
+   * whether the command was shortened.
+   */
+  limitSlew(
+    command: Float64Array,
+    accepted: ArmSlewPose,
+    driver: ArmDriver,
+    context: ArmForwardContext,
+    dt: number,
+  ): boolean {
+    let k = this.slewRatio(command, accepted, driver, context, dt);
+    if (k <= 1) return false;
+    for (let i = 0; i < DOFS; i++) this.step[i] = difference(command, this.qAcc, i);
+    let lo = 0;
+    let kLo = 0;
+    let hi = 1;
+    let kHi = k;
+    let retained = 0;
+    for (let pass = 0; pass < SLEW_SEARCH; pass++) {
+      const share = lo + ((1 - kLo) * (hi - lo)) / (kHi - kLo);
+      for (let i = 0; i < DOFS; i++) command[i] = this.qAcc[i] + this.step[i] * share;
+      k = this.slewRatio(command, accepted, driver, context, dt);
+      if (k <= 1) {
+        lo = share;
+        kLo = k;
+        if (k >= SLEW_FILL) break;
+        if (retained < 0) kHi = 1 + (kHi - 1) / 2;
+        retained = -1;
+      } else {
+        hi = share;
+        kHi = k;
+        if (retained > 0) kLo = 1 - (1 - kLo) / 2;
+        retained = 1;
+      }
+    }
+    for (let i = 0; i < DOFS; i++) command[i] = this.qAcc[i] + this.step[i] * lo;
+    return true;
   }
 
   /**
-   * Restart the correction from a committed pose that differs from the
-   * command, keeping its rate and its goal.
+   * The frame committed a pose other than the command: carry from it, at the
+   * rate the carry had, so the next frame continues from what was shown.
    */
-  absorb(rawNow: Float64Array, committed: Float64Array, driver: ArmDriver): void {
-    const weight = this.planeWeight(rawNow, driver.calibration);
-    const remaining = Math.max(0, this._duration - this._elapsed);
-    const plane = this.correction(0, 0);
+  absorb(committed: Float64Array): void {
     for (let i = 0; i < DOFS; i++) {
-      this.v0[i] = this.correction(i, 1);
-      this.d0[i] = difference(committed, rawNow, i);
+      const rate = residualCarry(
+        this.carryFrom[i],
+        this.carryRate[i],
+        this.carryDuration,
+        this.carryTime,
+        1,
+      );
+      this.carryFrom[i] = difference(committed, this.goalQ, i);
+      this.carryRate[i] = rate;
     }
-    this.d0[0] = this.unweighted(this.d0[0], weight, plane);
-    this._duration = Math.max(remaining, this.leadFloor);
-    this._elapsed = 0;
+    this.carryTime = 0;
   }
 
   /** Bring the accepted jet to rest over the lead floor, starting from the last accepted frame. */
-  beginStop(): void {
+  beginStop(dt: number): void {
     this.tail0.set(this.qAcc);
     this.tailV.set(this.vAcc);
     this.tailA.set(this.aAcc);
-    this.tailT = this.lastStep;
+    this.tailT = Math.max(0, dt);
     this._stopping = true;
   }
 
@@ -388,38 +391,35 @@ export class ArmRoute {
     return out;
   }
 
-  /** Record the committed q and the raw q it was commanded from. */
-  accept(q: Float64Array, raw: Float64Array, dt: number): void {
+  /** Record the committed q, and the goal's own rate where it was continuous. */
+  accept(q: Float64Array, dt: number): void {
     if (dt > 0) {
       for (let i = 0; i < DOFS; i++) {
         const v = difference(q, this.qAcc, i) / dt;
         this.aAcc[i] = (v - this.vAcc[i]) / dt;
         this.vAcc[i] = v;
-        this.rawVelocity[i] = this.hasRawPrev ? difference(raw, this.rawPrev, i) / dt : 0;
+        this.goalVelocity[i] = this.hasGoalPrev ? difference(this.goalQ, this.goalPrev, i) / dt : 0;
       }
     }
     this.qAcc.set(q);
-    this.rawPrev.set(raw);
-    this.hasRawPrev = true;
+    this.goalPrev.set(this.goalQ);
+    this.hasGoalPrev = true;
   }
 
-  /** One derivative of the unweighted correction at the current time. */
-  private correction(i: number, order: 0 | 1): number {
-    return quintic(this.d0[i], this.v0[i], this.dGoal[i], this._duration, this._elapsed, order);
-  }
-
-  /** Divide out the plane weight; near the pole the applied term carries nothing. */
-  private unweighted(applied: number, weight: number, fallback: number): number {
-    return weight > POLE_SINE ? applied / weight : fallback;
-  }
-
-  private elevation(q: Float64Array, calibration: ArmCalibration): number {
-    const ceiling = elevationCeiling(q[0], calibration.joints.shoulder.elevation, this.ceiling);
-    return (q[1] / Math.PI) * ceiling.max;
-  }
-
-  /** The plane angle means less as the arm nears the pole, and so does its correction. */
-  private planeWeight(q: Float64Array, calibration: ArmCalibration): number {
-    return Math.min(1, Math.max(0, Math.sin(this.elevation(q, calibration))) / this.goalSine);
+  /** How many times over the slew allowance the step from the accepted pose to `q` is. */
+  slewRatio(
+    q: Float64Array,
+    accepted: ArmSlewPose,
+    driver: ArmDriver,
+    context: ArmForwardContext,
+    dt: number,
+  ): number {
+    forwardArm(
+      configurationFromQ(q, this.configuration),
+      driver.calibration,
+      context,
+      this.forward,
+    );
+    return armStepWithinSlew(this.qAcc, accepted, q, this.forward, dt);
   }
 }

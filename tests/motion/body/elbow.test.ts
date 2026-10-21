@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
+import { forwardArm, makeArmForwardResult } from '@/engine/rig/arm-configuration';
+import { configurationFromQ } from '@/engine/rig/arm-path';
 import type { Side } from '@/engine/types';
 import { canonicalDirection, DT, type Harness, harness, wristOf } from './harness';
 
@@ -56,6 +58,12 @@ const CLEAR_OF_THE_FACE = [
   'faceFrame',
 ];
 
+/**
+ * Reaches whose authored hold asks for more forearm roll than the joint has.
+ * They arrive at that pose projected onto the joint range, not at the free one.
+ */
+const PROJECTED = ['cuteSalute'];
+
 const SIDES: Side[] = ['L', 'R'];
 
 /** Compare limiter-on and -off entrances with the same nominal gesture variation. */
@@ -70,6 +78,8 @@ interface Run {
   forearm: number;
   /** The lead hand's wrist, shoulder-relative in the body frame, every frame. */
   wrist: THREE.Vector3[];
+  /** The lead hand's wrist at its route's projected goal, as `wrist`; limiter on only. */
+  projected: THREE.Vector3 | null;
 }
 
 /** Play a gesture's entrance from rest and measure it. */
@@ -86,7 +96,7 @@ function entrance(id: string, side: Side, limits: boolean, frames = 90): Run {
     L: null,
     R: null,
   };
-  const run: Run = { acceleration: 0, upperArm: 0, forearm: 0, wrist: [] };
+  const run: Run = { acceleration: 0, upperArm: 0, forearm: 0, wrist: [], projected: null };
   for (let i = 0; i < frames; i++) {
     h.rig.reset();
     h.body.update(DT);
@@ -106,6 +116,18 @@ function entrance(id: string, side: Side, limits: boolean, frames = 90): Run {
     }
     run.wrist.push(shoulderRelative(h, side));
   }
+  const route = (h.body as unknown as { _routes: Record<Side, { goalQ: Float64Array }> })._routes;
+  const driver = h.rig.armDriver(side);
+  const context = h.rig.armForwardContext(side);
+  if (limits && driver && context) {
+    const goal = forwardArm(
+      configurationFromQ(route[side].goalQ, { ...driver.acceptedConfiguration }),
+      driver.calibration,
+      context,
+      makeArmForwardResult(),
+    );
+    run.projected = bodyFrame(h, side, goal.wrist.clone().sub(context.shoulder));
+  }
   return run;
 }
 
@@ -114,7 +136,15 @@ function shoulderRelative(h: Harness, side: Side): THREE.Vector3 {
   const upper = h.profile.bones[`upperArm.${side}`];
   if (!upper) throw new Error('synthetic rig has no upper arm');
   upper.updateWorldMatrix(true, false);
-  const d = wristOf(h.profile, side).sub(upper.getWorldPosition(new THREE.Vector3()));
+  return bodyFrame(
+    h,
+    side,
+    wristOf(h.profile, side).sub(upper.getWorldPosition(new THREE.Vector3())),
+  );
+}
+
+/** A world offset in the body frame with x pointing outward. */
+function bodyFrame(h: Harness, side: Side, d: THREE.Vector3): THREE.Vector3 {
   h.rig.anat.update();
   const anat = h.rig.anat;
   return new THREE.Vector3(
@@ -139,8 +169,9 @@ describe('a reach with a pole', () => {
     // move the arm, the hand ends up somewhere other than its anchor.
     const off: string[] = [];
     for (const id of CLEAR_OF_THE_FACE) {
-      const limited = entrance(id, side, true).wrist.at(-1);
-      const free = entrance(id, side, false).wrist.at(-1);
+      const run = entrance(id, side, true);
+      const limited = run.wrist.at(-1);
+      const free = PROJECTED.includes(id) ? run.projected : entrance(id, side, false).wrist.at(-1);
       if (!(limited && free)) throw new Error('no frames');
       const gap = limited.distanceTo(free);
       if (gap > 0.01) off.push(`${id}: ${(gap * 100).toFixed(1)} cm`);

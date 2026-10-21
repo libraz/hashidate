@@ -594,10 +594,6 @@ export class ArmDriver {
     return this.bounds;
   }
 
-  plan(context: ArmForwardContext, dt: number): ArmPathPlanOutput {
-    return this.planFrom(this.acceptedQ, context, dt, true);
-  }
-
   planFrom(
     start: Float64Array,
     context: ArmForwardContext,
@@ -613,10 +609,6 @@ export class ArmDriver {
       this.environment,
       this.output,
     );
-  }
-
-  restoreEndpoint(context: ArmForwardContext, dt: number, temporal: boolean): boolean {
-    return this.restoreEndpointFrom(this.acceptedQ, context, dt, temporal);
   }
 
   restoreEndpointFrom(

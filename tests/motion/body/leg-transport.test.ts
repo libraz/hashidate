@@ -38,7 +38,7 @@ function apply(rig: Rig, alpha: number, transport: number): number {
 afterEach(() => vi.restoreAllMocks());
 
 describe('airborne transport and body articulation', () => {
-  it('keeps a normally played hop on its authored trajectory through arm context retries', () => {
+  it('keeps a normally played hop on its authored trajectory with the body never held back', () => {
     const h = fixture();
     const dt = 1 / 30;
     h.step(dt);
@@ -58,7 +58,9 @@ describe('airborne transport and body articulation', () => {
       }
     }
     expect(airborne).toBe(true);
-    expect(samples.mock.calls.some(([alpha]) => alpha > 0 && alpha < 1)).toBe(true);
+    // The arms give way to the body: it is applied as followed, or not at all.
+    expect(samples.mock.calls.length).toBeGreaterThan(0);
+    expect(samples.mock.calls.every(([alpha]) => alpha === 0 || alpha === 1)).toBe(true);
   });
 
   it.each([1, 0.01])('separates world-up lift from articulation with parent scale %s', (scale) => {

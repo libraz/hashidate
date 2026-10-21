@@ -1,16 +1,16 @@
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
-import { elevationCeiling } from '@/engine/anatomy/strain';
 import { buildProfile } from '@/engine/profile';
 import { Rig } from '@/engine/rig';
+import { forwardArm, makeArmForwardResult } from '@/engine/rig/arm-configuration';
 import { LIMIT_SLEW } from '@/engine/rig/arm-driver';
-import type { ArmPathClearance } from '@/engine/rig/arm-path';
+import { type ArmPathClearance, configurationFromQ } from '@/engine/rig/arm-path';
 import {
   ArmRoute,
   armStepWithinSlew,
   clampToBox,
   MAX_VALIDATION_SAMPLES,
-  quintic,
+  residualCarry,
   stopTail,
   VALIDATION_INTERVAL,
   validationSamples,
@@ -62,29 +62,6 @@ function validates(s: Scene, q: Float64Array): boolean {
 }
 
 describe('closed-form curves', () => {
-  it('meets the quintic boundary jets and holds after', () => {
-    for (const [d0, v0, d1, T] of [
-      [0, 0, 1, 0.5],
-      [0.3, -2, -0.4, 0.12],
-      [-1, 4, -1, 0.9],
-    ]) {
-      expect(quintic(d0, v0, d1, T, 0, 0)).toBeCloseTo(d0, 12);
-      expect(quintic(d0, v0, d1, T, 0, 1)).toBeCloseTo(v0, 12);
-      expect(quintic(d0, v0, d1, T, 0, 2)).toBeCloseTo(0, 12);
-      expect(quintic(d0, v0, d1, T, T * (1 - 1e-12), 0)).toBeCloseTo(d1, 9);
-      expect(quintic(d0, v0, d1, T, T * (1 - 1e-12), 1)).toBeCloseTo(0, 9);
-      expect(quintic(d0, v0, d1, T, T * (1 - 1e-12), 2)).toBeCloseTo(0, 6);
-      expect(quintic(d0, v0, d1, T, 2 * T, 0)).toBe(d1);
-      expect(quintic(d0, v0, d1, T, 2 * T, 1)).toBe(0);
-      // Derivatives agree with the curve they describe.
-      const t = 0.37 * T;
-      const h = 1e-6;
-      const slope = (quintic(d0, v0, d1, T, t + h, 0) - quintic(d0, v0, d1, T, t - h, 0)) / (2 * h);
-      expect(quintic(d0, v0, d1, T, t, 1)).toBeCloseTo(slope, 5);
-    }
-    expect(quintic(0.2, 1, 0.7, 0, 0, 0)).toBe(0.7);
-  });
-
   it('brings the stop tail to rest at h and holds it', () => {
     for (const [x0, v0, a0] of [
       [0.1, 1.5, 0],
@@ -141,52 +118,108 @@ describe('closed-form curves', () => {
   });
 });
 
-describe('arm route planning', () => {
-  it('spends one environment batch on an admissible goal', () => {
+describe('arm route slew', () => {
+  const dt = 1 / 60;
+  function poseOf(s: Scene, q: Float64Array) {
+    return forwardArm(
+      configurationFromQ(q, { ...s.driver.acceptedConfiguration }),
+      s.driver.calibration,
+      s.context,
+      makeArmForwardResult(),
+    );
+  }
+
+  it('shortens a long multi-axis step to just inside the allowance, along the step', () => {
     const s = scene();
-    const goal = sideways();
-    expect(validates(s, goal)).toBe(true);
+    const from = sideways();
     const route = new ArmRoute(TAIL);
-    route.reset(goal);
-    route.request('goal', 0.3);
-    expect(route.pending).toBe('goal');
-    const batches = route.plan(s.driver, s.context, goal, goal, NO_FINGERS, NO_FINGERS);
-    expect(batches).toBe(1);
-    expect(route.pending).toBe('none');
-    expect(route.projected).toBe(false);
-    expect(route.stuck).toBe(false);
-    expect(Array.from(route.goalQ)).toEqual(Array.from(goal));
-    expect(Array.from(route.dGoal)).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    route.reset(from);
+    const accepted = poseOf(s, from);
+    const target = from.slice();
+    target[0] += 0.6;
+    target[2] += 0.5;
+    target[3] += 0.7;
+    target[4] += 0.4;
+    const k = armStepWithinSlew(from, accepted, target, poseOf(s, target), dt);
+    // One 1/k scale lands over: the bone angles are not linear in q.
+    const once = from.map((value, i) => value + (target[i] - value) / k);
+    expect(armStepWithinSlew(from, accepted, once, poseOf(s, once), dt)).toBeGreaterThan(1);
+
+    const command = target.slice();
+    expect(route.limitSlew(command, accepted, s.driver, s.context, dt)).toBe(true);
+    const ratio = armStepWithinSlew(from, accepted, command, poseOf(s, command), dt);
+    expect(ratio).toBeLessThanOrEqual(1);
+    expect(ratio).toBeGreaterThanOrEqual(0.98);
+    const share = (command[3] - from[3]) / (target[3] - from[3]);
+    for (let i = 0; i < 7; i++) {
+      expect(command[i] - from[i]).toBeCloseTo((target[i] - from[i]) * share, 12);
+    }
   });
 
-  it('projects a goal past the joint range onto it', () => {
+  it('leaves a step within the allowance alone', () => {
+    const s = scene();
+    const from = sideways();
+    const route = new ArmRoute(TAIL);
+    route.reset(from);
+    const command = from.slice();
+    command[3] += 0.5 * LIMIT_SLEW * dt;
+    const before = Array.from(command);
+    expect(route.limitSlew(command, poseOf(s, from), s.driver, s.context, dt)).toBe(false);
+    expect(Array.from(command)).toEqual(before);
+  });
+});
+
+/** Point the driver's request at `q`, as the body's composed request would for its raw q. */
+function requestAt(s: Scene, q: Float64Array): void {
+  s.driver.requestForConfiguration(
+    configurationFromQ(q, { ...s.driver.acceptedConfiguration }),
+    s.context,
+    NO_FINGERS,
+    NO_FINGERS,
+  );
+}
+
+describe('arm route goal', () => {
+  it('takes an admissible raw q on the chain for one settled step and one check', () => {
     const s = scene();
     const raw = sideways();
-    const goal = overRolled(s.driver, raw, 0.2);
+    requestAt(s, raw);
     const route = new ArmRoute(TAIL);
     route.reset(raw);
-    route.request('goal', 0.3);
-    route.plan(s.driver, s.context, goal, raw, NO_FINGERS, NO_FINGERS);
+    const batches = route.track(s.driver, s.context, raw, NO_FINGERS, NO_FINGERS, 1 / 60);
+    expect(batches).toBe(2);
+    expect(route.solved).toBe(false);
+    expect(route.projected).toBe(false);
+    expect(Array.from(route.goalQ)).toEqual(Array.from(raw));
+  });
+
+  it('solves a raw q past the joint range into it', () => {
+    const s = scene();
+    const raw = overRolled(s.driver, sideways(), 0.2);
+    requestAt(s, raw);
+    const route = new ArmRoute(TAIL);
+    route.reset(sideways());
+    route.track(s.driver, s.context, raw, NO_FINGERS, NO_FINGERS, 1 / 60);
+    expect(route.solved).toBe(true);
     expect(route.projected).toBe(true);
-    expect(route.stuck).toBe(false);
     expect(route.goalQ[4]).toBeLessThanOrEqual(
       s.driver.calibration.joints.elbow.dofs.rotation.max[1] + 1e-12,
     );
     expect(validates(s, route.goalQ)).toBe(true);
   });
 
-  it('projects a hand inside the face to a feasible pose beside it', () => {
+  it('solves a hand inside the face to a feasible pose', () => {
     const s = scene();
     const inFace = faceOnlyPose(s);
     expect(inFace, 'no grid pose puts only fingers inside the face').not.toBeNull();
     if (!inFace) return;
     expect(validates(s, inFace)).toBe(false);
+    requestAt(s, inFace);
     const route = new ArmRoute(TAIL);
     route.reset(s.driver.acceptedQ);
-    route.request('goal', 0.4);
-    route.plan(s.driver, s.context, inFace, inFace, NO_FINGERS, NO_FINGERS);
+    route.track(s.driver, s.context, inFace, NO_FINGERS, NO_FINGERS, 1 / 60);
+    expect(route.solved).toBe(true);
     expect(route.projected).toBe(true);
-    expect(route.stuck).toBe(false);
     expect(validates(s, route.goalQ)).toBe(true);
   });
 });
@@ -243,162 +276,94 @@ function faceOnlyPose(s: Scene): Float64Array | null {
 }
 
 describe('arm route tracking', () => {
-  /** Run a route at `hz` against a fixed raw pose, sampling `at` each listed time. */
-  function track(
-    s: Scene,
-    hz: number,
-    seconds: number,
-    events: {
-      replanAt?: { time: number; goal: Float64Array };
-      absorbAt?: { time: number; offset: number };
-    } = {},
-  ) {
-    const raw = sideways();
+  it('eases the residual carry from its jet to rest over the duration', () => {
+    for (const [from, rate, T] of [
+      [0.3, 0, 0.4],
+      [-0.2, 3, 0.12],
+      [0.05, -1, 0.9],
+    ]) {
+      expect(residualCarry(from, rate, T, 0, 0)).toBeCloseTo(from, 12);
+      expect(residualCarry(from, rate, T, 0, 1)).toBeCloseTo(rate, 12);
+      expect(residualCarry(from, rate, T, T * (1 - 1e-12), 0)).toBeCloseTo(0, 9);
+      expect(residualCarry(from, rate, T, T * (1 - 1e-12), 1)).toBeCloseTo(0, 9);
+      expect(residualCarry(from, rate, T, 2 * T, 0)).toBe(0);
+      const t = 0.37 * T;
+      const h = 1e-6;
+      const slope =
+        (residualCarry(from, rate, T, t + h, 0) - residualCarry(from, rate, T, t - h, 0)) / (2 * h);
+      expect(residualCarry(from, rate, T, t, 1)).toBeCloseTo(slope, 5);
+    }
+  });
+
+  /** Accept every command toward a raw q that moved off the accepted one in a single step. */
+  function run(s: Scene, hz: number, seconds: number, lead = 0.3, jump = 0.2) {
+    const from = sideways();
+    const raw = from.slice();
+    raw[3] += jump;
+    raw[2] -= jump / 2;
     const route = new ArmRoute(TAIL);
-    route.reset(raw);
-    route.request('goal', 0.4);
-    route.plan(s.driver, s.context, overRolled(s.driver, raw, 0.25), raw, NO_FINGERS, NO_FINGERS);
+    route.reset(from);
+    route.retime(lead);
     const dt = 1 / hz;
-    const frames = Math.round(seconds * hz);
-    const accepted: Float64Array[] = [];
-    const out = new Float64Array(7);
-    const checks: {
-      replanValue?: number;
-      replanRate?: number;
-      absorbValue?: number;
-      absorbRate?: number;
-    } = {};
-    for (let k = 1; k <= frames; k++) {
-      const time = k * dt;
-      if (events.replanAt && Math.abs(time - dt - events.replanAt.time) < dt / 2) {
-        const before = route.command(raw, s.driver, new Float64Array(7));
-        const rate = Array.from({ length: 7 }, (_, i) =>
-          quintic(route.d0[i], route.v0[i], route.dGoal[i], route.duration, route.elapsed, 1),
-        );
-        route.request('goal', 0.4);
-        route.plan(s.driver, s.context, events.replanAt.goal, raw, NO_FINGERS, NO_FINGERS);
-        const after = route.command(raw, s.driver, new Float64Array(7));
-        checks.replanValue = Math.max(...after.map((x, i) => Math.abs(x - before[i])));
-        checks.replanRate = Math.max(...rate.map((v, i) => Math.abs(v - route.v0[i])));
-      }
-      route.advance(dt);
-      route.command(raw, s.driver, out);
-      if (events.absorbAt && Math.abs(time - events.absorbAt.time) < dt / 2) {
-        const rate = Array.from({ length: 7 }, (_, i) =>
-          quintic(route.d0[i], route.v0[i], route.dGoal[i], route.duration, route.elapsed, 1),
-        );
-        for (let i = 1; i < 7; i++) out[i] += events.absorbAt.offset;
-        route.absorb(raw, out, s.driver);
-        const after = route.command(raw, s.driver, new Float64Array(7));
-        checks.absorbValue = Math.max(...after.map((x, i) => Math.abs(x - out[i])));
-        checks.absorbRate = Math.max(...rate.map((v, i) => Math.abs(v - route.v0[i])));
-      }
-      route.accept(out, raw, dt);
-      accepted.push(out.slice());
+    const commands: Float64Array[] = [];
+    for (let k = 0; k < Math.round(seconds * hz); k++) {
+      requestAt(s, raw);
+      s.driver.accept(route.qAcc, s.context, NO_FINGERS, NO_FINGERS);
+      route.track(s.driver, s.context, raw, NO_FINGERS, NO_FINGERS, dt);
+      const out = route.command(s.driver, new Float64Array(7));
+      route.accept(out, dt);
+      commands.push(out);
     }
-    return { route, accepted, checks, dt };
+    return { route, from, raw, commands, dt };
   }
 
-  /** Largest change of finite-difference velocity across frame `k`. */
-  function velocityJump(accepted: Float64Array[], dt: number, k: number): number {
-    let worst = 0;
-    for (let i = 0; i < 7; i++) {
-      const before = (accepted[k - 1][i] - accepted[k - 2][i]) / dt;
-      const after = (accepted[k][i] - accepted[k - 1][i]) / dt;
-      worst = Math.max(worst, Math.abs(after - before));
-    }
-    return worst;
-  }
+  it('carries the last command into a goal that jumped, and eases it out over the lead', () => {
+    const s = scene();
+    const lead = 0.3;
+    const { from, raw, commands, dt } = run(s, 60, 0.5, lead);
+    // The first frame is one carry step from where the arm was, not at the goal.
+    expect(Math.abs(commands[0][3] - from[3])).toBeLessThan(0.01);
+    expect(Math.abs(commands[0][3] - raw[3])).toBeGreaterThan(0.15);
+    // The lead later the carry is spent.
+    const done = commands[Math.ceil(lead / dt)];
+    for (let i = 0; i < 7; i++) expect(done[i]).toBeCloseTo(raw[i], 12);
+  });
 
-  it('samples the same correction at 20, 60 and 120 Hz', () => {
+  it('samples the same carry at 20, 60 and 120 Hz', () => {
     const s = scene();
     const samples = [20, 60, 120].map((hz) => {
-      const { accepted } = track(s, hz, 0.6);
-      const stride = hz / 20;
-      return accepted.filter((_, k) => (k + 1) % stride === 0);
+      // Small enough to be one frame's step even at 120 Hz, so every rate has the same goal.
+      const { commands } = run(s, hz, 0.3, 0.3, 0.05);
+      return commands.filter((_, k) => (k + 1) % (hz / 20) === 0);
     });
-    expect(samples[0].length).toBe(12);
+    expect(samples[0].length).toBe(6);
     for (const other of samples.slice(1)) {
-      expect(other.length).toBe(samples[0].length);
       for (let k = 0; k < other.length; k++) {
-        for (let i = 0; i < 7; i++) expect(other[k][i]).toBeCloseTo(samples[0][k][i], 9);
+        for (let i = 0; i < 7; i++) expect(other[k][i]).toBeCloseTo(samples[0][k][i], 12);
       }
     }
-    // Something moved: the correction is not trivially zero.
-    expect(Math.abs(samples[0][11][4] - samples[0][0][4])).toBeGreaterThan(0.01);
+    // Something was carried: the first sample is still well short of the last.
+    expect(Math.abs(samples[0][0][3] - samples[0][5][3])).toBeGreaterThan(0.01);
   });
 
-  it('keeps the command C1 across a replan and an absorb', () => {
+  it('carries on from an absorbed pose', () => {
     const s = scene();
-    const raw = sideways();
-    const next = overRolled(s.driver, raw, -0.3);
-    next[1] = 0.3 * Math.PI;
-    const jumps = [120, 240].map((hz) => {
-      const { checks, accepted, dt } = track(s, hz, 0.5, {
-        replanAt: { time: 0.15, goal: next },
-        absorbAt: { time: 0.3, offset: 0.002 },
-      });
-      expect(checks.replanValue).toBeLessThan(1e-12);
-      expect(checks.replanRate).toBeLessThan(1e-12);
-      expect(checks.absorbValue).toBeLessThan(1e-12);
-      expect(checks.absorbRate).toBeLessThan(1e-12);
-      const replan = Math.round(0.15 * hz);
-      const absorb = Math.round(0.3 * hz);
-      return {
-        replan: velocityJump(accepted, dt, replan),
-        // The repaired frame steps by the offset; the next one resumes the old rate.
-        absorb: Math.abs(
-          (accepted[absorb][4] - accepted[absorb - 1][4]) / dt -
-            (accepted[absorb - 2][4] - accepted[absorb - 3][4]) / dt,
-        ),
-      };
-    });
-    // A velocity seam would not shrink with the frame time.
-    expect(jumps[1].replan).toBeLessThan(0.7 * jumps[0].replan + 1e-9);
-    expect(jumps[1].absorb).toBeLessThan(0.7 * jumps[0].absorb + 1e-9);
+    const { route } = run(s, 60, 0.1);
+    const committed = route.command(s.driver, new Float64Array(7));
+    for (let i = 1; i < 7; i++) committed[i] -= 0.002;
+    route.absorb(committed);
+    const after = route.command(s.driver, new Float64Array(7));
+    for (let i = 0; i < 7; i++) expect(after[i]).toBeCloseTo(committed[i], 12);
   });
 
-  it('weights the plane correction away at the pole', () => {
+  it('stops from the accepted jet one frame on', () => {
     const s = scene();
-    const goal = sideways();
-    goal[1] = 0.25 * Math.PI;
-    const route = new ArmRoute(TAIL);
-    route.reset(goal);
-    route.request('goal', 0);
-    route.plan(s.driver, s.context, goal, goal, NO_FINGERS, NO_FINGERS);
-    route.dGoal[0] = 0.4;
-    const out = new Float64Array(7);
-    const raw = goal.slice();
-
-    raw[1] = 0;
-    expect(route.command(raw, s.driver, out)[0]).toBe(raw[0]);
-
-    raw[1] = 0.6 * Math.PI;
-    expect(route.command(raw, s.driver, out)[0]).toBeCloseTo(raw[0] + 0.4, 12);
-
-    // Halfway in sine between the pole and the goal's elevation, half the correction.
-    const ceiling = elevationCeiling(goal[0], s.driver.calibration.joints.shoulder.elevation).max;
-    const goalTheta = 0.25 * ceiling;
-    raw[1] = (Math.asin(0.5 * Math.sin(goalTheta)) / ceiling) * Math.PI;
-    expect(route.command(raw, s.driver, out)[0]).toBeCloseTo(raw[0] + 0.2, 9);
-  });
-
-  it('stops from the accepted jet and holds once at rest', () => {
-    const s = scene();
-    const { route, dt } = track(s, 60, 0.1);
-    route.advance(dt);
-    route.beginStop();
+    const { route, dt } = run(s, 60, 0.1);
+    route.beginStop(dt);
     expect(route.stopping).toBe(true);
-    const out = new Float64Array(7);
-    let last = route.tailSample(new Float64Array(7));
-    const steps = Math.ceil(TAIL / dt) + 3;
-    for (let k = 0; k < steps; k++) {
-      route.advance(dt);
-      route.tailSample(out);
-      if (k >= steps - 2) {
-        for (let i = 0; i < 7; i++) expect(out[i]).toBe(last[i]);
-      }
-      last = out.slice();
+    const out = route.tailSample(new Float64Array(7));
+    for (let i = 0; i < 7; i++) {
+      expect(out[i]).toBe(stopTail(route.qAcc[i], route.vAcc[i], route.aAcc[i], TAIL, dt, 0));
     }
   });
 });

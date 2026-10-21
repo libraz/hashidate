@@ -1029,16 +1029,6 @@ export class Rig {
     return rise;
   }
 
-  /** Stage a solver output without changing accepted arm or finger history. */
-  stageArmOutput(
-    side: Side,
-    output: ArmPathPlanOutput,
-    curls: FingerSpec,
-    spread: FingerSpec,
-  ): boolean {
-    return this.stageArmForward(side, output.forward, curls, spread);
-  }
-
   stageArmForward(
     side: Side,
     forward: ArmForwardResult,

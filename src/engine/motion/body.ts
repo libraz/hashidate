@@ -1,7 +1,15 @@
 import * as THREE from 'three';
 import type { ArmSolution } from '../rig';
-import { LIMIT_SLEW } from '../rig/arm-driver';
-import type { ArmFrameSideCommit, Rig, StandingArmPose } from '../rig/rig';
+import {
+  type ArmConfiguration,
+  type ArmForwardContext,
+  forwardArm,
+  makeArmForwardResult,
+} from '../rig/arm-configuration';
+import type { ArmDriver } from '../rig/arm-driver';
+import { type ArmPathPlanOutput, configurationFromQ } from '../rig/arm-path';
+import { ArmRoute, clampToBox, validationSamples } from '../rig/arm-route';
+import type { Rig, StandingArmPose } from '../rig/rig';
 import type {
   ArmSlot,
   FingerName,
@@ -294,79 +302,30 @@ interface IdleEnv {
   dt: number;
 }
 
-interface ArmBridgeSideSample {
-  q: Float64Array;
-  upperLocal: THREE.Quaternion;
-  lowerLocal: THREE.Quaternion;
-  handLocal: THREE.Quaternion;
-  points: THREE.Vector3[];
-  torsoLocal: THREE.Vector3[];
-  headLocal: THREE.Vector3[];
-  hasTorso: boolean;
-  hasHead: boolean;
-}
-
-interface ArmBridgeSample {
-  s: number;
-  side: Record<Side, ArmBridgeSideSample>;
-}
-
-interface ArmBridgeInterval {
-  from: ArmBridgeSample;
-  to: ArmBridgeSample;
-  depth: number;
-  travel: number;
-}
-
+/** What one frame's constrained arm commit spent. */
 interface ArmFrameWork {
-  contextRetries: number;
-  armStepRetries: number;
-  bridgeSamples: number;
+  /** Frames whose goal is the solver's step rather than the raw q. */
+  plans: number;
+  /** Locked pose checks, holds included. */
+  validations: number;
+  /** Commands whose endpoint was pushed clear and committed. */
+  repairs: number;
+  /** Arms brought to rest on the stop tail. */
+  stopTails: number;
+  /** Arms that kept their accepted pose because neither validated. */
+  holds: number;
   solverCalls: number;
   solverIterations: number;
   environmentBatches: number;
 }
 
-function makeArmBridgeSideSample(pointCount: number): ArmBridgeSideSample {
-  return {
-    q: new Float64Array(7),
-    upperLocal: new THREE.Quaternion(),
-    lowerLocal: new THREE.Quaternion(),
-    handLocal: new THREE.Quaternion(),
-    points: Array.from({ length: pointCount }, () => new THREE.Vector3()),
-    torsoLocal: Array.from({ length: pointCount }, () => new THREE.Vector3()),
-    headLocal: Array.from({ length: pointCount }, () => new THREE.Vector3()),
-    hasTorso: false,
-    hasHead: false,
-  };
+/** One side of the frame handed to `Rig.commitArmFrame`, refilled rather than rebuilt. */
+interface ArmCommit {
+  output: ArmPathPlanOutput;
+  context: ArmForwardContext;
+  curls: FingerSpec;
+  spread: FingerSpec;
 }
-
-function makeArmBridgeSample(pointCounts: Record<Side, number>): ArmBridgeSample {
-  return {
-    s: 0,
-    side: {
-      L: makeArmBridgeSideSample(pointCounts.L),
-      R: makeArmBridgeSideSample(pointCounts.R),
-    },
-  };
-}
-
-const ARM_BRIDGE_STARTS = [0, 0.25, 0.5, 0.75, 1] as const;
-const ARM_BRIDGE_MAX_DEPTH = 8;
-const ARM_BRIDGE_MAX_SAMPLES = 96;
-const ARM_STEP_BACKTRACKS = [1, 0.5, 0.25, 0.125, 0.0625, 0.03125] as const;
-
-/**
- * Bridge samples one frame's commit may spend across all its context retries:
- * two full bridges. The heaviest ordinary frame measured used 161; seven
- * attempts failing on speed reach 672. Past it the frame keeps its accepted pose.
- * Mirrored weight-shift certification at a 0.5 s step fell from 279 to 185 samples.
- * The changed rejection order needs a render check.
- */
-const ARM_FRAME_BRIDGE_BUDGET = 2 * ARM_BRIDGE_MAX_SAMPLES;
-
-/** Wrist flexion and deviation in the arm configuration, which the bridge rate-checks directly. */
-const ARM_BRIDGE_WRIST_DOFS = [5, 6] as const;
 
 /**
  * The two halves of a gesture's envelope, kept apart rather than multiplied.
@@ -549,26 +508,46 @@ export class Body {
     L: new THREE.Vector3(),
     R: new THREE.Vector3(),
   };
-  private readonly _transactionCurls: Record<Side, Record<FingerName, number>>;
-  private readonly _transactionSpread: Record<Side, Record<FingerName, number>>;
-  private readonly _bridgeCurls: Record<Side, Record<FingerName, number>>;
-  private readonly _bridgeSpread: Record<Side, Record<FingerName, number>>;
-  private readonly _bridgeSamples: ArmBridgeSample[];
-  private readonly _bridgeKnots: ArmBridgeSample[];
-  private readonly _bridgeFrontier: ArmBridgeInterval[];
-  private _bridgePendingCount = 0;
-  private _bridgeSampleCount = 0;
-  private _bridgeAlpha = 1;
-  private _bridgeResolution = Number.POSITIVE_INFINITY;
-  private readonly _bridgeRel = new THREE.Vector3();
   private readonly _armFrameWork: ArmFrameWork = {
-    contextRetries: 0,
-    armStepRetries: 0,
-    bridgeSamples: 0,
+    plans: 0,
+    validations: 0,
+    repairs: 0,
+    stopTails: 0,
+    holds: 0,
     solverCalls: 0,
     solverIterations: 0,
     environmentBatches: 0,
   };
+  /** Each constrained arm's tracked goal and residual carry. */
+  private readonly _routes: Record<Side, ArmRoute> = {
+    L: new ArmRoute(LEAD_FLOOR),
+    R: new ArmRoute(LEAD_FLOOR),
+  };
+  /** This frame's unconstrained q and the commanded q, per side. */
+  private readonly _rawQ: Record<Side, Float64Array> = {
+    L: new Float64Array(7),
+    R: new Float64Array(7),
+  };
+  private readonly _commandQ: Record<Side, Float64Array> = {
+    L: new Float64Array(7),
+    R: new Float64Array(7),
+  };
+  /** Whether a side's command is already formed this frame; the clasp leader's is, early. */
+  private readonly _commanded: Record<Side, boolean> = { L: false, R: false };
+  private readonly _sampleQ = new Float64Array(7);
+  private readonly _sampleCurls = mkFingerSpread();
+  private readonly _sampleSpread = mkFingerSpread();
+  private readonly _commandConfiguration: ArmConfiguration = {
+    shoulderPlane: 0,
+    shoulderLift: 0,
+    humeralRotation: 0,
+    elbowFlex: 0,
+    forearmRoll: 0,
+    wristFlex: 0,
+    wristDev: 0,
+  };
+  private readonly _commandForward = makeArmForwardResult();
+  private readonly _commit: Record<Side, ArmCommit | null> = { L: null, R: null };
   private readonly _acceptedTuple: Record<
     Side,
     Record<'upperArm' | 'lowerArm' | 'hand', Vec3Tuple>
@@ -576,18 +555,6 @@ export class Body {
     L: { upperArm: [0, 0, 0], lowerArm: [0, 0, 0], hand: [0, 0, 0] },
     R: { upperArm: [0, 0, 0], lowerArm: [0, 0, 0], hand: [0, 0, 0] },
   };
-  private readonly _frameCommit: Record<Side, ArmFrameSideCommit | null> = { L: null, R: null };
-  private readonly _fullArmQ: Record<Side, Float64Array> = {
-    L: new Float64Array(7),
-    R: new Float64Array(7),
-  };
-  private readonly _betaArmQ: Record<Side, Float64Array> = {
-    L: new Float64Array(7),
-    R: new Float64Array(7),
-  };
-  private _bridgeFailure: 'speed' | 'geometry' | 'budget' = 'geometry';
-  private _bridgeCapacityScope: 'context' | 'frame' | null = null;
-  private _bridgeCapacityMinimum = 0;
   /** `_armVec` before breathing and drift, which is what a child link is carried by. */
   private _armBlend: Record<Side, Record<ArmSlot, THREE.Vector3>>;
   private readonly _carryDir = new THREE.Vector3();
@@ -773,27 +740,6 @@ export class Body {
     this._armWorld = { L: mkDirs(), R: mkDirs() };
     this._armVec = { L: mkVecs(), R: mkVecs() }; // composed target for this frame
     this._armWorldVec = { L: mkVecs(), R: mkVecs() };
-    this._transactionCurls = { L: mkFingerSpread(), R: mkFingerSpread() };
-    this._transactionSpread = { L: mkFingerSpread(), R: mkFingerSpread() };
-    this._bridgeCurls = { L: mkFingerSpread(), R: mkFingerSpread() };
-    this._bridgeSpread = { L: mkFingerSpread(), R: mkFingerSpread() };
-    const bridgePointCounts = {
-      L: rig.armDriver('L')?.output.points.length ?? 0,
-      R: rig.armDriver('R')?.output.points.length ?? 0,
-    };
-    this._bridgeSamples = Array.from({ length: ARM_BRIDGE_MAX_SAMPLES }, () =>
-      makeArmBridgeSample(bridgePointCounts),
-    );
-    this._bridgeKnots = Array.from(
-      { length: ARM_BRIDGE_STARTS.length },
-      () => this._bridgeSamples[0],
-    );
-    this._bridgeFrontier = Array.from({ length: ARM_BRIDGE_MAX_SAMPLES }, () => ({
-      from: this._bridgeSamples[0],
-      to: this._bridgeSamples[0],
-      depth: 0,
-      travel: 0,
-    }));
     this._armBlend = { L: mkVecs(), R: mkVecs() };
     this._armState = { L: mkState(this._rest), R: mkState(this._rest) }; // what the arm is actually doing
     this._fingerSpec = { L: { ...BASE_FINGERS }, R: { ...BASE_FINGERS } };
@@ -1192,6 +1138,7 @@ export class Body {
       LEAD_FLOOR,
       Math.min(0.95, this.travel(def, v, pose) * LEAD_PER_RAD),
     );
+    for (const side of SIDES) this._routes[side].retime(lead);
     for (const f of this._spineFading) f.spineStart = f.spineWeight;
     for (const f of this._fading) for (const slot of ARM_SLOTS) f.armStart[slot] = f.armW[slot];
     while (this._fading.length > MAX_FADING) this.foldFading();
@@ -1557,9 +1504,11 @@ export class Body {
   }
 
   private resetArmFrameWork(): void {
-    this._armFrameWork.contextRetries = 0;
-    this._armFrameWork.armStepRetries = 0;
-    this._armFrameWork.bridgeSamples = 0;
+    this._armFrameWork.plans = 0;
+    this._armFrameWork.validations = 0;
+    this._armFrameWork.repairs = 0;
+    this._armFrameWork.stopTails = 0;
+    this._armFrameWork.holds = 0;
     this._armFrameWork.solverCalls = 0;
     this._armFrameWork.solverIterations = 0;
     this._armFrameWork.environmentBatches = 0;
@@ -1643,6 +1592,9 @@ export class Body {
           this._fingerSpreadState[side][finger].reset(spread);
         }
       }
+      // A route continues from the pose it last accepted; this one was set from outside.
+      const driver = this.rig.armDriver(side);
+      if (driver) this._routes[side].reset(driver.acceptedQ);
     }
   }
 
@@ -1651,21 +1603,6 @@ export class Body {
     if (revision === this._lastExternalArmRevision) return;
     this.seedArmFollowersFromRig();
     this._lastExternalArmRevision = revision;
-  }
-
-  private armFrameBudgetSpent(): boolean {
-    return this._armFrameWork.bridgeSamples >= ARM_FRAME_BRIDGE_BUDGET;
-  }
-
-  /** Whether this attempt's or this frame's sample allowance is used up, recording which. */
-  private armBridgeSamplesSpent(): boolean {
-    if (this.armFrameBudgetSpent()) {
-      this._bridgeFailure = 'budget';
-      return true;
-    }
-    if (this._bridgeSampleCount < ARM_BRIDGE_MAX_SAMPLES) return false;
-    this._bridgeFailure = 'geometry';
-    return true;
   }
 
   private recordArmSolve(output: { iterations: number; environmentBatches: number }): void {
@@ -1682,211 +1619,317 @@ export class Body {
     return slot.def.build(slot.time * slot.speed, slot.v, slot.phase, slot.pose);
   }
 
+  /**
+   * Form one arm's command for this frame: the route's goal for the request
+   * the followed directions make, plus its residual carry, slowed to the slew
+   * allowance.
+   */
+  private commandArm(
+    side: Side,
+    driver: ArmDriver,
+    context: ArmForwardContext,
+    dt: number,
+    frameReady: boolean,
+  ): void {
+    const route = this._routes[side];
+    const mirror = sideMirror(side);
+    const axial = this.axes.axialMirror(side, frameReady);
+    const raw = this._rawQ[side];
+    const directions = this._armDirs[side];
+    const world = this._armWorldVec[side];
+    const upper = this.axes
+      .toWorld(world.upperArm, directions.upperArm, side, mirror, frameReady)
+      .normalize();
+    const lower = this.axes
+      .toWorld(world.lowerArm, directions.lowerArm, side, mirror, frameReady)
+      .normalize();
+    const hand = this.axes
+      .toWorld(world.hand, directions.hand, side, mirror, frameReady)
+      .normalize();
+    const palm = this.axes
+      .toWorld(this._palmWorldVector[side], this._palmOut[side], side, mirror, frameReady)
+      .normalize();
+    const request = driver.composeRequest(
+      context,
+      upper,
+      lower,
+      hand,
+      palm,
+      Math.max(0, this._palmW[side].value),
+      this._twist[side].value * axial,
+      this._fingerSpec[side],
+      this._fingerSpreadSpec[side],
+    );
+    if (driver.configurationFromPose(context, upper, lower, hand, request.palm)) {
+      raw.set(driver.targetQ);
+    } else {
+      raw.set(route.qAcc);
+    }
+
+    this._armFrameWork.environmentBatches += route.track(
+      driver,
+      context,
+      raw,
+      this._fingerSpec[side],
+      this._fingerSpreadSpec[side],
+      dt,
+    );
+    if (route.solved) this._armFrameWork.plans++;
+    const command = route.command(driver, this._commandQ[side]);
+    // A command past the slew allowance is a seam, not a movement: take the
+    // allowed share of the step and carry on from there.
+    if (route.limitSlew(command, driver.acceptedForward, driver, context, dt)) {
+      route.absorb(command);
+    }
+    this._commanded[side] = true;
+  }
+
+  /**
+   * Check the frame's motion from the accepted pose to the command at fixed
+   * density in time, arm and fingers together. The last check lands in
+   * `driver.output`, which is what the frame commits.
+   */
+  private validateCommand(
+    side: Side,
+    driver: ArmDriver,
+    context: ArmForwardContext,
+    dt: number,
+  ): boolean {
+    const command = this._commandQ[side];
+    const accepted = this._routes[side].qAcc;
+    const curls = this._fingerSpec[side];
+    const spread = this._fingerSpreadSpec[side];
+    const n = validationSamples(dt);
+    for (let i = 1; i <= n; i++) {
+      const last = i === n;
+      let q = command;
+      let c: FingerSpec = curls;
+      let sp: FingerSpec = spread;
+      if (!last) {
+        const s = i / n;
+        q = this._sampleQ;
+        for (let j = 0; j < q.length; j++) {
+          const d = command[j] - accepted[j];
+          q[j] = accepted[j] + (j === 0 ? Math.atan2(Math.sin(d), Math.cos(d)) : d) * s;
+        }
+        for (const finger of FINGER_NAMES) {
+          const fromCurl = driver.acceptedCurls[finger];
+          const fromSpread = driver.acceptedSpread[finger];
+          this._sampleCurls[finger] = fromCurl + ((curls[finger] ?? 0) - fromCurl) * s;
+          this._sampleSpread[finger] = fromSpread + ((spread[finger] ?? 0) - fromSpread) * s;
+        }
+        c = this._sampleCurls;
+        sp = this._sampleSpread;
+      }
+      if (!this.validateArmPose(driver, context, q, c, sp, last)) return false;
+    }
+    return true;
+  }
+
+  /** One locked check of `q`, recorded in the frame's work. */
+  private validateArmPose(
+    driver: ArmDriver,
+    context: ArmForwardContext,
+    q: Float64Array,
+    curls: FingerSpec,
+    spread: FingerSpec,
+    final: boolean,
+  ): boolean {
+    driver.requestForConfiguration(
+      configurationFromQ(q, this._commandConfiguration),
+      context,
+      curls,
+      spread,
+    );
+    const out = final ? driver.output : driver.bridgeOutput;
+    const valid = driver.validateLockedPose(q, context, curls, spread, out);
+    this._armFrameWork.validations++;
+    this.recordArmSolve(out);
+    return valid;
+  }
+
+  /**
+   * An arm whose command did not validate. Repair the command's endpoint and
+   * restart the correction from it; failing that, bring the accepted motion to
+   * rest; failing that, hold the accepted pose. Leaves
+   * the pose to commit in `driver.output`; false when even the hold fails.
+   */
+  private recoverArm(
+    side: Side,
+    driver: ArmDriver,
+    context: ArmForwardContext,
+    dt: number,
+  ): boolean {
+    const route = this._routes[side];
+    const work = this._armFrameWork;
+    const command = this._commandQ[side];
+    const curls = this._fingerSpec[side];
+    const spread = this._fingerSpreadSpec[side];
+    driver.requestForConfiguration(
+      configurationFromQ(command, this._commandConfiguration),
+      context,
+      curls,
+      spread,
+    );
+    // A repair is a step like any other: one past the slew allowance is a seam.
+    let repaired =
+      driver.restoreEndpointFrom(command, context, dt, true) &&
+      route.slewRatio(driver.output.q, driver.acceptedForward, driver, context, dt) <= 1;
+    this.recordArmSolve(driver.output);
+    if (!repaired) {
+      // Pushing a point out of the face converges only linearly, since its
+      // reported normal is not the distance's gradient; approached from the
+      // accepted side instead, the same contact stays clear at every step.
+      const planned = driver.planFrom(route.qAcc, context, dt, true);
+      this.recordArmSolve(planned);
+      if (planned.status !== 'blocked') {
+        const q = this._sampleQ;
+        q.set(planned.q);
+        route.limitSlew(q, driver.acceptedForward, driver, context, dt);
+        repaired = this.validateArmPose(driver, context, q, curls, spread, true);
+      }
+    }
+    if (repaired) {
+      work.repairs++;
+      command.set(driver.output.q);
+      route.absorb(command);
+      this.armCommit(side, driver, context, curls, spread);
+      return true;
+    }
+
+    route.beginStop(dt);
+    const tail = clampToBox(
+      route.tailSample(command),
+      driver.fillBounds(route.qAcc, 0, false),
+      command,
+    );
+    route.limitSlew(tail, driver.acceptedForward, driver, context, dt);
+    if (this.validateArmPose(driver, context, tail, curls, spread, true)) {
+      work.stopTails++;
+      this.armCommit(side, driver, context, curls, spread);
+      return true;
+    }
+
+    work.holds++;
+    command.set(route.qAcc);
+    route.absorb(command);
+    if (
+      !this.validateArmPose(
+        driver,
+        context,
+        route.qAcc,
+        driver.acceptedCurls,
+        driver.acceptedSpread,
+        true,
+      )
+    ) {
+      return false;
+    }
+    this.armCommit(side, driver, context, driver.acceptedCurls, driver.acceptedSpread);
+    return true;
+  }
+
+  /** One side's commit record, pointing at this frame's output and context. */
+  private armCommit(
+    side: Side,
+    driver: ArmDriver,
+    context: ArmForwardContext,
+    curls: FingerSpec,
+    spread: FingerSpec,
+  ): ArmCommit {
+    let commit = this._commit[side];
+    if (!commit) {
+      commit = { output: driver.output, context, curls, spread };
+      this._commit[side] = commit;
+    }
+    commit.output = driver.output;
+    commit.context = context;
+    commit.curls = curls;
+    commit.spread = spread;
+    return commit;
+  }
+
+  /**
+   * Commit both arms against the body as followed: the torso is never held back
+   * for an arm, the arm gives way. An arm whose command does not validate holds
+   * its accepted pose in the new body.
+   */
   private commitArmTransaction(dt: number): void {
     const rig = this.rig;
     rig.captureProposedBodyContext(this._rise);
-    const rollComposed: Record<Side, boolean> = { L: false, R: false };
-    let committed = false;
-    for (let attempt = 0; attempt <= 6; attempt++) {
-      if (this.armFrameBudgetSpent()) break;
-      if (attempt > 0) this._armFrameWork.contextRetries++;
-      const alpha = attempt === 0 ? 1 : attempt === 6 ? 0 : 2 ** -attempt;
-      const candidateRise = rig.applyBodyContext(alpha, 1);
-      this._bridgeAlpha = alpha;
-      this._bridgeSampleCount = 0;
-      const leftDriver = rig.armDriver('L');
-      const rightDriver = rig.armDriver('R');
-      if (!(leftDriver && rightDriver)) continue;
-      this._bridgeResolution = Math.min(leftDriver.sweepResolution, rightDriver.sweepResolution);
-      const frameReady = this.axes.ready();
-      let feasible = true;
+    const rise = rig.applyBodyContext(1, 1);
+    const frameReady = this.axes.ready();
+    let feasible = true;
+    for (const side of SIDES) {
+      const driver = rig.armDriver(side);
+      const context = rig.armForwardContextFromUpdatedBody(side);
+      if (!(driver && context)) {
+        feasible = false;
+        break;
+      }
+      driver.captureVolumeFrame();
+      if (!this._commanded[side]) this.commandArm(side, driver, context, dt, frameReady);
+      if (this.validateCommand(side, driver, context, dt)) {
+        this.armCommit(side, driver, context, this._fingerSpec[side], this._fingerSpreadSpec[side]);
+        continue;
+      }
+      if (!this.recoverArm(side, driver, context, dt)) {
+        feasible = false;
+        break;
+      }
+    }
+    const left = this._commit.L;
+    const right = this._commit.R;
+    let committed =
+      feasible && !!(left && right) && rig.commitArmFrame({ L: left, R: right }, rise);
+
+    if (committed) {
+      const acceptedFrameReady = this.axes.ready();
       for (const side of SIDES) {
         const driver = rig.armDriver(side);
-        const context = rig.armForwardContextFromUpdatedBody(side);
-        if (!(driver && context)) {
-          feasible = false;
-          break;
-        }
-        driver.captureVolumeFrame();
-
-        const directions = this._armDirs[side];
-        const upper = this._armWorldVec[side].upperArm.fromArray(directions.upperArm).normalize();
-        const lower = this._armWorldVec[side].lowerArm.fromArray(directions.lowerArm).normalize();
-        const hand = this._armWorldVec[side].hand.fromArray(directions.hand).normalize();
-        this.axes.toWorld(upper, upper, side, sideMirror(side), frameReady);
-        this.axes.toWorld(lower, lower, side, sideMirror(side), frameReady);
-        this.axes.toWorld(hand, hand, side, sideMirror(side), frameReady);
-
-        const palm = this._palmWorldVector[side].fromArray(this._palmOut[side]).normalize();
-        this.axes.toWorld(palm, palm, side, sideMirror(side), frameReady);
-        for (const finger of FINGER_NAMES) {
-          const from = driver.acceptedCurls[finger] ?? 0;
-          const to = this._fingerSpec[side][finger] ?? 0;
-          this._transactionCurls[side][finger] = from + (to - from) * alpha;
-          const fromSpread = driver.acceptedSpread[finger] ?? 0;
-          const toSpread = this._fingerSpreadSpec[side][finger] ?? 0;
-          this._transactionSpread[side][finger] = fromSpread + (toSpread - fromSpread) * alpha;
-        }
-
-        const twist = this._twist[side].value * this.axes.axialMirror(side, frameReady);
-        driver.composeRequest(
-          context,
-          upper,
-          lower,
-          hand,
-          palm,
-          this._palmW[side].value,
-          twist,
-          this._transactionCurls[side],
-          this._transactionSpread[side],
-          !rollComposed[side],
+        if (!driver) continue;
+        this._routes[side].accept(driver.acceptedQ, dt);
+        const accepted = this._armWorldVec[side];
+        this.axes.toCharacter(
+          accepted.upperArm,
+          driver.acceptedForward.u,
+          side,
+          acceptedFrameReady,
         );
-        rollComposed[side] = true;
-
-        let output = driver.plan(context, dt);
-        this.recordArmSolve(output);
-        if (output.status === 'blocked') {
-          if (!driver.restoreEndpoint(context, dt, true)) {
-            this.recordArmSolve(driver.output);
-            feasible = false;
-            break;
-          }
-          this.recordArmSolve(driver.output);
-          output = driver.output;
-        }
-        this._frameCommit[side] = {
-          output,
-          context,
-          curls: this._transactionCurls[side],
-          spread: this._transactionSpread[side],
-        };
-        this._fullArmQ[side].set(output.q);
+        this.axes.toCharacter(
+          accepted.lowerArm,
+          driver.acceptedForward.l,
+          side,
+          acceptedFrameReady,
+        );
+        this.axes.toCharacter(accepted.hand, driver.acceptedForward.h, side, acceptedFrameReady);
+        const tuple = this._acceptedTuple[side];
+        tuple.upperArm[0] = accepted.upperArm.x;
+        tuple.upperArm[1] = accepted.upperArm.y;
+        tuple.upperArm[2] = accepted.upperArm.z;
+        tuple.lowerArm[0] = accepted.lowerArm.x;
+        tuple.lowerArm[1] = accepted.lowerArm.y;
+        tuple.lowerArm[2] = accepted.lowerArm.z;
+        tuple.hand[0] = accepted.hand.x;
+        tuple.hand[1] = accepted.hand.y;
+        tuple.hand[2] = accepted.hand.z;
+        this._arm.note(side, tuple.upperArm, tuple.lowerArm, tuple.hand);
       }
-      if (!feasible) continue;
-      const left = this._frameCommit.L;
-      const right = this._frameCommit.R;
-      if (!(left && right)) continue;
-
-      let capacityProposalUsed = false;
-      for (let backtrack = 0; backtrack < ARM_STEP_BACKTRACKS.length; backtrack++) {
-        const beta = ARM_STEP_BACKTRACKS[backtrack];
-        if (beta === undefined) continue;
-        if (beta < 1 && !this.evaluateArmCandidate(alpha, beta)) {
-          feasible = false;
-          break;
-        }
-
-        if (this.validateArmBridge(alpha, dt)) {
-          if (!rig.commitArmFrame({ L: left, R: right }, candidateRise)) {
-            feasible = false;
-            break;
-          }
-
-          const acceptedFrameReady = this.axes.ready();
-          for (const side of SIDES) {
-            const driver = rig.armDriver(side);
-            if (!driver) continue;
-            const accepted = this._armWorldVec[side];
-            this.axes.toCharacter(
-              accepted.upperArm,
-              driver.acceptedForward.u,
-              side,
-              acceptedFrameReady,
-            );
-            this.axes.toCharacter(
-              accepted.lowerArm,
-              driver.acceptedForward.l,
-              side,
-              acceptedFrameReady,
-            );
-            this.axes.toCharacter(
-              accepted.hand,
-              driver.acceptedForward.h,
-              side,
-              acceptedFrameReady,
-            );
-            const tuple = this._acceptedTuple[side];
-            tuple.upperArm[0] = accepted.upperArm.x;
-            tuple.upperArm[1] = accepted.upperArm.y;
-            tuple.upperArm[2] = accepted.upperArm.z;
-            tuple.lowerArm[0] = accepted.lowerArm.x;
-            tuple.lowerArm[1] = accepted.lowerArm.y;
-            tuple.lowerArm[2] = accepted.lowerArm.z;
-            tuple.hand[0] = accepted.hand.x;
-            tuple.hand[1] = accepted.hand.y;
-            tuple.hand[2] = accepted.hand.z;
-            this._arm.note(side, tuple.upperArm, tuple.lowerArm, tuple.hand);
-          }
-          committed = true;
-          break;
-        }
-
-        if (capacityProposalUsed) {
-          feasible = false;
-          break;
-        }
-        // Measured sparkle release: three alpha-1 quarter-steps certified in 83 samples each.
-        // This capacity-driven trajectory choice needs a render check.
-        if (this._bridgeCapacityScope !== null) {
-          let changesArm = false;
-          for (const side of SIDES) {
-            const accepted = rig.armDriver(side)?.acceptedQ;
-            const full = this._fullArmQ[side];
-            if (accepted) {
-              for (let index = 0; index < full.length; index++) {
-                if (full[index] !== accepted[index]) changesArm = true;
-              }
-            }
-          }
-          if (!changesArm) {
-            feasible = false;
-            break;
-          }
-          const available = Math.min(
-            ARM_BRIDGE_MAX_SAMPLES - this._bridgeSampleCount,
-            ARM_FRAME_BRIDGE_BUDGET - this._armFrameWork.bridgeSamples,
-          );
-          const minimum = this._bridgeCapacityMinimum;
-          const knots = ARM_BRIDGE_STARTS.length;
-          let proposal = -1;
-          if (
-            Number.isInteger(this._bridgeSampleCount) &&
-            Number.isInteger(this._armFrameWork.bridgeSamples) &&
-            Number.isInteger(minimum) &&
-            minimum >= knots &&
-            Number.isFinite(available) &&
-            available > 0
-          ) {
-            for (let index = backtrack + 1; index < ARM_STEP_BACKTRACKS.length; index++) {
-              const smaller = ARM_STEP_BACKTRACKS[index];
-              // Proposal estimate only: endpoint plus a new, complete native bridge.
-              if (1 + knots + (smaller / beta) * (minimum - knots) <= available) {
-                proposal = index;
-                break;
-              }
-            }
-          }
-          if (proposal < 0) {
-            feasible = false;
-            break;
-          }
-          capacityProposalUsed = true;
-          this._armFrameWork.armStepRetries++;
-          backtrack = proposal - 1;
-          continue;
-        }
-        if (this._bridgeFailure !== 'speed' || backtrack + 1 === ARM_STEP_BACKTRACKS.length) {
-          feasible = false;
-          break;
-        }
-        this._armFrameWork.armStepRetries++;
+    } else {
+      // Neither arm moved; each route restarts from the pose it still holds.
+      for (const side of SIDES) {
+        const driver = rig.armDriver(side);
+        if (!(driver && this._commanded[side])) continue;
+        const route = this._routes[side];
+        route.absorb(route.qAcc);
+        route.accept(route.qAcc, dt);
       }
-      if (committed) break;
-      if (!feasible) continue;
     }
+    this._commanded.L = false;
+    this._commanded.R = false;
 
     // A failed articulation must not hold back the common signed jump
-    // translation. This is its own accepted result, not a passed arm bridge.
+    // translation. This is its own accepted result, not a validated arm frame.
     if (!committed) committed = rig.commitArmTransport(this._rise);
     if (!committed) {
       rig.applyBodyContext(0, 0);
@@ -1899,329 +1942,6 @@ export class Body {
         }
       }
     }
-  }
-
-  /** Evaluate a shared beta-scaled arm increment against the unchanged request. */
-  private evaluateArmCandidate(alpha: number, beta: number): boolean {
-    if (this.armBridgeSamplesSpent()) return false;
-    this._bridgeSampleCount++;
-    this._armFrameWork.bridgeSamples++;
-    this.rig.applyBodyContext(alpha, 1);
-    let valid = true;
-    for (const side of SIDES) {
-      const driver = this.rig.armDriver(side);
-      const plan = this._frameCommit[side];
-      const context = this.rig.armForwardContextFromUpdatedBody(side);
-      if (!(driver && plan && context)) {
-        valid = false;
-        continue;
-      }
-      driver.captureVolumeFrame();
-      const q = this._betaArmQ[side];
-      const full = this._fullArmQ[side];
-      for (let i = 0; i < q.length; i++) {
-        q[i] = driver.acceptedQ[i] + (full[i] - driver.acceptedQ[i]) * beta;
-      }
-      if (!driver.validateLockedPose(q, context, plan.curls, plan.spread, driver.output)) {
-        this.recordArmSolve(driver.output);
-        valid = false;
-        continue;
-      }
-      this.recordArmSolve(driver.output);
-    }
-    if (!valid) this._bridgeFailure = 'geometry';
-    return valid;
-  }
-
-  private validateArmBridge(alpha: number, dt: number): boolean {
-    this._bridgePendingCount = 0;
-    this._bridgeCapacityScope = null;
-    this._bridgeCapacityMinimum = 0;
-    const entrySamples = this._bridgeSampleCount;
-    const left = this.rig.armDriver('L');
-    const right = this.rig.armDriver('R');
-    if (!(left && right)) {
-      this._bridgeFailure = 'geometry';
-      return false;
-    }
-    this._bridgeAlpha = alpha;
-    this._bridgeResolution = Math.min(left.sweepResolution, right.sweepResolution);
-    this._bridgeFailure = 'geometry';
-
-    let valid = true;
-    let restored = false;
-    let knotCount = 0;
-    try {
-      let previous: ArmBridgeSample | null = null;
-      for (const s of ARM_BRIDGE_STARTS) {
-        const sample = this.sampleArmBridge(s);
-        if (!(sample && (!previous || this.armBridgeStepWithinBudget(previous, sample, dt)))) {
-          valid = false;
-          break;
-        }
-        this._bridgeKnots[knotCount++] = sample;
-        previous = sample;
-      }
-      if (valid) {
-        for (let index = 1; index < knotCount; index++) {
-          if (
-            !this.classifyArmBridgeInterval(
-              this._bridgeKnots[index - 1],
-              this._bridgeKnots[index],
-              0,
-            )
-          ) {
-            valid = false;
-            break;
-          }
-        }
-      }
-      while (valid && this._bridgePendingCount > 0) {
-        // Every unresolved interval needs its own distinct midpoint to certify.
-        if (this._armFrameWork.bridgeSamples + this._bridgePendingCount > ARM_FRAME_BRIDGE_BUDGET) {
-          this._bridgeFailure = 'budget';
-          this._bridgeCapacityScope = 'frame';
-          this._bridgeCapacityMinimum =
-            this._bridgeSampleCount - entrySamples + this._bridgePendingCount;
-          valid = false;
-          break;
-        }
-        if (this._bridgeSampleCount + this._bridgePendingCount > ARM_BRIDGE_MAX_SAMPLES) {
-          this._bridgeFailure = 'geometry';
-          this._bridgeCapacityScope = 'context';
-          this._bridgeCapacityMinimum =
-            this._bridgeSampleCount - entrySamples + this._bridgePendingCount;
-          valid = false;
-          break;
-        }
-        const selected = this.selectArmBridgeInterval();
-        const interval = this._bridgeFrontier[selected];
-        const from = interval.from;
-        const to = interval.to;
-        const depth = interval.depth;
-        // Child classification may immediately reuse the freed record.
-        const last = --this._bridgePendingCount;
-        this._bridgeFrontier[selected] = this._bridgeFrontier[last];
-        this._bridgeFrontier[last] = interval;
-        const middle = this.sampleArmBridge((from.s + to.s) / 2);
-        if (
-          !(
-            middle &&
-            this.armBridgeStepWithinBudget(from, middle, dt) &&
-            this.armBridgeStepWithinBudget(middle, to, dt)
-          )
-        ) {
-          valid = false;
-          break;
-        }
-        if (
-          !(
-            this.classifyArmBridgeInterval(from, middle, depth + 1) &&
-            this.classifyArmBridgeInterval(middle, to, depth + 1)
-          )
-        )
-          valid = false;
-      }
-    } finally {
-      restored = this.restoreArmBridgeContext(alpha);
-    }
-    if (!restored) {
-      this._bridgeFailure = 'geometry';
-      this._bridgeCapacityScope = null;
-      this._bridgeCapacityMinimum = 0;
-    }
-    return valid && restored;
-  }
-
-  /** Classify a rate-checked interval without treating a pending midpoint as certified. */
-  private classifyArmBridgeInterval(
-    from: ArmBridgeSample,
-    to: ArmBridgeSample,
-    depth: number,
-  ): boolean {
-    const travel = this.armBridgeTravel(from, to);
-    if (!Number.isFinite(travel)) {
-      this._bridgeFailure = 'geometry';
-      return false;
-    }
-    if (travel <= this._bridgeResolution) return true;
-    if (depth >= ARM_BRIDGE_MAX_DEPTH) {
-      this._bridgeFailure = 'geometry';
-      return false;
-    }
-    const interval = this._bridgeFrontier[this._bridgePendingCount++];
-    interval.from = from;
-    interval.to = to;
-    interval.depth = depth;
-    interval.travel = travel;
-    return true;
-  }
-
-  /** Refine the greatest measured travel first, with a stable path-order tie break. */
-  private selectArmBridgeInterval(): number {
-    let selected = 0;
-    for (let index = 1; index < this._bridgePendingCount; index++) {
-      const candidate = this._bridgeFrontier[index];
-      const current = this._bridgeFrontier[selected];
-      if (
-        candidate.travel > current.travel ||
-        (candidate.travel === current.travel && candidate.from.s < current.from.s)
-      )
-        selected = index;
-    }
-    return selected;
-  }
-
-  private restoreArmBridgeContext(alpha: number): boolean {
-    this.rig.applyBodyContext(alpha, 1);
-    for (const side of SIDES) {
-      const driver = this.rig.armDriver(side);
-      const plan = this._frameCommit[side];
-      const context = this.rig.armForwardContextFromUpdatedBody(side);
-      if (!(driver && plan && context)) return false;
-      driver.captureVolumeFrame();
-      // `context` is Rig's reusable per-side record, so the existing commit
-      // already points at this refreshed final candidate context.
-    }
-    return true;
-  }
-
-  private sampleArmBridge(s: number): ArmBridgeSample | null {
-    if (this.armBridgeSamplesSpent()) return null;
-    const sample = this._bridgeSamples[this._bridgeSampleCount++];
-    if (!sample) return null;
-    this._armFrameWork.bridgeSamples++;
-    sample.s = s;
-    this.rig.applyBodyContext(this._bridgeAlpha * s, s);
-
-    for (const side of SIDES) {
-      const driver = this.rig.armDriver(side);
-      const endpoint = this._frameCommit[side];
-      const context = this.rig.armForwardContextFromUpdatedBody(side);
-      if (!(driver && endpoint && context)) return null;
-      driver.captureVolumeFrame();
-
-      const state = sample.side[side];
-      for (let i = 0; i < state.q.length; i++) {
-        state.q[i] = driver.acceptedQ[i] + (endpoint.output.q[i] - driver.acceptedQ[i]) * s;
-      }
-      for (const finger of FINGER_NAMES) {
-        const fromCurl = driver.acceptedCurls[finger] ?? 0;
-        const toCurl = endpoint.curls[finger] ?? 0;
-        this._bridgeCurls[side][finger] = fromCurl + (toCurl - fromCurl) * s;
-        const fromSpread = driver.acceptedSpread[finger] ?? 0;
-        const toSpread = endpoint.spread[finger] ?? 0;
-        this._bridgeSpread[side][finger] = fromSpread + (toSpread - fromSpread) * s;
-      }
-      const valid = driver.validateLockedPose(
-        state.q,
-        context,
-        this._bridgeCurls[side],
-        this._bridgeSpread[side],
-      );
-      this.recordArmSolve(driver.bridgeOutput);
-      if (!valid) {
-        this._bridgeFailure = 'geometry';
-        return null;
-      }
-
-      const output = driver.bridgeOutput;
-      state.upperLocal.copy(output.forward.upperLocal);
-      state.lowerLocal.copy(output.forward.lowerLocal);
-      state.handLocal.copy(output.forward.handLocal);
-      for (let i = 0; i < output.points.length; i++)
-        state.points[i]?.copy(output.points[i].position);
-      state.hasTorso = this.copyBridgeFrameCoordinates(
-        output.points,
-        driver.volumeFrame.torso,
-        state.torsoLocal,
-      );
-      state.hasHead = this.copyBridgeFrameCoordinates(
-        output.points,
-        driver.volumeFrame.head,
-        state.headLocal,
-      );
-      if (state.points.length !== output.points.length) {
-        this._bridgeFailure = 'geometry';
-        return null;
-      }
-    }
-    return sample;
-  }
-
-  private copyBridgeFrameCoordinates(
-    points: readonly { position: THREE.Vector3 }[],
-    frame: { O: THREE.Vector3; up: THREE.Vector3; right: THREE.Vector3; fwd: THREE.Vector3 } | null,
-    out: THREE.Vector3[],
-  ): boolean {
-    if (!frame || out.length !== points.length) return false;
-    for (let i = 0; i < points.length; i++) {
-      const point = points[i];
-      const target = out[i];
-      if (!(point && target)) return false;
-      this._bridgeRel.subVectors(point.position, frame.O);
-      target.set(
-        this._bridgeRel.dot(frame.right),
-        this._bridgeRel.dot(frame.up),
-        this._bridgeRel.dot(frame.fwd),
-      );
-    }
-    return true;
-  }
-
-  private armBridgeStepWithinBudget(
-    from: ArmBridgeSample,
-    to: ArmBridgeSample,
-    dt: number,
-  ): boolean {
-    const deltaS = to.s - from.s;
-    const allowance = LIMIT_SLEW * Math.max(0, dt) * deltaS + Math.sqrt(Number.EPSILON);
-    let within = true;
-    for (const side of SIDES) {
-      const a = from.side[side];
-      const b = to.side[side];
-      for (const dof of ARM_BRIDGE_WRIST_DOFS) {
-        if (Math.abs(b.q[dof] - a.q[dof]) > allowance) within = false;
-      }
-      if (
-        a.upperLocal.angleTo(b.upperLocal) > allowance ||
-        a.lowerLocal.angleTo(b.lowerLocal) > allowance ||
-        a.handLocal.angleTo(b.handLocal) > allowance
-      ) {
-        within = false;
-      }
-    }
-    if (!within) this._bridgeFailure = 'speed';
-    return within;
-  }
-
-  private armBridgeTravel(from: ArmBridgeSample, to: ArmBridgeSample): number {
-    let maximum = 0;
-    for (const side of SIDES) {
-      const a = from.side[side];
-      const b = to.side[side];
-      if (a.points.length !== b.points.length) return Number.POSITIVE_INFINITY;
-      for (let i = 0; i < a.points.length; i++) {
-        const aPoint = a.points[i];
-        const bPoint = b.points[i];
-        if (!(aPoint && bPoint)) return Number.POSITIVE_INFINITY;
-        maximum = Math.max(maximum, aPoint.distanceTo(bPoint));
-        if (a.hasTorso !== b.hasTorso || a.hasHead !== b.hasHead) return Number.POSITIVE_INFINITY;
-        if (a.hasTorso) {
-          const aLocal = a.torsoLocal[i];
-          const bLocal = b.torsoLocal[i];
-          if (!(aLocal && bLocal)) return Number.POSITIVE_INFINITY;
-          maximum = Math.max(maximum, aLocal.distanceTo(bLocal));
-        }
-        if (a.hasHead) {
-          const aLocal = a.headLocal[i];
-          const bLocal = b.headLocal[i];
-          if (!(aLocal && bLocal)) return Number.POSITIVE_INFINITY;
-          maximum = Math.max(maximum, aLocal.distanceTo(bLocal));
-        }
-      }
-    }
-    return maximum;
   }
 
   update(dt: number, ctx?: BodyContext): void {
@@ -2263,6 +1983,8 @@ export class Body {
         this._exiting = true;
         this._arm.beginExit();
         this._arm.freezeClasp(true);
+        // A release by `stopGesture` arrives here too, on the next frame.
+        for (const side of SIDES) this._routes[side].retime(out);
       }
 
       // Per link, staggered outward along the limb and allowed to overshoot.
@@ -2293,6 +2015,7 @@ export class Body {
         this.gesture = null;
         this.blend = 0;
         g = null;
+        for (const side of SIDES) this._routes[side].retime(LEAD_FLOOR);
       }
     }
 
@@ -2680,34 +2403,17 @@ export class Body {
         if (cc && side === cc.lead && driver) {
           const context = rig.armForwardContext(side);
           if (context) {
+            // The follower's clasp reads the leader's hand off the rig, so the
+            // leader's command is formed now and staged; the commit validates it.
             driver.captureVolumeFrame();
-            driver.composeRequest(
+            this.commandArm(side, driver, context, dt, frameReady);
+            const forward = forwardArm(
+              configurationFromQ(this._commandQ[side], this._commandConfiguration),
+              driver.calibration,
               context,
-              this._armWorldVec[side].upperArm,
-              this._armWorldVec[side].lowerArm,
-              this._armWorldVec[side].hand,
-              this._palmWorldVector[side],
-              palmW,
-              this._twist[side].value * this.axes.axialMirror(side, frameReady),
-              spec,
-              spread,
-              false,
+              this._commandForward,
             );
-            const provisional = driver.plan(context, dt);
-            this.recordArmSolve(provisional);
-            if (provisional.status === 'blocked' && !driver.restoreEndpoint(context, dt, true)) {
-              this.recordArmSolve(driver.output);
-              // Keep the last committed leader visible to the clasp resolver.
-              rig.stageArmForward(
-                side,
-                driver.acceptedForward,
-                driver.acceptedCurls,
-                driver.acceptedSpread,
-              );
-            } else {
-              if (provisional.status === 'blocked') this.recordArmSolve(driver.output);
-              rig.stageArmOutput(side, provisional, spec, spread);
-            }
+            rig.stageArmForward(side, forward, spec, spread);
           }
         }
       } else {

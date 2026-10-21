@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FINGER_WIDTH } from '@/engine/anatomy';
-import { DT, fingerDepth, handOrientation, harness } from './harness';
+import { gestureDef } from '@/engine/motion';
+import { DT, fingerDepth, handOrientation, harness, wristOf } from './harness';
 
 /**
  * Where a hand that touches the face puts its fingers.
@@ -74,6 +75,52 @@ describe('a hand held to the face', () => {
         .soft(palmDegrees, `${fps} Hz palm differs by ${palmDegrees.toFixed(3)}°`)
         .toBeLessThan(2);
       expect.soft(stopRows.get(fps), `${fps} Hz joint stops`).toEqual([]);
+    }
+  });
+});
+
+describe('two hands framing the face', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns the wrists to the same place one bob later', () => {
+    // The pose bobs at 1.8 rad/s of gesture time; random 0.5 pins rate and speed
+    // to 1. One period apart the authored pose is the same, so any difference
+    // is the arm creeping.
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const h = harness();
+    const step = () => {
+      h.rig.reset();
+      h.body.update(DT);
+    };
+    step();
+    const def = gestureDef('faceFrame');
+    if (!def) throw new Error('faceFrame is not in the table');
+    h.body.playDef({ ...def, sustain: true }, 'faceFrame');
+    const g = h.body.gesture;
+    if (!g) throw new Error('faceFrame did not start');
+    expect(g.v.rate * g.speed).toBeCloseTo(1, 12);
+    const period = (2 * Math.PI) / 1.8;
+    const wrists = () => ({ L: wristOf(h.profile, 'L'), R: wristOf(h.profile, 'R') });
+    while (g.time + DT / 2 < g.lead + 0.5) step();
+    const first = wrists();
+    const start = g.time;
+    const swing = { L: 0, R: 0 };
+    while (g.time + DT / 2 < start + period) {
+      step();
+      const now = wrists();
+      for (const side of ['L', 'R'] as const) {
+        swing[side] = Math.max(swing[side], now[side].distanceTo(first[side]));
+      }
+    }
+    const second = wrists();
+    // The frame grid lands within half a frame of the period.
+    expect(Math.abs(g.time - start - period)).toBeLessThan(DT / 2);
+    for (const side of ['L', 'R'] as const) {
+      // Still bobbing in between: a held arm would pass the bound below vacuously.
+      expect(swing[side], side).toBeGreaterThan(0.002);
+      expect(second[side].distanceTo(first[side]), side).toBeLessThan(0.001);
     }
   });
 });
