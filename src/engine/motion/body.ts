@@ -38,6 +38,7 @@ import { CROUCH_T, type HopSpec, type JumpArc, planJump, sampleJump } from './ju
 import { aimEyes, makeGazeFrame, prepareGaze } from './look';
 import { IdlePosture, type PostureInput } from './posture';
 import { ArmResolver, mkReachScratch, type ResolvedArm } from './resolve';
+import { SpineCarry } from './spine-carry';
 import { FINGER_ONSET, LINK_ONSET, minJerk, onset, reachEnvelope, UNTHREAD } from './timing';
 
 /**
@@ -264,32 +265,6 @@ const touchesHead = (s: SpineOffsets | undefined): boolean => !!s && ('head' in 
 
 /** Rate of `minJerk` at `x`; zero outside the interval, where the curve is clamped. */
 const minJerkRate = (x: number): number => (x <= 0 || x >= 1 ? 0 : 30 * x * x * (1 - x) * (1 - x));
-
-/**
- * Add `s` at weight `w` into a flat per-slot spine sum, widening `lo`/`hi` to
- * span its authored values. Returns the slots it wrote as a bit mask.
- */
-const addSpine = (
-  sum: Float64Array,
-  lo: Float64Array,
-  hi: Float64Array,
-  s: SpineOffsets | undefined,
-  w: number,
-): number => {
-  let mask = 0;
-  for (let i = 0; s && i < SPINE_SLOTS.length; i++) {
-    const o = s[SPINE_SLOTS[i]];
-    if (!o) continue;
-    for (let j = 0; j < 3; j++) {
-      const k = i * 3 + j;
-      sum[k] += o[j] * w;
-      lo[k] = Math.min(lo[k], o[j]);
-      hi[k] = Math.max(hi[k], o[j]);
-    }
-    mask |= 1 << i;
-  }
-  return mask;
-};
 
 /** Scratch for the girdle turn gathered across gesture slots. */
 const _girdleTurn = new THREE.Vector3();
@@ -585,22 +560,7 @@ export class Body {
   // Spine offsets have no follower. Fade them against the incoming entrance,
   // independently of the arm/finger lifetime and its exponential decay.
   private readonly _spineFading: Outgoing[] = [];
-  // A play or stop restarts every spine weight at zero rate. The rate it cut is
-  // carried on top of the composite and eased out over the new fade: a cubic
-  // Hermite from the displayed residual and its rate, to rest at zero rate.
-  private readonly _spineCarryFrom = new Float64Array(SPINE_SLOTS.length * 3);
-  private readonly _spineCarryRate = new Float64Array(SPINE_SLOTS.length * 3);
-  private _spineCarryTime = 0;
-  private _spineCarryDuration = 0;
-  /** Set by a release: the carry may slow the way to rest, never reverse or pass it. */
-  private _spineCarryRelease = false;
-  /** The spine composite, what was displayed, and the current pose's spine, as of the last update. */
-  private readonly _spineSum = new Float64Array(SPINE_SLOTS.length * 3);
-  /** Per channel, the span of rest and every authored pose on screen; the carry stays inside it. */
-  private readonly _spineLo = new Float64Array(SPINE_SLOTS.length * 3);
-  private readonly _spineHi = new Float64Array(SPINE_SLOTS.length * 3);
-  private readonly _spineShown = new Float64Array(SPINE_SLOTS.length * 3);
-  private _curSpine: SpineOffsets | undefined = undefined;
+  private readonly _spine: SpineCarry;
   /** The incoming entrance's clock, which outgoing spine and arm weights fade against. */
   private _fadeTime = 0;
   private _fadeDuration = 0;
@@ -653,6 +613,7 @@ export class Body {
     this.axes = new CharacterFrame(rig, profile);
     this.anchors = new ReachAnchors(profile, rig, this.axes);
     this._arm = new ArmResolver(profile, rig, this.axes, this.anchors);
+    this._spine = new SpineCarry(rig);
     this.t = 0;
 
     this.breathPeriod = 4.2;
@@ -996,7 +957,7 @@ export class Body {
     while (this._fading.length > MAX_FADING) this.foldFading();
     this._fadeTime = 0;
     this._fadeDuration = lead;
-    this._spineCarryDuration = lead;
+    this._spine.retime(lead);
     this.gesture = {
       def,
       id,
@@ -1158,7 +1119,7 @@ export class Body {
     // A pose let go leaves from where it is, at the weight it has: the exit
     // starts now, and the entrance stops where it got to rather than finishing.
     this.captureSpineCarry(true);
-    this._spineCarryDuration = g.lead * 1.25;
+    this._spine.retime(g.lead * 1.25);
     const held = g.def.sustain === true;
     g.exitAt = held ? g.time : Math.min(g.exitAt, g.time);
     g.releasedIn = g.lead > 0 ? Math.min(1, g.time / g.lead) : 1;
@@ -1172,8 +1133,6 @@ export class Body {
    * keeps a rate only where it already heads for rest.
    */
   private captureSpineCarry(release: boolean): void {
-    const T = this._spineCarryDuration;
-    const s = T > 0 ? Math.min(1, this._spineCarryTime / T) : 1;
     const fd = this._fadeDuration;
     const fadeRate = release || fd <= 0 ? 0 : -minJerkRate(this._fadeTime / fd) / fd;
     const g = this.gesture;
@@ -1185,26 +1144,7 @@ export class Body {
       const entranceRate = g.released || g.lead <= 0 ? 0 : minJerkRate(g.time / g.lead) / g.lead;
       blendRate = entranceRate * this._env.exit + (release ? 0 : this._env.entrance * exitRate);
     }
-    for (let i = 0; i < SPINE_SLOTS.length; i++) {
-      const slot = SPINE_SLOTS[i];
-      for (let j = 0; j < 3; j++) {
-        const k = i * 3 + j;
-        let rate =
-          s < 1
-            ? (this._spineCarryFrom[k] * 6 * s * (s - 1)) / T +
-              this._spineCarryRate[k] * (1 - s) * (1 - 3 * s)
-            : 0;
-        rate += (this._curSpine?.[slot]?.[j] ?? 0) * blendRate;
-        for (const f of this._spineFading)
-          rate += (f.pose?.spine?.[slot]?.[j] ?? 0) * f.spineStart * fadeRate;
-        const shown = this._spineShown[k];
-        if (release && rate * shown >= 0) rate = 0;
-        this._spineCarryFrom[k] = shown - this._spineSum[k];
-        this._spineCarryRate[k] = rate;
-      }
-    }
-    this._spineCarryTime = 0;
-    this._spineCarryRelease = release;
+    this._spine.capture(release, blendRate, fadeRate, this._spineFading);
   }
 
   /**
@@ -1955,41 +1895,7 @@ export class Body {
     pin.load = this._load;
     const { br, d } = this._posture.apply(rig, p, dt, pin);
     const idle = this.idleAmount;
-    // Every gesture slot contributes to the spine; the outgoing ones are fading.
-    const sum = this._spineSum.fill(0);
-    const lo = this._spineLo.fill(0);
-    const hi = this._spineHi.fill(0);
-    let written = 0;
-    for (const f of this._spineFading)
-      written |= addSpine(sum, lo, hi, f.pose?.spine, f.spineWeight);
-    written |= addSpine(sum, lo, hi, g?.spine, this.blend);
-    this._curSpine = g?.spine;
-    this._spineCarryTime += dt;
-    const carryT = this._spineCarryDuration;
-    const cs = carryT > 0 ? Math.min(1, this._spineCarryTime / carryT) : 1;
-    const h00 = (1 + 2 * cs) * (1 - cs) * (1 - cs);
-    const h10 = cs * (1 - cs) * (1 - cs) * carryT;
-    const shown = this._spineShown;
-    for (let i = 0; i < SPINE_SLOTS.length; i++) {
-      for (let k = i * 3; k < i * 3 + 3; k++) {
-        const c = sum[k];
-        if (cs >= 1) {
-          shown[k] = c;
-          continue;
-        }
-        const carried = c + this._spineCarryFrom[k] * h00 + this._spineCarryRate[k] * h10;
-        let floor = Math.min(lo[k], c);
-        let ceil = Math.max(hi[k], c);
-        if (this._spineCarryRelease) {
-          floor = Math.max(floor, Math.min(0, shown[k], c));
-          ceil = Math.min(ceil, Math.max(0, shown[k], c));
-        }
-        shown[k] = Math.min(Math.max(carried, floor), ceil);
-      }
-      const x = i * 3;
-      if (written & (1 << i) || shown[x] || shown[x + 1] || shown[x + 2])
-        rig.addOffset(SPINE_SLOTS[i], shown[x], shown[x + 1], shown[x + 2]);
-    }
+    this._spine.compose(dt, this._spineFading, g?.spine, this.blend);
 
     // --- gaze -------------------------------------------------------------
     const speech = this._speech;
