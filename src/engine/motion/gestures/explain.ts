@@ -1,7 +1,7 @@
 import type { GestureDef } from '../../types';
 import { V } from './base';
 import type { ArmPose } from './builders';
-import { both, one } from './builders';
+import { both, one, pair } from './builders';
 import { mixHand, OPEN_HAND, POINT_HAND, SOFT_HAND } from './hands';
 
 /**
@@ -17,7 +17,7 @@ export const EXPLAIN = {
     group: 'explain',
     lead: 0.35,
     hold: 3.4,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       // The two arms are deliberately out of phase with each other. That offset
       // is structural, not per-playback variation, so it stays a constant.
       const w = t * 2.6 * v.rate;
@@ -34,14 +34,14 @@ export const EXPLAIN = {
         palm: V(-0.5, 0.82 + p * 0.1, 0.1),
         twist: -0.35,
       });
-      return {
-        arms: { L: mk(a), R: mk(b) },
-        fingers: {
-          L: mixHand(SOFT_HAND, OPEN_HAND, 0.7 + 0.3 * a),
-          R: mixHand(SOFT_HAND, OPEN_HAND, 0.7 + 0.3 * b),
-        },
-        spine: { chest: [0, a * 0.045, 0], head: [0, a * 0.05, b * 0.02] },
-      };
+      return pair(
+        out,
+        mk(a),
+        mk(b),
+        mixHand(SOFT_HAND, OPEN_HAND, 0.7 + 0.3 * a),
+        mixHand(SOFT_HAND, OPEN_HAND, 0.7 + 0.3 * b),
+        { chest: [0, a * 0.045, 0], head: [0, a * 0.05, b * 0.02] },
+      );
     },
   },
 
@@ -50,9 +50,10 @@ export const EXPLAIN = {
     group: 'explain',
     lead: 0.42,
     hold: 2.8,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const b = Math.sin(t * 1.9 * v.rate) * 0.05;
       return both(
+        out,
         {
           upperArm: V(0.44, -0.74, 0.42),
           lowerArm: V(0.3, -0.12 + b, 0.92),
@@ -69,9 +70,10 @@ export const EXPLAIN = {
     group: 'explain',
     lead: 0.28,
     hold: 2.2,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const b = Math.sin(t * 5.2 * v.rate) * 0.03;
       return one(
+        out,
         v,
         {
           upperArm: V(0.34, -0.5, 0.34),

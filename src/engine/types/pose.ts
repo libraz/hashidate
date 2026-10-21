@@ -209,6 +209,10 @@ export interface GestureDef {
    * Build one pose. `t` remains the continuous playback clock; `phase` lets a
    * submovement wait for the slot's distance-derived entrance and its own beat.
    * Optional so direct table sampling and custom motions keep their old shape.
+   *
+   * `out` is this playback's own pose from its previous build. The built-in
+   * table fills it in place and returns it, so the caller must not still hold
+   * the previous result; a build may ignore it, and without it the pose is new.
    */
-  build(t: number, v: GestureVariation, phase?: GesturePhase): Pose;
+  build(t: number, v: GestureVariation, phase?: GesturePhase, out?: Pose): Pose;
 }

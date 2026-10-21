@@ -10,11 +10,15 @@ import type {
 } from '../../types';
 
 /**
- * The four shapes a gesture's `build` returns, and the side choice behind them.
+ * The shapes a gesture's `build` returns, and the side choice behind them.
  *
  * Every entry in the table goes through one of these rather than writing a
  * `Pose` out by hand, so that which hand acts is decided in one place and a
  * two-handed pose cannot accidentally state two different hands.
+ *
+ * Each takes the caller's `out` first and fills it in place, so a playback
+ * rebuilt every frame allocates no pose; `undefined` builds a new one. A reused
+ * pose ends up with exactly the fields and sides a new one would have.
  */
 
 /**
@@ -26,35 +30,116 @@ export interface ArmPose extends ArmDirections {
   twist?: number;
 }
 
+type Sided<T> = Partial<Record<Side, T>>;
+
 /** Pick the acting hand. Single-handed gestures that read fine either way. */
 const H = (v: GestureVariation): Side => (v.side > 0 ? 'R' : 'L');
 
+/** A record holding exactly the sides given, reusing `prev` when it already has those keys. */
+function sided<T>(
+  prev: Sided<T> | undefined,
+  left: T | undefined,
+  right: T | undefined,
+): Sided<T> | undefined {
+  if (left === undefined && right === undefined) return undefined;
+  const reuse =
+    prev && 'L' in prev === (left !== undefined) && 'R' in prev === (right !== undefined);
+  const record: Sided<T> = reuse ? prev : {};
+  if (left !== undefined) record.L = left;
+  if (right !== undefined) record.R = right;
+  return record;
+}
+
+/** `value` on the acting hand only. */
+const acting = <T>(prev: Sided<T> | undefined, v: GestureVariation, value: T | undefined) =>
+  H(v) === 'L' ? sided(prev, value, undefined) : sided(prev, undefined, value);
+
+/** Set a field, or remove it, so a reused pose carries nothing from an earlier shape. */
+function put<K extends keyof Pose>(pose: Pose, key: K, value: Pose[K]): void {
+  if (value !== undefined) pose[key] = value;
+  else if (key in pose) delete pose[key];
+}
+
+/** Write every field of a pose into `out`, or into a new one. */
+function fill(
+  out: Pose | undefined,
+  arms: Pose['arms'],
+  reachSpec: Pose['reach'],
+  fingers: Pose['fingers'],
+  spine: Pose['spine'],
+  fingerSpread: Pose['fingerSpread'],
+  claspSpec: Pose['clasp'],
+): Pose {
+  const pose = out ?? {};
+  put(pose, 'arms', arms);
+  put(pose, 'reach', reachSpec);
+  put(pose, 'point', undefined);
+  put(pose, 'fingers', fingers);
+  put(pose, 'spine', spine);
+  put(pose, 'fingerSpread', fingerSpread);
+  put(pose, 'clasp', claspSpec);
+  return pose;
+}
+
 /** One-handed result helper: keeps the side choice in one place. */
 export const one = (
+  out: Pose | undefined,
   v: GestureVariation,
   arm: ArmPose,
   fingers: FingerSpec,
   spine?: SpineOffsets,
   fingerSpread?: FingerSpec,
-): Pose => ({
-  arms: { [H(v)]: arm },
-  fingers: { [H(v)]: fingers },
-  ...(spine ? { spine } : {}),
-  ...(fingerSpread ? { fingerSpread: { [H(v)]: fingerSpread } } : {}),
-});
+): Pose =>
+  fill(
+    out,
+    acting(out?.arms, v, arm),
+    undefined,
+    acting(out?.fingers, v, fingers),
+    spine,
+    acting(out?.fingerSpread, v, fingerSpread),
+    undefined,
+  );
 
 /** Two-handed result helper. */
 export const both = (
+  out: Pose | undefined,
   arm: ArmPose,
   fingers: FingerSpec,
   spine?: SpineOffsets,
   fingerSpread?: FingerSpec,
-): Pose => ({
-  arms: { L: arm, R: arm },
-  fingers: { L: fingers, R: fingers },
-  ...(spine ? { spine } : {}),
-  ...(fingerSpread ? { fingerSpread: { L: fingerSpread, R: fingerSpread } } : {}),
-});
+): Pose =>
+  fill(
+    out,
+    sided(out?.arms, arm, arm),
+    undefined,
+    sided(out?.fingers, fingers, fingers),
+    spine,
+    sided(out?.fingerSpread, fingerSpread, fingerSpread),
+    undefined,
+  );
+
+/** Two-handed result helper for a pose whose hands do different things. */
+export const pair = (
+  out: Pose | undefined,
+  left: ArmPose,
+  right: ArmPose,
+  leftFingers: FingerSpec,
+  rightFingers: FingerSpec,
+  spine?: SpineOffsets,
+): Pose =>
+  fill(
+    out,
+    sided(out?.arms, left, right),
+    undefined,
+    sided(out?.fingers, leftFingers, rightFingers),
+    spine,
+    undefined,
+    undefined,
+  );
+
+/** A pose that moves only the trunk and head, leaving both arms at rest. */
+export const torso = (out: Pose | undefined, spine: SpineOffsets): Pose =>
+  fill(out, undefined, undefined, undefined, spine, undefined, undefined);
 
 /**
  * Reach helpers, for gestures that have to make contact with the face.
@@ -126,30 +211,77 @@ export const both = (
  * can actually get to, the way `cheekPoke` comes up under the near cheekbone.
  */
 export const reach = (
+  out: Pose | undefined,
   v: GestureVariation,
   spec: ReachSpec,
   fingers: FingerSpec,
   spine?: SpineOffsets,
-): Pose => ({
-  reach: { [H(v)]: spec },
-  fingers: { [H(v)]: fingers },
-  ...(spine ? { spine } : {}),
-});
+  fingerSpread?: FingerSpec,
+): Pose =>
+  fill(
+    out,
+    undefined,
+    acting(out?.reach, v, spec),
+    acting(out?.fingers, v, fingers),
+    spine,
+    acting(out?.fingerSpread, v, fingerSpread),
+    undefined,
+  );
 
-export const reachBoth = (spec: ReachSpec, fingers: FingerSpec, spine?: SpineOffsets): Pose => ({
-  reach: { L: spec, R: spec },
-  fingers: { L: fingers, R: fingers },
-  ...(spine ? { spine } : {}),
-});
+export const reachBoth = (
+  out: Pose | undefined,
+  spec: ReachSpec,
+  fingers: FingerSpec,
+  spine?: SpineOffsets,
+): Pose =>
+  fill(
+    out,
+    undefined,
+    sided(out?.reach, spec, spec),
+    sided(out?.fingers, fingers, fingers),
+    spine,
+    undefined,
+    undefined,
+  );
+
+/** Two-handed reach for a pose whose hands go to different places. */
+export const reachPair = (
+  out: Pose | undefined,
+  left: ReachSpec,
+  right: ReachSpec,
+  leftFingers: FingerSpec,
+  rightFingers: FingerSpec,
+  spine?: SpineOffsets,
+): Pose =>
+  fill(
+    out,
+    undefined,
+    sided(out?.reach, left, right),
+    sided(out?.fingers, leftFingers, rightFingers),
+    spine,
+    undefined,
+    undefined,
+  );
 
 /** A mirrored two-hand reach whose other hand interlaces with the `H(v)` hand's. */
 export const clasp = (
+  out: Pose | undefined,
   v: GestureVariation,
   spec: ReachSpec,
   fingers: FingerSpec,
   dihedral: number,
   spine?: SpineOffsets,
-): Pose => ({
-  ...reachBoth(spec, fingers, spine),
-  clasp: { lead: H(v), dihedral },
-});
+): Pose => {
+  const held = out?.clasp ?? { lead: H(v), dihedral };
+  held.lead = H(v);
+  held.dihedral = dihedral;
+  return fill(
+    out,
+    undefined,
+    sided(out?.reach, spec, spec),
+    sided(out?.fingers, fingers, fingers),
+    spine,
+    undefined,
+    held,
+  );
+};

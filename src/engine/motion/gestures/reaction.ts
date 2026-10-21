@@ -1,6 +1,6 @@
 import type { GestureDef } from '../../types';
 import { V } from './base';
-import { both, reach } from './builders';
+import { both, reach, torso } from './builders';
 import { OPEN_HAND } from './hands';
 
 /**
@@ -17,13 +17,15 @@ export const REACTION = {
     group: 'reaction',
     lead: 0.12,
     hold: 0.55,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       // A damped oscillation, not a single dip: one beat reads as a twitch, and
       // the second, smaller beat is what makes it read as agreement.
       const a = Math.exp(-t * 1.5) * Math.sin(t * 7.6 * v.rate);
-      return {
-        spine: { head: [0.15 * a, 0, 0], neck: [0.06 * a, 0, 0], chest: [0.025 * a, 0, 0] },
-      };
+      return torso(out, {
+        head: [0.15 * a, 0, 0],
+        neck: [0.06 * a, 0, 0],
+        chest: [0.025 * a, 0, 0],
+      });
     },
   },
 
@@ -32,9 +34,9 @@ export const REACTION = {
     group: 'reaction',
     lead: 0.42,
     hold: 1.7,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = (0.15 + 0.02 * Math.sin(t * 1.2 * v.rate)) * v.side;
-      return { spine: { head: [0.02, 0.07 * v.side, s], neck: [0, 0.03 * v.side, s * 0.4] } };
+      return torso(out, { head: [0.02, 0.07 * v.side, s], neck: [0, 0.03 * v.side, s * 0.4] });
     },
   },
 
@@ -43,18 +45,16 @@ export const REACTION = {
     group: 'reaction',
     lead: 0.55,
     hold: 2.6,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const k = Math.min(1, t / 0.6);
       const b = Math.sin(t * 1.5 * v.rate) * 0.012;
       // Torso forward, head back up. Leaning with the head still down reads as
       // slumping rather than as interest.
-      return {
-        spine: {
-          spine: [(0.09 + b) * k, 0, 0],
-          chest: [0.05 * k, 0, 0],
-          head: [-0.085 * k, 0, 0],
-        },
-      };
+      return torso(out, {
+        spine: [(0.09 + b) * k, 0, 0],
+        chest: [0.05 * k, 0, 0],
+        head: [-0.085 * k, 0, 0],
+      });
     },
   },
 
@@ -63,12 +63,13 @@ export const REACTION = {
     group: 'reaction',
     lead: 0.5,
     hold: 3.0,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const b = Math.sin(t * 1.4 * v.rate) * 0.05;
       // Knuckle to the chin, the way a hand rests there while thinking. The
       // wrist stays in front while the fingertips and index return toward the
       // chin and cheek; the rounded entrance keeps that relationship visible.
       return reach(
+        out,
         v,
         {
           at: 'chin',
@@ -93,8 +94,9 @@ export const REACTION = {
     group: 'reaction',
     lead: 0.34,
     hold: 1.8,
-    build() {
+    build(_t, _v, _phase?, out?) {
       return both(
+        out,
         {
           shoulder: V(0.92, 0.06, 0.06),
           upperArm: V(0.52, -0.72, 0.38),

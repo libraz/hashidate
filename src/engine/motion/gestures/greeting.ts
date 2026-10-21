@@ -12,13 +12,16 @@ import { FIST, mixHand, OPEN_HAND, SOFT_HAND } from './hands';
  * `bow` use both hands; `wave` follows the caller's chosen hand.
  */
 
+/** Seconds per beckoning curl: about two cycles in the nominal 2.6 s hold after the opening. */
+const BECKON_PERIOD = 0.9;
+
 export const GREETING = {
   wave: {
     label: { en: 'Wave', ja: '手を振る' },
     group: 'greeting',
     lead: 0.3,
     hold: 2.6,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = Math.sin(t * 7.4 * v.rate);
       // The swing decays a little: a wave held at constant amplitude for three
       // seconds is a metronome, not a greeting.
@@ -31,7 +34,7 @@ export const GREETING = {
         hand: V(0.14 + s * 0.18 * a, 0.96, 0.2),
         twist: s * 0.18 * a,
       };
-      return one(v, arm, OPEN_HAND, {
+      return one(out, v, arm, OPEN_HAND, {
         head: [0, 0, 0.03 * s * v.side],
         chest: [0, 0.02 * s * v.side, 0],
       });
@@ -43,17 +46,16 @@ export const GREETING = {
     group: 'greeting',
     lead: 0.4,
     hold: 2.6,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       // Both arms opened forward, palms up. The opening is the gesture — held
       // spread from the first frame it reads as a shrug — so the arms travel
       // outward over the first second and settle.
       const openingDuration = 0.9;
       const o = Math.min(1, t / openingDuration);
       const b = Math.sin(t * 1.6 * v.rate) * 0.03;
-      // The original 0.9 s opening leaves about two cycles in the nominal 2.6 s hold.
-      // The fingers use the invitation and existing FIST endpoints; needs a render check.
+      // The fingers curl between the open invitation and the existing FIST.
       const beckonTime = Math.max(0, t - openingDuration) * v.rate;
-      const curl = (1 - Math.cos((2 * Math.PI * beckonTime) / openingDuration)) / 2;
+      const curl = (1 - Math.cos((2 * Math.PI * beckonTime) / BECKON_PERIOD)) / 2;
       const fingers = {
         ...mixHand({ thumb: 0.18, index: 0.14, middle: 0.16, ring: 0.2, little: 0.26 }, FIST, curl),
         thumb: 0.18,
@@ -64,6 +66,7 @@ export const GREETING = {
       // upward normal keeps the invitation readable while leaving range in
       // both models.
       return both(
+        out,
         {
           upperArm: V(0.3 + 0.08 * o, -0.76 + 0.12 * o + b, 0.54 + 0.18 * o),
           lowerArm: V(0.14 + 0.08 * o, 0.24 + b, 0.95),
@@ -84,7 +87,7 @@ export const GREETING = {
     // is down in 0.3 s, a beat at the bottom, and up in 0.38 s.
     lead: 0.3,
     hold: 0.2,
-    build(_t, v) {
+    build(_t, v, _phase?, out?) {
       // A bob, not a bow.
       //
       // This bent the trunk twelve degrees over half a second, and at that speed
@@ -103,6 +106,7 @@ export const GREETING = {
       // difference between a character and a mechanism, and this is the one
       // gesture short enough that a viewer sees the whole of it at once.
       return both(
+        out,
         {
           upperArm: V(0.2, -0.96, 0.2),
           lowerArm: V(0.12, -0.86, 0.5),

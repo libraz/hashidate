@@ -152,7 +152,10 @@ const LEAD_PER_RAD = 0.32;
  * uses, so no built-in moves. A loaded motion may state 0, and spine offsets
  * have no follower — a zero lead there is a one-frame snap in and out.
  * Measured zero-lead head handoff: 0.2 to 0.1 radians in its first 60 Hz frame.
- * The nod-derived floor needs a render check.
+ *
+ * Spine travel stretches a lead at `LEAD_PER_RAD` too, a rate measured on arms.
+ * After any one held built-in that moves a single built-in lead: `stageBow` into
+ * `nod`, 0.12 s to 0.149 s; from rest it moves none.
  */
 const LEAD_FLOOR = 0.12;
 
@@ -193,6 +196,8 @@ export interface ActiveGesture {
   exitAt: number;
   /** Entrance progress, 0..1, at the moment it was let go; the entrance holds there while the exit runs. */
   releasedIn: number;
+  /** The pose `build` fills each frame, this playback's own. */
+  pose: Pose;
 }
 
 /**
@@ -1014,8 +1019,9 @@ export class Body {
         if (pDir) slerpDir(v, v, carry(pDir, parentOf(f.arm[side])), f.w);
       }
     } else if (outgoing) {
-      // Each lerp takes a slot's share of what the chain holds so far, so every
-      // outgoing slot lands at its own `armW` and rest keeps only what is left.
+      // Each slerp takes a slot's share of what the chain holds so far, so every
+      // outgoing slot lands near its own `armW` (exactly, for directions close
+      // together) and rest keeps only what is left.
       let pool = 1 - cw;
       for (const f of this._fading) if (this.outgoingDir(f, side, slot)) pool -= f.armW[slot];
       pool = Math.max(0, pool);
@@ -1120,20 +1126,22 @@ export class Body {
     // actually reaching for reads as the whole character swivelling.
     const turn = az * 0.22 * extent;
     const lean = -Math.max(0, el) * 0.1 * extent;
+    // Nothing in it moves, so every frame returns the same pose.
+    const pose: Pose = {
+      point: { [side]: at },
+      fingers: { [side]: hand },
+      spine: {
+        chest: [lean * 0.6, turn * 0.6, 0],
+        spine: [lean * 0.4, turn * 0.4, 0],
+      },
+    };
     const def: GestureDef = {
       label: { en: 'Pointing', ja: '指し示す' },
       group: 'explain',
       lead: 0.3,
       hold: 1.6,
       sustain: true,
-      build: () => ({
-        point: { [side]: at },
-        fingers: { [side]: hand },
-        spine: {
-          chest: [lean * 0.6, turn * 0.6, 0],
-          spine: [lean * 0.4, turn * 0.4, 0],
-        },
-      }),
+      build: () => pose,
     };
     this.playDef(def, `point.${side}`);
   }
@@ -1178,7 +1186,12 @@ export class Body {
     // entrance stops reading as deliberate and starts reading as slow,
     // however far the arm has to go. The authored lead remains a floor — doze
     // deliberately takes 1.5 seconds so its entrance reads as falling asleep.
-    const lead = Math.max(def.lead, LEAD_FLOOR, Math.min(0.95, this.travel(def, v) * LEAD_PER_RAD));
+    const pose: Pose = {};
+    const lead = Math.max(
+      def.lead,
+      LEAD_FLOOR,
+      Math.min(0.95, this.travel(def, v, pose) * LEAD_PER_RAD),
+    );
     for (const f of this._spineFading) f.spineStart = f.spineWeight;
     for (const f of this._fading) for (const slot of ARM_SLOTS) f.armStart[slot] = f.armW[slot];
     while (this._fading.length > MAX_FADING) this.foldFading();
@@ -1196,6 +1209,7 @@ export class Body {
       phase: { entrance: 0, held: 0 },
       exitAt: lead + def.hold,
       releasedIn: 1,
+      pose,
     };
     this._env.entrance = 0;
     this._env.exit = 1;
@@ -1211,8 +1225,8 @@ export class Body {
   }
 
   /** Largest angle any arm link or spine slot has to cover to reach the gesture's opening pose. */
-  private travel(def: GestureDef, v: GestureVariation): number {
-    const pose = def.build(0, v, PROBE_PHASE);
+  private travel(def: GestureDef, v: GestureVariation, out: Pose): number {
+    const pose = def.build(0, v, PROBE_PHASE, out);
     let worst = 0;
     // The spine on screen is the outgoing slots' offsets at their weights.
     for (const slot of SPINE_SLOTS) {
@@ -1220,9 +1234,8 @@ export class Body {
       const to = pose.spine?.[slot];
       if (to) d.set(to[0], to[1], to[2]);
       for (const f of this._spineFading) {
-        const from = (f.pose ?? f.g.def.build(f.g.time * f.g.speed, f.g.v, f.g.phase)).spine?.[
-          slot
-        ];
+        const from = (f.pose ?? f.g.def.build(f.g.time * f.g.speed, f.g.v, f.g.phase, f.g.pose))
+          .spine?.[slot];
         if (from) d.addScaledVector(this._spineFrom.fromArray(from), -f.spineWeight);
       }
       worst = Math.max(worst, d.length());
@@ -1440,8 +1453,8 @@ export class Body {
    *
    * Not the oldest: under rapid firing the oldest is the pose still on screen
    * and each later slot holds only the sliver its entrance reached. The arm
-   * blends are lerp chains, so taking a link out hands its share back, in
-   * proportion, to everything blended before it — rest and the older slots.
+   * blends are slerp chains, so taking a link out hands its share back, close
+   * to in proportion, to everything blended before it — rest and the older slots.
    */
   private foldFading(): void {
     let victim = 0;
@@ -1666,7 +1679,7 @@ export class Body {
     slot.time += dt;
     slot.phase.entrance = slot.lead <= 0 ? 1 : Math.min(1, Math.max(0, slot.time / slot.lead));
     slot.phase.held = Math.max(0, slot.time - slot.lead) * slot.speed;
-    return slot.def.build(slot.time * slot.speed, slot.v, slot.phase);
+    return slot.def.build(slot.time * slot.speed, slot.v, slot.phase, slot.pose);
   }
 
   private commitArmTransaction(dt: number): void {
@@ -2276,7 +2289,7 @@ export class Body {
       // only starting the motion afterwards makes the gesture appear to begin
       // twice: once as the blend rises, again as the motion kicks in.
       g = this.advance(this.gesture, dt);
-      if (target === 0 && this.blend < 0.01) {
+      if (target === 0) {
         this.gesture = null;
         this.blend = 0;
         g = null;
@@ -2303,6 +2316,8 @@ export class Body {
     const handSource = this._fading[this._fading.length - 1];
     const holdingHand = !!(g?.fingers || g?.fingerSpread) && this._fingerEnv.entrance < 1;
     for (const f of this._fading) {
+      // Not on the fade clock: this weight also takes home an arm the incoming pose leaves
+      // alone, and fading it over the incoming lead took wave into nod from 7.1 to 15.1 rad/s.
       f.w *= Math.exp(-dt * 6);
       let armLeft = 0;
       for (const slot of ARM_SLOTS) {

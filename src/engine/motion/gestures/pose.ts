@@ -29,7 +29,7 @@ export const POSE = {
     sustain: true,
     lead: 0.5,
     hold: 1.0,
-    build() {
+    build(_t, _v, _phase?, out?) {
       // Authored as directions, unlike the other poses whose hands have to meet.
       // A body-anchored wrist target does not describe this pose: what makes
       // folded arms read is where the upper arms sit, and a target for the wrist
@@ -37,6 +37,7 @@ export const POSE = {
       // somewhere different on each side. Composing the two — stated upper arm,
       // solved hand — is not something the arm path can express today.
       return both(
+        out,
         {
           upperArm: V(0.34, -0.8, 0.4),
           lowerArm: V(-0.72, 0.1, 0.68),
@@ -55,11 +56,12 @@ export const POSE = {
     sustain: true,
     lead: 0.45,
     hold: 1.0,
-    build(_t, v) {
+    build(_t, v, _phase?, out?) {
       // Clasped, so the two wrists sit side by side rather than palm to palm —
       // one hand's fingers wrap the other's back, which is half a hand's width
       // more than the contact gap.
       return clasp(
+        out,
         v,
         {
           space: 'body',
@@ -83,9 +85,10 @@ export const POSE = {
     sustain: true,
     lead: 0.55,
     hold: 1.0,
-    build(_t, v) {
+    build(_t, v, _phase?, out?) {
       // Jaw resting into the heel of the hand, head tipped toward it.
       return reach(
+        out,
         v,
         {
           at: 'cheek',
@@ -115,7 +118,7 @@ export const POSE = {
     sustain: true,
     lead: 0.3,
     hold: 1.0,
-    build(_t, v) {
+    build(_t, v, _phase?, out?) {
       // Arm carried out with a slack elbow, forearm angled up, thumb vertical.
       //
       // The forearm angle is not a stylistic choice. Rolling the arm sweeps the
@@ -133,6 +136,7 @@ export const POSE = {
       // `twist` here would be ignored — that path only rolls the hand, and a
       // wrist has no axial travel to give.
       return one(
+        out,
         v,
         {
           upperArm: V(0.32, 0.06, 0.95),
@@ -152,8 +156,9 @@ export const POSE = {
     sustain: true,
     lead: 0.34,
     hold: 1.0,
-    build(_t, v) {
+    build(_t, v, _phase?, out?) {
       return one(
+        out,
         v,
         {
           upperArm: V(0.38, -0.6, 0.4),
@@ -173,8 +178,9 @@ export const POSE = {
     sustain: true,
     lead: 0.32,
     hold: 1.0,
-    build() {
+    build(_t, _v, _phase?, out?) {
       return both(
+        out,
         {
           upperArm: V(0.44, -0.52, 0.34),
           lowerArm: V(0.18, 0.9, 0.36),
@@ -195,8 +201,9 @@ export const POSE = {
     sustain: true,
     lead: 0.28,
     hold: 1.0,
-    build(_t, v) {
+    build(_t, v, _phase?, out?) {
       return one(
+        out,
         v,
         {
           upperArm: V(0.4, -0.62, 0.44),
@@ -216,12 +223,13 @@ export const POSE = {
     sustain: true,
     lead: 0.4,
     hold: 1.0,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       // Held out and waiting, which is what makes it a promise rather than a
       // hand shape: the drift is small and slow, because an offered hand that
       // is perfectly still reads as a prop.
       const b = Math.sin(t * 1.5 * v.rate) * 0.03;
       return one(
+        out,
         v,
         {
           // The arm goes out in front and the wrist bends up, which is where
@@ -259,7 +267,7 @@ export const POSE = {
     // should be visible as an entrance rather than as an arrival.
     lead: 1.5,
     hold: 1.0,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       // Nodding off, which is not a deeper `bow` — the two poses differ in what
       // they do after they arrive. A bow is held square and comes back up; this
       // sinks, drifts, and every so often almost catches itself, and that
@@ -268,6 +276,7 @@ export const POSE = {
       const drift = Math.sin(t * 0.55 * v.rate) * 0.05;
       const nearly = Math.sin(t * 1.7 * v.rate) * 0.02;
       return both(
+        out,
         {
           // Slack rather than posed. The arms hanging almost where they rest is
           // the point — a sleeping character who is still holding their arms
@@ -296,9 +305,10 @@ export const POSE = {
     sustain: true,
     lead: 0.4,
     hold: 1.0,
-    build(_t, v) {
+    build(_t, v, _phase?, out?) {
       // Cupped behind the ear, so the palm faces forward past it.
       return reach(
+        out,
         v,
         {
           at: 'ear',

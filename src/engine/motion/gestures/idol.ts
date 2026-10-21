@@ -1,7 +1,7 @@
-import type { GestureDef } from '../../types';
+import type { GestureDef, SpineOffsets } from '../../types';
 import { V } from './base';
 import type { ArmPose } from './builders';
-import { both, reach } from './builders';
+import { both, pair, reach } from './builders';
 import { OPEN_HAND, POINT_HAND, SOFT_HAND } from './hands';
 
 /** Idol — bright stage gestures that stay inside the bust shot. */
@@ -17,7 +17,7 @@ export const IDOL = {
     group: 'idol',
     lead: 0.34,
     hold: 2.0,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = Math.sin(t * 7.1 * v.rate) * 0.16 * v.scale;
       const arm: ArmPose = {
         upperArm: V(0.48, -0.46, 0.3),
@@ -25,11 +25,7 @@ export const IDOL = {
         hand: V(0.14 + s * 1.4, 0.95, 0.22),
         twist: s * 0.9,
       };
-      return {
-        arms: { L: arm, R: arm },
-        fingers: { L: OPEN_HAND, R: OPEN_HAND },
-        spine: { head: [0, 0, 0.03 * s], chest: [0, 0.015 * s, 0] },
-      };
+      return both(out, arm, OPEN_HAND, { head: [0, 0, 0.03 * s], chest: [0, 0.015 * s, 0] });
     },
   },
 
@@ -38,7 +34,7 @@ export const IDOL = {
     group: 'idol',
     lead: 0.36,
     hold: 2.1,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = Math.sin(t * 3.2 * v.rate) * 0.03 * v.scale;
       const point: ArmPose = {
         upperArm: V(0.4, -0.52, 0.4),
@@ -52,10 +48,10 @@ export const IDOL = {
         hand: V(0.22, -0.25 + s, 0.92),
         twist: -0.15,
       };
-      const arms = v.side > 0 ? { L: frame, R: point } : { L: point, R: frame };
-      const fingers =
-        v.side > 0 ? { L: OPEN_HAND, R: POINT_HAND } : { L: POINT_HAND, R: OPEN_HAND };
-      return { arms, fingers, spine: { head: [-0.03, 0.04 * v.side, 0.02 * v.side] } };
+      const spine: SpineOffsets = { head: [-0.03, 0.04 * v.side, 0.02 * v.side] };
+      return v.side > 0
+        ? pair(out, frame, point, OPEN_HAND, POINT_HAND, spine)
+        : pair(out, point, frame, POINT_HAND, OPEN_HAND, spine);
     },
   },
 
@@ -64,7 +60,7 @@ export const IDOL = {
     group: 'idol',
     lead: 0.4,
     hold: 2.0,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = Math.sin(t * 2.8 * v.rate) * 0.025 * v.scale;
       const presentation: ArmPose = {
         upperArm: V(0.5, -0.5 + s, 0.3),
@@ -80,11 +76,10 @@ export const IDOL = {
         palm: V(-0.5, 0.35, -0.79),
         twist: 0.15,
       };
-      return {
-        arms: { L: presentation, R: close },
-        fingers: { L: OPEN_HAND, R: OPEN_HAND },
-        spine: { chest: [0, 0.025 * s, 0], head: [-0.03, 0, 0] },
-      };
+      return pair(out, presentation, close, OPEN_HAND, OPEN_HAND, {
+        chest: [0, 0.025 * s, 0],
+        head: [-0.03, 0, 0],
+      });
     },
   },
 
@@ -93,9 +88,10 @@ export const IDOL = {
     group: 'idol',
     lead: 0.48,
     hold: 1.8,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const b = Math.sin(t * 2.1 * v.rate) * 0.025 * v.scale;
       return reach(
+        out,
         v,
         {
           // Kept beside the lower cheek so the salute stays below the temple
@@ -118,9 +114,10 @@ export const IDOL = {
     group: 'idol',
     lead: 0.52,
     hold: 0.55,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const k = ease(t, 0.7);
       return both(
+        out,
         {
           upperArm: V(0.24, -0.94, 0.18),
           lowerArm: V(0.16, -0.86, 0.48),

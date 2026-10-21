@@ -17,10 +17,11 @@ export const CUTE = {
     group: 'cute',
     lead: 0.45,
     hold: 2.6,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const b = Math.sin(t * 1.6 * v.rate) * 0.04;
       // Index fingertip on the cheek; the rest of the hand is folded away.
       return reach(
+        out,
         v,
         {
           at: 'cheek',
@@ -44,7 +45,7 @@ export const CUTE = {
     group: 'cute',
     lead: 0.34,
     hold: 2.4,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       // Both paws held up in front, palms to the viewer, fingers hooked. The
       // little bounce is what sells it.
       //
@@ -55,6 +56,7 @@ export const CUTE = {
       // the shoulders. Paws belong out in front of the chest anyway.
       const b = Math.sin(t * 3.6 * v.rate) * 0.1;
       return reachBoth(
+        out,
         {
           space: 'body',
           at: 'sternum',
@@ -74,11 +76,12 @@ export const CUTE = {
     group: 'cute',
     lead: 0.3,
     hold: 2.2,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       // Hands open beside the face, fingers fluttering.
       const f = 0.06 + 0.1 * (0.5 - 0.5 * Math.cos(t * 8.4 * v.rate));
       const b = Math.sin(t * 4.2 * v.rate) * 0.03;
       return both(
+        out,
         {
           upperArm: V(0.54, -0.42 + b, 0.26),
           lowerArm: V(0.3, 0.86, 0.32),
@@ -96,11 +99,12 @@ export const CUTE = {
     group: 'cute',
     lead: 0.38,
     hold: 2.6,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       // Palms together at the chest, head tipped up — the upward look is what
       // makes it read as pleading rather than as praying.
       const b = Math.sin(t * 2.8 * v.rate) * 0.02;
       return reachBoth(
+        out,
         {
           space: 'body',
           at: 'sternum',
@@ -119,10 +123,11 @@ export const CUTE = {
     group: 'cute',
     lead: 0.4,
     hold: 2.6,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const b = Math.sin(t * 1.5 * v.rate) * 0.03;
       // Beside the mouth, not over it — the hand shields, it does not cover.
       return reach(
+        out,
         v,
         {
           at: 'mouth',
@@ -146,10 +151,11 @@ export const CUTE = {
     group: 'cute',
     lead: 0.5,
     hold: 1.8,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const k = Math.min(1, t / 0.7);
       const b = Math.sin(t * 1.3 * v.rate) * 0.03;
       return reach(
+        out,
         v,
         {
           at: 'mouth',
@@ -174,12 +180,13 @@ export const CUTE = {
     group: 'cute',
     lead: 0.6,
     hold: 2.0,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       // Arms up and the spine arching back. Elbows stay forward of the ears so
       // the hands do not leave the top of the frame.
       const k = Math.min(1, t / 0.8);
       const b = Math.sin(t * 1.1 * v.rate) * 0.02;
       return both(
+        out,
         {
           shoulder: V(0.92, 0.1, 0.04),
           upperArm: V(0.56, -0.2 + b, 0.2),

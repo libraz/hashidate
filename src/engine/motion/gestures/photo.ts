@@ -1,7 +1,7 @@
 import type { GestureDef } from '../../types';
 import { V } from './base';
 import type { ArmPose } from './builders';
-import { reach, reachBoth } from './builders';
+import { pair, reach, reachBoth } from './builders';
 import { OPEN_HAND, PEACE_HAND, PEACE_SPREAD, POINT_HAND, SOFT_HAND } from './hands';
 
 /** Photo pose — compact silhouettes for a still frame. */
@@ -12,9 +12,10 @@ export const PHOTO = {
     group: 'photo',
     lead: 0.48,
     hold: 2.3,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const b = Math.sin(t * 2.1 * v.rate) * 0.025 * v.scale;
       return reachBoth(
+        out,
         {
           at: 'chin',
           // Leave a gap between the palms and keep them forward of the chin.
@@ -35,9 +36,10 @@ export const PHOTO = {
     group: 'photo',
     lead: 0.46,
     hold: 2.3,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const b = Math.sin(t * 2.0 * v.rate) * 0.02 * v.scale;
-      const pose = reach(
+      return reach(
+        out,
         v,
         {
           at: 'cheek',
@@ -49,9 +51,8 @@ export const PHOTO = {
         },
         PEACE_HAND,
         { head: [0.045, 0.1 * v.side, 0.07 * v.side] },
+        PEACE_SPREAD,
       );
-      const side = v.side > 0 ? 'R' : 'L';
-      return { ...pose, fingerSpread: { [side]: PEACE_SPREAD } };
     },
   },
 
@@ -60,9 +61,10 @@ export const PHOTO = {
     group: 'photo',
     lead: 0.48,
     hold: 2.2,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const b = Math.sin(t * 2.4 * v.rate) * 0.025 * v.scale;
       return reachBoth(
+        out,
         {
           at: 'cheek',
           offset: [0.16, -0.36 + b, 0.86],
@@ -81,9 +83,10 @@ export const PHOTO = {
     group: 'photo',
     lead: 0.5,
     hold: 2.2,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const b = Math.sin(t * 1.8 * v.rate) * 0.025 * v.scale;
       return reachBoth(
+        out,
         {
           at: 'cheek',
           // Outside the cheeks so the face stays visible; forward clearance
@@ -104,7 +107,7 @@ export const PHOTO = {
     group: 'photo',
     lead: 0.42,
     hold: 2.3,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = Math.sin(t * 1.8 * v.rate) * 0.025 * v.scale;
       const low: ArmPose = {
         upperArm: V(0.4, -0.84, 0.25),
@@ -119,14 +122,10 @@ export const PHOTO = {
         palm: V(-0.6, 0.34, -0.72),
         twist: -0.12,
       };
-      return {
-        arms: { L: low, R: frame },
-        fingers: { L: SOFT_HAND, R: OPEN_HAND },
-        spine: {
-          chest: [0, 0.05 * v.side, 0.025 * v.side],
-          head: [0.02, 0.11 * v.side, 0.08 * v.side],
-        },
-      };
+      return pair(out, low, frame, SOFT_HAND, OPEN_HAND, {
+        chest: [0, 0.05 * v.side, 0.025 * v.side],
+        head: [0.02, 0.11 * v.side, 0.08 * v.side],
+      });
     },
   },
 } satisfies Record<string, GestureDef>;

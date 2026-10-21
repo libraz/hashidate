@@ -1,7 +1,7 @@
 import type { GestureDef } from '../../types';
 import { V } from './base';
 import type { ArmPose } from './builders';
-import { both } from './builders';
+import { both, pair, torso } from './builders';
 import { OPEN_HAND, POINT_HAND } from './hands';
 
 /** Dance — little rhythmic movements for a live stage. */
@@ -12,9 +12,10 @@ export const DANCE = {
     group: 'dance',
     lead: 0.42,
     hold: 2.1,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = Math.sin(t * 2.5 * v.rate) * 0.07 * v.scale;
       return both(
+        out,
         {
           upperArm: V(0.38, -0.76 + s * 0.2, 0.34),
           lowerArm: V(0.22, -0.48 + s, 0.82),
@@ -35,15 +36,13 @@ export const DANCE = {
     group: 'dance',
     lead: 0.3,
     hold: 1.8,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = Math.sin(t * 5.4 * v.rate) * 0.055 * v.scale;
-      return {
-        spine: {
-          chest: [s * 0.35, 0, s],
-          neck: [-s * 0.2, 0, -s * 0.35],
-          head: [-s * 0.3, 0, -s * 0.5],
-        },
-      };
+      return torso(out, {
+        chest: [s * 0.35, 0, s],
+        neck: [-s * 0.2, 0, -s * 0.35],
+        head: [-s * 0.3, 0, -s * 0.5],
+      });
     },
   },
 
@@ -52,11 +51,12 @@ export const DANCE = {
     group: 'dance',
     lead: 0.38,
     hold: 2.0,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const w = t * 3.8 * v.rate;
       const x = Math.sin(w) * 0.06 * v.scale;
       const y = Math.sin(w * 2) * 0.045 * v.scale;
       return both(
+        out,
         {
           upperArm: V(0.42, -0.68, 0.35),
           lowerArm: V(0.24 + x, -0.08 + y, 0.95),
@@ -75,7 +75,7 @@ export const DANCE = {
     group: 'dance',
     lead: 0.35,
     hold: 1.9,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = Math.sin(t * 3.3 * v.rate) * 0.035 * v.scale;
       const raised: ArmPose = {
         upperArm: V(0.46, -0.5 + s, 0.32),
@@ -89,11 +89,10 @@ export const DANCE = {
         hand: V(0.2, -0.34 - s, 0.91),
         twist: -0.08,
       };
-      return {
-        arms: { L: low, R: raised },
-        fingers: { L: OPEN_HAND, R: POINT_HAND },
-        spine: { chest: [0, s * 0.3, 0], head: [-0.02, 0, 0] },
-      };
+      return pair(out, low, raised, OPEN_HAND, POINT_HAND, {
+        chest: [0, s * 0.3, 0],
+        head: [-0.02, 0, 0],
+      });
     },
   },
 
@@ -102,7 +101,7 @@ export const DANCE = {
     group: 'dance',
     lead: 0.34,
     hold: 1.8,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = Math.sin(t * 5.1 * v.rate) * 0.07 * v.scale;
       const mk = (pulse: number): ArmPose => ({
         upperArm: V(0.4, -0.76 + pulse * 0.25, 0.3),
@@ -110,11 +109,10 @@ export const DANCE = {
         hand: V(0.16, -0.44 + pulse * 1.2, 0.88),
         twist: -0.12,
       });
-      return {
-        arms: { L: mk(-s), R: mk(s) },
-        fingers: { L: OPEN_HAND, R: OPEN_HAND },
-        spine: { chest: [0, s * 0.35, 0], head: [-s * 0.25, 0, 0] },
-      };
+      return pair(out, mk(-s), mk(s), OPEN_HAND, OPEN_HAND, {
+        chest: [0, s * 0.35, 0],
+        head: [-s * 0.25, 0, 0],
+      });
     },
   },
 } satisfies Record<string, GestureDef>;

@@ -17,9 +17,10 @@ export const EMOTE = {
     group: 'emote',
     lead: 0.3,
     hold: 2.4,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const b = Math.sin(t * 2.2 * v.rate) * 0.03;
       return one(
+        out,
         v,
         {
           upperArm: V(0.38, -0.58, 0.36),
@@ -40,7 +41,7 @@ export const EMOTE = {
     group: 'emote',
     lead: 0.2,
     hold: 2.2,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       // Rectified sine so the hands *meet* on the beat and rebound. A plain
       // sine carries them through each other and out the far side.
       //
@@ -51,6 +52,7 @@ export const EMOTE = {
       // moves and the hands cannot miss each other.
       const gap = 0.028 + Math.abs(Math.sin(t * 6.2 * v.rate)) * 0.08;
       return reachBoth(
+        out,
         {
           space: 'body',
           at: 'sternum',
@@ -72,11 +74,12 @@ export const EMOTE = {
     group: 'emote',
     lead: 0.26,
     hold: 1.9,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       // Hands up but not overhead. An overhead cheer leaves the bust framing
       // entirely and reads as a character with no hands.
       const b = Math.sin(t * 5.6 * v.rate) * 0.05;
       return both(
+        out,
         {
           upperArm: V(0.52, -0.32 + b, 0.28),
           lowerArm: V(0.34, 0.88, 0.3),
@@ -94,9 +97,10 @@ export const EMOTE = {
     group: 'emote',
     lead: 0.42,
     hold: 2.4,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const b = Math.sin(t * 1.7 * v.rate) * 0.04;
       return reach(
+        out,
         v,
         {
           at: 'mouth',
@@ -123,9 +127,10 @@ export const EMOTE = {
     group: 'emote',
     lead: 0.22,
     hold: 1.5,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = Math.sin(t * 8.6 * v.rate);
       return one(
+        out,
         v,
         {
           upperArm: V(0.44, -0.54, 0.34),
@@ -144,11 +149,12 @@ export const EMOTE = {
     group: 'emote',
     lead: 0.24,
     hold: 1.6,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       // Small fists shaken at chest height. Fast and short-travelled: a wide
       // swing reads as a tantrum rather than as sulking.
       const s = Math.sin(t * 7.8 * v.rate) * 0.05;
       return both(
+        out,
         {
           upperArm: V(0.38, -0.86, 0.22),
           lowerArm: V(0.3, -0.42 + s, 0.84),

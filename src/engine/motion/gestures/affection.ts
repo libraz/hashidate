@@ -2,7 +2,7 @@ import type { GestureDef } from '../../types';
 import { heldTime } from '../timing';
 import { V } from './base';
 import type { ArmPose } from './builders';
-import { reach, reachBoth } from './builders';
+import { pair, reach, reachBoth } from './builders';
 import { FULL_HEART_HAND, HEART_HAND, mixHand, OPEN_HAND, SOFT_HAND } from './hands';
 
 /** Affection — small ways to say that the character cares. */
@@ -18,7 +18,7 @@ export const AFFECTION = {
     group: 'affection',
     lead: 0.48,
     hold: 1.8,
-    build(t, v, phase) {
+    build(t, v, phase?, out?) {
       // The hand starts soft beside the mouth and opens as the kiss leaves.
       // It stays below eye level, with a pole because this is a face reach.
       const held = heldTime(t, 0.48, phase);
@@ -26,6 +26,7 @@ export const AFFECTION = {
       const open = ease(held - 0.32, 0.34);
       const fingers = mixHand(SOFT_HAND, OPEN_HAND, open);
       return reach(
+        out,
         v,
         {
           at: 'mouth',
@@ -46,9 +47,10 @@ export const AFFECTION = {
     group: 'affection',
     lead: 0.4,
     hold: 2.1,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const pulse = Math.sin(t * 2.6 * v.rate) * 0.025 * v.scale * ease(t, 0.45);
       return reachBoth(
+        out,
         {
           space: 'body',
           at: 'sternum',
@@ -67,12 +69,13 @@ export const AFFECTION = {
     group: 'affection',
     lead: 0.52,
     hold: 2.0,
-    build(t, v, phase) {
+    build(t, v, phase?, out?) {
       // The same heart hand shape travels from the sternum toward the viewer.
       // Smooth distance easing keeps the hands from jumping away together.
       const offer = ease(heldTime(t, 0.52, phase) - 0.2, 0.7);
       const pulse = Math.sin(t * 2.2 * v.rate) * 0.018 * v.scale * ease(t, 0.45);
       return reachBoth(
+        out,
         {
           space: 'body',
           at: 'sternum',
@@ -91,9 +94,10 @@ export const AFFECTION = {
     group: 'affection',
     lead: 0.5,
     hold: 2.2,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const squeeze = Math.sin(t * 2.8 * v.rate) * 0.025 * v.scale;
       return reachBoth(
+        out,
         {
           space: 'body',
           at: 'shoulder',
@@ -115,7 +119,7 @@ export const AFFECTION = {
     group: 'affection',
     lead: 0.4,
     hold: 2.2,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = Math.sin(t * 4.1 * v.rate) * 0.055 * v.scale;
       const mk = (pulse: number): ArmPose => ({
         upperArm: V(0.4, -0.58 + pulse * 0.3, 0.36),
@@ -123,11 +127,10 @@ export const AFFECTION = {
         hand: V(0.12, 0.92 + pulse * 0.8, 0.32),
         twist: 0.28,
       });
-      return {
-        arms: { L: mk(-s), R: mk(s) },
-        fingers: { L: HEART_HAND, R: HEART_HAND },
-        spine: { chest: [0, s * 0.35, 0], head: [-0.02, -s * 0.4, 0] },
-      };
+      return pair(out, mk(-s), mk(s), HEART_HAND, HEART_HAND, {
+        chest: [0, s * 0.35, 0],
+        head: [-0.02, -s * 0.4, 0],
+      });
     },
   },
 } satisfies Record<string, GestureDef>;

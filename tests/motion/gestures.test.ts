@@ -630,3 +630,33 @@ describe('pointHand', () => {
     expect(new Set(shapes).size).toBe(FINGERS.length);
   });
 });
+
+describe('pose reuse', () => {
+  /** Two and a half seconds at 60 Hz: past every entrance and through several beats. */
+  const FRAMES = 150;
+
+  each(IDS)('%s fills the slot pose in place, value for value', (id) => {
+    const def = TABLE[id];
+    for (const v of [RIGHT, LEFT]) {
+      const out: Pose = {};
+      let records: unknown[] | null = null;
+      for (let i = 0; i < FRAMES; i++) {
+        const t = i / 60;
+        const phase: GesturePhase = {
+          entrance: Math.min(1, t / def.lead),
+          held: Math.max(0, t - def.lead),
+        };
+        const fresh = def.build(t, v, phase);
+        // Twice a frame, as a switch frame builds an outgoing slot again.
+        for (let k = 0; k < 2; k++) {
+          const reused = def.build(t, v, phase, out);
+          expect(reused).toBe(out);
+          expect(reused).toStrictEqual(fresh);
+          const now = [out.arms, out.reach, out.fingers, out.fingerSpread, out.clasp];
+          records ??= now;
+          for (let r = 0; r < now.length; r++) expect(now[r]).toBe(records[r]);
+        }
+      }
+    }
+  });
+});

@@ -1,7 +1,7 @@
 import type { GestureDef, ReachSpec } from '../../types';
 import { heldTime } from '../timing';
 import { V } from './base';
-import { both, one, reachBoth } from './builders';
+import { both, one, reachBoth, reachPair, torso } from './builders';
 import { OPEN_HAND, PAW, PEACE_HAND, PEACE_PALM, PEACE_SPREAD, POINT_HAND } from './hands';
 
 /** Playful — teasing, hiding, and waving tiny paws. */
@@ -17,13 +17,14 @@ export const PLAYFUL = {
     group: 'playful',
     lead: 0.5,
     hold: 2.5,
-    build(t, _v, phase) {
+    build(t, _v, phase?, out?) {
       // The hands begin closer to the eyes, then open sideways to reveal the
       // face. The poles keep both elbows stable while the hands travel.
       // Let the covering hands arrive before revealing the face. Starting the
       // opening during the entrance skipped the visible hide-and-reveal beat.
       const k = ease(heldTime(t, 0.5, phase) - 0.5, 0.8);
       return reachBoth(
+        out,
         {
           // Start near the inner edge of each cheek to cover the eyes, then
           // travel to the near cheek itself so the face is revealed. The
@@ -47,11 +48,12 @@ export const PLAYFUL = {
     group: 'playful',
     lead: 0.38,
     hold: 2.0,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const b = Math.sin(t * 3.2 * v.rate) * 0.035 * v.scale;
       // Peace fingers beside the head, below the ears. This deliberately does
       // not reach for the crown or put a hand above the bust framing.
       return both(
+        out,
         {
           upperArm: V(0.5, -0.38 + b, 0.28),
           lowerArm: V(0.28, 0.76 + b, 0.48),
@@ -71,9 +73,10 @@ export const PLAYFUL = {
     group: 'playful',
     lead: 0.3,
     hold: 1.7,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = Math.sin(t * 6.4 * v.rate) * 0.11 * v.scale;
       return one(
+        out,
         v,
         {
           upperArm: V(0.42, -0.58, 0.34),
@@ -92,7 +95,7 @@ export const PLAYFUL = {
     group: 'playful',
     lead: 0.42,
     hold: 2.1,
-    build(t, v, phase) {
+    build(t, v, phase?, out?) {
       // Each paw has its own body reach so the two rise and fall opposite one
       // another. Begin the bounce after arrival so its downward half-cycle
       // cannot overfold an elbow during the entrance. Lower wrists leave the
@@ -107,11 +110,7 @@ export const PLAYFUL = {
         palm: [0, 0.05, 1],
         pole: [0.3, -0.9, 0.3],
       });
-      return {
-        reach: { L: paw(-s), R: paw(s) },
-        fingers: { L: PAW, R: PAW },
-        spine: { head: [0.025 + s * 0.12, 0, 0] },
-      };
+      return reachPair(out, paw(-s), paw(s), PAW, PAW, { head: [0.025 + s * 0.12, 0, 0] });
     },
   },
 
@@ -120,15 +119,13 @@ export const PLAYFUL = {
     group: 'playful',
     lead: 0.34,
     hold: 1.8,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = Math.sin(t * 4.4 * v.rate) * 0.07 * v.scale;
-      return {
-        spine: {
-          chest: [0, s, s * 0.6],
-          neck: [0, -s * 0.45, -s * 0.25],
-          head: [0, -s * 0.7, -s * 0.45],
-        },
-      };
+      return torso(out, {
+        chest: [0, s, s * 0.6],
+        neck: [0, -s * 0.45, -s * 0.25],
+        head: [0, -s * 0.7, -s * 0.45],
+      });
     },
   },
 } satisfies Record<string, GestureDef>;

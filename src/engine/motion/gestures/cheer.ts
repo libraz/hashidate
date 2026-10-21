@@ -1,7 +1,7 @@
 import type { GestureDef } from '../../types';
 import { V } from './base';
 import type { ArmPose } from './builders';
-import { both, one } from './builders';
+import { both, one, pair } from './builders';
 import { FIST, OPEN_HAND } from './hands';
 
 /** Encouragement — compact cheers that keep the hands in the shot. */
@@ -17,9 +17,10 @@ export const CHEER = {
     group: 'cheer',
     lead: 0.3,
     hold: 1.7,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = Math.sin(t * 5.8 * v.rate) * 0.09 * v.scale;
       return one(
+        out,
         v,
         {
           upperArm: V(0.44, -0.48 + s * 0.25, 0.3),
@@ -38,9 +39,10 @@ export const CHEER = {
     group: 'cheer',
     lead: 0.34,
     hold: 1.8,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = Math.sin(t * 5.6 * v.rate) * 0.075 * v.scale;
       return both(
+        out,
         {
           upperArm: V(0.45, -0.48 + s * 0.25, 0.3),
           lowerArm: V(0.28, 0.68 + s, 0.62),
@@ -58,7 +60,7 @@ export const CHEER = {
     group: 'cheer',
     lead: 0.38,
     hold: 1.9,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const s = Math.sin(t * 5.2 * v.rate) * 0.08 * v.scale;
       const mk = (pulse: number): ArmPose => ({
         upperArm: V(0.46, -0.46 + pulse * 0.2, 0.3),
@@ -66,11 +68,10 @@ export const CHEER = {
         hand: V(0.18, 0.78 + pulse * 1.2, 0.58),
         twist: -0.08,
       });
-      return {
-        arms: { L: mk(-s), R: mk(s) },
-        fingers: { L: FIST, R: FIST },
-        spine: { chest: [0, s * 0.25, 0], head: [-0.035 * s, 0, 0] },
-      };
+      return pair(out, mk(-s), mk(s), FIST, FIST, {
+        chest: [0, s * 0.25, 0],
+        head: [-0.035 * s, 0, 0],
+      });
     },
   },
 
@@ -79,9 +80,10 @@ export const CHEER = {
     group: 'cheer',
     lead: 0.38,
     hold: 2.0,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       const b = Math.sin(t * 2.5 * v.rate) * 0.025 * v.scale;
       return both(
+        out,
         {
           upperArm: V(0.42, -0.7 + b, 0.36),
           lowerArm: V(0.28, 0.14 + b, 0.95),
@@ -99,11 +101,12 @@ export const CHEER = {
     group: 'cheer',
     lead: 0.46,
     hold: 1.9,
-    build(t, v) {
+    build(t, v, _phase?, out?) {
       // Open from a compact chest position into a broad, frame-safe sweep.
       const k = ease(t, 0.7);
       const b = Math.sin(t * 2.3 * v.rate) * 0.02 * v.scale;
       return both(
+        out,
         {
           upperArm: V(0.34 + 0.13 * k, -0.8 + 0.26 * k + b, 0.3 + 0.08 * k),
           lowerArm: V(0.2 + 0.13 * k, -0.28 + 0.54 * k + b, 0.9),

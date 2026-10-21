@@ -44,7 +44,7 @@ import { REACTION } from './reaction';
  * The table is filed by group, one file each, in the order the groups are
  * declared — which is the order the ids come out in and therefore the order a
  * control surface draws them. `base`, `hands` and `builders` hold the parts the
- * twelve share: the rest pose, the named hand shapes, and the four helpers every
+ * twelve share: the rest pose, the named hand shapes, and the helpers every
  * `build` returns through.
  */
 
