@@ -188,14 +188,32 @@ export interface ActiveGesture {
 }
 
 /**
+ * Most gestures fading at once. Each one resolves both arms every frame, and
+ * firing gestures faster than their leads would otherwise grow the list without bound.
+ */
+const MAX_FADING = 4;
+
+const mkSlotWeights = (): Record<ArmSlot, number> => ({
+  shoulder: 0,
+  upperArm: 0,
+  lowerArm: 0,
+  hand: 0,
+});
+
+/**
  * A gesture on its way out. It keeps moving while its weight decays, and leaves
- * only once that weight is spent — never because another gesture arrived.
+ * only once that weight is spent — never because another gesture arrived, short
+ * of `MAX_FADING` being reached, when its share is folded into the rest.
  */
 interface Outgoing {
   g: ActiveGesture;
+  /** The hand shape's weight, on its own decay; the finger and clasp blends read it. */
   w: number;
   spineWeight: number;
   spineStart: number;
+  /** Per arm link, as `spineWeight` and `spineStart` are for the spine. */
+  armW: Record<ArmSlot, number>;
+  armStart: Record<ArmSlot, number>;
   armAlive: boolean;
   spineAlive: boolean;
   /** This slot's own solver output and elbow state. */
@@ -210,6 +228,8 @@ const mkOutgoing = (g: ActiveGesture): Outgoing => ({
   w: 0,
   spineWeight: 0,
   spineStart: 0,
+  armW: mkSlotWeights(),
+  armStart: mkSlotWeights(),
   armAlive: false,
   spineAlive: false,
   reach: mkReachScratch(),
@@ -539,8 +559,11 @@ export class Body {
   // Spine offsets have no follower. Fade them against the incoming entrance,
   // independently of the arm/finger lifetime and its exponential decay.
   private readonly _spineFading: Outgoing[] = [];
-  private _spineFadeTime = 0;
-  private _spineFadeDuration = 0;
+  /** The incoming entrance's clock, which outgoing spine and arm weights fade against. */
+  private _fadeTime = 0;
+  private _fadeDuration = 0;
+  /** What each arm link's outgoing weights keep of their start this frame. */
+  private readonly _fadeRemaining = mkSlotWeights();
   /** Spent outgoing slots, kept so a gesture switch does not allocate. */
   private readonly _spare: Outgoing[] = [];
   /** The current gesture's solver output and elbow state. */
@@ -879,10 +902,25 @@ export class Body {
     );
     // Outgoing first, then incoming: the incoming gesture takes over as its
     // blend rises, and the two never both sit at full weight.
-    if (outgoing) {
+    if (outgoing && !cDir) {
+      // Nothing to complement: the link goes home on the outgoing decay, which
+      // the incoming lead was never sized to cover.
       for (const f of this._fading) {
-        const pDir = slot === 'shoulder' ? f.pose?.arms?.[side]?.shoulder : f.arm[side]?.[slot];
+        const pDir = this.outgoingDir(f, side, slot);
         if (pDir) v.lerp(carry(pDir, parentOf(f.arm[side])), f.w).normalize();
+      }
+    } else if (outgoing) {
+      // Each lerp takes a slot's share of what the chain holds so far, so every
+      // outgoing slot lands at its own `armW` and rest keeps only what is left.
+      let pool = 1 - cw;
+      for (const f of this._fading) if (this.outgoingDir(f, side, slot)) pool -= f.armW[slot];
+      pool = Math.max(0, pool);
+      for (const f of this._fading) {
+        const pDir = this.outgoingDir(f, side, slot);
+        const share = f.armW[slot];
+        if (!pDir || share <= 0) continue;
+        pool += share;
+        v.lerp(carry(pDir, parentOf(f.arm[side])), share / pool).normalize();
       }
     }
     if (cDir) v.lerp(carry(cDir, cParent), cw).normalize();
@@ -900,6 +938,13 @@ export class Body {
     v.z += w * 0.8 * Math.sin(this.t * 0.19 + ph + 0.6);
     v.x += w * 0.5 * Math.sin(this.t * 0.23 + ph + 1.3);
     return v.normalize();
+  }
+
+  /** What an outgoing slot states for one arm link: the authored shoulder, or the resolved link. */
+  private outgoingDir(f: Outgoing, side: Side, slot: ArmSlot): THREE.Vector3 | undefined {
+    return slot === 'shoulder'
+      ? f.pose?.arms?.[side]?.shoulder
+      : (f.arm[side]?.[slot] ?? undefined);
   }
 
   /** Follow one arm slot's target and write the result into `_armDirs`. */
@@ -1030,8 +1075,10 @@ export class Body {
     // deliberately takes 1.5 seconds so its entrance reads as falling asleep.
     const lead = Math.max(def.lead, Math.min(0.95, this.travel(def, v) * LEAD_PER_RAD));
     for (const f of this._spineFading) f.spineStart = f.spineWeight;
-    this._spineFadeTime = 0;
-    this._spineFadeDuration = lead;
+    for (const f of this._fading) for (const slot of ARM_SLOTS) f.armStart[slot] = f.armW[slot];
+    while (this._fading.length > MAX_FADING) this.foldFading();
+    this._fadeTime = 0;
+    this._fadeDuration = lead;
     this.gesture = {
       def,
       id,
@@ -1061,7 +1108,7 @@ export class Body {
   private travel(def: GestureDef, v: GestureVariation): number {
     const pose = def.build(0, v, PROBE_PHASE);
     let worst = 0;
-    for (const side of ['L', 'R'] as const) {
+    for (const side of SIDES) {
       const mirror = sideMirror(side);
       this._probeReach[side].swivelDir.set(0, 0, 0);
       const arm = this._arm.resolve(pose, side, mirror, this._probeReach, 1);
@@ -1108,7 +1155,7 @@ export class Body {
    * The one place a gesture leaves the current slot early. It keeps its pose
    * time and its solver state, and from here its weight only decays, so a
    * switch can neither drop it nor raise it — however many arrive within one
-   * fade.
+   * fade, up to `MAX_FADING`.
    */
   private handoff(): void {
     const g = this.gesture;
@@ -1119,6 +1166,11 @@ export class Body {
       out.w = this.blend;
       out.spineWeight = this.blend;
       out.spineStart = this.blend;
+      // Each link at what it was worth on screen; an overshoot hands over at full weight.
+      for (const slot of ARM_SLOTS) {
+        out.armW[slot] = Math.min(1, plain(this._armEnv[slot]));
+        out.armStart[slot] = out.armW[slot];
+      }
       out.armAlive = true;
       out.spineAlive = true;
       out.reach = this._curReach;
@@ -1134,6 +1186,48 @@ export class Body {
     this._curReach.R.clasp = false;
     this.gesture = null;
     this.blend = 0;
+  }
+
+  /**
+   * Retire the outgoing arm slot worth least, short of the one just handed over,
+   * whose hand the finger blend may still be holding.
+   *
+   * Not the oldest: under rapid firing the oldest is the pose still on screen
+   * and each later slot holds only the sliver its entrance reached. The arm
+   * blends are lerp chains, so taking a link out hands its share back, in
+   * proportion, to everything blended before it — rest and the older slots.
+   */
+  private foldFading(): void {
+    let victim = 0;
+    let least = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < this._fading.length - 1; i++) {
+      const s = this._fading[i].armStart;
+      const worth = s.shoulder + s.upperArm + s.lowerArm + s.hand;
+      if (worth < least) {
+        least = worth;
+        victim = i;
+      }
+    }
+    const v = this._fading[victim];
+    for (const slot of ARM_SLOTS) {
+      let before = 1;
+      for (let j = victim + 1; j < this._fading.length; j++)
+        before -= this._fading[j].armStart[slot];
+      const left = before - v.armStart[slot];
+      if (left <= 1e-9) continue;
+      const k = before / left;
+      for (let j = 0; j < victim; j++) {
+        const f = this._fading[j];
+        f.armStart[slot] *= k;
+        f.armW[slot] = f.armStart[slot];
+      }
+    }
+    this._fading.splice(victim, 1);
+    v.armAlive = false;
+    if (!v.spineAlive) {
+      v.pose = null;
+      this._spare.push(v);
+    }
   }
 
   /**
@@ -1239,7 +1333,7 @@ export class Body {
   /** Seed the followers once from the pose they will actually continue from. */
   private seedArmFollowersFromRig(): void {
     const frameReady = this.axes.ready();
-    for (const side of ['L', 'R'] as Side[]) {
+    for (const side of SIDES) {
       const accepted = this.rig.armStateForBodyInitialization(side);
       const tuple = this._acceptedTuple[side];
       let stanceReady = true;
@@ -1791,18 +1885,35 @@ export class Body {
         this.blend = 0;
         g = null;
       }
-    } else if (this.blend > 0) {
-      this.blend *= Math.exp(-dt * 10);
+    }
+
+    // Restarted switches capture the weights already on screen, including all
+    // earlier outgoing slots. Their sum complements the new entrance without
+    // pulling a held pose toward rest. This clock also runs after a release.
+    this._fadeTime += dt;
+    const fadeFraction =
+      this._fadeDuration > 0 ? Math.min(1, this._fadeTime / this._fadeDuration) : 1;
+    const spineRemaining = 1 - minJerk(fadeFraction);
+    // The arm links fade against the incoming links' own staggered entrance.
+    const remaining = this._fadeRemaining;
+    for (const slot of ARM_SLOTS) {
+      remaining[slot] = 1 - Math.min(1, reachEnvelope(onset(fadeFraction, LINK_ONSET[slot])));
     }
 
     let kept = 0;
     // The hand the last gesture left is held until the new one's fingers come
-    // in, so its slot outlives its arm weight; see the finger blend.
-    const handedOver = this._fading[this._fading.length - 1];
-    const holdingHand = !!g?.fingers && this._fingerEnv.entrance < 1;
+    // in, so its slot outlives its arm weight; see the finger blend. Taken
+    // before pruning: if this slot goes, no older one inherits the hold.
+    const handSource = this._fading[this._fading.length - 1];
+    const holdingHand = !!(g?.fingers || g?.fingerSpread) && this._fingerEnv.entrance < 1;
     for (const f of this._fading) {
       f.w *= Math.exp(-dt * 6);
-      if (f.w < 0.01 && !(holdingHand && f === handedOver)) {
+      let armLeft = 0;
+      for (const slot of ARM_SLOTS) {
+        f.armW[slot] = f.armStart[slot] * remaining[slot];
+        armLeft += f.armW[slot];
+      }
+      if (armLeft === 0 && f.w < 0.01 && !(holdingHand && f === handSource)) {
         f.armAlive = false;
         if (!f.spineAlive) {
           f.pose = null;
@@ -1818,13 +1929,6 @@ export class Body {
     }
     this._fading.length = kept;
 
-    // Restarted switches capture the weights already on screen, including all
-    // earlier outgoing slots. Their sum complements the new entrance without
-    // pulling a held pose toward rest. This clock also runs after a release.
-    this._spineFadeTime += dt;
-    const spineFraction =
-      this._spineFadeDuration > 0 ? Math.min(1, this._spineFadeTime / this._spineFadeDuration) : 1;
-    const spineRemaining = 1 - minJerk(spineFraction);
     kept = 0;
     for (const f of this._spineFading) {
       f.spineWeight = f.spineStart * spineRemaining;
@@ -2043,19 +2147,37 @@ export class Body {
       // nothing about them that the interpolated target has already eased —
       // taking them at full weight from the first frame would be a step. They
       // arrive late instead, which is what a wrist does.
+      // As for the limbs: an arm the incoming gesture poses is complemented, and
+      // one it leaves alone goes home on the outgoing decay.
       const cw = plain(this._armEnv.hand);
       let twistTarget = 0;
-      for (const f of this._fading) twistTarget += (f.arm[side]?.twist ?? 0) * f.w;
+      for (const f of this._fading) {
+        twistTarget += (f.arm[side]?.twist ?? 0) * (cArm ? f.armW.hand : f.w);
+      }
       twistTarget += (cArm?.twist ?? 0) * cw;
       this._twist[side].step(twistTarget, dt, ARM_FOLLOW);
 
-      // Palm direction blends and follows like the limb directions do.
+      // Palm direction blends and follows like the limb directions do; see
+      // `composeArmTarget` for the shares.
       const pt = this._palmTarget.copy(BASE_PALM);
-      for (const f of this._fading) {
-        const palm = f.arm[side]?.palm;
-        if (palm) pt.lerp(palm, f.w).normalize();
+      if (cArm?.palm) {
+        let pool = 1 - cw;
+        for (const f of this._fading) if (f.arm[side]?.palm) pool -= f.armW.hand;
+        pool = Math.max(0, pool);
+        for (const f of this._fading) {
+          const palm = f.arm[side]?.palm;
+          const share = f.armW.hand;
+          if (!palm || share <= 0) continue;
+          pool += share;
+          pt.lerp(palm, share / pool).normalize();
+        }
+        pt.lerp(cArm.palm, cw).normalize();
+      } else {
+        for (const f of this._fading) {
+          const palm = f.arm[side]?.palm;
+          if (palm) pt.lerp(palm, f.w).normalize();
+        }
       }
-      if (cArm?.palm) pt.lerp(cArm.palm, cw).normalize();
       const ps = this._palm[side].step(pt, dt, ARM_FOLLOW);
       const po = this._palmOut[side];
       // Palm state follows the same canonical frame as the arm directions.
@@ -2080,7 +2202,7 @@ export class Body {
       let hold = 1;
       for (const f of this._fading) {
         const arm = f.arm[side];
-        if (arm && !arm.palm) hold -= f.w;
+        if (arm && !arm.palm) hold -= cArm ? f.armW.hand : f.w;
       }
       if (cArm && !cArm.palm) hold -= cw;
       const palmW = Math.max(0, this._palmW[side].step(Math.max(0, hold), dt, ARM_FOLLOW));
@@ -2113,10 +2235,10 @@ export class Body {
         if (o.pose?.clasp) held += o.w * (1 - minJerk((1 - o.w) / UNTHREAD));
       }
       const free = Math.max(0, 1 - held);
-      // A switch hands the hand straight over. The outgoing shape fades on the
-      // arm's schedule and the incoming one starts late (FINGER_ONSET); weighted
+      // A switch hands the hand straight over. The outgoing shape fades on its
+      // own decay and the incoming one starts late (FINGER_ONSET); weighted
       // as they are, the gap between sagged even fist-to-point a quarter open.
-      const handedOver = this._fading[this._fading.length - 1];
+      // The hold goes to `handSource` alone, never to an older slot left last.
       // Held so that rest shows through only as far as the new gesture's own
       // exit lets it: (1 - hold)(1 - fw) = 1 - exit.
       const fx = this._fingerEnv.exit;
@@ -2131,7 +2253,7 @@ export class Body {
           const oK = minJerk((1 - o.w) / UNTHREAD);
           let pv = o.pose?.fingers?.[side]?.[f];
           if (pv !== undefined && oSpread) pv = claspCurl(side !== oc?.lead, f, pv, oK);
-          const ow = o === handedOver ? Math.max(o.w, handHold) : o.w;
+          const ow = o === handSource ? Math.max(o.w, handHold) : o.w;
           if (pv !== undefined) val += (pv - val) * ow;
           const pvSpread = oSpread
             ? (oSpread[f] ?? 0) * (1 - oK)
