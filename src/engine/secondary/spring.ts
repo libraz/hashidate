@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { type Localized, same } from '../../i18n/locale';
+import { normaliseBoneName } from '../profile/candidates';
 import type {
   AvatarDescriptor,
   ColliderSpec,
@@ -62,8 +63,13 @@ import { SkinPointAnchor, type SkinPointAnchorDiagnostics } from './skin-point-a
  * interpolated between the previous frame and this one. Fed the frame's pose
  * instead, steps sample the body at uneven times — 1, 1, 1, 1, 2 per frame at
  * 50 Hz. A step landing on the frame's end reads the frame as posed, so one step
- * per frame at 60 Hz is unchanged. Frames above 60 Hz that alternate between
- * one step and none are not evened out.
+ * per frame at 60 Hz is unchanged.
+ *
+ * What is written to a bone is the last solved rotation carried forward along
+ * the last step's motion by the accumulator's remainder. Above 60 Hz most frames
+ * take no step, and writing the last solved rotation again would hold the hair
+ * still while the head keeps moving. Interpolating between the last two steps
+ * instead would show the hair a step late on every frame, including at 60 Hz.
  */
 
 /** Simulation step, seconds. */
@@ -135,6 +141,9 @@ export class Joint {
   readonly length: number;
   readonly cur: THREE.Vector3;
   readonly prev: THREE.Vector3;
+  /** Local rotation solved by the last step, and by the one before it. */
+  readonly solvedQ = new THREE.Quaternion();
+  readonly prevSolvedQ = new THREE.Quaternion();
   readonly valid: boolean;
   /** Clearance per collider of this joint's group, filled in by calibration. */
   limits: Float32Array;
@@ -199,6 +208,17 @@ export class Joint {
       .applyQuaternion(worldQuat(this.bone, _q))
       .add(_p.setFromMatrixPosition(this.bone.matrixWorld));
     this.prev.copy(this.cur);
+    this.solvedQ.copy(this.bone.quaternion);
+    this.prevSolvedQ.copy(this.solvedQ);
+  }
+
+  /**
+   * Write the rotation `s` of the way from the previous step's result to the last
+   * one's. Above 1 it continues past the last result along the same arc.
+   */
+  present(s: number): void {
+    this.bone.quaternion.slerpQuaternions(this.prevSolvedQ, this.solvedQ, s);
+    this.bone.updateMatrix();
   }
 }
 
@@ -438,10 +458,12 @@ export class Spring {
       if (!(o instanceof THREE.Bone)) return;
       // Preserve the legacy first-name-wins lookup for unanchored groups. The
       // attachment resolver below uses the strict all-matches map instead.
-      if (!byName.has(o.name)) byName.set(o.name, o);
-      const matches = bonesByName.get(o.name) ?? [];
+      // Keyed by the loader-sanitised name, as descriptor names are looked up.
+      const key = normaliseBoneName(o.name);
+      if (!byName.has(key)) byName.set(key, o);
+      const matches = bonesByName.get(key) ?? [];
       matches.push(o);
-      bonesByName.set(o.name, matches);
+      bonesByName.set(key, matches);
     });
     this.root.updateMatrixWorld(true);
 
@@ -449,7 +471,7 @@ export class Spring {
     for (const [id, list] of Object.entries(spec.colliders ?? {})) {
       const built: Collider[] = [];
       for (const c of list) {
-        const bone = byName.get(c.bone);
+        const bone = byName.get(normaliseBoneName(c.bone));
         if (bone) built.push(new Collider(bone, c));
         else this.missing.push(`collider:${c.bone}`);
       }
@@ -460,7 +482,7 @@ export class Spring {
       const def = { ...GROUP_DEFAULTS, ...g };
       const roots: THREE.Bone[] = [];
       for (const name of g.roots ?? []) {
-        const bone = byName.get(name);
+        const bone = byName.get(normaliseBoneName(name));
         if (bone) roots.push(bone);
         else this.missing.push(`sway:${name}`);
       }
@@ -469,7 +491,7 @@ export class Spring {
       // can check against the model, so the descriptor names the hub and the
       // children are read off the rig.
       for (const name of g.childrenOf ?? []) {
-        const hub = byName.get(name);
+        const hub = byName.get(normaliseBoneName(name));
         if (!hub) {
           this.missing.push(`sway:${name}`);
           continue;
@@ -486,7 +508,7 @@ export class Spring {
           if (rootName === undefined || (g.childrenOf?.length ?? 0) > 0) {
             throw new Error('requires exactly one explicit root and no childrenOf');
           }
-          const rootMatches = bonesByName.get(rootName) ?? [];
+          const rootMatches = bonesByName.get(normaliseBoneName(rootName)) ?? [];
           const rootBone = roots.length === 1 ? roots[0] : undefined;
           if (rootMatches.length !== 1 || rootBone === undefined) {
             throw new Error(`root bone must resolve uniquely: ${rootName}`);
@@ -703,7 +725,7 @@ export class Spring {
   #calibrate(): void {
     this.root.updateMatrixWorld(true);
     for (const g of this.groups) {
-      g.anchor?.place();
+      this.#place(g);
       for (const j of g.joints) j.seed();
     }
     for (const g of this.groups) {
@@ -836,7 +858,7 @@ export class Spring {
     for (const input of this.#inputs) input.snap();
     for (const g of this.groups) {
       if (g.enabled) {
-        g.anchor?.place();
+        this.#place(g);
         for (const j of g.joints) j.seed();
       } else {
         for (const j of g.joints) {
@@ -850,12 +872,31 @@ export class Spring {
     // reseeded. Its first placement above may have read their pre-reset pose.
     this.#rehang();
     for (const g of this.groups) {
-      if (g.anchor && !g.enabled) g.anchor.place();
+      if (g.anchor && !g.enabled) this.#place(g);
+    }
+  }
+
+  /**
+   * Place a group's anchor. An anchor guards its contract on every placement
+   * (a bone's scale can change at runtime), and a violation must not escape
+   * into the render loop: the group is switched off and the reason recorded.
+   */
+  #place(g: SpringGroup, inputs?: ReadonlyMap<THREE.Object3D, THREE.Matrix4>): void {
+    if (!g.anchor) return;
+    try {
+      g.anchor.place(inputs);
+    } catch (error) {
+      this.missing.push(
+        `sway:${g.id} anchor: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      g.enabled = false;
+      g.wasEnabled = false;
+      g.anchor = null;
     }
   }
 
   #placeAnchors(): void {
-    for (const g of this.groups) g.anchor?.place();
+    for (const g of this.groups) this.#place(g);
   }
 
   #syncGroupToggles(): void {
@@ -876,15 +917,15 @@ export class Spring {
 
     for (const g of this.groups) {
       if (g.wasEnabled === g.enabled) {
-        if (!g.enabled && g.anchor) g.anchor.place();
+        if (!g.enabled && g.anchor) this.#place(g);
         continue;
       }
       g.wasEnabled = g.enabled;
       if (g.enabled) {
-        g.anchor?.place();
+        this.#place(g);
         for (const joint of g.joints) joint.seed();
       } else if (g.anchor) {
-        g.anchor.place();
+        this.#place(g);
       }
     }
   }
@@ -954,11 +995,9 @@ export class Spring {
     const start = this._acc;
     this._acc = Math.min(this._acc + dt, STEP * MAX_STEPS);
     const span = this._acc - start;
-    let steps = 0;
     let between = false;
     while (this._acc >= STEP) {
       this._acc -= STEP;
-      steps++;
       // What is left of the frame after this step says where in it the step
       // falls; a remainder that is only rounding is the frame's end.
       if (this._acc > span * 1e-9) {
@@ -975,9 +1014,21 @@ export class Spring {
     if (between) {
       // Hand the frame's own body back, and hang what is drawn on it.
       for (const input of this.#inputs) input.end();
-      this.#rehang();
-      this.#placeAnchors();
-    } else if (steps === 0) this.#placeAnchors();
+    }
+    // The solver is up to a step behind the frame. Carry the last step's motion
+    // forward by the unspent remainder: nothing moves on a frame that lands on a
+    // step, and frames between steps keep moving with the head.
+    this.#present(1 + this._acc / STEP);
+    this.#rehang();
+    this.#placeAnchors();
+  }
+
+  /** Write every running group's rotations at `s`; see `Joint#present`. */
+  #present(s: number): void {
+    for (const g of this.groups) {
+      if (!g.enabled) continue;
+      for (const j of g.joints) j.present(s);
+    }
   }
 
   /** Recompute unattached joints' world matrices from their parents, as a world update would. */
@@ -1001,7 +1052,7 @@ export class Spring {
     for (const g of this.groups) {
       // Place after prior cloth/producer groups in this same fixed step, even
       // when this accessory group itself is switched off.
-      g.anchor?.place(inputs);
+      this.#place(g, inputs);
       if (!g.enabled) {
         // An ordinary disabled group can still be a producer for an attached
         // group later in this pass. Keep its world matrices on its current
@@ -1075,6 +1126,8 @@ export class Spring {
         _q.multiply(j.rest).premultiply(_aim);
         bone.quaternion.copy(_pq).invert().multiply(_q);
         if (g.anchor) bone.quaternion.normalize();
+        j.prevSolvedQ.copy(j.solvedQ);
+        j.solvedQ.copy(bone.quaternion);
 
         // The next joint down reads this bone's world matrix, and three will not
         // refresh it until render. Propagating one link by hand is cheaper than

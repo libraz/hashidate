@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { normaliseBoneName } from '../profile/candidates';
 import type { SkinPointAnchorSpec } from '../types';
 
 const WEIGHT_SUM_TOLERANCE = 1e-5;
@@ -201,7 +202,7 @@ export class SkinPointAnchor {
           ),
         `anchor position is invalid: ${bone}`,
       );
-      const matches = bonesByName.get(bone) ?? [];
+      const matches = bonesByName.get(normaliseBoneName(bone)) ?? [];
       requireAnchor(matches.length === 1, `anchor source bone must resolve uniquely: ${bone}`);
       const source = matches[0];
       requireAnchor(source, `anchor source bone must resolve uniquely: ${bone}`);

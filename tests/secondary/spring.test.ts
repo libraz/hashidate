@@ -312,6 +312,88 @@ function expectRenderedJointGeometry(spring: Spring): void {
   }
 }
 
+describe('Spring bone lookup', () => {
+  it('finds bones whose loader-sanitised names differ from the descriptor spelling', () => {
+    const rig = buildRig();
+    addBoneChain(rig, { parent: 'Head', root: 'Hair', joints: 3 });
+    addBoneChain(rig, { parent: 'Head', root: 'Hub', joints: 2 });
+    addBoneChain(rig, { parent: 'Head', root: 'Ball', joints: 1 });
+    // GLTFLoader strips the dot and spaces from node names.
+    must(rig.bones.get('Hair'), 'Hair').name = 'Hair001';
+    must(rig.bones.get('Hub'), 'Hub').name = 'Hub_Bone';
+    must(rig.bones.get('Ball'), 'Ball').name = 'Ball001';
+    const descriptor: AvatarDescriptor = {
+      ...rig.descriptor,
+      sway: {
+        groups: [
+          { id: 'hair', roots: ['Hair.001'], colliders: ['ball'] },
+          { id: 'hub', childrenOf: ['Hub Bone'] },
+        ],
+        colliders: { ball: [{ bone: 'Ball.001', radius: 0.05 }] },
+      },
+    };
+    const spring = new Spring(buildProfile(rig.root, descriptor), descriptor);
+    expect(spring.missing).toEqual([]);
+    expect(spring.groups.map((g) => g.id)).toEqual(['hair', 'hub']);
+    expect(must(spring.groups[0], 'hair').colliders).toHaveLength(1);
+    expect(must(spring.groups[1], 'hub').joints.length).toBeGreaterThan(0);
+  });
+});
+
+describe('Spring above the step rate', () => {
+  const build = () =>
+    makeSpring([{ id: 'hair', roots: ['Hair'] }], [{ parent: 'Head', root: 'Hair', joints: 3 }]);
+
+  it('moves the written rotation every frame at 144 Hz, within one step of the solved state', () => {
+    const { rig, spring } = build();
+    const head = must(rig.bones.get('Head'), 'Head');
+    const joint = must(spring.groups[0]?.joints[0], 'joint');
+    spring.update(0);
+    let last = joint.bone.quaternion.clone();
+    let changed = 0;
+    const frames = 144;
+    for (let i = 0; i < frames; i++) {
+      head.rotation.y = 0.4 * Math.sin((i / 144) * Math.PI * 2);
+      spring.update(1 / 144);
+      const q = joint.bone.quaternion;
+      if (i > 10) {
+        if (q.angleTo(last) > 1e-9) changed++;
+        // Never further from the last solved rotation than that step travelled.
+        expect(q.angleTo(joint.solvedQ)).toBeLessThanOrEqual(
+          joint.solvedQ.angleTo(joint.prevSolvedQ) + 1e-9,
+        );
+      }
+      last = q.clone();
+    }
+    expect(changed).toBe(frames - 11);
+  });
+
+  it('writes the solved rotation when the frame lands on a step', () => {
+    const { rig, spring } = build();
+    const head = must(rig.bones.get('Head'), 'Head');
+    const joint = must(spring.groups[0]?.joints[0], 'joint');
+    spring.update(0);
+    head.rotation.y = 0.3;
+    spring.update(STEP);
+    expect(joint.bone.quaternion.angleTo(joint.solvedQ)).toBeLessThan(1e-9);
+  });
+
+  it('forgets the previous step on reset, so nothing is carried across a teleport', () => {
+    const { rig, spring } = build();
+    const head = must(rig.bones.get('Head'), 'Head');
+    const joint = must(spring.groups[0]?.joints[0], 'joint');
+    spring.update(0);
+    for (let i = 0; i < 20; i++) {
+      head.rotation.y = 0.5 * Math.sin(i * 0.5);
+      spring.update(STEP);
+    }
+    spring.reset();
+    spring.update(1 / 144);
+    expect(joint.prevSolvedQ.angleTo(joint.solvedQ)).toBe(0);
+    expect(joint.bone.quaternion.angleTo(joint.solvedQ)).toBe(0);
+  });
+});
+
 describe('Spring', () => {
   it('keeps a resting chain stable and finite, including a calibrated collider', () => {
     const { spring } = makeSpring(
@@ -908,6 +990,26 @@ describe('Spring weighted root attachments', () => {
       const childHead = new THREE.Vector3().setFromMatrixPosition(childJoint.bone.matrixWorld);
       expect(childHead.distanceTo(parentJoint.cur)).toBeLessThan(1e-6);
     }
+  });
+
+  it('disables an attached group whose contract breaks mid-run instead of throwing', () => {
+    const fixture = makeAnchorFixture();
+    fixture.spring.update(STEP);
+    const charm = must(
+      fixture.spring.groups.find((group) => group.id === 'charm'),
+      'charm group',
+    );
+    expect(charm.enabled).toBe(true);
+
+    must(fixture.rig.bones.get('ProducerA_1'), 'ProducerA_1').scale.set(1, 2, 1);
+    expect(() => {
+      for (let frame = 0; frame < 5; frame++) fixture.spring.update(STEP);
+    }).not.toThrow();
+    expect(charm.enabled).toBe(false);
+    expect(charm.anchor).toBeNull();
+    expect(fixture.spring.missing.filter((m) => m.startsWith('sway:charm anchor:'))).toHaveLength(
+      1,
+    );
   });
 
   it('normalizes animated measured Float32 charm rotations while preserving ppm TRS scale', () => {

@@ -102,6 +102,18 @@ function boneOf(fixture: ReturnType<typeof makeSkinFixture>) {
 }
 
 describe('SkinPointAnchor', () => {
+  it('resolves influence bone names through the loader-sanitised spelling', () => {
+    const fixture = makeSkinFixture();
+    const byName = new Map(fixture.bonesByName);
+    byName.set('Skirt_LF001', byName.get('SkirtLF') ?? []);
+    const spec = {
+      influences: [
+        { bone: 'Skirt LF.001', weight: 1, position: [0, 0, 0] as [number, number, number] },
+      ],
+    };
+    expect(() => new SkinPointAnchor(fixture.anchorRoot, spec, byName)).not.toThrow();
+  });
+
   it('matches a real four-weight skinned point through 0.01 scale and moved ancestors', () => {
     const fixture = makeSkinFixture();
     fixture.avatar.position.set(-1.7, 0.6, 2.2);
