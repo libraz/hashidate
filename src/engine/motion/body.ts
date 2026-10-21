@@ -269,6 +269,13 @@ interface ArmBridgeSample {
   side: Record<Side, ArmBridgeSideSample>;
 }
 
+interface ArmBridgeInterval {
+  from: ArmBridgeSample;
+  to: ArmBridgeSample;
+  depth: number;
+  travel: number;
+}
+
 interface ArmFrameWork {
   contextRetries: number;
   armStepRetries: number;
@@ -306,6 +313,15 @@ const ARM_BRIDGE_STARTS = [0, 0.25, 0.5, 0.75, 1] as const;
 const ARM_BRIDGE_MAX_DEPTH = 8;
 const ARM_BRIDGE_MAX_SAMPLES = 96;
 const ARM_STEP_BACKTRACKS = [1, 0.5, 0.25, 0.125, 0.0625, 0.03125] as const;
+
+/**
+ * Bridge samples one frame's commit may spend across all its context retries:
+ * two full bridges. The heaviest ordinary frame measured used 161; seven
+ * attempts failing on speed reach 672. Past it the frame keeps its accepted pose.
+ * Mirrored weight-shift certification at a 0.5 s step fell from 279 to 185 samples.
+ * The changed rejection order needs a render check.
+ */
+const ARM_FRAME_BRIDGE_BUDGET = 2 * ARM_BRIDGE_MAX_SAMPLES;
 
 /**
  * The two halves of a gesture's envelope, kept apart rather than multiplied.
@@ -493,6 +509,9 @@ export class Body {
   private readonly _bridgeCurls: Record<Side, Record<FingerName, number>>;
   private readonly _bridgeSpread: Record<Side, Record<FingerName, number>>;
   private readonly _bridgeSamples: ArmBridgeSample[];
+  private readonly _bridgeKnots: ArmBridgeSample[];
+  private readonly _bridgeFrontier: ArmBridgeInterval[];
+  private _bridgePendingCount = 0;
   private _bridgeSampleCount = 0;
   private _bridgeAlpha = 1;
   private _bridgeResolution = Number.POSITIVE_INFINITY;
@@ -521,7 +540,7 @@ export class Body {
     L: new Float64Array(7),
     R: new Float64Array(7),
   };
-  private _bridgeFailure: 'speed' | 'geometry' = 'geometry';
+  private _bridgeFailure: 'speed' | 'geometry' | 'budget' = 'geometry';
   /** `_armVec` before breathing and drift, which is what a child link is carried by. */
   private _armBlend: Record<Side, Record<ArmSlot, THREE.Vector3>>;
   private readonly _carryDir = new THREE.Vector3();
@@ -693,6 +712,16 @@ export class Body {
     this._bridgeSamples = Array.from({ length: ARM_BRIDGE_MAX_SAMPLES }, () =>
       makeArmBridgeSample(bridgePointCounts),
     );
+    this._bridgeKnots = Array.from(
+      { length: ARM_BRIDGE_STARTS.length },
+      () => this._bridgeSamples[0],
+    );
+    this._bridgeFrontier = Array.from({ length: ARM_BRIDGE_MAX_SAMPLES }, () => ({
+      from: this._bridgeSamples[0],
+      to: this._bridgeSamples[0],
+      depth: 0,
+      travel: 0,
+    }));
     this._armBlend = { L: mkVecs(), R: mkVecs() };
     this._armState = { L: mkState(this._rest), R: mkState(this._rest) }; // what the arm is actually doing
     this._fingerSpec = { L: { ...BASE_FINGERS }, R: { ...BASE_FINGERS } };
@@ -1395,6 +1424,21 @@ export class Body {
     this._lastExternalArmRevision = revision;
   }
 
+  private armFrameBudgetSpent(): boolean {
+    return this._armFrameWork.bridgeSamples >= ARM_FRAME_BRIDGE_BUDGET;
+  }
+
+  /** Whether this attempt's or this frame's sample allowance is used up, recording which. */
+  private armBridgeSamplesSpent(): boolean {
+    if (this.armFrameBudgetSpent()) {
+      this._bridgeFailure = 'budget';
+      return true;
+    }
+    if (this._bridgeSampleCount < ARM_BRIDGE_MAX_SAMPLES) return false;
+    this._bridgeFailure = 'geometry';
+    return true;
+  }
+
   private recordArmSolve(output: { iterations: number; environmentBatches: number }): void {
     this._armFrameWork.solverCalls++;
     this._armFrameWork.solverIterations += output.iterations;
@@ -1415,6 +1459,7 @@ export class Body {
     const rollComposed: Record<Side, boolean> = { L: false, R: false };
     let committed = false;
     for (let attempt = 0; attempt <= 6; attempt++) {
+      if (this.armFrameBudgetSpent()) break;
       if (attempt > 0) this._armFrameWork.contextRetries++;
       const alpha = attempt === 0 ? 1 : attempt === 6 ? 0 : 2 ** -attempt;
       const candidateRise = rig.applyBodyContext(alpha, 1);
@@ -1574,10 +1619,7 @@ export class Body {
 
   /** Evaluate a shared beta-scaled arm increment against the unchanged request. */
   private evaluateArmCandidate(alpha: number, beta: number): boolean {
-    if (this._bridgeSampleCount >= ARM_BRIDGE_MAX_SAMPLES) {
-      this._bridgeFailure = 'geometry';
-      return false;
-    }
+    if (this.armBridgeSamplesSpent()) return false;
     this._bridgeSampleCount++;
     this._armFrameWork.bridgeSamples++;
     this.rig.applyBodyContext(alpha, 1);
@@ -1608,6 +1650,7 @@ export class Body {
   }
 
   private validateArmBridge(alpha: number, dt: number): boolean {
+    this._bridgePendingCount = 0;
     const left = this.rig.armDriver('L');
     const right = this.rig.armDriver('R');
     if (!(left && right)) {
@@ -1620,21 +1663,114 @@ export class Body {
 
     let valid = true;
     let restored = false;
+    let knotCount = 0;
     try {
       let previous: ArmBridgeSample | null = null;
       for (const s of ARM_BRIDGE_STARTS) {
         const sample = this.sampleArmBridge(s);
-        if (!(sample && (!previous || this.refineArmBridge(previous, sample, 0, dt)))) {
+        if (!(sample && (!previous || this.armBridgeStepWithinBudget(previous, sample, dt)))) {
           valid = false;
           break;
         }
+        this._bridgeKnots[knotCount++] = sample;
         previous = sample;
+      }
+      if (valid) {
+        for (let index = 1; index < knotCount; index++) {
+          if (
+            !this.classifyArmBridgeInterval(
+              this._bridgeKnots[index - 1],
+              this._bridgeKnots[index],
+              0,
+            )
+          ) {
+            valid = false;
+            break;
+          }
+        }
+      }
+      while (valid && this._bridgePendingCount > 0) {
+        // Every unresolved interval needs its own distinct midpoint to certify.
+        if (this._armFrameWork.bridgeSamples + this._bridgePendingCount > ARM_FRAME_BRIDGE_BUDGET) {
+          this._bridgeFailure = 'budget';
+          valid = false;
+          break;
+        }
+        if (this._bridgeSampleCount + this._bridgePendingCount > ARM_BRIDGE_MAX_SAMPLES) {
+          this._bridgeFailure = 'geometry';
+          valid = false;
+          break;
+        }
+        const selected = this.selectArmBridgeInterval();
+        const interval = this._bridgeFrontier[selected];
+        const from = interval.from;
+        const to = interval.to;
+        const depth = interval.depth;
+        // Child classification may immediately reuse the freed record.
+        const last = --this._bridgePendingCount;
+        this._bridgeFrontier[selected] = this._bridgeFrontier[last];
+        this._bridgeFrontier[last] = interval;
+        const middle = this.sampleArmBridge((from.s + to.s) / 2);
+        if (
+          !(
+            middle &&
+            this.armBridgeStepWithinBudget(from, middle, dt) &&
+            this.armBridgeStepWithinBudget(middle, to, dt)
+          )
+        ) {
+          valid = false;
+          break;
+        }
+        if (
+          !this.classifyArmBridgeInterval(from, middle, depth + 1) ||
+          !this.classifyArmBridgeInterval(middle, to, depth + 1)
+        )
+          valid = false;
       }
     } finally {
       restored = this.restoreArmBridgeContext(alpha);
     }
     if (!restored) this._bridgeFailure = 'geometry';
     return valid && restored;
+  }
+
+  /** Classify a rate-checked interval without treating a pending midpoint as certified. */
+  private classifyArmBridgeInterval(
+    from: ArmBridgeSample,
+    to: ArmBridgeSample,
+    depth: number,
+  ): boolean {
+    const travel = this.armBridgeTravel(from, to);
+    if (!Number.isFinite(travel)) {
+      this._bridgeFailure = 'geometry';
+      return false;
+    }
+    if (travel <= this._bridgeResolution) return true;
+    if (depth >= ARM_BRIDGE_MAX_DEPTH) {
+      this._bridgeFailure = 'geometry';
+      return false;
+    }
+    const interval = this._bridgeFrontier[this._bridgePendingCount++];
+    interval.from = from;
+    interval.to = to;
+    interval.depth = depth;
+    interval.travel = travel;
+    return true;
+  }
+
+  /** Refine the greatest measured travel first, with a stable path-order tie break. */
+  private selectArmBridgeInterval(): number {
+    let selected = 0;
+    for (let index = 1; index < this._bridgePendingCount; index++) {
+      const candidate = this._bridgeFrontier[index];
+      const current = this._bridgeFrontier[selected];
+      if (
+        candidate.travel > current.travel ||
+        (candidate.travel === current.travel && candidate.from.s < current.from.s)
+      )
+        selected = index;
+    }
+    return selected;
   }
 
   private restoreArmBridgeContext(alpha: number): boolean {
@@ -1652,10 +1788,7 @@ export class Body {
   }
 
   private sampleArmBridge(s: number): ArmBridgeSample | null {
-    if (this._bridgeSampleCount >= ARM_BRIDGE_MAX_SAMPLES) {
-      this._bridgeFailure = 'geometry';
-      return null;
-    }
+    if (this.armBridgeSamplesSpent()) return null;
     const sample = this._bridgeSamples[this._bridgeSampleCount++];
     if (!sample) return null;
     this._armFrameWork.bridgeSamples++;
@@ -1735,33 +1868,6 @@ export class Body {
       );
     }
     return true;
-  }
-
-  private refineArmBridge(
-    from: ArmBridgeSample,
-    to: ArmBridgeSample,
-    depth: number,
-    dt: number,
-  ): boolean {
-    if (!this.armBridgeStepWithinBudget(from, to, dt)) return false;
-    if (this.armBridgeTravel(from, to) <= this._bridgeResolution) return true;
-    if (depth >= ARM_BRIDGE_MAX_DEPTH) {
-      this._bridgeFailure = 'geometry';
-      return false;
-    }
-    const middle = this.sampleArmBridge((from.s + to.s) / 2);
-    if (
-      !(
-        middle &&
-        this.armBridgeStepWithinBudget(from, middle, dt) &&
-        this.armBridgeStepWithinBudget(middle, to, dt)
-      )
-    )
-      return false;
-    return (
-      this.refineArmBridge(from, middle, depth + 1, dt) &&
-      this.refineArmBridge(middle, to, depth + 1, dt)
-    );
   }
 
   private armBridgeStepWithinBudget(
