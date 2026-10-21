@@ -75,6 +75,7 @@ export function rollRoom(used: number, d: JointDof): [number, number] {
 export function elevationCeiling(
   plane: number,
   rows: ElevationRow[] = ELEVATION,
+  out: ElevationCeiling = { free: 0, max: 0 },
 ): ElevationCeiling {
   let deg = (plane / D) % 360;
   if (deg > 180) deg -= 360;
@@ -84,14 +85,15 @@ export function elevationCeiling(
     const b = rows[i];
     if (deg <= b[0]) {
       const t = (deg - a[0]) / (b[0] - a[0]);
-      return {
-        free: (a[1] + (b[1] - a[1]) * t) * D,
-        max: (a[2] + (b[2] - a[2]) * t) * D,
-      };
+      out.free = (a[1] + (b[1] - a[1]) * t) * D;
+      out.max = (a[2] + (b[2] - a[2]) * t) * D;
+      return out;
     }
   }
   const last = rows[rows.length - 1];
-  return { free: last[1] * D, max: last[2] * D };
+  out.free = last[1] * D;
+  out.max = last[2] * D;
+  return out;
 }
 
 /** Strain for elevation, which carries its ceiling rather than a fixed band. */
