@@ -410,10 +410,9 @@ export class StageRecorder {
     const canvas = document.createElement('canvas');
     canvas.width = request.width;
     canvas.height = request.height;
-    // `desynchronized` takes the low-latency compositing path. Nothing about the
-    // frame changes; what it buys is that composing the next one is not waiting
-    // on the page's own presentation.
-    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+    // Never attached to the page, so nothing here is presented; it only feeds
+    // `captureStream`.
+    const ctx = canvas.getContext('2d', { alpha: false });
     if (ctx === null) {
       this.failure = 'no 2d context for the recording canvas';
       return;
