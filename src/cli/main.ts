@@ -106,7 +106,7 @@ function usage(): never {
       '  yarn ctl bloom on --strength 0.8 --radius 0.4 --threshold 0.9',
       '  yarn ctl idle on',
       '  yarn ctl debug        # overlay the measurements on every viewer (off clears them)',
-      '  yarn ctl avatars          # list the avatars the server found, and the files it rejected',
+      '  yarn ctl avatars          # the avatars the server found, the files it rejected, what was loaded',
       '  yarn ctl avatar <id>',
       '  yarn ctl tune sway.stiffness=2 idle.breathDepth=1.2',
       '  yarn ctl voice bright-idol # choose a voice preset',

@@ -329,6 +329,15 @@ describe('reportBodySchema', () => {
     expect(avatarStatusPhaseSchema.safeParse('loading').success).toBe(true);
     expect(avatarStatusPhaseSchema.safeParse('connected').success).toBe(false);
   });
+
+  it('bounds the unresolved names a ready avatar reports', () => {
+    const ok = (problems: string[]) =>
+      avatarStatusSchema.safeParse({ phase: 'ready', problems }).success;
+    expect(ok([])).toBe(true);
+    expect(ok(Array(32).fill('x'.repeat(1024)))).toBe(true);
+    expect(ok(Array(33).fill('x'))).toBe(false);
+    expect(ok(['x'.repeat(1025)])).toBe(false);
+  });
 });
 
 describe('recordingSchema', () => {

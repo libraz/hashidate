@@ -240,14 +240,19 @@ export class ControlClient {
    *
    * The control stream starts before the first GLB is available, so a model that
    * fails to load must still be visible as a connected but failed renderer. Keep
-   * the error bounded at this edge as well as in the wire schema: this method is
-   * also called by an embedding host that may have a loader of its own.
+   * the error and the problems bounded at this edge as well as in the wire schema:
+   * this method is also called by an embedding host that may have a loader of
+   * its own.
    */
   setAvatarStatus(status: AvatarStatus): void {
-    const error = status.error;
+    const { id, error, problems } = status;
     this.avatar = {
       phase: status.phase,
+      ...(id === undefined ? {} : { id }),
       ...(error === undefined ? {} : { error: error === null ? null : error.slice(0, 1024) }),
+      ...(problems === undefined
+        ? {}
+        : { problems: problems.slice(0, 32).map((problem) => problem.slice(0, 1024)) }),
     };
     if (this.status === 'online') void this.report(true);
   }

@@ -741,6 +741,23 @@ describe('the control stream lifecycle', () => {
     client.stop();
   });
 
+  it('bounds the unresolved names it reports for a ready avatar', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const send = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false } as Response);
+    const client = new ControlClient(null, { base: '/control', rendererId: 'renderer-test' });
+    client.setAvatarStatus({ phase: 'ready', problems: Array(40).fill('x'.repeat(5000)) });
+
+    client.start();
+    FakeEventSource.instances[0].open();
+
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(3));
+    const body = JSON.parse(String(send.mock.calls[2][1]?.body)) as {
+      avatar?: { phase?: string; problems?: string[] };
+    };
+    expect(body.avatar).toEqual({ phase: 'ready', problems: Array(32).fill('x'.repeat(1024)) });
+    client.stop();
+  });
+
   it('applies known stream commands and surfaces rejected elements individually', () => {
     vi.stubGlobal('EventSource', FakeEventSource);
     const rejected: unknown[] = [];

@@ -175,10 +175,16 @@ export type AvatarStatusPhase = z.infer<typeof avatarStatusPhaseSchema>;
  * This is separate from `connected`: a renderer can keep reporting heartbeats
  * while a model is loading or after it failed to load. The optional error is
  * bounded so a loader cannot turn a periodic report into an unbounded payload.
+ * `id` names the avatar the phase is about, which the vocabulary only catches
+ * up with once it is ready. `problems` is what a loaded avatar's descriptor
+ * names and its GLB lacks, so an import can be checked without looking at the
+ * renderer; bounded the same way.
  */
 export const avatarStatusSchema = z.object({
   phase: avatarStatusPhaseSchema,
+  id: z.string().max(64).optional(),
   error: z.string().max(1024).nullable().optional(),
+  problems: z.array(z.string().max(1024)).max(32).optional(),
 });
 
 export type AvatarStatus = z.infer<typeof avatarStatusSchema>;

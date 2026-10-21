@@ -123,4 +123,18 @@ export const avatars: Handler = async (client) => {
   }
   // Beside the ones that worked rather than instead of them, as with motions.
   for (const { id, error } of errors) console.log(`  ${id.padEnd(16)} ${error}`);
+  // What a renderer made of the one it loaded: the end of an import is an
+  // avatar that is ready with nothing unresolved.
+  const { avatar: status } = await client.state();
+  if (!status) return;
+  const loaded = `loaded: ${status.id ?? '?'} (${status.phase})`;
+  if (status.phase === 'failed') {
+    console.log(`${loaded} ${status.error ?? ''}`.trimEnd());
+  } else if (status.phase === 'ready') {
+    const problems = status.problems ?? [];
+    console.log(`${loaded} ${problems.length === 0 ? 'nothing unresolved' : 'unresolved:'}`);
+    for (const problem of problems) console.log(`  ${problem}`);
+  } else {
+    console.log(loaded);
+  }
 };

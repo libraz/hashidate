@@ -90,14 +90,22 @@ export function App() {
     const off = rt.onStatus((next) => {
       setStatus(next);
       if (next.phase === 'failed') {
-        client.setAvatarStatus({ phase: 'failed', error: next.message });
+        client.setAvatarStatus({ phase: 'failed', id: next.avatar.id, error: next.message });
         // A failed load cannot end the hold that was waiting for it. The old
         // session, when there is one, remains usable for subsequent commands.
         // With another avatar queued behind it the hold is for that one.
         if (!rt.hasQueuedLoad) client.discardHeld();
+      } else if (next.phase === 'ready') {
+        client.setAvatarStatus({
+          phase: 'ready',
+          id: next.loaded.avatar.id,
+          problems: next.loaded.problems,
+        });
+        client.bind(next.loaded.session, next.loaded.avatar.id);
+      } else if (next.phase === 'loading') {
+        client.setAvatarStatus({ phase: 'loading', id: next.avatar.id });
       } else {
         client.setAvatarStatus({ phase: next.phase });
-        if (next.phase === 'ready') client.bind(next.loaded.session, next.loaded.avatar.id);
       }
     });
     client.start();

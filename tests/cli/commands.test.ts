@@ -298,6 +298,7 @@ describe('ctl avatars', () => {
         avatars: [{ id: 'one', label: { en: 'One', ja: '一' }, url: '/models/one.glb' }],
         errors: [{ id: 'two', error: 'not an object' }],
       })),
+      state: vi.fn(async () => ({ avatar: null })),
     };
 
     await avatars(fake as unknown as ControlClient, []);
@@ -305,6 +306,43 @@ describe('ctl avatars', () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatch(/^\s+one\s+One\s+\/models\/one\.glb$/);
     expect(lines[1]).toMatch(/^\s+two\s+not an object$/);
+  });
+
+  it.each([
+    [{ phase: 'ready', id: 'one' }, ['loaded: one (ready) nothing unresolved']],
+    [
+      {
+        phase: 'ready',
+        id: 'one',
+        problems: ['Profile unresolved: blink', 'Tail drive unresolved: tail'],
+      },
+      [
+        'loaded: one (ready) unresolved:',
+        '  Profile unresolved: blink',
+        '  Tail drive unresolved: tail',
+      ],
+    ],
+    [
+      { phase: 'failed', id: 'one', error: 'missing one.glb' },
+      ['loaded: one (failed) missing one.glb'],
+    ],
+    [{ phase: 'loading', id: 'one' }, ['loaded: one (loading)']],
+  ])('reports what the renderer made of the loaded avatar %j', async (status, expected) => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: string) => {
+      lines.push(line);
+    });
+    const fake = {
+      avatars: vi.fn(async () => ({
+        avatars: [{ id: 'one', label: { en: 'One', ja: '一' }, url: '/models/one.glb' }],
+        errors: [],
+      })),
+      state: vi.fn(async () => ({ avatar: status })),
+    };
+
+    await avatars(fake as unknown as ControlClient, []);
+
+    expect(lines.slice(1)).toEqual(expected);
   });
 
   it('says so when there is nothing to list', async () => {
