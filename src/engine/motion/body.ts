@@ -20,7 +20,7 @@ import { ReachAnchors } from './anchors';
 import { claspMeasure, claspSpread } from './clasp';
 import { gestureDef, SPINE_SLOTS } from './custom';
 import { FingerLife } from './finger-life';
-import { DirFollower, OMEGA_PER_RATE, ScalarFollower } from './follow';
+import { DirFollower, OMEGA_PER_RATE, ScalarFollower, slerpDir } from './follow';
 import { CharacterFrame, sideMirror } from './frame';
 import { Gaze, HEAD_OMEGA, type SpeechGaze } from './gaze';
 import { BASE_FINGERS, BASE_PALM, BASE_POSE, pointHand } from './gestures';
@@ -555,6 +555,7 @@ export class Body {
   /** `_armVec` before breathing and drift, which is what a child link is carried by. */
   private _armBlend: Record<Side, Record<ArmSlot, THREE.Vector3>>;
   private readonly _carryDir = new THREE.Vector3();
+  private readonly _carryFrom = new THREE.Vector3();
   private readonly _spineTravel = new THREE.Vector3();
   private readonly _spineFrom = new THREE.Vector3();
   private readonly _carryQ = new THREE.Quaternion();
@@ -583,6 +584,7 @@ export class Body {
 
   private _palm: Record<Side, DirFollower>;
   private _palmTarget: THREE.Vector3;
+  private readonly _palmFrom = new THREE.Vector3();
   private _palmOut: Record<Side, Vec3Tuple>;
   private _palmWorldOut: Record<Side, Vec3Tuple>;
   private _palmW: Record<Side, ScalarFollower>;
@@ -935,8 +937,11 @@ export class Body {
     const parent = ARM_PARENT[slot];
     const to = parent ? this._armBlend[side][parent] : null;
     const carry = (dir: THREE.Vector3, from: THREE.Vector3 | undefined): THREE.Vector3 => {
-      const d = this._carryDir.copy(dir);
-      if (to && from) d.applyQuaternion(this._carryQ.setFromUnitVectors(from, to));
+      const d = this._carryDir.copy(dir).normalize();
+      if (to && from)
+        d.applyQuaternion(
+          this._carryQ.setFromUnitVectors(this._carryFrom.copy(from).normalize(), to),
+        );
       return d;
     };
     const parentOf = (arm: ResolvedArm | null | undefined) => (parent ? arm?.[parent] : undefined);
@@ -950,7 +955,7 @@ export class Body {
       // the incoming lead was never sized to cover.
       for (const f of this._fading) {
         const pDir = this.outgoingDir(f, side, slot);
-        if (pDir) v.lerp(carry(pDir, parentOf(f.arm[side])), f.w).normalize();
+        if (pDir) slerpDir(v, v, carry(pDir, parentOf(f.arm[side])), f.w);
       }
     } else if (outgoing) {
       // Each lerp takes a slot's share of what the chain holds so far, so every
@@ -963,10 +968,10 @@ export class Body {
         const share = f.armW[slot];
         if (!pDir || share <= 0) continue;
         pool += share;
-        v.lerp(carry(pDir, parentOf(f.arm[side])), share / pool).normalize();
+        slerpDir(v, v, carry(pDir, parentOf(f.arm[side])), share / pool);
       }
     }
-    if (cDir) v.lerp(carry(cDir, cParent), cw).normalize();
+    if (cDir) slerpDir(v, v, carry(cDir, cParent), cw);
     this._armBlend[side][slot].copy(v);
 
     // Breathing and idle drift are added *after* the gesture blend, not before
@@ -2309,13 +2314,13 @@ export class Body {
           const share = f.armW.hand;
           if (!palm || share <= 0) continue;
           pool += share;
-          pt.lerp(palm, share / pool).normalize();
+          slerpDir(pt, pt, this._palmFrom.copy(palm).normalize(), share / pool);
         }
-        pt.lerp(cArm.palm, cw).normalize();
+        slerpDir(pt, pt, this._palmFrom.copy(cArm.palm).normalize(), cw);
       } else {
         for (const f of this._fading) {
           const palm = f.arm[side]?.palm;
-          if (palm) pt.lerp(palm, f.w).normalize();
+          if (palm) slerpDir(pt, pt, this._palmFrom.copy(palm).normalize(), f.w);
         }
       }
       const ps = this._palm[side].step(pt, dt, ARM_FOLLOW);
