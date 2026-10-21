@@ -28,6 +28,7 @@ import {
   positiveConformalScale,
 } from './arm-driver';
 import type { ArmPathEnvironment, ArmPathPlanOutput } from './arm-path';
+import { ArmTwists } from './arm-twists';
 import { ElbowSearch } from './elbow';
 import { FINGER_TIP_EXTENSION } from './hand-geometry';
 import { Hands } from './hands';
@@ -276,6 +277,7 @@ export type { OffsetSlot } from './spine';
 
 export class Rig {
   readonly p: Profile;
+  private readonly armTwists: ArmTwists | null;
   /** bone -> rest quaternion */
   readonly rest = new Map<THREE.Bone, THREE.Quaternion>();
 
@@ -487,6 +489,7 @@ export class Rig {
 
     const all = [...Object.values(profile.bones), ...Object.values(profile.fingerBones).flat()];
     for (const b of all) this.rest.set(b, b.quaternion.clone());
+    this.armTwists = ArmTwists.create(profile);
     this.spine = new SpineOffsets(profile);
     this.legs = GroundedLegs.create(profile, (bone) => this.restOf(bone));
 
@@ -857,11 +860,12 @@ export class Rig {
   finishLegacyBodyFrame(rise: number): void {
     if (!(this._limitsEnabled && this.bothArmFramesSupported())) {
       this.invalidateArmContinuation();
-      return;
+    } else if (!this._armContinuationReady && this.reseedConstrainedArms(rise)) {
+      this._armContinuationReady = true;
+      this._externalArmRevision++;
     }
-    if (this._armContinuationReady || !this.reseedConstrainedArms(rise)) return;
-    this._armContinuationReady = true;
-    this._externalArmRevision++;
+    this.armTwists?.accept('L');
+    this.armTwists?.accept('R');
   }
 
   /** Refresh and return this side's reusable FK frame. */
@@ -998,6 +1002,8 @@ export class Rig {
     }
     this.captureBodyPose(this._acceptedBodyPose, rise);
     this._acceptedRise = rise;
+    this.armTwists?.accept('L');
+    this.armTwists?.accept('R');
     return true;
   }
 
@@ -1135,6 +1141,7 @@ export class Rig {
   /** Start a frame: every controlled bone back to its rest orientation. */
   reset(): void {
     for (const [bone, q] of this.rest) bone.quaternion.copy(q);
+    this.armTwists?.reset();
     this.spine.clear();
     for (const side of ['L', 'R'] as Side[]) {
       for (const finger of FINGER_NAMES) {
@@ -1212,6 +1219,7 @@ export class Rig {
     this.writeWorldRotation(upper, forward.upperWorld);
     this.writeWorldRotation(lower, forward.lowerWorld);
     this.writeWorldRotation(hand, forward.handWorld);
+    this.armTwists?.stage(side);
   }
 
   private readActualArmPose(side: Side): boolean {
@@ -1614,6 +1622,7 @@ export class Rig {
     this.captureAcceptedArmState(side, driver.acceptedForward, curls, spread);
     this.captureBodyPose(this._acceptedBodyPose, this._acceptedRise);
     if (bumpRevision) this._externalArmRevision++;
+    this.armTwists?.accept(side);
   }
 
   private tryStaticAimArm(
@@ -1693,6 +1702,7 @@ export class Rig {
   }
 
   private noteExternalArmEdit(side: Side): void {
+    this.armTwists?.accept(side);
     if (!this.captureAcceptedArmState(side, null, this._posedCurls[side], this._posedSpread[side]))
       return;
     this._acceptedHandPose[side] = this.captureHandPose(side);
@@ -1990,6 +2000,7 @@ export class Rig {
       if (uD) this.anat.clearHand(side, uD, lD, hD);
       if (hD.distanceToSquared(_fixDir) > 1e-8) below(carry, hw);
     }
+    this.armTwists?.stage(side);
   }
 
   /**
@@ -2252,6 +2263,7 @@ export class Rig {
     // their tips off the face. Preserve the final rendered controls for the
     // next constrained re-seed, rather than the values before clearance.
     this.copyPosedFingerSpec(side, _fSpec, spread);
+    this.armTwists?.stage(side);
   }
 
   /** How far off the skin a finger's bones are held: half its thickness, from the knuckle pitch. */
