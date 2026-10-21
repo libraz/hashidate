@@ -31,6 +31,8 @@ export interface VisemeEvent {
   v: VisemeName;
   t: number;
   dur: number;
+  /** Set on the lips-shut lead-in of a bilabial mora; always an `n` followed by its vowel. */
+  closure?: true;
 }
 
 /** A phrase boundary the text marks: when the punctuation is reached, and how strong it is. */
@@ -235,7 +237,7 @@ export function textToVisemes(
     const closed = BILABIAL.test(ch) && out[out.length - 1]?.v !== 'n';
     if (closed) {
       const shut = Math.min(CLOSURE, dur * 0.4);
-      out.push({ v: 'n', t, dur: shut });
+      out.push({ v: 'n', t, dur: shut, closure: true });
       out.push({ v, t: t + shut, dur: dur - shut });
     } else {
       out.push({ v, t, dur });
@@ -265,8 +267,20 @@ export function scaleTrack(track: VisemeTrack, seconds: number): VisemeTrack {
   // mouth that stays shut for exactly as long as the audio lasts.
   if (!(track.duration > 0 && seconds > 0)) return { events: [], breaks: [], duration: seconds };
   const k = seconds / track.duration;
+  const events = track.events.map((ev) => ({ ...ev, t: ev.t * k, dur: ev.dur * k }));
+  // A fast take would squeeze a closure below what reads as lips meeting. Hold
+  // it at CLOSURE, taken out of its own vowel, but never past half the mora.
+  for (let i = 0; i < events.length - 1; i++) {
+    const shut = events[i];
+    if (!shut.closure) continue;
+    const vowel = events[i + 1];
+    const end = vowel.t + vowel.dur;
+    shut.dur = Math.max(shut.dur, Math.min(CLOSURE, (end - shut.t) * 0.5));
+    vowel.t = shut.t + shut.dur;
+    vowel.dur = end - vowel.t;
+  }
   return {
-    events: track.events.map((ev) => ({ v: ev.v, t: ev.t * k, dur: ev.dur * k })),
+    events,
     breaks: track.breaks.map((b) => ({ t: b.t * k, kind: b.kind })),
     duration: seconds,
   };
@@ -281,6 +295,10 @@ export class Mouth {
   amplitude: number;
   /** Per-frame target, reused. `sil` is carried so a track may name it; only the six driven shapes are read. */
   readonly #target: Record<VisemeName, number> = { a: 0, i: 0, u: 0, e: 0, o: 0, n: 0, sil: 0 };
+  /** Smoothed spoken shapes, before the closure gate is applied. */
+  readonly #state: MouthWeights = { a: 0, i: 0, u: 0, e: 0, o: 0, n: 0 };
+  /** How shut a bilabial closure holds the lips, 0..1. */
+  #closure = 0;
 
   constructor() {
     this.track = null;
@@ -341,6 +359,7 @@ export class Mouth {
   update(dt: number): void {
     const target = this.#target;
     for (const v in target) target[v as VisemeName] = 0;
+    let closure = 0;
 
     if (this.track) {
       this.time += dt;
@@ -362,7 +381,8 @@ export class Mouth {
         // Attack into the mora, release out of it; overlapping events blend.
         const a = Math.min(1, Math.max(0, (rel + pre) / 0.06));
         const r = Math.min(1, Math.max(0, (ev.dur + post - rel) / 0.075));
-        target[ev.v] = Math.max(target[ev.v] ?? 0, Math.min(a, r));
+        if (ev.closure) closure = Math.max(closure, Math.min(a, r));
+        else target[ev.v] = Math.max(target[ev.v] ?? 0, Math.min(a, r));
       }
       // Adjacent morae overlap during the crossfade. Two vowel shapes at full
       // strength distort the mouth, so keep their total within one shape.
@@ -374,14 +394,21 @@ export class Mouth {
 
     // Smooth toward the target so consonant boundaries do not pop.
     const k = 1 - Math.exp(-dt * 26);
-    let open = 0;
-    for (const key in this.weights) {
+    // A closure shuts the lips over whatever is still fading in or out, rather
+    // than sharing the mouth with it: sharing left a mid-closure mouth half open.
+    // It rides the track's own ramps unsmoothed; the decay only covers a stop().
+    this.#closure = Math.max(closure, this.#closure * (1 - k));
+    const open = 1 - this.#closure;
+    let openness = 0;
+    for (const key in this.#state) {
       const v = key as MouthViseme;
       const t = (target[v] ?? 0) * this.amplitude;
-      this.weights[v] += (t - this.weights[v]) * k;
-      open = Math.max(open, this.weights[v] * (VOWEL_OPEN[v] ?? 0.5));
+      this.#state[v] += (t - this.#state[v]) * k;
+      this.weights[v] = this.#state[v] * open;
+      openness = Math.max(openness, this.weights[v] * (VOWEL_OPEN[v] ?? 0.5));
     }
-    this.openness = open;
+    this.weights.n = Math.max(this.weights.n, this.#closure * this.amplitude);
+    this.openness = openness;
     this.busy += ((this.speaking ? 1 : 0) - this.busy) * (1 - Math.exp(-dt * 8));
   }
 }

@@ -419,6 +419,61 @@ describe('textToVisemes / bilabial closure', () => {
     });
     expect(closure).toBeGreaterThan(0.3);
   });
+
+  /** The mouth at the middle of the first closure in `track`. */
+  const midClosure = (track: ReturnType<typeof textToVisemes>): Mouth => {
+    const shut = track.events.find((e) => e.closure);
+    if (!shut) throw new Error('no closure in track');
+    const mouth = new Mouth();
+    mouth.schedule(track);
+    const dt = 1 / 1000;
+    drive(mouth, shut.t + shut.dur / 2, dt);
+    return mouth;
+  };
+
+  // At half pace the closure is shorter than its own ramps, so it peaks just short of shut.
+  it.each([
+    ['at the estimated pace', 1, 0.01],
+    ['when fitted to a fast take', 0.75, 0.01],
+    ['when fitted to a very fast take', 0.5, 0.05],
+  ])('shuts the vowels and the jaw at mid-closure %s', (_, k, tol) => {
+    const estimate = textToVisemes('あまあま');
+    const mouth = midClosure(scaleTrack(estimate, estimate.duration * k));
+    expect(mouth.weights.n).toBeGreaterThan(0.9);
+    for (const v of VOWELS) expect(mouth.weights[v as MouthViseme]).toBeLessThan(tol);
+    expect(mouth.openness).toBeLessThan(tol);
+  });
+
+  it('keeps a closure at its full length when the take is faster than the estimate', () => {
+    const estimate = textToVisemes('あまあま');
+    const scaled = scaleTrack(estimate, estimate.duration * 0.75);
+    const shut = scaled.events.filter((e) => e.closure);
+    expect(shut).toHaveLength(2);
+    for (const e of shut) expect(e.dur).toBeCloseTo(0.05, 12);
+    // The time comes out of the closure's own vowel, so the line still ends where the take does.
+    const i = scaled.events.indexOf(shut[0]);
+    const vowel = scaled.events[i + 1];
+    expect(vowel.t).toBeCloseTo(shut[0].t + shut[0].dur, 12);
+    const original = estimate.events[i + 1];
+    expect(vowel.t + vowel.dur).toBeCloseTo((original.t + original.dur) * 0.75, 12);
+  });
+
+  it('never lets a closure take more than half its mora', () => {
+    const estimate = textToVisemes('ま');
+    const scaled = scaleTrack(estimate, estimate.duration * 0.3);
+    expect(scaled.events[0].dur).toBeCloseTo(scaled.duration / 2, 12);
+    expect(scaled.events[1].dur).toBeCloseTo(scaled.duration / 2, 12);
+  });
+
+  it('lets the lips open again rather than popping when a line is stopped mid-closure', () => {
+    const track = textToVisemes('あま');
+    const mouth = midClosure(track);
+    mouth.stop();
+    const before = mouth.weights.n;
+    mouth.update(1 / 60);
+    expect(mouth.weights.n).toBeGreaterThan(before * 0.5);
+    for (const v of VOWELS) expect(mouth.weights[v as MouthViseme]).toBeLessThan(0.5);
+  });
 });
 
 describe('Mouth / repeated vowels', () => {
