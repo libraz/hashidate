@@ -1,7 +1,16 @@
 import * as THREE from 'three';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Side } from '@/engine/types';
 import { canonicalDirection, DT, type Harness, harness, wristOf } from './harness';
+
+beforeEach(() => {
+  // Compare limiter-on and -off entrances with the same nominal gesture variation.
+  vi.spyOn(Math, 'random').mockReturnValue(0.5);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 /**
  * Where the elbow goes on the way into a reach.
