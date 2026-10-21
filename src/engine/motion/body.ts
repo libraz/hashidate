@@ -382,7 +382,12 @@ const mkArmEnv = (): Record<ArmSlot, Envelope> => ({
   hand: mkEnv(),
 });
 
+export interface BodyOptions {
+  random?: () => number;
+}
+
 export class Body {
+  private readonly _random: () => number;
   rig: Rig;
   p: Profile;
   t: number;
@@ -557,7 +562,8 @@ export class Body {
     return this._arm.pointStrain;
   }
 
-  constructor(rig: Rig, profile: Profile) {
+  constructor(rig: Rig, profile: Profile, { random = Math.random }: BodyOptions = {}) {
+    this._random = random;
     this.rig = rig;
     this.p = profile;
     this._rest = restPose(profile.avatar.armRest);
@@ -629,7 +635,7 @@ export class Body {
     // Gaze wanders and snaps back rather than staring; `saccade` carries the
     // amplitude on the frame a new fixation starts so the director can blink
     // with it.
-    this._gaze = new Gaze();
+    this._gaze = new Gaze({ random: this._random });
     this.saccade = 0;
 
     // Pre-allocated per side and slot. This runs every frame for hours at a
@@ -996,14 +1002,14 @@ export class Body {
       // Frequency and amplitude, never phase: `build` is called from t=0 and a
       // phase offset would put every oscillation mid-swing on frame one, which
       // snaps the limb into the gesture instead of easing it in.
-      rate: 0.92 + Math.random() * 0.16,
-      scale: 0.9 + Math.random() * 0.2,
+      rate: 0.92 + this._random() * 0.16,
+      scale: 0.9 + this._random() * 0.2,
       // Random unless the caller named a hand. Left random on purpose when it
       // did not: a character that greets with the same arm every single time
       // reads as a mechanism, and the table was authored so that either hand
       // works. What a caller pins is a hand it has a reason for — the one away
       // from the slide, the one it used on the line before.
-      side: side === undefined ? (Math.random() < 0.5 ? -1 : 1) : sideMirror(side),
+      side: side === undefined ? (this._random() < 0.5 ? -1 : 1) : sideMirror(side),
     };
     // The distance-derived extension is capped: past about a second an
     // entrance stops reading as deliberate and starts reading as slow,
@@ -1016,7 +1022,7 @@ export class Body {
       v,
       time: 0,
       released: false,
-      speed: 0.93 + Math.random() * 0.14,
+      speed: 0.93 + this._random() * 0.14,
       lead,
       phase: { entrance: 0, held: 0 },
       exitAt: lead + def.hold,

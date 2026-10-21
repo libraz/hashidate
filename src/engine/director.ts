@@ -237,7 +237,7 @@ export class Director {
     this.p = profile;
     this.a = avatar;
     this.rig = new Rig(profile);
-    this.body = new Body(this.rig, profile);
+    this.body = new Body(this.rig, profile, { random });
     this.mouth = new Mouth();
     // Driven by the pose rather than by anything semantic, so it takes no
     // commands — it only has to run last. See the note at the end of `update`.
