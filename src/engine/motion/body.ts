@@ -14,7 +14,6 @@ import type {
   Profile,
   Side,
   SpineOffsets,
-  SpineSlot,
   Vec3Tuple,
 } from '../types';
 import { ReachAnchors } from './anchors';
@@ -331,6 +330,9 @@ const ARM_STEP_BACKTRACKS = [1, 0.5, 0.25, 0.125, 0.0625, 0.03125] as const;
  * The changed rejection order needs a render check.
  */
 const ARM_FRAME_BRIDGE_BUDGET = 2 * ARM_BRIDGE_MAX_SAMPLES;
+
+/** Wrist flexion and deviation in the arm configuration, which the bridge rate-checks directly. */
+const ARM_BRIDGE_WRIST_DOFS = [5, 6] as const;
 
 /**
  * The two halves of a gesture's envelope, kept apart rather than multiplied.
@@ -1495,7 +1497,7 @@ export class Body {
       this._bridgeResolution = Math.min(leftDriver.sweepResolution, rightDriver.sweepResolution);
       const frameReady = this.axes.ready();
       let feasible = true;
-      for (const side of ['L', 'R'] as Side[]) {
+      for (const side of SIDES) {
         const driver = rig.armDriver(side);
         const context = rig.armForwardContextFromUpdatedBody(side);
         if (!(driver && context)) {
@@ -1577,7 +1579,7 @@ export class Body {
           }
 
           const acceptedFrameReady = this.axes.ready();
-          for (const side of ['L', 'R'] as Side[]) {
+          for (const side of SIDES) {
             const driver = rig.armDriver(side);
             if (!driver) continue;
             const accepted = this._armWorldVec[side];
@@ -1630,7 +1632,7 @@ export class Body {
     if (!committed) committed = rig.commitArmTransport(this._rise);
     if (!committed) {
       rig.applyBodyContext(0, 0);
-      for (const side of ['L', 'R'] as Side[]) {
+      for (const side of SIDES) {
         const driver = rig.armDriver(side);
         const context = rig.armForwardContextFromUpdatedBody(side);
         if (driver && context) {
@@ -1648,7 +1650,7 @@ export class Body {
     this._armFrameWork.bridgeSamples++;
     this.rig.applyBodyContext(alpha, 1);
     let valid = true;
-    for (const side of ['L', 'R'] as Side[]) {
+    for (const side of SIDES) {
       const driver = this.rig.armDriver(side);
       const plan = this._frameCommit[side];
       const context = this.rig.armForwardContextFromUpdatedBody(side);
@@ -1799,7 +1801,7 @@ export class Body {
 
   private restoreArmBridgeContext(alpha: number): boolean {
     this.rig.applyBodyContext(alpha, 1);
-    for (const side of ['L', 'R'] as Side[]) {
+    for (const side of SIDES) {
       const driver = this.rig.armDriver(side);
       const plan = this._frameCommit[side];
       const context = this.rig.armForwardContextFromUpdatedBody(side);
@@ -1819,7 +1821,7 @@ export class Body {
     sample.s = s;
     this.rig.applyBodyContext(this._bridgeAlpha * s, s);
 
-    for (const side of ['L', 'R'] as Side[]) {
+    for (const side of SIDES) {
       const driver = this.rig.armDriver(side);
       const endpoint = this._frameCommit[side];
       const context = this.rig.armForwardContextFromUpdatedBody(side);
@@ -1902,10 +1904,10 @@ export class Body {
     const deltaS = to.s - from.s;
     const allowance = LIMIT_SLEW * Math.max(0, dt) * deltaS + Math.sqrt(Number.EPSILON);
     let within = true;
-    for (const side of ['L', 'R'] as Side[]) {
+    for (const side of SIDES) {
       const a = from.side[side];
       const b = to.side[side];
-      for (const dof of [5, 6]) {
+      for (const dof of ARM_BRIDGE_WRIST_DOFS) {
         if (Math.abs(b.q[dof] - a.q[dof]) > allowance) within = false;
       }
       if (
@@ -1922,7 +1924,7 @@ export class Body {
 
   private armBridgeTravel(from: ArmBridgeSample, to: ArmBridgeSample): number {
     let maximum = 0;
-    for (const side of ['L', 'R'] as Side[]) {
+    for (const side of SIDES) {
       const a = from.side[side];
       const b = to.side[side];
       if (a.points.length !== b.points.length) return Number.POSITIVE_INFINITY;
@@ -2113,13 +2115,16 @@ export class Body {
     // Every gesture slot contributes to the spine; the outgoing ones are fading.
     for (const f of this._spineFading) {
       if (!f.pose?.spine) continue;
-      for (const [slot, o] of Object.entries(f.pose.spine) as Array<[SpineSlot, Vec3Tuple]>) {
-        rig.addOffset(slot, o[0] * f.spineWeight, o[1] * f.spineWeight, o[2] * f.spineWeight);
+      for (const slot of SPINE_SLOTS) {
+        const o = f.pose.spine[slot];
+        if (o)
+          rig.addOffset(slot, o[0] * f.spineWeight, o[1] * f.spineWeight, o[2] * f.spineWeight);
       }
     }
     if (g?.spine) {
-      for (const [slot, o] of Object.entries(g.spine) as Array<[SpineSlot, Vec3Tuple]>) {
-        rig.addOffset(slot, o[0] * this.blend, o[1] * this.blend, o[2] * this.blend);
+      for (const slot of SPINE_SLOTS) {
+        const o = g.spine[slot];
+        if (o) rig.addOffset(slot, o[0] * this.blend, o[1] * this.blend, o[2] * this.blend);
       }
     }
 
