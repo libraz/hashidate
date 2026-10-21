@@ -72,7 +72,9 @@ const STEP = 1 / 60;
 /**
  * Steps allowed in one frame.
  *
- * Four covers a 15 fps frame. Past that the simulation deliberately falls
+ * The viewer caps a frame at 50 ms, which runs at most three steps even with a
+ * carried remainder, so four is reached only by a caller passing a longer dt.
+ * Past the cap the simulation deliberately falls
  * behind rather than spending the frame catching up — hair lagging for a moment
  * after a stall is invisible, and a frame that takes twice as long because the
  * last one did is how a stall becomes permanent.

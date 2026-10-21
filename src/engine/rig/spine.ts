@@ -38,6 +38,8 @@ interface Offset {
 export class SpineOffsets {
   /** slot -> additive Euler offset for this frame */
   readonly offset = new Map<OffsetSlot, Offset>();
+  /** One record per slot, reused across frames so `add` allocates nothing in steady state. */
+  private readonly spare = new Map<OffsetSlot, Offset>();
 
   /**
    * Basis that turns a root-authored rotation into this bone's rest frame.
@@ -83,11 +85,19 @@ export class SpineOffsets {
 
   /** Accumulate a small additive rotation on a spine-chain slot (radians). */
   add(slot: OffsetSlot, x: number, y: number, z: number): void {
-    const o = this.offset.get(slot) ?? { x: 0, y: 0, z: 0 };
+    let o = this.offset.get(slot);
+    if (!o) {
+      o = this.spare.get(slot);
+      if (o) o.x = o.y = o.z = 0;
+      else {
+        o = { x: 0, y: 0, z: 0 };
+        this.spare.set(slot, o);
+      }
+      this.offset.set(slot, o);
+    }
     o.x += x;
     o.y += y;
     o.z += z;
-    this.offset.set(slot, o);
   }
 
   /** Bake accumulated spine offsets into local quaternions. */

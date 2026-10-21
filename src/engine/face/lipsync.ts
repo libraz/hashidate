@@ -261,6 +261,8 @@ export class Mouth {
   openness: number;
   busy: number;
   amplitude: number;
+  /** Per-frame target, reused. `sil` is carried so a track may name it; only the six driven shapes are read. */
+  readonly #target: Record<VisemeName, number> = { a: 0, i: 0, u: 0, e: 0, o: 0, n: 0, sil: 0 };
 
   constructor() {
     this.track = null;
@@ -319,8 +321,8 @@ export class Mouth {
   }
 
   update(dt: number): void {
-    // `sil` is carried so a track may name it; only the six driven shapes are read.
-    const target: Record<VisemeName, number> = { a: 0, i: 0, u: 0, e: 0, o: 0, n: 0, sil: 0 };
+    const target = this.#target;
+    for (const v in target) target[v as VisemeName] = 0;
 
     if (this.track) {
       this.time += dt;
@@ -336,15 +338,17 @@ export class Mouth {
       }
       // Adjacent morae overlap during the crossfade. Two vowel shapes at full
       // strength distort the mouth, so keep their total within one shape.
-      const sum = Object.values(target).reduce((s, v) => s + v, 0);
-      if (sum > 1) for (const k of Object.keys(target) as VisemeName[]) target[k] /= sum;
+      let sum = 0;
+      for (const v in target) sum += target[v as VisemeName];
+      if (sum > 1) for (const v in target) target[v as VisemeName] /= sum;
       if (this.time > this.track.duration + 0.25) this.track = null;
     }
 
     // Smooth toward the target so consonant boundaries do not pop.
     const k = 1 - Math.exp(-dt * 26);
     let open = 0;
-    for (const v of Object.keys(this.weights) as MouthViseme[]) {
+    for (const key in this.weights) {
+      const v = key as MouthViseme;
       const t = (target[v] ?? 0) * this.amplitude;
       this.weights[v] += (t - this.weights[v]) * k;
       open = Math.max(open, this.weights[v] * (VOWEL_OPEN[v] ?? 0.5));
