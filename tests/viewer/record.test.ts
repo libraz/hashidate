@@ -7,6 +7,7 @@ import {
   place,
   SlideComposite,
   StageRecorder,
+  VIDEO_BITS_PER_SECOND,
 } from '@/viewer/record';
 import type { Rect } from '@/viewer/scene/placement';
 import type { StageFrame } from '@/viewer/scene/runtime';
@@ -89,6 +90,12 @@ function composite() {
 describe('pickMime', () => {
   it('takes MP4 when the browser will encode it', () => {
     expect(pickMime(() => true)).toBe(CANDIDATES[0]);
+  });
+
+  it('asks for High profile H.264 before Baseline', () => {
+    expect(CANDIDATES[0]).toBe('video/mp4;codecs=avc1.64002A,mp4a.40.2');
+    const noHigh = (type: string) => !type.includes('avc1.64');
+    expect(pickMime(noHigh)).toBe('video/mp4;codecs=avc1.42E01E,mp4a.40.2');
   });
 
   it('falls back to WebM rather than writing a container that is a lie', () => {
@@ -349,7 +356,10 @@ class FakeMediaRecorder implements FakeMediaRecorderInstance {
   private onStopped: (() => void) | null = null;
   private onError: ((event: Event) => void) | null = null;
 
-  constructor(_stream: MediaStream, _options?: MediaRecorderOptions) {
+  readonly options: MediaRecorderOptions | undefined;
+
+  constructor(_stream: MediaStream, options?: MediaRecorderOptions) {
+    this.options = options;
     FakeMediaRecorder.instances.push(this);
   }
 
@@ -461,6 +471,19 @@ afterEach(() => {
 });
 
 describe('StageRecorder lifecycle', () => {
+  it('states the video bitrate rather than leaving it to the encoder', async () => {
+    const env = recorderEnvironment();
+    await env.recorder.start({ session: 'rate', width: 1920, height: 1080, fps: 60 });
+    expect(FakeMediaRecorder.instances[0].options).toMatchObject({
+      mimeType: CANDIDATES[0],
+      videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
+    });
+    expect(VIDEO_BITS_PER_SECOND).toBe(12_000_000);
+    const stopping = env.recorder.stop();
+    FakeMediaRecorder.instances[0].emitStop();
+    await stopping;
+  });
+
   it('cleans up a synchronous encoder start failure and allows retry', async () => {
     const borrowedStop = vi.fn();
     const env = recorderEnvironment({

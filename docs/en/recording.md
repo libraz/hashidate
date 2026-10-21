@@ -55,7 +55,9 @@ The voice and the processed BGM meet before that mute and the recording tap. A t
 
 ## Container and codec
 
-The take is encoded in the browser. MP4 is requested first: `avc1` video with AAC audio, which opens without a conversion step in most editors.
+The take is encoded in the browser. MP4 is requested first: `avc1` video with AAC audio, which opens without a conversion step in most editors. High profile (`avc1.64002A`, level 4.2, enough for 1080p60) is asked for before Baseline, which is only the fallback for an encoder that offers nothing else.
+
+The video is encoded at a fixed 12 Mbps rather than the encoder's own default, which is sized for a video call and turns hair and fine texture to mush at 1080p.
 
 A build with no H.264 encoder falls back to WebM, and the file is then named `.webm`. The extension follows the codec the encoder chose rather than the one requested, so a WebM stream is never named `.mp4`.
 
@@ -101,7 +103,7 @@ ffmpeg -i show/recordings/<take>.mp4 \
 
 The audio is not re-encoded, because there is no reason to touch it.
 
-The file usually gets much smaller: 615 MB became 147 MB for an eighteen-minute commentary. That is not quality thrown away. The browser encodes while it streams, so it can neither look ahead nor use B-frames, and it goes on spending bits through every second nothing moved; on a take that is mostly a still document, that is most of them.
+The file usually gets much smaller. That is not quality thrown away. The browser encodes while it streams, so it can neither look ahead nor use B-frames, and it goes on spending its 12 Mbps through every second nothing moved; on a take that is mostly a still document, that is most of them.
 
 Setting the display to 60 Hz avoids the conversion entirely. This pass is enough when the only goal is removing the apparent drift.
 

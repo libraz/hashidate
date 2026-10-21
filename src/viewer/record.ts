@@ -55,15 +55,25 @@ export const CHUNK_MS = 1_000;
  * would be the one outcome worse than either.
  *
  * The codec strings are spelled out because Chromium refuses the truncated
- * forms for `video/mp4`.
+ * forms for `video/mp4`. High profile at level 4.2, which covers 1080p60, comes
+ * first; Baseline stays as the fallback for an encoder that offers nothing else.
  */
 export const CANDIDATES = [
+  'video/mp4;codecs=avc1.64002A,mp4a.40.2',
   'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
   'video/mp4',
   'video/webm;codecs=vp9,opus',
   'video/webm;codecs=vp8,opus',
   'video/webm',
 ] as const;
+
+/**
+ * The video bitrate every take is encoded at, in bits per second.
+ *
+ * Stated because the encoder's own default is chosen for a call rather than a
+ * master: 12 Mbps is the usual target for 1080p at 50–60 fps.
+ */
+export const VIDEO_BITS_PER_SECOND = 12_000_000;
 
 /** The first container this browser will encode, or null if it will encode none. */
 export function pickMime(
@@ -447,7 +457,10 @@ export class StageRecorder {
 
     let recorder: MediaRecorder;
     try {
-      recorder = new MediaRecorder(stream, { mimeType: mime });
+      recorder = new MediaRecorder(stream, {
+        mimeType: mime,
+        videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
+      });
     } catch (error) {
       this.closeVideoTracks(stream);
       this.failure = error instanceof Error ? error.message : String(error);
