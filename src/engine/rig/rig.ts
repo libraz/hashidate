@@ -866,12 +866,43 @@ export class Rig {
 
   /** Refresh and return this side's reusable FK frame. */
   armForwardContext(side: Side): ArmForwardContext | null {
+    return this.readArmForwardContext(side, true);
+  }
+
+  /**
+   * @internal Read synchronously after applyBodyContext has refreshed the scene.
+   * Native evaluation only changes scratch state between the two arm reads.
+   * Custom evaluators and a hips frame outside the root retain eager refreshes.
+   */
+  armForwardContextFromUpdatedBody(side: Side): ArmForwardContext | null {
+    for (const armSide of ['L', 'R'] as const) {
+      const driver = this._armDrivers[armSide];
+      const native = this._nativeArmEnvironment[armSide];
+      if (
+        !(
+          driver &&
+          native &&
+          driver.environment === native.environment &&
+          driver.environment.sample === native.sample &&
+          driver.environment.rowCount === native.rowCount &&
+          driver.sampleEnvironment === native.sampleEnvironment
+        )
+      )
+        return this.armForwardContext(side);
+    }
+    for (let parent = this.p.bones.hips?.parent; parent; parent = parent.parent) {
+      if (parent === this.p.root) return this.readArmForwardContext(side, false);
+    }
+    return this.armForwardContext(side);
+  }
+
+  private readArmForwardContext(side: Side, refreshScene: boolean): ArmForwardContext | null {
     const upper = this.p.bones[`upperArm.${side}`];
     const parent = upper?.parent;
     const upperLength = this.p.limb?.[`upper.${side}`] ?? 0;
     const lowerLength = this.p.limb?.[`lower.${side}`] ?? 0;
     if (!(upper && parent && upperLength > 0 && lowerLength > 0 && this.anat.update())) return null;
-    this.p.root.updateMatrixWorld(true);
+    if (refreshScene) this.p.root.updateMatrixWorld(true);
     if (!this.armContext(side)) return null;
     upper.updateWorldMatrix(true, false);
     parent.updateWorldMatrix(true, false);
@@ -891,8 +922,8 @@ export class Rig {
     this.captureBodyPose(this._proposedBodyPose, rise);
   }
 
-  /** Rebuild one common-alpha body sample and its deterministic leg contact. */
-  applyBodyContext(alpha: number): number {
+  /** Rebuild articulation and common airborne transport with separate progress. */
+  applyBodyContext(alpha: number, transportProgress = alpha): number {
     const a = this._acceptedBodyPose;
     const b = this._proposedBodyPose;
     const blend = THREE.MathUtils.clamp(alpha, 0, 1);
@@ -905,10 +936,15 @@ export class Rig {
       bone.quaternion.copy(qa).slerp(this._applyTargetQ, blend);
     }
     const hips = this.p.bones.hips;
-    if (hips) hips.position.lerpVectors(a.hipsPosition, b.hipsPosition, blend);
-    const rise = THREE.MathUtils.lerp(a.rise, b.rise, blend);
-    this.p.root.updateMatrixWorld(true);
-    this.p.root.updateMatrixWorld(true);
+    const rise = THREE.MathUtils.lerp(
+      a.rise,
+      b.rise,
+      THREE.MathUtils.clamp(transportProgress, 0, 1),
+    );
+    if (hips) {
+      hips.position.lerpVectors(a.hipsPosition, b.hipsPosition, blend);
+      hips.position.addScaledVector(this.transportUp(), rise);
+    }
     this.plantLegs(rise);
     this.p.root.updateMatrixWorld(true);
     this.anat.update();
@@ -965,6 +1001,120 @@ export class Rig {
     return true;
   }
 
+  /**
+   * Accept only the common signed jump translation after an articulated frame
+   * could not be certified. Native torso/head/face self-clearances are invariant
+   * under this rigid upper-body translation. Legs still solve contact; custom
+   * environments and carriers outside the hips subtree have no such guarantee.
+   */
+  commitArmTransport(lift: number): boolean {
+    if (
+      !(
+        Number.isFinite(lift) &&
+        lift === this._proposedBodyPose.rise &&
+        lift !== this._acceptedRise &&
+        this._limitsEnabled &&
+        this._armContinuationReady &&
+        this.bothArmFramesSupported()
+      )
+    )
+      return false;
+    for (const side of ['L', 'R'] as Side[]) {
+      const driver = this._armDrivers[side];
+      const native = this._nativeArmEnvironment[side];
+      if (
+        !(
+          driver &&
+          native &&
+          this.canWriteArm(side) &&
+          driver.environment === native.environment &&
+          driver.environment.sample === native.sample &&
+          driver.environment.rowCount === native.rowCount &&
+          driver.sampleEnvironment === native.sampleEnvironment
+        )
+      )
+        return false;
+    }
+    if (!this.transportTopologySupported()) return false;
+    for (const snapshot of [this._acceptedBodyPose, this._proposedBodyPose]) {
+      const position = snapshot.hipsPosition;
+      if (![position.x, position.y, position.z, snapshot.rise].every(Number.isFinite)) return false;
+      for (const slot of BODY_SNAPSHOT_SLOTS) {
+        if (!this.p.bones[slot]) continue;
+        const q = snapshot.slots[slot];
+        if (!(q && [q.x, q.y, q.z, q.w].every(Number.isFinite))) return false;
+      }
+    }
+    this.applyBodyContext(0, 1);
+    const left = this.armForwardContextFromUpdatedBody('L');
+    const right = this.armForwardContextFromUpdatedBody('R');
+    if (!(left && right && this._lastPlantSuccess)) {
+      this.applyBodyContext(0, 0);
+      return false;
+    }
+    // Both contexts are ready before accepted history changes on either side.
+    // Keep configurations, controls and roll history exactly as last accepted.
+    for (const side of ['L', 'R'] as Side[]) {
+      const driver = this._armDrivers[side] as ArmDriver;
+      const context = side === 'L' ? left : right;
+      const forward = driver.refreshAcceptedForward(context);
+      this.writeArmForward(side, forward);
+      this.hands.curlHand(side, driver.acceptedCurls, driver.acceptedSpread);
+      this.copyPosedFingerSpec(side, driver.acceptedCurls, driver.acceptedSpread);
+    }
+    this.p.root.updateMatrixWorld(true);
+    for (const side of ['L', 'R'] as Side[]) {
+      const driver = this._armDrivers[side] as ArmDriver;
+      this.noteFingers(side);
+      this._acceptedHandPose[side] = this.captureHandPose(side);
+      this.captureAcceptedArmState(
+        side,
+        driver.acceptedForward,
+        driver.acceptedCurls,
+        driver.acceptedSpread,
+      );
+    }
+    this.captureBodyPose(this._acceptedBodyPose, lift);
+    this._acceptedRise = lift;
+    return true;
+  }
+
+  /** Every self-clearance carrier must share the hips translation, not leg IK. */
+  private transportTopologySupported(): boolean {
+    const hips = this.p.bones.hips;
+    if (!hips) return false;
+    const legBones = new Set<THREE.Object3D>();
+    for (const side of ['L', 'R'] as Side[]) {
+      for (const part of ['upperLeg', 'lowerLeg', 'foot', 'toe'] as const) {
+        const bone = this.p.bones[`${part}.${side}`];
+        if (bone) legBones.add(bone);
+      }
+    }
+    const carried = (object: THREE.Object3D): boolean => {
+      for (let node: THREE.Object3D | null = object; node; node = node.parent) {
+        if (legBones.has(node)) return false;
+        if (node === hips) return true;
+      }
+      return false;
+    };
+    for (const slot of BODY_SNAPSHOT_SLOTS) {
+      const bone = this.p.bones[slot];
+      if (bone && !carried(bone)) return false;
+    }
+    for (const side of ['L', 'R'] as Side[]) {
+      for (const part of ['upperArm', 'lowerArm', 'hand'] as const) {
+        const bone = this.p.bones[`${part}.${side}`];
+        if (!(bone?.parent && carried(bone) && carried(bone.parent))) return false;
+      }
+      for (const finger of FINGER_NAMES) {
+        for (const bone of this.p.fingerBones[`${finger}.${side}`] ?? []) {
+          if (!carried(bone)) return false;
+        }
+      }
+    }
+    return true;
+  }
+
   lastAcceptedHandPose(side: Side): Readonly<HandSensePose> | null {
     return this._acceptedHandPose[side];
   }
@@ -1009,8 +1159,27 @@ export class Rig {
       if (bone && target) target.copy(bone.quaternion);
     }
     const hips = this.p.bones.hips;
-    if (hips) out.hipsPosition.copy(hips.position);
     out.rise = rise;
+    if (hips) {
+      // Contact may have corrected the pelvis. Preserve its authored input so
+      // retries do not feed a previous leg correction back into the next one.
+      out.hipsPosition.copy(
+        hips.position.equals(this._postPlantHips) ? this._prePlantHips : hips.position,
+      );
+      out.hipsPosition.addScaledVector(this.transportUp(), -out.rise);
+    }
+  }
+
+  /** World-up metres expressed in the actual hips parent's local frame. */
+  private transportUp(): THREE.Vector3 {
+    this._transportUp.set(0, 1, 0);
+    const parent = this.p.bones.hips?.parent;
+    if (parent) {
+      parent.updateWorldMatrix(true, false);
+      this._transportInverse.setFromMatrix4(parent.matrixWorld).invert();
+      this._transportUp.applyMatrix3(this._transportInverse);
+    }
+    return this._transportUp;
   }
 
   private canWriteArm(side: Side): boolean {
@@ -1167,7 +1336,10 @@ export class Rig {
 
   /** Keep standing feet planted, or carry their contact points through a hop. */
   plantLegs(rise: number): void {
-    this.legs?.apply(rise);
+    const hips = this.p.bones.hips;
+    if (hips) this._prePlantHips.copy(hips.position);
+    this._lastPlantSuccess = this.legs ? this.legs.apply(rise) : true;
+    if (hips) this._postPlantHips.copy(hips.position);
   }
 
   /**

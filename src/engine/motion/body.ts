@@ -1427,7 +1427,7 @@ export class Body {
       let feasible = true;
       for (const side of ['L', 'R'] as Side[]) {
         const driver = rig.armDriver(side);
-        const context = rig.armForwardContext(side);
+        const context = rig.armForwardContextFromUpdatedBody(side);
         if (!(driver && context)) {
           feasible = false;
           break;
@@ -1562,7 +1562,7 @@ export class Body {
       rig.applyBodyContext(0, 0);
       for (const side of ['L', 'R'] as Side[]) {
         const driver = rig.armDriver(side);
-        const context = rig.armForwardContext(side);
+        const context = rig.armForwardContextFromUpdatedBody(side);
         if (driver && context) {
           const acceptedForward = driver.refreshAcceptedForward(context);
           rig.stageArmForward(side, acceptedForward, driver.acceptedCurls, driver.acceptedSpread);
@@ -1584,7 +1584,7 @@ export class Body {
     for (const side of ['L', 'R'] as Side[]) {
       const driver = this.rig.armDriver(side);
       const plan = this._frameCommit[side];
-      const context = this.rig.armForwardContext(side);
+      const context = this.rig.armForwardContextFromUpdatedBody(side);
       if (!(driver && plan && context)) {
         valid = false;
         continue;
@@ -1641,7 +1641,7 @@ export class Body {
     for (const side of ['L', 'R'] as Side[]) {
       const driver = this.rig.armDriver(side);
       const plan = this._frameCommit[side];
-      const context = this.rig.armForwardContext(side);
+      const context = this.rig.armForwardContextFromUpdatedBody(side);
       if (!(driver && plan && context)) return false;
       driver.captureVolumeFrame();
       // `context` is Rig's reusable per-side record, so the existing commit
@@ -1664,7 +1664,7 @@ export class Body {
     for (const side of ['L', 'R'] as Side[]) {
       const driver = this.rig.armDriver(side);
       const endpoint = this._frameCommit[side];
-      const context = this.rig.armForwardContext(side);
+      const context = this.rig.armForwardContextFromUpdatedBody(side);
       if (!(driver && endpoint && context)) return null;
       driver.captureVolumeFrame();
 
