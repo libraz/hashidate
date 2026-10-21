@@ -7,7 +7,18 @@
  * candidates run most specific first.
  */
 
+import * as THREE from 'three';
 import type { BlinkShapes, BoneSlot, GazeLimits, Side, VisemeName, VrmEmotionName } from '../types';
+
+/**
+ * A name as the scene holds it. GLTFLoader runs node names through three's
+ * sanitiser (whitespace becomes `_`; `[ ] . : /` are dropped), so `Body.001`
+ * arrives as `Body001` and `mixamorig:Hips` as `mixamorigHips`. The Mixamo
+ * prefix is then dropped so one set of candidates covers that family. Applied to
+ * both sides of every lookup: candidates, descriptor names and scene bones.
+ */
+export const normaliseBoneName = (name: string): string =>
+  THREE.PropertyBinding.sanitizeNodeName(name).replace(/^mixamorig/, '');
 
 // Candidate names per canonical bone slot, most specific first.
 export const BONE_CANDIDATES: Record<BoneSlot, string[]> = {
@@ -15,27 +26,27 @@ export const BONE_CANDIDATES: Record<BoneSlot, string[]> = {
   spine: ['Spine', 'spine', 'J_Bip_C_Spine'],
   // UpperChest first: when a rig has both, it is the one the arms hang off, and
   // aiming an arm from the lower Chest silently drops a link out of the chain.
-  chest: ['UpperChest', 'Chest', 'chest', 'J_Bip_C_UpperChest', 'J_Bip_C_Chest'],
+  chest: ['UpperChest', 'Chest', 'chest', 'J_Bip_C_UpperChest', 'J_Bip_C_Chest', 'Spine2'],
   neck: ['Neck', 'neck', 'J_Bip_C_Neck'],
   head: ['Head', 'head', 'J_Bip_C_Head'],
   'eye.L': ['Eye_L', 'LeftEye', 'J_Bip_L_Eye'],
   'eye.R': ['Eye_R', 'RightEye', 'J_Bip_R_Eye'],
   'shoulder.L': ['Shoulder_L', 'LeftShoulder', 'J_Bip_L_Shoulder'],
   'shoulder.R': ['Shoulder_R', 'RightShoulder', 'J_Bip_R_Shoulder'],
-  'upperArm.L': ['UpperArm_L', 'LeftUpperArm', 'J_Bip_L_UpperArm'],
-  'upperArm.R': ['UpperArm_R', 'RightUpperArm', 'J_Bip_R_UpperArm'],
-  'lowerArm.L': ['LowerArm_L', 'LeftLowerArm', 'J_Bip_L_LowerArm'],
-  'lowerArm.R': ['LowerArm_R', 'RightLowerArm', 'J_Bip_R_LowerArm'],
+  'upperArm.L': ['UpperArm_L', 'LeftUpperArm', 'J_Bip_L_UpperArm', 'LeftArm'],
+  'upperArm.R': ['UpperArm_R', 'RightUpperArm', 'J_Bip_R_UpperArm', 'RightArm'],
+  'lowerArm.L': ['LowerArm_L', 'LeftLowerArm', 'J_Bip_L_LowerArm', 'LeftForeArm'],
+  'lowerArm.R': ['LowerArm_R', 'RightLowerArm', 'J_Bip_R_LowerArm', 'RightForeArm'],
   'hand.L': ['Hand_L', 'LeftHand', 'J_Bip_L_Hand'],
   'hand.R': ['Hand_R', 'RightHand', 'J_Bip_R_Hand'],
-  'upperLeg.L': ['UpperLeg_L', 'LeftUpperLeg', 'J_Bip_L_UpperLeg'],
-  'upperLeg.R': ['UpperLeg_R', 'RightUpperLeg', 'J_Bip_R_UpperLeg'],
-  'lowerLeg.L': ['LowerLeg_L', 'LeftLowerLeg', 'J_Bip_L_LowerLeg'],
-  'lowerLeg.R': ['LowerLeg_R', 'RightLowerLeg', 'J_Bip_R_LowerLeg'],
+  'upperLeg.L': ['UpperLeg_L', 'LeftUpperLeg', 'J_Bip_L_UpperLeg', 'LeftUpLeg'],
+  'upperLeg.R': ['UpperLeg_R', 'RightUpperLeg', 'J_Bip_R_UpperLeg', 'RightUpLeg'],
+  'lowerLeg.L': ['LowerLeg_L', 'LeftLowerLeg', 'J_Bip_L_LowerLeg', 'LeftLeg'],
+  'lowerLeg.R': ['LowerLeg_R', 'RightLowerLeg', 'J_Bip_R_LowerLeg', 'RightLeg'],
   'foot.L': ['Foot_L', 'LeftFoot', 'J_Bip_L_Foot'],
   'foot.R': ['Foot_R', 'RightFoot', 'J_Bip_R_Foot'],
-  'toe.L': ['Toe_L', 'LeftToes', 'J_Bip_L_ToeBase'],
-  'toe.R': ['Toe_R', 'RightToes', 'J_Bip_R_ToeBase'],
+  'toe.L': ['Toe_L', 'LeftToes', 'J_Bip_L_ToeBase', 'LeftToeBase'],
+  'toe.R': ['Toe_R', 'RightToes', 'J_Bip_R_ToeBase', 'RightToeBase'],
 };
 
 /** Fingers as the naming patterns spell them; the profile keys them lowercase. */
@@ -67,6 +78,7 @@ export const FINGER_PATTERNS: FingerPattern[] = [
   (f, side, i) => `${f}_${SEGMENTS[i]}_${side}`,
   (f, side, i) => `J_Bip_${side}_${f}${i + 1}`, // VRM 0.x
   (f, side, i) => `${side === 'L' ? 'Left' : 'Right'}Hand${f}${i + 1}`, // Mixamo
+  // Unity humanoid; the loader has turned its spaces into underscores.
   (f, side, i) => `${side === 'L' ? 'Left' : 'Right'} ${f} ${SEGMENTS[i]}`,
   (f, side, i) => `${f}${i + 1}_${side}`,
 ];
@@ -74,11 +86,11 @@ export const FINGER_PATTERNS: FingerPattern[] = [
 // Explicit viseme shapes, preferred over composing mouth shapes from ARKit.
 // Artist-authored visemes read better than anything we can synthesise.
 export const VISEME_CANDIDATES: Record<VisemeName, string[]> = {
-  a: ['aa', 'vrc.v_aa', 'A', 'あ'],
-  i: ['ih', 'vrc.v_ih', 'I', 'い'],
-  u: ['ou', 'vrc.v_ou', 'U', 'う'],
-  e: ['ee', 'vrc.v_e', 'vrc.v_ee', 'E', 'え'],
-  o: ['oh', 'vrc.v_oh', 'O', 'お'],
+  a: ['aa', 'vrc.v_aa', 'A', 'あ', 'Fcl_MTH_A'],
+  i: ['ih', 'vrc.v_ih', 'I', 'い', 'Fcl_MTH_I'],
+  u: ['ou', 'vrc.v_ou', 'U', 'う', 'Fcl_MTH_U'],
+  e: ['ee', 'vrc.v_e', 'vrc.v_ee', 'E', 'え', 'Fcl_MTH_E'],
+  o: ['oh', 'vrc.v_oh', 'O', 'お', 'Fcl_MTH_O'],
   n: ['vrc.v_nn', 'N', 'ん'],
   sil: ['vrc.v_sil', 'sil'],
 };
@@ -94,9 +106,9 @@ export const VRM_EMOTION_CANDIDATES: Record<VrmEmotionName, string[]> = {
 
 /** Blink shapes, per canonical slot. */
 export const BLINK_CANDIDATES: Record<keyof BlinkShapes, string[]> = {
-  both: ['blink', 'Blink', 'vrc.Blink'],
-  L: ['eyeBlinkLeft', 'blinkLeft', 'Blink_L'],
-  R: ['eyeBlinkRight', 'blinkRight', 'Blink_R'],
+  both: ['blink', 'Blink', 'vrc.Blink', 'Fcl_EYE_Close'],
+  L: ['eyeBlinkLeft', 'blinkLeft', 'Blink_L', 'Fcl_EYE_Close_L'],
+  R: ['eyeBlinkRight', 'blinkRight', 'Blink_R', 'Fcl_EYE_Close_R'],
 };
 
 /**
@@ -163,6 +175,7 @@ export function isExpressionShape(name: string): boolean {
   return (
     ARKIT_52.has(name) ||
     name.startsWith('vrc.v_') ||
+    name.startsWith('Fcl_') ||
     VRM_SHAPES.has(name) ||
     /^(blink|Blink)/.test(name)
   );

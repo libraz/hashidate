@@ -380,3 +380,56 @@ describe('wardrobe hide shapes', () => {
     expect(influence('Body', 'BustHide')).toBe(0);
   });
 });
+
+describe('wardrobe mesh names', () => {
+  const tableFor = (meshes: string[]): WardrobeTable => ({
+    slots: {
+      outfit: {
+        label: same('Outfit'),
+        items: [{ id: 'on', label: same('On'), meshes }],
+      },
+    },
+  });
+
+  it('matches a name that is not a valid pattern', () => {
+    const rig = buildRig({ garments: ['Skirt(long)', 'Skirt(long)_2', 'Skirt(long)_x'] });
+    const wardrobe = new Wardrobe(
+      rig.root,
+      buildProfile(rig.root, rig.descriptor),
+      tableFor(['Skirt(long)']),
+    );
+
+    expect(wardrobe.missing).toEqual([]);
+    // Nothing is worn at the start, so a mesh the item claims is hidden and one
+    // it does not claim is left as it was.
+    expect(rig.meshes.get('Skirt(long)')?.visible).toBe(false);
+    expect(rig.meshes.get('Skirt(long)_2')?.visible).toBe(false);
+    expect(rig.meshes.get('Skirt(long)_x')?.visible).toBe(true);
+  });
+
+  it('takes a numbered clash only with a non-empty digit suffix', () => {
+    const rig = buildRig({ garments: ['Skirt', 'Skirt_', 'Skirt_12', 'Skirt_1a'] });
+    const wardrobe = new Wardrobe(
+      rig.root,
+      buildProfile(rig.root, rig.descriptor),
+      tableFor(['Skirt']),
+    );
+    expect(wardrobe.missing).toEqual([]);
+
+    expect(rig.meshes.get('Skirt')?.visible).toBe(false);
+    expect(rig.meshes.get('Skirt_12')?.visible).toBe(false);
+    expect(rig.meshes.get('Skirt_')?.visible).toBe(true);
+    expect(rig.meshes.get('Skirt_1a')?.visible).toBe(true);
+  });
+
+  it('finds a mesh the loader renamed', () => {
+    const rig = buildRig({ garments: ['Lace_Trim', 'Body001'] });
+    const wardrobe = new Wardrobe(
+      rig.root,
+      buildProfile(rig.root, rig.descriptor),
+      tableFor(['Lace Trim', 'Body.001']),
+    );
+
+    expect(wardrobe.missing).toEqual([]);
+  });
+});

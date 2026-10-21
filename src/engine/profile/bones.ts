@@ -7,7 +7,16 @@
  */
 
 import * as THREE from 'three';
-import type { BodyFrame, BoneSlot, FingerKey, FingerName, LegBoneSlot, Side } from '../types';
+import type {
+  BodyFrame,
+  BoneOverrides,
+  BoneSlot,
+  FingerKey,
+  FingerName,
+  FingerOverrides,
+  LegBoneSlot,
+  Side,
+} from '../types';
 import {
   BONE_CANDIDATES,
   FINGER_ALIASES,
@@ -15,6 +24,7 @@ import {
   FINGERS,
   type FingerCandidate,
   NEXT_IN_CHAIN,
+  normaliseBoneName,
 } from './candidates';
 
 const SIDES: readonly Side[] = ['L', 'R'];
@@ -52,22 +62,30 @@ const lower = (finger: FingerCandidate): FingerName =>
 
 const worldPos = (b: THREE.Object3D): THREE.Vector3 => b.getWorldPosition(new THREE.Vector3());
 
-/** Every bone in the scene, by name. The first of a duplicated name wins. */
+/** Every bone in the scene, by normalised name. The first of a duplicated name wins. */
 export function collectBones(root: THREE.Object3D): Map<string, THREE.Bone> {
   const bonesByName = new Map<string, THREE.Bone>();
   root.traverse((o) => {
-    if (o instanceof THREE.Bone && !bonesByName.has(o.name)) bonesByName.set(o.name, o);
+    if (!(o instanceof THREE.Bone)) return;
+    const key = normaliseBoneName(o.name);
+    if (!bonesByName.has(key)) bonesByName.set(key, o);
   });
   return bonesByName;
 }
 
-/** Fill each canonical slot from the candidate lists, most specific first. */
-export function resolveBones(bonesByName: Map<string, THREE.Bone>): Resolved<BoneMap> {
+/**
+ * Fill each canonical slot from the candidate lists, most specific first.
+ * Names the avatar states are tried before the generic ones.
+ */
+export function resolveBones(
+  bonesByName: Map<string, THREE.Bone>,
+  overrides: BoneOverrides = {},
+): Resolved<BoneMap> {
   const bones: BoneMap = {};
   const missing: string[] = [];
   for (const slot of Object.keys(BONE_CANDIDATES) as BoneSlot[]) {
-    const hit = BONE_CANDIDATES[slot]
-      .map((n) => bonesByName.get(n))
+    const hit = [...(overrides[slot] ?? []), ...BONE_CANDIDATES[slot]]
+      .map((n) => bonesByName.get(normaliseBoneName(n)))
       .find((b): b is THREE.Bone => b !== undefined);
     if (hit) bones[slot] = hit;
     // Legs are an optional profile extension. Their absence is normal, while a
@@ -86,10 +104,15 @@ function resolveFinger(
   bonesByName: Map<string, THREE.Bone>,
   finger: FingerCandidate,
   side: Side,
+  stated: string[] | undefined,
 ): THREE.Bone[] | null {
+  if (stated) {
+    const chain = stated.map((n) => bonesByName.get(normaliseBoneName(n)));
+    if (chain[0] && chain[1]) return chain.filter((b): b is THREE.Bone => b !== undefined);
+  }
   for (const alias of FINGER_ALIASES[finger]) {
     for (const pat of FINGER_PATTERNS) {
-      const chain = [0, 1, 2].map((i) => bonesByName.get(pat(alias, side, i)));
+      const chain = [0, 1, 2].map((i) => bonesByName.get(normaliseBoneName(pat(alias, side, i))));
       // A distal segment is often absent; proximal and intermediate are not.
       if (chain[0] && chain[1]) return chain.filter((b): b is THREE.Bone => b !== undefined);
     }
@@ -97,13 +120,16 @@ function resolveFinger(
   return null;
 }
 
-export function resolveFingers(bonesByName: Map<string, THREE.Bone>): Resolved<FingerMap> {
+export function resolveFingers(
+  bonesByName: Map<string, THREE.Bone>,
+  overrides: FingerOverrides = {},
+): Resolved<FingerMap> {
   const fingerBones: FingerMap = {};
   const missing: string[] = [];
   const noFingers: string[] = [];
   for (const side of SIDES) {
     for (const f of FINGERS) {
-      const chain = resolveFinger(bonesByName, f, side);
+      const chain = resolveFinger(bonesByName, f, side, overrides[`${lower(f)}.${side}`]);
       if (chain) fingerBones[`${lower(f)}.${side}`] = chain;
       else noFingers.push(`${lower(f)}.${side}`);
     }

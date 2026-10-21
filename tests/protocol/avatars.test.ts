@@ -243,3 +243,37 @@ describe('avatarsResponseSchema', () => {
     expect(parsed.errors[0]).toMatchObject({ id: 'a' });
   });
 });
+
+describe('avatar bone names and PBR ranges', () => {
+  const pbr = (override: unknown) => ({
+    ...minimal,
+    materials: { preservedPbrOverrides: { Metal: override } },
+  });
+
+  it('accepts the unit range, and reflection of any size above zero', () => {
+    expect(() => accept(pbr({ metalness: 0, roughness: 1, reflection: 3 }))).not.toThrow();
+  });
+
+  it.each([
+    [{ metalness: 1.2, roughness: 0.5 }, 'metalness'],
+    [{ metalness: 0.5, roughness: -0.1 }, 'roughness'],
+    [{ metalness: 0.5, roughness: 0.5, reflection: -1 }, 'reflection'],
+  ])('rejects %j', (override, field) => {
+    expect(reject(pbr(override))).toContain(field);
+  });
+
+  it('accepts bone and finger overrides', () => {
+    const avatar = accept({
+      ...minimal,
+      bones: { 'upperArm.L': ['Arm_L'], hips: ['Root'] },
+      fingers: { 'index.R': ['I1', 'I2', 'I3'] },
+    });
+    expect(avatar.bones?.['upperArm.L']).toEqual(['Arm_L']);
+    expect(avatar.fingers?.['index.R']).toEqual(['I1', 'I2', 'I3']);
+  });
+
+  it('rejects an unknown slot or finger', () => {
+    expect(reject({ ...minimal, bones: { tail: ['T'] } })).toContain('tail');
+    expect(reject({ ...minimal, fingers: { 'index.X': ['I'] } })).toContain('index.X');
+  });
+});

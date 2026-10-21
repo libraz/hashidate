@@ -2,9 +2,11 @@ import { z } from 'zod';
 import type {
   ArmSlot,
   AvatarDescriptor,
+  BoneOverrides,
   ColliderSpec,
   DrawnShapeSpec,
   EmotionName,
+  FingerOverrides,
   GazeLimits,
   JointDof,
   JointSpec,
@@ -147,6 +149,57 @@ type _ShapeOverridesMatchEngine = Expect<
   Equals<z.output<typeof shapeOverridesSchema>, ShapeOverrides>
 >;
 
+const boneSlotSchema = z.enum([
+  'hips',
+  'spine',
+  'chest',
+  'neck',
+  'head',
+  'eye.L',
+  'eye.R',
+  'shoulder.L',
+  'shoulder.R',
+  'upperArm.L',
+  'upperArm.R',
+  'lowerArm.L',
+  'lowerArm.R',
+  'hand.L',
+  'hand.R',
+  'upperLeg.L',
+  'upperLeg.R',
+  'lowerLeg.L',
+  'lowerLeg.R',
+  'foot.L',
+  'foot.R',
+  'toe.L',
+  'toe.R',
+]);
+
+const fingerKeySchema = z.enum([
+  'thumb.L',
+  'index.L',
+  'middle.L',
+  'ring.L',
+  'little.L',
+  'thumb.R',
+  'index.R',
+  'middle.R',
+  'ring.R',
+  'little.R',
+]);
+
+const boneOverridesSchema = z.partialRecord(boneSlotSchema, names);
+
+type _BoneOverridesMatchEngine = Expect<
+  Equals<z.output<typeof boneOverridesSchema>, BoneOverrides>
+>;
+
+const fingerOverridesSchema = z.partialRecord(fingerKeySchema, names);
+
+type _FingerOverridesMatchEngine = Expect<
+  Equals<z.output<typeof fingerOverridesSchema>, FingerOverrides>
+>;
+
 const drawnShapeFields = {
   group: z.string(),
   exclude: names.optional(),
@@ -186,10 +239,14 @@ type _EmotionShapesMatchEngine = Expect<
 
 // --- materials ----------------------------------------------------------------
 
+// The renderer refuses these ranges at load; stating them here rejects the file
+// with a path instead.
+const unit = finite.min(0).max(1);
+
 const pbrScalarSchema = z.strictObject({
-  metalness: finite,
-  roughness: finite,
-  reflection: finite.optional(),
+  metalness: unit,
+  roughness: unit,
+  reflection: finite.min(0).optional(),
 });
 
 type _PbrScalarMatchesEngine = Expect<Equals<z.output<typeof pbrScalarSchema>, PbrScalarOverride>>;
@@ -379,6 +436,8 @@ export const avatarFileSchema = z.strictObject({
   separator: separatorSchema.optional(),
   gaze: gazeSchema.nullable().optional(),
   shapes: shapeOverridesSchema.optional(),
+  bones: boneOverridesSchema.optional(),
+  fingers: fingerOverridesSchema.optional(),
   presets: presetSchema.nullable().optional(),
   emotionShapes: emotionShapesSchema.nullable().optional(),
   mouthShapePattern: patternSchema.nullable().optional(),

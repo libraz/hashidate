@@ -23,6 +23,13 @@ import type { MorphTarget, Profile, WardrobePreset, WardrobeSlot, WardrobeTable 
  * a plain visibility change.
  */
 
+/** `<name>_<digits>`, without building a pattern out of a name. */
+function isNumberedClash(meshName: string, name: string): boolean {
+  if (!meshName.startsWith(`${name}_`)) return false;
+  const suffix = meshName.slice(name.length + 1);
+  return suffix.length > 0 && /^\d+$/.test(suffix);
+}
+
 const EMPTY: WardrobeTable = { slots: {}, presets: {} };
 
 export class Wardrobe {
@@ -73,11 +80,12 @@ export class Wardrobe {
    *                          same name, which is how "Pillow" became "Pillow_1"
    */
   private resolve(name: string): THREE.Mesh[] {
+    // Mesh names reach the scene through the loader's sanitiser; the descriptor
+    // may spell them as the authoring tool did.
+    const wanted = THREE.PropertyBinding.sanitizeNodeName(name);
     return this.all.filter(
       (m) =>
-        m.name === name ||
-        m.name.startsWith(`${name}__`) ||
-        new RegExp(`^${name}_\\d+$`).test(m.name),
+        m.name === wanted || m.name.startsWith(`${wanted}__`) || isNumberedClash(m.name, wanted),
     );
   }
 

@@ -51,10 +51,10 @@ export function buildProfile(
   const bonesByName = collectBones(root);
 
   const missing: string[] = [];
-  const { value: bones, missing: boneGaps } = resolveBones(bonesByName);
+  const { value: bones, missing: boneGaps } = resolveBones(bonesByName, avatar.bones);
   missing.push(...boneGaps);
 
-  const { value: fingerBones, missing: fingerGaps } = resolveFingers(bonesByName);
+  const { value: fingerBones, missing: fingerGaps } = resolveFingers(bonesByName, avatar.fingers);
   missing.push(...fingerGaps);
 
   const { morphTargets, faceMeshes, dict } = routeMorphs(root);
@@ -173,3 +173,4 @@ export function buildProfile(
 
 export { ARKIT_52, DEFAULT_GAZE_LIMITS, isSeparator } from './candidates';
 export { BODY_ANCHORS, FACE_ANCHORS } from './frames';
+export { readVrmHumanoid, type VrmHumanoid } from './vrm';

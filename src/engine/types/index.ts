@@ -38,8 +38,10 @@ export type {
 } from './anatomy';
 export type {
   AvatarDescriptor,
+  BoneOverrides,
   ColliderSpec,
   DrawnShapeSpec,
+  FingerOverrides,
   MaterialRules,
   PbrScalarOverride,
   PresetCompositionSpec,

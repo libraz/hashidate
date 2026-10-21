@@ -1,6 +1,14 @@
 import type { Localized } from '../../i18n/locale';
 import type { JointTable } from './anatomy';
-import type { ArmSlot, EmotionName, ShapeWeights, Vec3Tuple, VisemeName } from './primitives';
+import type {
+  ArmSlot,
+  BoneSlot,
+  EmotionName,
+  FingerKey,
+  ShapeWeights,
+  Vec3Tuple,
+  VisemeName,
+} from './primitives';
 import type { GazeLimits } from './profile';
 import type { TurnRequest } from './turn';
 
@@ -16,6 +24,12 @@ export interface ShapeOverrides {
   blink?: { both?: string[]; L?: string[]; R?: string[] };
   viseme?: Partial<Record<VisemeName, string[]>>;
 }
+
+/** Bone names per canonical slot, most specific first. */
+export type BoneOverrides = Partial<Record<BoneSlot, string[]>>;
+
+/** One finger chain's bone names, proximal segment first. */
+export type FingerOverrides = Partial<Record<FingerKey, string[]>>;
 
 /** A group of author-drawn shapes, discovered by group name rather than by convention. */
 export interface DrawnShapeSpec {
@@ -206,6 +220,13 @@ export interface AvatarDescriptor {
   gaze?: Partial<GazeLimits> | null;
   /** Names for canonical slots the engine's own candidate lists do not resolve. */
   shapes?: ShapeOverrides;
+  /**
+   * Bone names for slots the engine's own candidate lists do not resolve. Tried
+   * before the generic names; matched after the loader's name sanitisation.
+   */
+  bones?: BoneOverrides;
+  /** Finger chains by key, proximal segment first. Same precedence as `bones`. */
+  fingers?: FingerOverrides;
   presets?: PresetSpec | null;
   /**
    * Emotion composition in this avatar's own shape names, for avatars without
