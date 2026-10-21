@@ -1,5 +1,6 @@
 import type * as THREE from 'three';
 import type { Profile } from '../types';
+import { normaliseBoneName } from './candidates';
 
 type ArmTwistSlot = 'upperArm.L' | 'upperArm.R' | 'lowerArm.L' | 'lowerArm.R';
 type ArmTwists = NonNullable<Profile['armTwists']>;
@@ -28,7 +29,7 @@ export function resolveArmTwists(
 
   for (const slot of Object.keys(CANDIDATES) as ArmTwistSlot[]) {
     const helper = CANDIDATES[slot]
-      .map((name) => bonesByName.get(name))
+      .map((name) => bonesByName.get(normaliseBoneName(name)))
       .find((bone): bone is THREE.Bone => bone !== undefined);
     if (!helper) continue;
 
