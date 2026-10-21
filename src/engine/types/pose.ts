@@ -35,6 +35,18 @@ export interface ArmDirections {
 /** Which anchor a reach lands on. Face anchors are in IPD, body anchors in spans. */
 export type AnchorSpace = 'face' | 'body';
 
+/** Internal procedural contact landmark; never part of the motion wire format. */
+export type HandContact =
+  | { kind: 'palm'; region: 'heel' | 'center'; surface?: 'center' | 'pad' | 'back' }
+  | {
+      kind: 'finger';
+      finger: FingerName;
+      /** Real joint-to-joint segment: 0 joins joints 0–1, 1 joins joints 1–2. */
+      segment: 0 | 1;
+      fraction: number;
+      surface?: 'center' | 'pad' | 'back';
+    };
+
 /**
  * A pose that has to make *contact*, given as a place rather than as directions.
  *
@@ -43,6 +55,8 @@ export type AnchorSpace = 'face' | 'body';
  * this way instead.
  */
 export interface ReachSpec {
+  /** Optional posed hand landmark used by internal procedural reaches. */
+  contact?: HandContact;
   /** Anchor name — see `FACE_ANCHORS` / `BODY_ANCHORS` in `profile/frames.ts`. */
   at: string;
   space?: AnchorSpace;

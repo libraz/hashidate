@@ -1,6 +1,14 @@
 import * as THREE from 'three';
 import { fingerCurl } from '../anatomy';
-import type { FingerName, FingerSpec, JointSpec, JointTable, Profile, Side } from '../types';
+import type {
+  FingerName,
+  FingerSpec,
+  HandContact,
+  JointSpec,
+  JointTable,
+  Profile,
+  Side,
+} from '../types';
 import { composeFingerRotation } from './hands';
 
 /** The virtual fingertip carries this much of the final bone past the last joint. */
@@ -26,6 +34,8 @@ interface FingerPointPath {
 
 /** Captured hand hierarchy in the hand bone's local coordinate frame. */
 export interface HandGeometryCalibration {
+  /** Absent on legacy collision-only calibrations; contacts require an explicit capture. */
+  readonly handPresent?: boolean;
   readonly metricScale: number;
   readonly joints: JointTable;
   readonly points: readonly FingerPointPath[];
@@ -152,7 +162,7 @@ export function captureHandGeometry(
     }
   }
 
-  return { metricScale, joints: cloneJointTable(joints), points };
+  return { handPresent: !!hand, metricScale, joints: cloneJointTable(joints), points };
 }
 
 /** Create a result buffer with identities and vectors stable across every sample. */
@@ -202,29 +212,187 @@ export function sampleHandGeometry(
       continue;
     }
 
-    _pathMatrix.identity();
-    for (const node of path.nodes ?? []) {
-      const jointIndex = node.jointIndex;
-      const amount = jointIndex === undefined ? 0 : (curls[path.finger] ?? 0);
-      const nodeJoints = calibration.joints[path.finger === 'thumb' ? 'thumb' : 'finger'];
-      if (node.curlAxis) {
-        composeFingerRotation(
-          _localQuaternion,
-          node.rest,
-          node.curlAxis,
-          fingerCurl(nodeJoints, jointIndex as number, amount),
-          node.splayAxis,
-          jointIndex === 0 ? (spread[path.finger] ?? 0) : 0,
-          _rotationScratch,
-        );
-      } else {
-        _localQuaternion.copy(node.rest);
-      }
-      _localMatrix.compose(node.position, _localQuaternion, node.scale);
-      _pathMatrix.multiply(_localMatrix);
-    }
+    evaluateFingerPath(calibration, path, curls, spread, _pathMatrix);
     _position.setFromMatrixPosition(_pathMatrix).multiplyScalar(calibration.metricScale);
     output.position.copy(_position);
   }
   return out;
+}
+
+/** Compose the same captured hierarchy for collision points and contact landmarks. */
+function evaluateFingerPath(
+  calibration: HandGeometryCalibration,
+  path: FingerPointPath,
+  curls: FingerSpec,
+  spread: FingerSpec,
+  out: THREE.Matrix4,
+): void {
+  out.identity();
+  for (const node of path.nodes ?? []) {
+    const jointIndex = node.jointIndex;
+    const amount = jointIndex === undefined ? 0 : (curls[path.finger] ?? 0);
+    const nodeJoints = calibration.joints[path.finger === 'thumb' ? 'thumb' : 'finger'];
+    if (node.curlAxis) {
+      composeFingerRotation(
+        _localQuaternion,
+        node.rest,
+        node.curlAxis,
+        fingerCurl(nodeJoints, jointIndex as number, amount),
+        node.splayAxis,
+        jointIndex === 0 ? (spread[path.finger] ?? 0) : 0,
+        _rotationScratch,
+      );
+    } else {
+      _localQuaternion.copy(node.rest);
+    }
+    _localMatrix.compose(node.position, _localQuaternion, node.scale);
+    out.multiply(_localMatrix);
+  }
+}
+
+interface ContactSegment {
+  readonly finger: FingerName;
+  readonly segment: 0 | 1;
+  readonly start: FingerPointPath;
+  readonly end: FingerPointPath;
+  readonly normal: THREE.Vector3 | null;
+}
+
+/** Captured contact geometry in metric hand-bone coordinates, without live bones. */
+export interface HandContactCalibration {
+  readonly geometry: HandGeometryCalibration;
+  readonly palmNormal: THREE.Vector3 | null;
+  readonly palmCenter: THREE.Vector3 | null;
+  readonly segments: readonly ContactSegment[];
+}
+
+const _contactStart = new THREE.Matrix4();
+const _contactEnd = new THREE.Matrix4();
+const _contactLinear = new THREE.Matrix3();
+const _contactPoint = new THREE.Vector3();
+const _contactEndPoint = new THREE.Vector3();
+const _contactNormal = new THREE.Vector3();
+const _contactTangent = new THREE.Vector3();
+const EMPTY_CONTROLS: FingerSpec = {};
+
+function finiteVector(value: THREE.Vector3): boolean {
+  return Number.isFinite(value.x) && Number.isFinite(value.y) && Number.isFinite(value.z);
+}
+
+/** Capture normals and palm landmarks from the existing bind hierarchy. */
+export function captureHandContactGeometry(
+  geometry: HandGeometryCalibration,
+  palmLocal: THREE.Vector3,
+): HandContactCalibration {
+  const palmNormal =
+    finiteVector(palmLocal) && palmLocal.lengthSq() > 0 ? palmLocal.clone().normalize() : null;
+  const segments: ContactSegment[] = [];
+  let palmCenter: THREE.Vector3 | null = geometry.handPresent === true ? new THREE.Vector3() : null;
+  for (const finger of FINGERS) {
+    const real = geometry.points.filter((point) => point.finger === finger && !point.tip);
+    if (finger !== 'thumb' && palmCenter) {
+      const mcp = real.find((point) => point.jointIndex === 0);
+      if (!mcp) palmCenter = null;
+      else {
+        evaluateFingerPath(geometry, mcp, EMPTY_CONTROLS, EMPTY_CONTROLS, _contactStart);
+        palmCenter.add(
+          _contactPoint.setFromMatrixPosition(_contactStart).multiplyScalar(geometry.metricScale),
+        );
+      }
+    }
+    for (const segment of [0, 1] as const) {
+      const start = real.find((point) => point.jointIndex === segment);
+      const end = real.find((point) => point.jointIndex === segment + 1);
+      if (!(start && end)) continue;
+      evaluateFingerPath(geometry, start, EMPTY_CONTROLS, EMPTY_CONTROLS, _contactStart);
+      evaluateFingerPath(geometry, end, EMPTY_CONTROLS, EMPTY_CONTROLS, _contactEnd);
+      _contactTangent
+        .setFromMatrixPosition(_contactEnd)
+        .sub(_contactPoint.setFromMatrixPosition(_contactStart));
+      let normal: THREE.Vector3 | null = null;
+      _contactLinear.setFromMatrix4(_contactStart);
+      if (
+        palmNormal &&
+        finiteVector(_contactTangent) &&
+        _contactTangent.lengthSq() > 0 &&
+        Number.isFinite(_contactLinear.determinant()) &&
+        _contactLinear.determinant() !== 0
+      ) {
+        _contactTangent.normalize();
+        _contactNormal
+          .copy(palmNormal)
+          .addScaledVector(_contactTangent, -palmNormal.dot(_contactTangent));
+        if (finiteVector(_contactNormal) && _contactNormal.lengthSq() > 0) {
+          // A normal is a covector: bind transpose stores it in the segment carrier.
+          normal = _contactNormal.normalize().applyMatrix3(_contactLinear.transpose()).clone();
+        }
+      }
+      segments.push({ finger, segment, start, end, normal });
+    }
+  }
+  // Halfway from the hand origin to the mean of the four non-thumb MCPs.
+  if (palmCenter) palmCenter.multiplyScalar(1 / 8);
+  return { geometry, palmNormal, palmCenter, segments };
+}
+
+/** Evaluate a contact proxy, leaving out unchanged for unsupported or invalid selectors. */
+export function sampleHandContact(
+  calibration: HandContactCalibration,
+  curls: FingerSpec,
+  spread: FingerSpec,
+  selector: HandContact,
+  clearance: number,
+  out: THREE.Vector3,
+): boolean {
+  const { geometry } = calibration;
+  if (
+    geometry.handPresent !== true ||
+    !selector ||
+    !Number.isFinite(geometry.metricScale) ||
+    geometry.metricScale <= 0
+  )
+    return false;
+  const surface = selector.surface ?? 'center';
+  if (surface !== 'center' && surface !== 'pad' && surface !== 'back') return false;
+  if (surface !== 'center' && (!Number.isFinite(clearance) || clearance < 0)) return false;
+  if (selector.kind === 'palm') {
+    if (selector.region === 'heel') _contactPoint.set(0, 0, 0);
+    else if (selector.region === 'center' && calibration.palmCenter)
+      _contactPoint.copy(calibration.palmCenter);
+    else return false;
+    if (surface !== 'center') {
+      if (!calibration.palmNormal) return false;
+      _contactNormal.copy(calibration.palmNormal);
+    }
+  } else if (selector.kind === 'finger') {
+    if (!Number.isFinite(selector.fraction) || selector.fraction < 0 || selector.fraction > 1)
+      return false;
+    let segment: ContactSegment | undefined;
+    for (const entry of calibration.segments) {
+      if (entry.finger === selector.finger && entry.segment === selector.segment) {
+        segment = entry;
+        break;
+      }
+    }
+    if (!segment) return false;
+    evaluateFingerPath(geometry, segment.start, curls, spread, _contactStart);
+    evaluateFingerPath(geometry, segment.end, curls, spread, _contactEnd);
+    _contactPoint.setFromMatrixPosition(_contactStart);
+    _contactEndPoint.setFromMatrixPosition(_contactEnd);
+    _contactPoint.lerp(_contactEndPoint, selector.fraction).multiplyScalar(geometry.metricScale);
+    if (surface !== 'center') {
+      if (!segment.normal) return false;
+      _contactLinear.setFromMatrix4(_contactStart);
+      const determinant = _contactLinear.determinant();
+      if (!Number.isFinite(determinant) || determinant === 0) return false;
+      _contactNormal.copy(segment.normal).applyMatrix3(_contactLinear.invert().transpose());
+      if (!finiteVector(_contactNormal) || _contactNormal.lengthSq() === 0) return false;
+      _contactNormal.normalize();
+    }
+  } else return false;
+  if (surface !== 'center')
+    _contactPoint.addScaledVector(_contactNormal, surface === 'pad' ? clearance : -clearance);
+  if (!finiteVector(_contactPoint)) return false;
+  out.copy(_contactPoint);
+  return true;
 }
