@@ -91,6 +91,83 @@ describe('signed body volume clearances', () => {
   it.each([
     { yaw: 0, scale: 1 },
     { yaw: 0.7, scale: 1.3 },
+  ])(
+    'returns the full height-and-bearing clearance gradient at yaw $yaw and scale $scale',
+    ({ yaw, scale }) => {
+      const { volumes } = buildSubject(yaw, scale);
+      const snapshot = volumes.captureVolumeFrame(frame());
+      const pose = required(snapshot.torso, 'torso frame');
+      const volume = required(volumes.torso, 'torso volume');
+      volume.bands = 3;
+      volume.sectors = 4;
+      volume.r = Float32Array.from(
+        { length: 12 },
+        (_, i) => volume.radius * (1 + 0.1 * Math.floor(i / 4) + 0.05 * (i % 4)),
+      );
+      const height = volume.bottom + (volume.top - volume.bottom) * ((0.35 + 0.5) / volume.bands);
+      const theta = ((1.25 + 0.5) / volume.sectors) * Math.PI * 2;
+      const radial = pose.right
+        .clone()
+        .multiplyScalar(Math.cos(theta))
+        .addScaledVector(pose.fwd, Math.sin(theta));
+      const point = pose.O.clone()
+        .addScaledVector(pose.up, height)
+        .addScaledVector(radial, surfaceOf(volume, height, theta) * 0.8);
+      const readPoint = (at: THREE.Vector3) =>
+        volumes.sampleVolumeClearances(snapshot, at, rows())[0];
+      const result = readPoint(point);
+      const step = Math.cbrt(Number.EPSILON) * (volume.top - volume.bottom);
+      const numerical = new THREE.Vector3();
+      for (let axis = 0; axis < 3; axis++) {
+        const plus = point.clone().setComponent(axis, point.getComponent(axis) + step);
+        const minus = point.clone().setComponent(axis, point.getComponent(axis) - step);
+        numerical.setComponent(
+          axis,
+          (readPoint(plus).distance - readPoint(minus).distance) / (2 * step),
+        );
+      }
+      expect(result.valid).toBe(true);
+      expect(result.distance).toBeLessThan(0);
+      expect(result.normal.distanceTo(numerical)).toBeLessThan(1e-8);
+      expect(result.normal.dot(pose.up)).toBeLessThan(0);
+      expect(result.normal.dot(radial)).toBeCloseTo(1, 10);
+      expect(result.normal.length()).toBeGreaterThan(1);
+    },
+  );
+
+  it.each(['top', 'bottom'] as const)(
+    'uses the measured head %s cap to leave the volume vertically',
+    (cap) => {
+      const { volumes } = buildSubject(0.7, 1.3);
+      const snapshot = volumes.captureVolumeFrame(frame());
+      const pose = required(snapshot.head, 'head frame');
+      const volume = required(volumes.head, 'head volume');
+      const outward = pose.up.clone().multiplyScalar(cap === 'top' ? 1 : -1);
+      const height = volume[cap];
+      const boundary = pose.O.clone()
+        .addScaledVector(pose.up, height)
+        .addScaledVector(pose.fwd, surfaceOf(volume, height, Math.PI / 2) * 0.2);
+      const step = Math.cbrt(Number.EPSILON) * (volume.top - volume.bottom);
+      const inside = boundary.clone().addScaledVector(outward, -step);
+      const contact = volumes.sampleVolumeClearances(snapshot, boundary, rows())[1];
+      const buried = volumes.sampleVolumeClearances(snapshot, inside, rows())[1];
+      expect(contact.valid).toBe(true);
+      expect(contact.distance).toBeCloseTo(0, 12);
+      expect(contact.normal.distanceTo(outward)).toBeLessThan(1e-12);
+      expect(buried.valid).toBe(true);
+      expect(buried.distance).toBeCloseTo(-step, 12);
+      expect(buried.normal.distanceTo(outward)).toBeLessThan(1e-12);
+      const restored = inside.clone().addScaledVector(buried.normal, -buried.distance);
+      expect(volumes.sampleVolumeClearances(snapshot, restored, rows())[1].distance).toBeCloseTo(
+        0,
+        12,
+      );
+    },
+  );
+
+  it.each([
+    { yaw: 0, scale: 1 },
+    { yaw: 0.7, scale: 1.3 },
   ])('agrees with the existing arm proxy loops at yaw $yaw and scale $scale', ({ yaw, scale }) => {
     const subject = buildSubject(yaw, scale);
     const { anatomy, profile } = subject;
@@ -128,8 +205,21 @@ describe('signed body volume clearances', () => {
               bodyPose.up,
               -points[index].point.clone().sub(bodyPose.O).dot(bodyPose.up),
             );
-          expect(entry.normal.length()).toBeCloseTo(1, 12);
-          expect(entry.normal.dot(radial.normalize())).toBeCloseTo(1, 10);
+          expect(vectorValues(entry.normal).every(Number.isFinite)).toBe(true);
+          const volume = required(
+            entry.surface === 'torso' ? subject.volumes.torso : subject.volumes.head,
+            `${entry.surface} volume`,
+          );
+          const height = points[index].point.clone().sub(bodyPose.O).dot(bodyPose.up);
+          const top = height - volume.top;
+          const bottom = volume.bottom - height;
+          if (entry.surface === 'head' && entry.distance === Math.max(top, bottom)) {
+            expect(entry.normal.dot(bodyPose.up)).toBeCloseTo(top >= bottom ? 1 : -1, 10);
+          } else {
+            // A radial surface's gradient has unit radial component, but its
+            // height and bearing components must retain their magnitude.
+            expect(entry.normal.dot(radial.normalize())).toBeCloseTo(1, 10);
+          }
         }
       }
       const signedContact = measured.some((sample) =>
@@ -146,6 +236,28 @@ describe('signed body volume clearances', () => {
 
     expect(sawContact).toBe(true);
     expect(sawClear).toBe(true);
+  });
+
+  it('keeps table derivatives periodic, height-clamped, and neutral for a fallback cylinder', () => {
+    const volume = {
+      r: new Float32Array([1, 2, 4, 3, 2, 3, 5, 4]),
+      bands: 2,
+      sectors: 4,
+      bottom: 0,
+      top: 2,
+      radius: 3,
+    };
+    const gradient = { height: Number.NaN, bearing: Number.NaN };
+    const repeated = { height: Number.NaN, bearing: Number.NaN };
+    for (const height of [0, 0.5, 1, 1.5, 2]) {
+      const radius = surfaceOf(volume, height, -0.2, gradient);
+      expect(surfaceOf(volume, height, Math.PI * 2 - 0.2, repeated)).toBeCloseTo(radius, 12);
+      expect(repeated.height).toBeCloseTo(gradient.height, 12);
+      expect(repeated.bearing).toBeCloseTo(gradient.bearing, 12);
+      expect(gradient.height).toBe(height > 0.5 && height < 1.5 ? 1 : 0);
+    }
+    expect(surfaceOf({ ...volume, r: null }, 1, 0.3, gradient)).toBe(3);
+    expect(gradient).toEqual({ height: 0, bearing: 0 });
   });
 
   it('keeps the existing one-percent torso contact boundary on both sides', () => {

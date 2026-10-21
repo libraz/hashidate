@@ -53,6 +53,7 @@ export interface ArmPathClearance {
   /** Invalid optional surfaces retain their stable slot but add no constraint. */
   valid: boolean;
   distance: number;
+  /** World-space distance gradient; radial tables need not have a unit gradient. */
   normal: THREE.Vector3;
 }
 
@@ -1579,7 +1580,10 @@ export class ArmStepSolver {
         const pointIndex = forced ? this.forcedPointIndex[row] : clearance.pointIndex;
         if (pointIndex < 0 || pointIndex >= state.points.length) continue;
         const displacement = this.predictedPointDisplacement(pointIndex, unconstrained);
-        if (!(nullspace || forced) && clearance.distance > displacement + this.roundoffTolerance)
+        if (
+          !(nullspace || forced) &&
+          clearance.distance > clearance.normal.length() * displacement + this.roundoffTolerance
+        )
           continue;
         if (constraintCount >= this.qpCapacity) return false;
         const offset = constraintCount * DOFS;

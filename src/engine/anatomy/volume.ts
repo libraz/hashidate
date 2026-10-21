@@ -181,14 +181,29 @@ export function partSkin(
   };
 }
 
+/** Derivatives of the radius table in metres per height metre and per radian. */
+export interface SurfaceGradient {
+  height: number;
+  bearing: number;
+}
+
 /** Radius of one volume at a height and bearing in its own frame. */
-export function surfaceOf(t: MeasuredVolume, h: number, theta: number): number {
+export function surfaceOf(
+  t: MeasuredVolume,
+  h: number,
+  theta: number,
+  gradient?: SurfaceGradient,
+): number {
   const tr = t.r;
-  if (!tr) return t.radius;
-  const fb = Math.min(
-    t.bands - 1,
-    Math.max(0, ((h - t.bottom) / (t.top - t.bottom)) * t.bands - 0.5),
-  );
+  if (!tr) {
+    if (gradient) {
+      gradient.height = 0;
+      gradient.bearing = 0;
+    }
+    return t.radius;
+  }
+  const rawBand = ((h - t.bottom) / (t.top - t.bottom)) * t.bands - 0.5;
+  const fb = Math.min(t.bands - 1, Math.max(0, rawBand));
   const b0 = Math.floor(fb);
   const b1 = Math.min(t.bands - 1, b0 + 1);
   const tb = fb - b0;
@@ -199,6 +214,19 @@ export function surfaceOf(t: MeasuredVolume, h: number, theta: number): number {
   const s1 = (s0 + 1) % t.sectors;
   const ts = fs - Math.floor(fs);
   const g = (b: number, s: number) => tr[b * t.sectors + s];
+  if (gradient) {
+    // The selected cell also fixes the one-sided derivative at a table knot.
+    // Clamped half-bands have constant radius in height.
+    gradient.height =
+      rawBand > 0 && rawBand < t.bands - 1
+        ? ((g(b1, s0) * (1 - ts) + g(b1, s1) * ts - (g(b0, s0) * (1 - ts) + g(b0, s1) * ts)) *
+            t.bands) /
+          (t.top - t.bottom)
+        : 0;
+    gradient.bearing =
+      (((g(b0, s1) - g(b0, s0)) * (1 - tb) + (g(b1, s1) - g(b1, s0)) * tb) * t.sectors) /
+      (Math.PI * 2);
+  }
   return (
     (g(b0, s0) * (1 - ts) + g(b0, s1) * ts) * (1 - tb) +
     (g(b1, s0) * (1 - ts) + g(b1, s1) * ts) * tb

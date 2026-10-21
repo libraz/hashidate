@@ -1856,6 +1856,59 @@ describe('constrained arm path kernel', () => {
     }
   });
 
+  it.each([1, 8])(
+    'keeps an approaching plane active with clearance gradient magnitude %s',
+    (magnitude) => {
+      const h = fixture();
+      const start = new Float64Array([0, 0.5, 0, 0.7, 0, 0, 0]);
+      const goal = start.slice();
+      goal[5] = 0.4;
+      const contact = start.slice();
+      contact[5] = 0.1;
+      const palm = forwardArm(
+        configFrom(start),
+        h.calibration,
+        h.context,
+        makeArmForwardResult(),
+      ).palm.clone();
+      const offset = firstHandProxy(h, contact).dot(palm);
+      const pointIndex = TORSO_SAMPLES * 2 + 1;
+      const distances: number[] = [];
+      const environment: ArmPathEnvironment = {
+        rowCount: 1,
+        sample: (points, rows) => {
+          const distance = offset - points[pointIndex].position.dot(palm);
+          distances.push(distance);
+          rows[0].key = 'scaled-plane';
+          rows[0].pointIndex = pointIndex;
+          rows[0].valid = true;
+          rows[0].distance = magnitude * distance;
+          rows[0].normal.copy(palm).multiplyScalar(-magnitude);
+        },
+      };
+      const strict = { lower: start.slice(), upper: start.slice() };
+      strict.upper[5] = goal[5];
+      const request = requestAt(h.calibration, h.context, goal, h.handLength);
+      const output = makeArmPathPlanOutput(h.calibration, h.handGeometry, 1);
+      const out = h.solver.plan(request, start, h.context, strict, environment, output);
+
+      expect(out.status).toBe('progress');
+      expect(out.q[5]).toBeGreaterThan(0);
+      expect(distances.length).toBeGreaterThan(1);
+      expect(distances[0]).toBeGreaterThan(0);
+      // Only wrist flex moves here, so its sine arc stays inside the plane
+      // when the linear clearance constraint bounds the first proposed step.
+      expect(distances[1]).toBeGreaterThanOrEqual(-1e-10);
+      expect(out.environmentBatches).toBe(distances.length);
+      expect(out.environmentBatches).toBeLessThanOrEqual(96);
+      expect(
+        out.forward.wrist.distanceTo(
+          forwardArm(configFrom(out.q), h.calibration, h.context, makeArmForwardResult()).wrist,
+        ),
+      ).toBeLessThan(1e-12);
+    },
+  );
+
   it('relinearizes a violated row that becomes valid only after the trial enters its query domain', () => {
     const h = fixture();
     const pointIndex = TORSO_SAMPLES * 2 + 1;

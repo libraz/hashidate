@@ -38,14 +38,14 @@ export interface BodyVolumeFrame {
   head: VolumePose | null;
 }
 
-/** Signed radial clearance from one measured body volume, in world metres. */
+/** Signed clearance from a measured radial surface or a head cap, in world metres. */
 export interface BodyClearance {
   surface: 'torso' | 'head';
   /** False when the volume is absent or the point is outside its measured height. */
   valid: boolean;
   /** Negative inside the existing one-percent contact tolerance. */
   distance: number;
-  /** Outward radial direction in world space, including on the volume axis. */
+  /** World-space clearance gradient; a finite outward fallback on the volume axis. */
   normal: THREE.Vector3;
 }
 
@@ -102,6 +102,7 @@ export class BodyVolumes {
 
   private readonly _hq = new THREE.Quaternion();
   private readonly _rel = new THREE.Vector3();
+  private readonly _surfaceGradient = { height: 0, bearing: 0 };
   private readonly _trunkFrame: VolumeFrame;
   private _inVol: MeasuredVolume | null;
   private _inFrame: VolumeFrame;
@@ -273,12 +274,39 @@ export class BodyVolumes {
       vol,
       h,
       Math.atan2(this._radial.dot(pose.fwd), this._radial.dot(pose.right)),
+      this._surfaceGradient,
     );
     result.valid = true;
     result.distance = r - R * (1 - TORSO_DEPTH_TOLERANCE);
+    if (surface === 'head') {
+      const top = h - vol.top;
+      const bottom = vol.bottom - h;
+      // The radial table is flat in its end half-bands. The head still has
+      // caps there; choose the outward cap gradient on a tied boundary.
+      if (top >= result.distance && top >= bottom) {
+        result.distance = top;
+        result.normal.copy(pose.up);
+        return;
+      }
+      if (bottom >= result.distance) {
+        result.distance = bottom;
+        result.normal.copy(pose.up).negate();
+        return;
+      }
+    }
     if (r > 1e-9) {
-      result.normal.copy(this._radial).divideScalar(r);
+      const toleranceScale = 1 - TORSO_DEPTH_TOLERANCE;
+      const bearingScale = (toleranceScale * this._surfaceGradient.bearing) / (r * r);
+      // Keep the gradient magnitude: the QP linearizes this same clearance,
+      // so normalizing only its derivative would change the constraint.
+      result.normal
+        .copy(this._radial)
+        .divideScalar(r)
+        .addScaledVector(pose.up, -toleranceScale * this._surfaceGradient.height)
+        .addScaledVector(pose.right, bearingScale * this._radial.dot(pose.fwd))
+        .addScaledVector(pose.fwd, -bearingScale * this._radial.dot(pose.right));
     } else {
+      // Bearing and the radial derivative are undefined on the axis.
       result.normal.copy(pose.fwd);
       if (result.normal.lengthSq() > 1e-18) result.normal.normalize();
       else result.normal.set(0, 0, 1);
