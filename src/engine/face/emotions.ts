@@ -85,6 +85,7 @@ export const EMOTIONS: Record<EmotionName, ShapeWeights> = {
     eyeLookUpLeft: 0.4,
     eyeLookUpRight: 0.4,
     eyeLookInLeft: 0.28,
+    eyeLookOutRight: 0.28,
     mouthPucker: 0.3,
     mouthLeft: 0.28,
     eyeSquintLeft: 0.2,

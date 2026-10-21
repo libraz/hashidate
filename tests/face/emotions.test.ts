@@ -103,6 +103,16 @@ describe('composeArkit', () => {
     expect(composeArkit({})).toEqual({});
   });
 
+  it.each(Object.keys(EMOTIONS) as EmotionName[])(
+    'turns both eyes the same way sideways for %s, so the gaze never crosses',
+    (name) => {
+      const t = EMOTIONS[name];
+      // Looking right is the left eye in and the right eye out, and the reverse.
+      expect(t.eyeLookInLeft ?? 0).toBeCloseTo(t.eyeLookOutRight ?? 0, 12);
+      expect(t.eyeLookOutLeft ?? 0).toBeCloseTo(t.eyeLookInRight ?? 0, 12);
+    },
+  );
+
   it('never emits a weight outside 0..1 for any single emotion at full strength', () => {
     for (const name of Object.keys(EMOTIONS) as EmotionName[]) {
       for (const v of Object.values(composeArkit({ [name]: 1 }))) {
