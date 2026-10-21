@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Body } from '@/engine/motion/body';
+import { Body, type BodyOptions } from '@/engine/motion/body';
 import { buildProfile } from '@/engine/profile';
 import { Rig } from '@/engine/rig';
 import type { BoneSlot, FingerName, GestureDef, Profile, Side, Vec3Tuple } from '@/engine/types';
@@ -28,13 +28,13 @@ export interface PointCapture {
   palm: THREE.Vector3;
 }
 
-export function harness(yaw = 0): Harness {
+export function harness(yaw = 0, options: BodyOptions = {}): Harness {
   const built = buildRig();
   built.root.rotation.y = yaw;
   built.root.updateMatrixWorld(true);
   const profile = buildProfile(built.root, built.descriptor);
   const rig = new Rig(profile);
-  const body = new Body(rig, profile);
+  const body = new Body(rig, profile, options);
   // Nothing here is testing the idle, and a breath riding on top of the
   // trajectory shows up as noise in every speed measurement below.
   body.breathDepth = 0;

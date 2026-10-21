@@ -1,16 +1,7 @@
 import * as THREE from 'three';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { Side } from '@/engine/types';
 import { canonicalDirection, DT, type Harness, harness, wristOf } from './harness';
-
-beforeEach(() => {
-  // Compare limiter-on and -off entrances with the same nominal gesture variation.
-  vi.spyOn(Math, 'random').mockReturnValue(0.5);
-});
-
-afterEach(() => {
-  vi.restoreAllMocks();
-});
 
 /**
  * Where the elbow goes on the way into a reach.
@@ -67,6 +58,9 @@ const CLEAR_OF_THE_FACE = [
 
 const SIDES: Side[] = ['L', 'R'];
 
+/** Compare limiter-on and -off entrances with the same nominal gesture variation. */
+const NOMINAL = { random: () => 0.5 };
+
 interface Run {
   /** Peak wrist acceleration over either hand, m/s². */
   acceleration: number;
@@ -80,7 +74,7 @@ interface Run {
 
 /** Play a gesture's entrance from rest and measure it. */
 function entrance(id: string, side: Side, limits: boolean, frames = 90): Run {
-  const h = harness();
+  const h = harness(0, NOMINAL);
   h.rig.limitsEnabled = limits;
   h.rig.reset();
   h.body.update(DT);

@@ -1,11 +1,7 @@
 import * as THREE from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FINGER_WIDTH, JOINTS } from '@/engine/anatomy';
-import { Body } from '@/engine/motion/body';
-import { buildProfile } from '@/engine/profile';
-import { Rig } from '@/engine/rig';
 import type { JointReading, Side } from '@/engine/types';
-import { buildRig } from '../../helpers/scene';
 import { DT, fingerDepth, type Harness, harness } from './harness';
 
 /**
@@ -148,7 +144,7 @@ describe('the path between two poses', () => {
     expect(worst).toBeLessThanOrEqual(free[1] - free[0] + 1e-6);
   });
 
-  it('keeps the constrained hand clear of the face within the signed wrist limits', () => {
+  it('clears the fingers by no more turn of the hand than a wrist deviates comfortably', () => {
     const h = harness();
     h.rig.limitsEnabled = true;
     expect(h.rig.limitsEnabled).toBe(true);
@@ -168,7 +164,9 @@ describe('the path between two poses', () => {
     const heldWorldOrientation = hand.getWorldQuaternion(new THREE.Quaternion());
     const clearance = h.rig.fingerClearance('R');
     expect(clearance).toBeGreaterThan(0);
-    const [minimumDeviation, maximumDeviation] = h.rig.joints.wrist.dofs.deviation.max;
+    // On the live path the clearance turn is part of the solved wrist, so it is
+    // bounded where the wrist is: inside its comfortable deviation, not its stop.
+    const [minimumDeviation, maximumDeviation] = h.rig.joints.wrist.dofs.deviation.free;
     const transitionCommits = vi.spyOn(h.rig, 'commitArmFrame');
     let greatestHandTurn = 0;
 
@@ -206,33 +204,26 @@ describe('the humerus under a bent elbow', () => {
   });
 
   it('turns with the arm so the elbow folds about its own hinge', () => {
-    const built = buildRig();
-    built.root.updateMatrixWorld(true);
-    const profile = buildProfile(built.root, built.descriptor);
-    const rig = new Rig(profile);
-    const upper = profile.bones['upperArm.R'];
-    const lower = profile.bones['lowerArm.R'];
-    const hand = profile.bones['hand.R'];
-    const chest = profile.bones.chest ?? profile.bones.spine;
-    if (!(upper && lower && hand && chest && profile.body)) throw new Error('rig incomplete');
+    const h = harness();
+    // Constructing the body poses the arms; the front is read off the bind pose.
+    h.rig.reset();
+    h.profile.root?.updateMatrixWorld(true);
+    const upper = h.profile.bones['upperArm.R'];
+    const lower = h.profile.bones['lowerArm.R'];
+    const hand = h.profile.bones['hand.R'];
+    const chest = h.profile.bones.chest ?? h.profile.bones.spine;
+    if (!(upper && lower && hand && chest && h.profile.body)) throw new Error('rig incomplete');
     const wp = (b: THREE.Object3D) => b.getWorldPosition(new THREE.Vector3());
     // The front of the arm at rest, carried in the bone: the way an elbow folds.
     const q0 = upper.getWorldQuaternion(new THREE.Quaternion());
     const along0 = wp(lower).sub(wp(upper)).normalize();
-    const front = profile.body.forward
+    const front = h.profile.body.forward
       .clone()
       .applyQuaternion(chest.getWorldQuaternion(new THREE.Quaternion()));
     front.addScaledVector(along0, -front.dot(along0));
     expect([front.x, front.y, front.z].every(Number.isFinite)).toBe(true);
     expect(front.length()).toBeGreaterThan(1e-6);
     front.normalize().applyQuaternion(q0.invert());
-
-    const body = new Body(rig, profile);
-    body.breathDepth = 0;
-    body.idleAmount = 0;
-    body.weightShift = 0;
-    body.gazeAmount = 0;
-    const h = { body, profile, rig };
 
     const off: number[] = [];
     for (const g of ['listen', 'pointUp', 'sparkle', 'stretch', 'bothPeace']) {
