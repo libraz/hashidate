@@ -500,7 +500,7 @@ export class Body {
   private readonly _look = new ScalarFollower(1);
   private readonly _gazeFrame = makeGazeFrame();
 
-  private _armDirs: Record<Side, Record<ArmSlot, Vec3Tuple>>;
+  private readonly _armDirs: Record<Side, Record<ArmSlot, Vec3Tuple>>;
   private _armWorld: Record<Side, Record<ArmSlot, Vec3Tuple>>;
   private _armVec: Record<Side, Record<ArmSlot, THREE.Vector3>>;
   private _armWorldVec: Record<Side, Record<ArmSlot, THREE.Vector3>>;
@@ -563,9 +563,9 @@ export class Body {
   private readonly _spineFrom = new THREE.Vector3();
   private readonly _carryQ = new THREE.Quaternion();
   private _armState: Record<Side, Record<ArmSlot, DirFollower>>;
-  private _fingerSpec: Record<Side, Record<FingerName, number>>;
+  private readonly _fingerSpec: Record<Side, Record<FingerName, number>>;
   private _fingerState: Record<Side, Record<FingerName, ScalarFollower>>;
-  private _fingerSpreadSpec: Record<Side, Record<FingerName, number>>;
+  private readonly _fingerSpreadSpec: Record<Side, Record<FingerName, number>>;
   private _fingerSpreadState: Record<Side, Record<FingerName, ScalarFollower>>;
   /** Drift and lag on top of the authored hand. See `finger-life.ts`. */
   private readonly _fingerLife: FingerLife;
@@ -574,7 +574,7 @@ export class Body {
     Side,
     { lead: FingerSpec | null; follow: FingerSpec | null }
   >;
-  private _twist: Record<Side, ScalarFollower>;
+  private readonly _twist: Record<Side, ScalarFollower>;
 
   /**
    * The current gesture's envelope, split per arm link by its onset delay, and
@@ -588,9 +588,9 @@ export class Body {
   private _palm: Record<Side, DirFollower>;
   private _palmTarget: THREE.Vector3;
   private readonly _palmFrom = new THREE.Vector3();
-  private _palmOut: Record<Side, Vec3Tuple>;
+  private readonly _palmOut: Record<Side, Vec3Tuple>;
   private _palmWorldOut: Record<Side, Vec3Tuple>;
-  private _palmW: Record<Side, ScalarFollower>;
+  private readonly _palmW: Record<Side, ScalarFollower>;
 
   /** Gestures on their way out, oldest first. Only `handoff` adds to it. */
   private readonly _fading: Outgoing[] = [];
@@ -1543,7 +1543,6 @@ export class Body {
     const frameReady = this.axes.ready();
     for (const side of SIDES) {
       const accepted = this.rig.armStateForBodyInitialization(side);
-      const tuple = this._acceptedTuple[side];
       let stanceReady = true;
       for (const slot of ARM_SLOTS) {
         const source = accepted.directions[slot];
@@ -1560,14 +1559,8 @@ export class Body {
         target[2] = source[2] / length;
       }
       if (stanceReady) {
-        for (const slot of ['upperArm', 'lowerArm', 'hand'] as const) {
-          const target = tuple[slot];
-          const source = this._armDirs[side][slot];
-          target[0] = source[0];
-          target[1] = source[1];
-          target[2] = source[2];
-        }
-        this._arm.note(side, tuple.upperArm, tuple.lowerArm, tuple.hand);
+        const dirs = this._armDirs[side];
+        this._arm.note(side, dirs.upperArm, dirs.lowerArm, dirs.hand);
       }
       const palm = accepted.palm;
       const palmLength = Math.hypot(palm[0], palm[1], palm[2]);
@@ -2310,7 +2303,6 @@ export class Body {
         );
         this.followArm(slot, side, v, dt, carried ? TRAVEL_FOLLOW : ARM_FOLLOW);
         this.axes.tupleToWorld(worldDirs[slot], dirs[slot], side, mirror, frameReady);
-        this.axes.toWorld(this._armWorldVec[side][slot], dirs[slot], side, mirror, frameReady);
       }
 
       // The wrist's own channels ride the hand link's envelope: a palm roll and
@@ -2367,7 +2359,6 @@ export class Body {
         mirror,
         frameReady,
       );
-      this._palmWorldVector[side].fromArray(palmWorld);
 
       // BASE_PALM describes an arm hanging at the side, and only that. A pose
       // that raises the hand and states no palm of its own must not be held to
