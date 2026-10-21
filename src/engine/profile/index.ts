@@ -177,4 +177,4 @@ export function buildProfile(
 
 export { ARKIT_52, DEFAULT_GAZE_LIMITS, isSeparator } from './candidates';
 export { BODY_ANCHORS, FACE_ANCHORS } from './frames';
-export { readVrmHumanoid, type VrmHumanoid } from './vrm';
+export { loadedNodeNames, readVrmHumanoid, type VrmHumanoid } from './vrm';

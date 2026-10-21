@@ -738,13 +738,7 @@ export class AvatarRuntime {
 
     let mounted: Mounted | undefined;
     try {
-      mounted = mountAvatar(
-        root,
-        avatar,
-        this.toon,
-        () => this.environment.texture,
-        gltf.parser?.json,
-      );
+      mounted = mountAvatar(root, avatar, this.toon, () => this.environment.texture, gltf.parser);
       const { profile, director, wardrobe, materials, problems } = mounted;
 
       this.shotCamera.rebuild(buildFramings(root, profile, FOV));

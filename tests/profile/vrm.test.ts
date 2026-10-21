@@ -1,5 +1,8 @@
+import type * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { describe, expect, it } from 'vitest';
-import { readVrmHumanoid } from '@/engine/profile';
+import { loadedNodeNames, readVrmHumanoid } from '@/engine/profile';
+import { collectBones, resolveBones } from '@/engine/profile/bones';
 
 /** The extension keys, as the specs spell them. */
 const VRM_1 = 'VRMC_vrm';
@@ -105,4 +108,27 @@ describe('readVrmHumanoid', () => {
       expect(readVrmHumanoid(gltf)).toBeNull();
     },
   );
+});
+
+describe('readVrmHumanoid against a loaded scene', () => {
+  /** Two joints share a name; the humanoid map points at the second. */
+  const duplicated = {
+    asset: { version: '2.0' },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ name: 'Armature', children: [1, 2] }, { name: 'Hips' }, { name: 'Hips' }],
+    skins: [{ joints: [1, 2] }],
+    extensions: { [VRM_1]: { humanoid: { humanBones: { hips: { node: 2 } } } } },
+  };
+
+  it('binds the node the map names, not the first node with its name', async () => {
+    const gltf = await new GLTFLoader().parseAsync(JSON.stringify(duplicated), '');
+    const second = [...gltf.parser.associations].find(([, ref]) => ref.nodes === 2)?.[0];
+
+    const map = readVrmHumanoid(gltf.parser.json, loadedNodeNames(gltf.parser.associations));
+    const { value: bones } = resolveBones(collectBones(gltf.scene), map?.bones);
+
+    expect(second).toBeDefined();
+    expect(bones.hips).toBe(second as THREE.Object3D);
+  });
 });

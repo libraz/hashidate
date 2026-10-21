@@ -53,9 +53,10 @@ describe('mountAvatar with VRM data', () => {
           extensions: { VRMC_vrm: { humanoid: { humanBones: { head: { node: 0 } } } } },
         };
 
-  const mount = (root: THREE.Object3D, gltfJson: unknown): void => {
+  const mount = (root: THREE.Object3D, json: unknown): void => {
+    const parser = json === undefined ? undefined : { json, associations: new Map() };
     try {
-      mountAvatar(root, base, true, () => null, gltfJson);
+      mountAvatar(root, base, true, () => null, parser);
     } catch {
       // A bare group has no skeleton; only the root's orientation is under test.
     }

@@ -3,9 +3,11 @@
  *
  * A VRM file states which node fills each humanoid slot, which is better
  * evidence than any naming guess. This reads that map out of a glTF JSON object
- * and spells it as the descriptor's `bones` and `fingers`; it touches no scene.
+ * and spells it as the descriptor's `bones` and `fingers`, naming each node as
+ * the loader did when the parser's associations are at hand.
  */
 
+import * as THREE from 'three';
 import type { BoneOverrides, BoneSlot, FingerKey, FingerOverrides, Side } from '../types';
 
 /** What a glTF's VRM humanoid says, in the descriptor's vocabulary. */
@@ -61,11 +63,15 @@ const SEGMENTS = ['Proximal', 'Intermediate', 'Distal'];
 const THUMB_V1 = ['Metacarpal', 'Proximal', 'Distal'];
 
 /** VRM bone name to node name, for whichever version the file carries. */
-function readNodeNames(gltf: Json): { names: Map<string, string>; legacy: boolean } | null {
+function readNodeNames(
+  gltf: Json,
+  loadedName?: (index: number) => string | undefined,
+): { names: Map<string, string>; legacy: boolean } | null {
   const nodes = Array.isArray(gltf.nodes) ? (gltf.nodes as unknown[]) : [];
   const extensions = isRecord(gltf.extensions) ? gltf.extensions : {};
   const nameOf = (index: unknown): string | undefined => {
     if (typeof index !== 'number' || !Number.isInteger(index)) return undefined;
+    if (loadedName) return loadedName(index) || undefined;
     const node = nodes[index];
     const name = isRecord(node) ? node.name : undefined;
     return typeof name === 'string' && name.length > 0 ? name : undefined;
@@ -97,15 +103,37 @@ function readNodeNames(gltf: Json): { names: Map<string, string>; legacy: boolea
 }
 
 /**
+ * Node index to the name the loader gave it.
+ *
+ * GLTFLoader suffixes a repeated name (`Hips`, `Hips_1`), so the file's name
+ * can belong to a different node than the one the map points at. `associations`
+ * is the parser's own record of which object each node index became.
+ */
+export function loadedNodeNames(
+  associations: ReadonlyMap<unknown, { nodes?: number }>,
+): (index: number) => string | undefined {
+  const names = new Map<number, string>();
+  for (const [object, ref] of associations) {
+    if (object instanceof THREE.Object3D && ref.nodes !== undefined && !names.has(ref.nodes)) {
+      names.set(ref.nodes, object.name);
+    }
+  }
+  return (index) => names.get(index);
+}
+
+/**
  * Read a glTF JSON object's VRM humanoid map as bone overrides.
  *
- * Returns null when the file carries no humanoid map. Names are the nodes' names
- * as written in the file; they are matched after the loader's sanitisation like
- * any other.
+ * Returns null when the file carries no humanoid map. With `loadedName` (see
+ * `loadedNodeNames`) each bone is named as the loader named its node; without
+ * it, by the file's name, which a duplicated name makes ambiguous.
  */
-export function readVrmHumanoid(gltf: unknown): VrmHumanoid | null {
+export function readVrmHumanoid(
+  gltf: unknown,
+  loadedName?: (index: number) => string | undefined,
+): VrmHumanoid | null {
   if (!isRecord(gltf)) return null;
-  const found = readNodeNames(gltf);
+  const found = readNodeNames(gltf, loadedName);
   if (!found) return null;
   const { names, legacy } = found;
 

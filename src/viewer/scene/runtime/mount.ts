@@ -1,6 +1,7 @@
 import * as THREE from 'three';
+import type { GLTFParser } from 'three/addons/loaders/GLTFLoader.js';
 import { Director } from '@/engine/director';
-import { buildProfile, readVrmHumanoid, type VrmHumanoid } from '@/engine/profile';
+import { buildProfile, loadedNodeNames, readVrmHumanoid, type VrmHumanoid } from '@/engine/profile';
 import { type MaterialSet, releaseTextureImages, setupMaterials, Wardrobe } from '@/engine/scene';
 import type { AvatarDescriptor, BoneOverrides, FingerOverrides, Profile } from '@/engine/types';
 import { getLocale } from '@/i18n/locale';
@@ -48,17 +49,18 @@ export function withVrmHumanoid(
 }
 
 /**
- * `gltfJson` is the file's JSON, read for a VRM humanoid map. A VRM 0.x model
- * faces -Z, so it is turned to face +Z before anything measures it.
+ * `parser` is the loader's, read for a VRM humanoid map: its JSON for the map,
+ * its associations for the node each entry became. A VRM 0.x model faces -Z,
+ * so it is turned to face +Z before anything measures it.
  */
 export function mountAvatar(
   root: THREE.Object3D,
   descriptor: AvatarDescriptor,
   toon: boolean,
   environment: () => THREE.Texture | null,
-  gltfJson?: unknown,
+  parser?: Pick<GLTFParser, 'json' | 'associations'>,
 ): Mounted {
-  const vrm = readVrmHumanoid(gltfJson);
+  const vrm = parser ? readVrmHumanoid(parser.json, loadedNodeNames(parser.associations)) : null;
   const avatar = vrm ? withVrmHumanoid(descriptor, vrm) : descriptor;
   if (vrm?.legacy) {
     root.rotateY(Math.PI);
@@ -164,8 +166,6 @@ export function disposeRawAvatar(root: THREE.Object3D): void {
     };
     if (disposable(renderable.geometry)) {
       geometries.add(renderable.geometry);
-      const morphTexture = (renderable.geometry as { morphTexture?: unknown }).morphTexture;
-      if (disposable(morphTexture)) textures.add(morphTexture);
     }
     const rawMaterials = Array.isArray(renderable.material)
       ? renderable.material
@@ -190,15 +190,13 @@ export function disposeAvatar(cur: LoadedAvatar): void {
   // Materials and their textures belong to the material layer, which holds
   // both the imported set and the toon set; only the geometry is ours.
   cur.materials.dispose();
-  // Geometry, and the two GPU resources that hang off a skinned mesh rather
-  // than off its material: the skeleton's bone texture and the morph-target
-  // array texture. Neither is reachable by walking materials, and neither
-  // shows up as anything but a slowly climbing texture count.
+  // Geometry, and the skeleton's bone texture, which hangs off a skinned mesh
+  // rather than its material and shows up only as a climbing texture count.
+  // Morph textures are freed by the geometry's dispose event.
   const skeletons = new Set<THREE.Skeleton>();
   cur.root.traverse((o) => {
     if (!(o instanceof THREE.Mesh)) return;
     o.geometry?.dispose();
-    o.geometry?.morphTexture?.dispose();
     if (o instanceof THREE.SkinnedMesh && o.skeleton) skeletons.add(o.skeleton);
   });
   for (const s of skeletons) s.dispose();
