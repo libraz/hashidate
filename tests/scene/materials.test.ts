@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
-import { setupMaterials } from '@/engine/scene/materials';
+import { AVATAR_ANISOTROPY, setupMaterials } from '@/engine/scene/materials';
 import type { AvatarDescriptor, MaterialRules } from '@/engine/types';
 
 const avatar = (materials?: MaterialRules): AvatarDescriptor => ({
@@ -470,6 +470,49 @@ describe('avatar material conversion', () => {
     expect((flatObject.material as THREE.MeshToonMaterial).alphaToCoverage).toBe(true);
     expect((decalObject.material as THREE.MeshToonMaterial).alphaToCoverage).toBe(false);
 
+    materials.dispose();
+  });
+
+  it('carries the authored opacity of a face decal into the toon variant', () => {
+    const decal = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.6 });
+    decal.name = 'Decal';
+    const object = mesh(decal);
+    const root = new THREE.Group();
+    root.add(object);
+
+    const materials = setupMaterials(root, avatar({ faceDecal: /^Decal$/ }));
+    materials.apply(true);
+
+    expect(object.material).toBeInstanceOf(THREE.MeshToonMaterial);
+    expect((object.material as THREE.MeshToonMaterial).opacity).toBe(0.6);
+    materials.dispose();
+  });
+
+  it('filters every avatar texture anisotropically, leaving the shared environment alone', () => {
+    const environment = new THREE.Texture();
+    const map = new THREE.Texture();
+    const normalMap = new THREE.Texture();
+    const metal = new THREE.MeshStandardMaterial({ map, normalMap });
+    metal.name = 'Metal';
+    const cloth = new THREE.MeshStandardMaterial({ map: new THREE.Texture() });
+    cloth.name = 'Cloth';
+    const root = new THREE.Group();
+    root.add(mesh([metal, cloth]));
+
+    const materials = setupMaterials(
+      root,
+      avatar({
+        preserveImported: /^Metal$/,
+        preservedPbrOverrides: { Metal: { metalness: 0.5, roughness: 0.5, reflection: 1 } },
+      }),
+      () => environment,
+    );
+
+    expect(map.anisotropy).toBe(AVATAR_ANISOTROPY);
+    expect(normalMap.anisotropy).toBe(AVATAR_ANISOTROPY);
+    expect(cloth.map?.anisotropy).toBe(AVATAR_ANISOTROPY);
+    expect(AVATAR_ANISOTROPY).toBeGreaterThan(1);
+    expect(environment.anisotropy).toBe(1);
     materials.dispose();
   });
 

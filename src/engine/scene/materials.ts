@@ -61,6 +61,13 @@ const MATCH_NONE = /(?!)/;
  */
 const SLEEVE_ALPHA_TOLERANCE = 1e-6;
 
+/**
+ * Anisotropic filtering for every texture the avatar brought, the value the
+ * room's props use. Hair cards and the sides of the face are seen at grazing
+ * angles; three clamps it to the device maximum.
+ */
+export const AVATAR_ANISOTROPY = 8;
+
 /** The descriptor's rules with the fallbacks filled in. */
 type ResolvedRules = Omit<Required<MaterialRules>, 'preservedPbrOverrides'> & {
   preservedPbrOverrides: Record<string, PbrScalarOverride>;
@@ -94,7 +101,9 @@ function toToon(src: SourceMaterial, rules: ResolvedRules): THREE.MeshToonMateri
     map: src.map,
     alphaMap: src.alphaMap,
     color: src.color,
-    ...(rules.blendTransparent.test(name) ? { opacity: src.opacity } : {}),
+    ...(rules.blendTransparent.test(name) || rules.faceDecal.test(name)
+      ? { opacity: src.opacity }
+      : {}),
     side: rules.doubleSided.test(name) ? THREE.DoubleSide : THREE.FrontSide,
   });
   m.name = name;
@@ -263,6 +272,10 @@ export function setupMaterials(
       const name = m.name || '';
       m.side = rules.doubleSided.test(name) ? THREE.DoubleSide : THREE.FrontSide;
       applyAlphaRules(m, name, m.transparent || m.alphaTest > 0, rules);
+      // The toon variants share these textures, so this covers both sets.
+      for (const v of Object.values(m) as unknown[]) {
+        if (isTexture(v)) v.anisotropy = AVATAR_ANISOTROPY;
+      }
       m.needsUpdate = true;
     }
   }
