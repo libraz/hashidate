@@ -48,7 +48,7 @@ const LAG_PER_METRE = 9.7;
 const LAG_MAX = 0.15;
 /** Further than this from its point and the hand was moved rather than swung — a placement change, a reload. */
 const TELEPORT = 0.3;
-/** A frame this long is a tab coming back, not motion. */
+/** Direct callers' large steps reseed; the viewer caps dt at 0.05, so this cannot detect its resumes. */
 const STALE_DT = 0.1;
 /** Curl gravity takes off a slack hand turned fully palm up, or adds palm down. */
 const DROOP = 0.04;
@@ -74,6 +74,14 @@ const SPLAY_MAX = 0.14;
 /** The fingers' own spring: about 3.5 Hz, a little under critical so a stop leaves a small follow-through. */
 const LAG_OMEGA = 22;
 const LAG_ZETA = 0.6;
+const LAG_REFERENCE_DT = 1 / 50;
+const LAG_W2 = LAG_OMEGA * LAG_OMEGA;
+const LAG_A = LAG_ZETA * LAG_OMEGA;
+const LAG_B = LAG_OMEGA * Math.sqrt(1 - LAG_ZETA * LAG_ZETA);
+const LAG_LOG_D = Math.log(
+  1 + 2 * LAG_A * LAG_REFERENCE_DT + LAG_W2 * LAG_REFERENCE_DT * LAG_REFERENCE_DT,
+);
+const LAG_THETA = Math.atan2(LAG_B * LAG_REFERENCE_DT, 1 + LAG_A * LAG_REFERENCE_DT);
 
 /**
  * How freely each finger is carried by the hand's motion and the wrist's bend.
@@ -117,8 +125,9 @@ const slack = (v: number): number => {
 };
 
 interface HandMotion {
-  /** The lagging point and its velocity, world space. */
+  /** The lagging point, world space. */
   point: THREE.Vector3;
+  /** Carried filter state: the old discrete velocity, not the interpolated point's derivative. */
   vel: THREE.Vector3;
   /** False until the point has been placed on the knuckle once. */
   seeded: boolean;
@@ -207,12 +216,18 @@ export class FingerLife {
       m.seeded = true;
     }
 
-    // Implicit damped spring, stable at any frame length.
-    const w2 = LAG_OMEGA * LAG_OMEGA;
-    m.vel
-      .addScaledVector(_off.copy(_pos).sub(m.point), w2 * dt)
-      .divideScalar(1 + 2 * LAG_ZETA * LAG_OMEGA * dt + w2 * dt * dt);
-    m.point.addScaledVector(m.vel, dt);
+    // Fractional powers of the old implicit transition preserve its damping at
+    // any Hz, using 50 Hz as the measured reference. This still needs a render check.
+    const r = dt / LAG_REFERENCE_DT;
+    const decay = Math.exp(-0.5 * LAG_LOG_D * r);
+    const c = Math.cos(LAG_THETA * r);
+    const s = Math.sin(LAG_THETA * r) / LAG_B;
+    _off.subVectors(m.point, _pos);
+    m.point
+      .copy(_pos)
+      .addScaledVector(_off, decay * (c + LAG_A * s))
+      .addScaledVector(m.vel, decay * s);
+    m.vel.multiplyScalar(decay * (c - LAG_A * s)).addScaledVector(_off, -decay * LAG_W2 * s);
 
     const bend = flex - m.wrist.step(flex, dt, TENO_RATE);
     m.teno = TENO_MAX * Math.tanh((-TENODESIS * bend) / TENO_MAX);
