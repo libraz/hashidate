@@ -501,7 +501,7 @@ const night: Pattern = {
     monitor.position.set(-0.95, 1.16, ROOM.backZ + 0.55);
     monitor.target.position.set(0, 1.25, 1.2);
     monitor.castShadow = true;
-    monitor.shadow.mapSize.set(1024, 1024);
+    monitor.shadow.mapSize.set(2048, 2048);
     monitor.shadow.normalBias = 0.03;
     root.add(monitor, monitor.target);
 
