@@ -109,6 +109,9 @@ const _d = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _pq = new THREE.Quaternion();
 const _aim = new THREE.Quaternion();
+const _flip = new THREE.Quaternion();
+const _ax = new THREE.Vector3();
+const _back = new THREE.Vector3();
 const _m = new THREE.Matrix4();
 const _ip = new THREE.Vector3();
 const _iq = new THREE.Quaternion();
@@ -144,6 +147,10 @@ export class Joint {
   /** Local rotation solved by the last step, and by the one before it. */
   readonly solvedQ = new THREE.Quaternion();
   readonly prevSolvedQ = new THREE.Quaternion();
+  /** World axis of the last swing toward the tail, zero until there is one. */
+  readonly swing = new THREE.Vector3();
+  /** A direction square to `axis`, in this bone's own coordinates. */
+  readonly side: THREE.Vector3;
   readonly valid: boolean;
   /** Clearance per collider of this joint's group, filled in by calibration. */
   limits: Float32Array;
@@ -183,6 +190,9 @@ export class Joint {
     this.prev = new THREE.Vector3();
     this.valid = this.length > 1e-6 && this.axis.lengthSq() > 1e-12;
     if (this.valid) this.axis.normalize();
+    this.side = new THREE.Vector3()
+      .crossVectors(this.axis, Math.abs(this.axis.x) < 0.9 ? _p.set(1, 0, 0) : _p.set(0, 1, 0))
+      .normalize();
   }
 
   /** This joint's local rotation at rest, drive included. */
@@ -210,6 +220,7 @@ export class Joint {
     this.prev.copy(this.cur);
     this.solvedQ.copy(this.bone.quaternion);
     this.prevSolvedQ.copy(this.solvedQ);
+    this.swing.set(0, 0, 0);
   }
 
   /**
@@ -334,20 +345,27 @@ export class Collider {
 
   /**
    * Hold `point` at or beyond `min` from the axis — or at or within it, for an
-   * inside collider.
+   * inside collider. Returns whether the point had to be moved.
    *
    * `min` is calibrated per joint rather than being `radius + tail radius`. See
    * `#calibrate`.
    */
-  push(point: THREE.Vector3, min: number): void {
+  push(point: THREE.Vector3, min: number): boolean {
     const dist = this.nearest(point);
-    if (this.inside ? dist <= min : dist >= min) return;
+    if (this.inside ? dist <= min : dist >= min) return false;
     // Dead centre has no direction to leave by. Any is as good as any other,
     // and picking one beats leaving the point buried forever.
     if (dist < 1e-9) _d.set(0, 1, 0);
     else _d.multiplyScalar(1 / dist);
     point.copy(_p).addScaledVector(_d, min);
+    return true;
   }
+}
+
+/** A node hung from its parent by hand, as a world update would. */
+interface Hung {
+  readonly bone: THREE.Object3D;
+  readonly parent: THREE.Object3D;
 }
 
 /** One link of a chain: a bone, and the children the run continues into. */
@@ -419,8 +437,13 @@ export class Spring {
   readonly #inputs: Input[] = [];
   /** Each input's `between` matrix by node, for attachments composing from it. */
   readonly #inputWorld = new Map<THREE.Object3D, THREE.Matrix4>();
-  /** Unattached joints, shallowest first, for re-hanging chains on an interpolated body. */
-  readonly #rebase: Joint[] = [];
+  /** Unattached joints and bridges, shallowest first, for re-hanging chains on an interpolated body. */
+  readonly #rebase: Hung[] = [];
+  /**
+   * Unsimulated nodes between a simulated joint and something a step reads, such
+   * as a chain hung from a plain node riding on another chain. Shallowest first.
+   */
+  readonly #bridges: Hung[] = [];
 
   /**
    * @param profile  the avatar profile; only `root` is used, since sway chains
@@ -670,23 +693,43 @@ export class Spring {
       this.#inputs.push(input);
       this.#inputWorld.set(node, input.between);
     };
-    const depth = new Map<Joint, number>();
+    const depth = new Map<THREE.Object3D, number>();
+    const depthOf = (node: THREE.Object3D): number => {
+      let d = 0;
+      for (let n: THREE.Object3D | null = node.parent; n; n = n.parent) d++;
+      return d;
+    };
+    // Every unsimulated node from `node` up to the simulated joint carrying it.
+    const bridge = (node: THREE.Object3D): void => {
+      if (outside(node) === node) return;
+      for (let n: THREE.Object3D | null = node; n && !simulated.has(n); n = n.parent) {
+        if (depth.has(n) || !n.parent) continue;
+        depth.set(n, depthOf(n));
+        this.#bridges.push({ bone: n, parent: n.parent });
+      }
+    };
     for (const g of this.groups) {
       for (const j of g.joints) {
         if (outside(j.parent) === j.parent) add(j.parent);
         if (g.anchor) continue;
-        let d = 0;
-        for (let n: THREE.Object3D | null = j.parent; n; n = n.parent) d++;
-        depth.set(j, d);
+        if (!simulated.has(j.parent)) bridge(j.parent);
+        depth.set(j.bone, depthOf(j.bone));
         this.#rebase.push(j);
       }
-      for (const c of g.colliders) if (outside(c.bone) === c.bone) add(c.bone);
+      for (const c of g.colliders) {
+        if (outside(c.bone) === c.bone) add(c.bone);
+        else if (!simulated.has(c.bone)) bridge(c.bone);
+      }
       if (g.anchor) {
         add(outside(g.anchor.root.parent));
         for (const influence of g.anchor.influences) add(outside(influence.bone));
       }
     }
-    this.#rebase.sort((a, b) => (depth.get(a) ?? 0) - (depth.get(b) ?? 0));
+    const byDepth = (a: Hung, b: Hung): number =>
+      (depth.get(a.bone) ?? 0) - (depth.get(b.bone) ?? 0);
+    this.#bridges.sort(byDepth);
+    this.#rebase.push(...this.#bridges);
+    this.#rebase.sort(byDepth);
   }
 
   /** Current weighted target and root residual for attachment diagnostics. */
@@ -1018,9 +1061,43 @@ export class Spring {
     // The solver is up to a step behind the frame. Carry the last step's motion
     // forward by the unspent remainder: nothing moves on a frame that lands on a
     // step, and frames between steps keep moving with the head.
-    this.#present(1 + this._acc / STEP);
+    const carry = 1 + this._acc / STEP;
+    this.#present(carry);
     this.#rehang();
+    if (carry > 1 && this.#keepClear()) this.#rehang();
     this.#placeAnchors();
+  }
+
+  /**
+   * Hold back any carried-forward link that would enter a collider, at its
+   * solved rotation. The carry is never collision-checked otherwise, and a link
+   * swinging in is carried through the surface the next step will stop it at.
+   * Returns whether anything was held back.
+   */
+  #keepClear(): boolean {
+    let held = false;
+    for (const g of this.groups) {
+      if (!(g.enabled && g.colliders.length) || g.anchor) continue;
+      for (const c of g.colliders) c.place();
+      for (const j of g.joints) {
+        // An earlier link may have been held back, so hang this one again first.
+        j.bone.matrixWorld.multiplyMatrices(j.parent.matrixWorld, j.bone.matrix);
+        _next
+          .copy(j.axis)
+          .multiplyScalar(j.length)
+          .applyQuaternion(worldQuat(j.bone, _q))
+          .add(_bp.setFromMatrixPosition(j.bone.matrixWorld));
+        let inside = false;
+        for (let i = 0; i < g.colliders.length; i++) {
+          if (g.colliders[i].push(_next, j.limits[i])) inside = true;
+        }
+        if (!inside) continue;
+        j.present(1);
+        j.bone.matrixWorld.multiplyMatrices(j.parent.matrixWorld, j.bone.matrix);
+        held = true;
+      }
+    }
+    return held;
   }
 
   /** Write every running group's rotations at `s`; see `Joint#present`. */
@@ -1050,6 +1127,9 @@ export class Spring {
   ): void {
     if (rebase) this.#rehang();
     for (const g of this.groups) {
+      // A group may hang from a node an earlier group just moved.
+      for (const b of this.#bridges)
+        b.bone.matrixWorld.multiplyMatrices(b.parent.matrixWorld, b.bone.matrix);
       // Place after prior cloth/producer groups in this same fixed step, even
       // when this accessory group itself is switched off.
       this.#place(g, inputs);
@@ -1120,7 +1200,25 @@ export class Spring {
         // an axis that is not its local Y — which is most of them — is handled
         // without knowing anything about how the rig was built.
         _to.subVectors(j.cur, _bp).normalize();
-        _aim.setFromUnitVectors(_dir, _to);
+        if (_dir.dot(_to) < -0.999) {
+          // Nearly a half turn, where the shortest swing's axis is the cross of two
+          // almost opposite vectors and spins with any wobble, rolling the bone.
+          // Keep the last axis (or the rest pose's side) and flip about it instead.
+          _ax.copy(j.swing).addScaledVector(_dir, -j.swing.dot(_dir));
+          if (_ax.lengthSq() < 1e-12) {
+            _ax.copy(j.side).applyQuaternion(j.rest);
+            if (j.driven) _ax.applyQuaternion(j.drive);
+            _ax.applyQuaternion(_pq);
+          }
+          j.swing.copy(_ax.normalize());
+          _aim
+            .setFromAxisAngle(_ax, Math.PI)
+            .premultiply(_flip.setFromUnitVectors(_back.copy(_dir).negate(), _to));
+        } else {
+          _aim.setFromUnitVectors(_dir, _to);
+          _ax.crossVectors(_dir, _to);
+          if (_ax.lengthSq() > 1e-12) j.swing.copy(_ax.normalize());
+        }
         _q.copy(_pq);
         if (j.driven) _q.multiply(j.drive);
         _q.multiply(j.rest).premultiply(_aim);
