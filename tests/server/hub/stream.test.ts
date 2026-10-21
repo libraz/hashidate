@@ -10,10 +10,16 @@ import { EPOCH_MS, event, frame, state } from './fixtures';
 
 let hub: Hub;
 
+// The hub draws an unnamed gesture's side; pinned so a delivered frame is exact.
+const sided = (id: string): StreamMessage => ({
+  type: 'command',
+  commands: [{ cmd: 'gesture', id, side: 'L' }],
+});
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(EPOCH_MS);
-  hub = new Hub();
+  hub = new Hub(null, null, null, null, null, undefined, () => 0);
 });
 
 afterEach(() => {
@@ -39,11 +45,11 @@ describe('subscription', () => {
     expect(delivered).toBe(2);
     expect(a).toEqual([
       { type: 'command', commands: [{ cmd: 'queue', turns: [] }] },
-      frame('wave'),
+      sided('wave'),
     ]);
     expect(b).toEqual([
       { type: 'command', commands: [{ cmd: 'queue', turns: [] }] },
-      frame('wave'),
+      sided('wave'),
     ]);
   });
 
@@ -59,7 +65,7 @@ describe('subscription', () => {
     expect(hub.send(frame('wave'))).toBe(0);
     expect(seen).toEqual([
       { type: 'command', commands: [{ cmd: 'queue', turns: [] }] },
-      frame('nod'),
+      sided('nod'),
     ]);
   });
 
@@ -82,7 +88,7 @@ describe('subscription', () => {
     expect(hub.send(frame('wave'))).toBe(1);
     expect(kept).toEqual([
       { type: 'command', commands: [{ cmd: 'queue', turns: [] }] },
-      frame('wave'),
+      sided('wave'),
     ]);
   });
 

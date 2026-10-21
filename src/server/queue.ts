@@ -1,5 +1,6 @@
 import type { TurnRequest } from '../engine/types';
 import type { Command, HistoryEntry, QueueEntry, QueueUpdate } from '../protocol';
+import { type Random, withSide } from './side';
 
 /**
  * The queue of turns waiting to be said, and the only copy that counts.
@@ -80,6 +81,9 @@ export type AiringEntry = QueueEntry;
 const now = (): number => Date.now() / 1000;
 
 export class TurnQueue {
+  /** @param random Draws the side of a line that names a movement and no hand. */
+  constructor(private readonly random: Random = Math.random) {}
+
   /** Lines waiting to start. This is the only list exposed to editors. */
   private entries: QueueEntry[] = [];
   /** Lines that started but have not yet reported an end. */
@@ -159,7 +163,8 @@ export class TurnQueue {
     const stamp = now();
     const reserved = this.occupiedIds();
     const added = turns.map((turn) => ({
-      ...turn,
+      ...withSide(turn, this.random),
+
       id: this.mint(reserved),
       ...(source === undefined ? {} : { source }),
       ...(note === undefined ? {} : { note }),
@@ -179,7 +184,7 @@ export class TurnQueue {
    */
   say(turn: TurnRequest): QueueEntry {
     const reserved = this.occupiedIds();
-    const entry = { ...turn, id: this.claim(turn.id, reserved), at: now() };
+    const entry = { ...withSide(turn, this.random), id: this.claim(turn.id, reserved), at: now() };
     this.entries.push(entry);
     return entry;
   }
@@ -196,7 +201,8 @@ export class TurnQueue {
     const reserved = this.occupiedIds();
     const stamp = now();
     const next: QueueEntry[] = [];
-    for (const turn of turns) {
+    for (const original of turns) {
+      const turn = withSide(original, this.random);
       if (turn.id !== undefined && this.onAir.some((entry) => entry.id === turn.id)) continue;
       const kept = turn.id === undefined || taken.has(turn.id) ? undefined : pending.get(turn.id);
       if (kept !== undefined) {
@@ -237,7 +243,7 @@ export class TurnQueue {
     const index = this.entries.findIndex((entry) => entry.id === id);
     if (index === -1) return false;
     const { reading, ...fields } = patch;
-    const updated = { ...this.entries[index], ...fields, id };
+    const updated = withSide({ ...this.entries[index], ...fields, id }, this.random);
     if (reading === null) delete updated.reading;
     else if (reading !== undefined) updated.reading = reading;
     this.entries[index] = updated;

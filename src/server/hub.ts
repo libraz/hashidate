@@ -24,6 +24,7 @@ import { BgmCoordinator } from './bgm-state';
 import type { DeckSource } from './decks';
 import { type RewindMode, TurnQueue } from './queue';
 import type { AppendResult, OpenOptions, RecordingStore } from './recordings';
+import { type Random, withSide } from './side';
 import type { SpeechSource } from './speech';
 import { Standing } from './standing';
 
@@ -220,7 +221,7 @@ export class Hub {
    * when the list has to be re-delivered, and a `turn.end` arriving, which is
    * when an entry stops being pending.
    */
-  readonly queue = new TurnQueue();
+  readonly queue: TurnQueue;
   /** Last queue state observed at a hub boundary, for edits outside reports. */
   private queueWorkObserved = false;
 
@@ -258,7 +259,9 @@ export class Hub {
     private readonly recordings: RecordingStore | null = null,
     private readonly bgmLibrary: BgmSource | null = null,
     private readonly bgmCoordinator: BgmCoordinator = new BgmCoordinator(),
+    private readonly random: Random = Math.random,
   ) {
+    this.queue = new TurnQueue(random);
     this.standing = new Standing(
       (deckId) => this.decks?.current.find((deck) => deck.id === deckId)?.pages,
     );
@@ -641,7 +644,8 @@ export class Hub {
     const ids: (string | undefined)[] = commands.map(() => undefined);
     let queueAt = -1;
     let avatarAt = -1;
-    commands.forEach((command, index) => {
+    commands.forEach((original, index) => {
+      const command = withSide(original, this.random);
       switch (command.cmd) {
         case 'say': {
           const { cmd: _cmd, ...turn } = command;
