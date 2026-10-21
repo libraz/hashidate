@@ -45,6 +45,7 @@ describe('imported furniture finishes', () => {
   it('keeps the bed duvet soft while every frame component stays ivory', () => {
     const callbacks = furnitureCallbacks();
     const assets = new SceneryAssets();
+    assets.attach(new THREE.Scene());
     const geometry = new THREE.BufferGeometry();
     const duvet = box(new THREE.Vector3(-0.75, 0.1, -0.9), new THREE.Vector3(0.75, 0.6, 0.9));
     const frame = box(new THREE.Vector3(-0.7, 0, -0.9), new THREE.Vector3(0.7, 0.08, 0.9));
@@ -87,6 +88,7 @@ describe('imported furniture finishes', () => {
   it('uses the split sofa names so wood trim never receives the linen map', () => {
     const callbacks = furnitureCallbacks();
     const assets = new SceneryAssets();
+    assets.attach(new THREE.Scene());
     const scene = new THREE.Group();
     const upholstery = new THREE.Mesh(
       box(new THREE.Vector3(-0.8, 0.2, -0.3), new THREE.Vector3(0.8, 0.8, 0.3)),
@@ -121,6 +123,7 @@ describe('imported furniture finishes', () => {
     const environmentDispose = vi.spyOn(environment, 'dispose');
     const callbacks = furnitureCallbacks();
     const assets = new SceneryAssets(() => environment);
+    assets.attach(new THREE.Scene());
     const scene = new THREE.Group();
     const duvet = new THREE.Mesh(
       box(new THREE.Vector3(-0.75, 0.1, -0.9), new THREE.Vector3(0.75, 0.6, 0.9)),

@@ -166,6 +166,8 @@ describe('shared furniture reflection maps', () => {
       return environment;
     });
 
+    expect(callbacks).toHaveLength(0);
+    assets.attach(new THREE.Scene());
     expect(callbacks).toHaveLength(15);
     expect(providerCalls).toBe(0);
     callbacks[0]?.({ scene } as GLTF);

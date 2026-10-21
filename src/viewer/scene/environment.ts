@@ -35,8 +35,34 @@ export class StudioEnvironment {
     }
   }
 
+  /**
+   * Forget the map after its WebGL context was lost, returning it so borrowers
+   * can be moved to the rebuilt one. Its GPU memory went with the context.
+   */
+  invalidate(): THREE.Texture | null {
+    const lost = this.target?.texture ?? null;
+    this.target = null;
+    return lost;
+  }
+
   dispose(): void {
     this.target?.dispose();
     this.target = null;
   }
+}
+
+/** Point every material under `root` that borrowed `from` at `to` instead. */
+export function rebindEnvironment(
+  root: THREE.Object3D,
+  from: THREE.Texture,
+  to: THREE.Texture | null,
+): void {
+  root.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+    for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+      if (material instanceof THREE.MeshStandardMaterial && material.envMap === from) {
+        material.envMap = to;
+      }
+    }
+  });
 }

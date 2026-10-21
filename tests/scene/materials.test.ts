@@ -283,6 +283,40 @@ describe('avatar material conversion', () => {
     expect(environmentDispose).not.toHaveBeenCalled();
   });
 
+  it('moves borrowers to a rebuilt environment and still never disposes the shared map', () => {
+    const lost = new THREE.Texture();
+    const rebuilt = new THREE.Texture();
+    const metal = new THREE.MeshStandardMaterial();
+    metal.name = 'Metal';
+    const matte = new THREE.MeshStandardMaterial();
+    matte.name = 'Matte';
+    const reflecting = mesh(metal);
+    const plain = mesh(matte);
+    const root = new THREE.Group();
+    root.add(reflecting, plain);
+
+    const materials = setupMaterials(
+      root,
+      avatar({
+        preserveImported: /^(?:Metal|Matte)$/,
+        preservedPbrOverrides: {
+          Metal: { metalness: 0.8, roughness: 0.3, reflection: 0.6 },
+          Matte: { metalness: 0.8, roughness: 0.3 },
+        },
+      }),
+      lost,
+    );
+    materials.apply(true);
+    materials.rebindEnvironment(rebuilt);
+
+    expect((reflecting.material as THREE.MeshStandardMaterial).envMap).toBe(rebuilt);
+    expect((plain.material as THREE.MeshStandardMaterial).envMap).toBeNull();
+
+    const rebuiltDispose = vi.spyOn(rebuilt, 'dispose');
+    materials.dispose();
+    expect(rebuiltDispose).not.toHaveBeenCalled();
+  });
+
   it('rejects a negative or non-finite reflection', () => {
     const source = new THREE.MeshStandardMaterial();
     source.name = 'Metal';

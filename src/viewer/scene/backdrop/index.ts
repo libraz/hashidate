@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { LabelledId } from '@/engine/types';
 import type { Localized } from '@/i18n/locale';
-import type { StudioEnvironment } from '../environment';
+import { rebindEnvironment, type StudioEnvironment } from '../environment';
 import { SceneryAssets } from './assets';
 import type { BuiltBackdrop, Pattern } from './patterns';
 import { PATTERNS } from './patterns';
@@ -216,6 +216,7 @@ export class BackdropStage {
     if (!built) return;
     for (const light of this.defaultLights) light.visible = false;
     this.scene.add(built.root);
+    this.scenery.setEnvironmentIntensity(built.environmentIntensity);
     this.scenery.attach(this.scene);
     this.scene.fog = built.fog;
     this.scene.environment = this.environment.texture;
@@ -255,6 +256,17 @@ export class BackdropStage {
     this.renderer.toneMapping = this.baseline.toneMapping;
     this.renderer.toneMappingExposure = this.baseline.exposure;
     for (const light of this.defaultLights) light.visible = true;
+  }
+
+  /**
+   * Move everything here that borrowed `from` onto `to`, after the WebGL
+   * context was lost and the runtime rebuilt its reflection map. A suspended
+   * room is rebound too, so it comes back with a map that still exists.
+   */
+  rebindEnvironment(from: THREE.Texture, to: THREE.Texture | null): void {
+    if (this.mounted) rebindEnvironment(this.mounted.built.root, from, to);
+    rebindEnvironment(this.scenery.root, from, to);
+    if (this.scene.environment === from) this.scene.environment = to;
   }
 
   dispose(): void {

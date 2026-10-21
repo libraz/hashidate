@@ -40,6 +40,12 @@ interface FurnitureSpec {
   finish?: { color: number; roughness: number };
 }
 
+/**
+ * Furniture reflection strength as a fraction of the room's own
+ * `environmentIntensity`, so a night room dims the furniture with its walls.
+ */
+const FURNITURE_REFLECTION = 0.7;
+
 /** The top of the commode at its 62% scale. */
 const COMMODE_TOP = 0.751;
 
@@ -166,16 +172,39 @@ export class SceneryAssets {
   /** PBR maps belong to the scenery, which outlives each weather pattern. */
   private readonly textures: TextureBin = [];
   private disposed = false;
+  /** Loads start on the first `attach`, so a viewer that never shows a room fetches nothing. */
+  private loading = false;
   private clock: ClockHands | null = null;
+  /** The mounted room's `environmentIntensity`, which furniture reflections scale with. */
+  private roomIntensity = 1;
+  /** Every material holding the borrowed map, rescaled when the room changes. */
+  private readonly reflective = new Set<THREE.MeshStandardMaterial>();
 
   constructor(private readonly environment: () => THREE.Texture | null = () => null) {
     this.root.name = 'shared-scenery';
-    const loader = new GLTFLoader();
-    for (const spec of FURNITURE) this.load(loader, spec);
   }
 
   attach(scene: THREE.Scene): void {
-    if (!this.disposed && this.root.parent !== scene) scene.add(this.root);
+    if (this.disposed) return;
+    if (!this.loading) {
+      this.loading = true;
+      const loader = new GLTFLoader();
+      for (const spec of FURNITURE) this.load(loader, spec);
+    }
+    if (this.root.parent !== scene) scene.add(this.root);
+  }
+
+  /**
+   * Follow the mounted room's environment strength.
+   *
+   * Three applies `scene.environmentIntensity` only to materials without an
+   * `envMap` of their own, so furniture holding the borrowed map is scaled here.
+   */
+  setEnvironmentIntensity(intensity: number): void {
+    this.roomIntensity = intensity;
+    for (const material of this.reflective) {
+      material.envMapIntensity = FURNITURE_REFLECTION * intensity;
+    }
   }
 
   detach(scene: THREE.Scene): void {
@@ -190,6 +219,7 @@ export class SceneryAssets {
   dispose(): void {
     this.disposed = true;
     this.clock = null;
+    this.reflective.clear();
     this.root.removeFromParent();
     const materials = new Set<THREE.Material>();
     this.root.traverse((object) => {
@@ -304,9 +334,16 @@ export class SceneryAssets {
     return true;
   }
 
-  private withEnvironment<T extends THREE.MeshStandardMaterial>(material: T): T {
+  /** Give a material the borrowed map at the furniture's share of the room's strength. */
+  private borrow<T extends THREE.MeshStandardMaterial>(material: T): T {
     material.envMap = this.environment();
-    material.envMapIntensity = 0.7;
+    material.envMapIntensity = FURNITURE_REFLECTION * this.roomIntensity;
+    this.reflective.add(material);
+    return material;
+  }
+
+  private withEnvironment<T extends THREE.MeshStandardMaterial>(material: T): T {
+    this.borrow(material);
     // These maps are applied to glTF UVs. TextureLoader defaults to a canvas
     // orientation, while glTF's UV origin is already at the lower left.
     for (const texture of [material.map, material.normalMap, material.roughnessMap]) {
@@ -413,12 +450,12 @@ export class SceneryAssets {
                 : spec.finishKind === 'sofa'
                   ? 0xf0d5dc
                   : 0xf1c6d2;
-            object.material = new THREE.MeshStandardMaterial({
-              color,
-              roughness: spec.finishKind === 'pillows' ? 0.88 : 0.72,
-              envMap: this.environment(),
-              envMapIntensity: 0.7,
-            });
+            object.material = this.borrow(
+              new THREE.MeshStandardMaterial({
+                color,
+                roughness: spec.finishKind === 'pillows' ? 0.88 : 0.72,
+              }),
+            );
             return;
           }
           if (!spec.finish) {
@@ -443,18 +480,17 @@ export class SceneryAssets {
                 material.needsUpdate = true;
                 original?.dispose();
               }
-              material.envMap = this.environment();
-              material.envMapIntensity = 0.7;
+              this.borrow(material);
             }
             return;
           }
           for (const material of materials) release(material, this.textures);
-          object.material = new THREE.MeshStandardMaterial({
-            color: spec.finish.color,
-            roughness: spec.finish.roughness,
-            envMap: this.environment(),
-            envMapIntensity: 0.7,
-          });
+          object.material = this.borrow(
+            new THREE.MeshStandardMaterial({
+              color: spec.finish.color,
+              roughness: spec.finish.roughness,
+            }),
+          );
         });
         this.root.add(scene);
       },

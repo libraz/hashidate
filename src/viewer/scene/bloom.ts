@@ -21,7 +21,14 @@ export type BloomPipelineFactory = (
   camera: THREE.Camera,
   settings: BloomSettings,
   size: { width: number; height: number },
+  multisample: boolean,
 ) => BloomPipeline;
+
+/** Construction options for {@link BloomStage}. */
+export interface BloomStageOptions {
+  /** Multisample the scene target. Off for the panel preview, which is a monitor. */
+  multisample?: boolean;
+}
 
 /**
  * Applies an optional bloom pass to the WebGL canvas.
@@ -36,11 +43,14 @@ export class BloomStage {
   private width: number;
   private height: number;
   private disposed = false;
+  private readonly multisample: boolean;
 
   constructor(
     private readonly renderer: THREE.WebGLRenderer,
     private readonly createPipeline: BloomPipelineFactory = createBloomPipeline,
+    { multisample = true }: BloomStageOptions = {},
   ) {
+    this.multisample = multisample;
     const size = renderer.getSize(new THREE.Vector2());
     this.width = size.x;
     this.height = size.y;
@@ -94,6 +104,7 @@ export class BloomStage {
         camera,
         { ...this.settings },
         { width: this.width, height: this.height },
+        this.multisample,
       );
     }
     this.pipeline.render(scene, camera);
@@ -123,8 +134,9 @@ function createBloomPipeline(
   camera: THREE.Camera,
   settings: BloomSettings,
   size: { width: number; height: number },
+  multisample: boolean,
 ): BloomPipeline {
-  const samples = Math.min(4, renderer.capabilities.maxSamples);
+  const samples = multisample ? Math.min(4, renderer.capabilities.maxSamples) : 0;
   const target = new THREE.WebGLRenderTarget(1, 1, {
     type: THREE.HalfFloatType,
     depthBuffer: true,
@@ -184,6 +196,7 @@ function createBloomPipeline(
   // EffectComposer's custom-target constructor starts with a one-pixel logical
   // size; setSize converts the current CSS size to physical pixels.
   composer.setSize(size.width, size.height);
+  let pixelRatio = renderer.getPixelRatio();
 
   return {
     render(nextScene, nextCamera) {
@@ -193,6 +206,13 @@ function createBloomPipeline(
       composer.render();
     },
     resize(width, height) {
+      // The composer keeps the ratio it was built with; a window moved to
+      // another display changes the renderer's.
+      const ratio = renderer.getPixelRatio();
+      if (ratio !== pixelRatio) {
+        pixelRatio = ratio;
+        composer.setPixelRatio(ratio);
+      }
       composer.setSize(width, height);
     },
     setSettings(next) {

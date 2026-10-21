@@ -60,6 +60,7 @@ describe('BloomStage', () => {
       camera,
       { ...BLOOM_DEFAULTS, enabled: true },
       { width: 900, height: 506 },
+      true,
     );
     expect(pipelines[0].resize).not.toHaveBeenCalled();
     expect(pipelines[0].render).toHaveBeenCalledWith(scene, camera);

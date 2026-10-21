@@ -115,6 +115,13 @@ export class AvatarRuntime {
   private readonly camWorld = new THREE.Vector3();
   private readonly resizeObserver: ResizeObserver;
   /**
+   * Whether another page frames this one, which only the panel's preview does.
+   * A monitor a few hundred pixels tall, so it renders at 1x without bloom MSAA.
+   */
+  private readonly embedded: boolean;
+  /** Matches the current device pixel ratio only, so it fires on a display change. */
+  private pixelRatioQuery: MediaQueryList | null = null;
+  /**
    * One page-owned graph. The final master is where the URL-selected mute is
    * applied, and both the voice and BGM survive avatar swaps below it.
    */
@@ -202,8 +209,9 @@ export class AvatarRuntime {
     // behind the character needs the frame to be clearable to nothing. With
     // none up the scene's background paints every pixel opaque, so this costs
     // an alpha channel nothing ever reads.
+    this.embedded = window.parent !== window;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true, alpha: true });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.renderer.setPixelRatio(this.pixelRatio());
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     // Above the document layer. Both are stated, because an absolutely
     // positioned canvas paints over a static sibling whatever the order is.
@@ -213,13 +221,12 @@ export class AvatarRuntime {
     this.scene = new THREE.Scene();
     this.scene.background = this.flat;
 
-    const embedded = window.parent !== window;
     this.shotCamera = new ShotCamera(
       this.renderer.domElement,
-      { pointer: stageMode().console || embedded, embedded },
+      { pointer: stageMode().console || this.embedded, embedded: this.embedded },
       () => this.resize(),
     );
-    this.bloomStage = new BloomStage(this.renderer);
+    this.bloomStage = new BloomStage(this.renderer, undefined, { multisample: !this.embedded });
 
     // Toon materials blow out easily; these levels are tuned for MeshToonMaterial.
     //
@@ -267,6 +274,10 @@ export class AvatarRuntime {
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(host);
     this.resize();
+    this.watchPixelRatio();
+
+    this.renderer.domElement.addEventListener('webglcontextlost', this.onContextLost);
+    this.renderer.domElement.addEventListener('webglcontextrestored', this.onContextRestored);
 
     // Opt into the Page Visibility API. Without this the timer is just a clock.
     this.timer.connect(document);
@@ -617,6 +628,46 @@ export class AvatarRuntime {
     this.shotCamera.setLens(rect.width / rect.height, this.avatarPlacement.shift);
   }
 
+  /** The renderer's pixel ratio: the display's, capped at 2, or 1 in the preview. */
+  private pixelRatio(): number {
+    return Math.min(devicePixelRatio, this.embedded ? 1 : 2);
+  }
+
+  /** Re-arm the display-change query for the ratio now in effect. */
+  private watchPixelRatio(): void {
+    this.pixelRatioQuery?.removeEventListener('change', this.onPixelRatioChange);
+    this.pixelRatioQuery = matchMedia(`(resolution: ${devicePixelRatio}dppx)`);
+    this.pixelRatioQuery.addEventListener('change', this.onPixelRatioChange);
+  }
+
+  private readonly onPixelRatioChange = (): void => this.applyPixelRatio();
+
+  private applyPixelRatio(): void {
+    if (this.disposed) return;
+    this.renderer.setPixelRatio(this.pixelRatio());
+    this.resize();
+    this.watchPixelRatio();
+  }
+
+  /** Without `preventDefault` the browser never offers the context back. */
+  private readonly onContextLost = (event: Event): void => {
+    event.preventDefault();
+  };
+
+  /**
+   * Three rebuilds its own state on restore; the reflection map was rendered
+   * into the lost context, so it is rebuilt and handed to the room, the
+   * furniture and the avatar's reflective clones.
+   */
+  private readonly onContextRestored = (): void => {
+    if (this.disposed) return;
+    const lost = this.environment.invalidate();
+    if (!lost) return;
+    const rebuilt = this.environment.texture;
+    this.backdrop.rebindEnvironment(lost, rebuilt);
+    this.current?.materials.rebindEnvironment(rebuilt);
+  };
+
   /**
    * Draw the character or not, as the placement says.
    *
@@ -774,6 +825,9 @@ export class AvatarRuntime {
     this.queued = null;
     this.renderer.setAnimationLoop(null);
     this.resizeObserver.disconnect();
+    this.pixelRatioQuery?.removeEventListener('change', this.onPixelRatioChange);
+    this.renderer.domElement.removeEventListener('webglcontextlost', this.onContextLost);
+    this.renderer.domElement.removeEventListener('webglcontextrestored', this.onContextRestored);
     this.timer.dispose();
     // Before the voice, which is where the take's audio track comes from, and
     // before the loop stops feeding it frames. A page closed mid-take still
@@ -809,14 +863,16 @@ export class AvatarRuntime {
     // Capped at 50 ms whatever the frame took. Below 20 fps the simulation
     // deliberately runs slow rather than integrating a step large enough to
     // throw the sway chains, which is a far more visible failure than lag.
-    const dt = Math.min(this.timer.getDelta(), 0.05);
+    const elapsed = this.timer.getDelta();
+    const dt = Math.min(elapsed, 0.05);
     this.shotCamera.update();
     // A document is opened asynchronously and may never open at all, so the
     // moment it is actually up is not the moment it was asked for.
     if (this.slides.up !== this.documentUp) this.updateBackground();
     this.backdrop.update(dt);
 
-    this.fpsAcc += dt;
+    // The readout counts real time, so it reports the slow frames the cap hides.
+    this.fpsAcc += elapsed;
     this.fpsFrames++;
     if (this.fpsAcc > 0.5) {
       this.fps = Math.round(this.fpsFrames / this.fpsAcc);

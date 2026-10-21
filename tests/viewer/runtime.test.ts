@@ -57,7 +57,7 @@ function bareRuntime(loader: { loadAsync: (url: string) => Promise<unknown> }): 
     renderer: {
       setAnimationLoop: vi.fn(),
       dispose: vi.fn(),
-      domElement: { remove: vi.fn() },
+      domElement: { remove: vi.fn(), removeEventListener: vi.fn() },
     },
     resizeObserver: { disconnect: vi.fn() },
     timer: { dispose: vi.fn() },

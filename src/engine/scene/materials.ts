@@ -82,6 +82,8 @@ export interface MaterialSet {
   apply(useToon: boolean): void;
   /** Every material name the avatar brought, for the readout. */
   names: string[];
+  /** Move the clones that borrowed the shared reflection map onto its rebuilt successor. */
+  rebindEnvironment(to: THREE.Texture | null): void;
   dispose(): void;
 }
 
@@ -206,6 +208,7 @@ export function setupMaterials(
   const original = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
   const toon = new Map<THREE.Mesh, THREE.Material[]>();
   const preservedClones = new Map<THREE.Material, THREE.Material>();
+  let shared = environment;
 
   // First collect the exact imported references and retain the existing mesh
   // flags. These source materials are fixed before any variants are cloned.
@@ -282,7 +285,7 @@ export function setupMaterials(
       seen.add(m);
       const props: unknown[] = Object.values(m);
       for (const v of props) {
-        if (!isTexture(v) || v === environment || seenTextures.has(v)) continue;
+        if (!isTexture(v) || v === shared || seenTextures.has(v)) continue;
         seenTextures.add(v);
         v.dispose();
       }
@@ -297,5 +300,14 @@ export function setupMaterials(
     preservedClones.clear();
   };
 
-  return { apply, names, dispose };
+  const rebindEnvironment = (to: THREE.Texture | null): void => {
+    for (const clone of preservedClones.values()) {
+      if (!(clone instanceof THREE.MeshStandardMaterial) || clone.envMap !== shared) continue;
+      clone.envMap = to;
+      clone.needsUpdate = true;
+    }
+    shared = to;
+  };
+
+  return { apply, names, rebindEnvironment, dispose };
 }
