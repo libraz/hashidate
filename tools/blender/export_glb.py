@@ -62,7 +62,13 @@ aa ih ou ee oh blink blinkLeft blinkRight lookup lookdown lookLeft lookRight""".
 #
 # The delimiter itself is per-author (underscores, asterisks, ...), so it is
 # profile data, like the group names.
-SEPARATOR = re.compile(_profile["separator"])
+try:
+    SEPARATOR = re.compile(_profile["separator"])
+except re.error as e:
+    raise SystemExit(f"export profile {profile_path}: bad separator pattern: {e}")
+if SEPARATOR.groups != 1:
+    raise SystemExit(f"export profile {profile_path}: separator needs exactly one capture "
+                     f"group (the label), got {SEPARATOR.groups}")
 KEEP_GROUPS = set(_profile["keep_groups"])
 KEEP_GROUPS_BY_MESH = _profile.get("keep_groups_by_mesh", {})
 TEX_BY_MATERIAL = _profile.get("texture_by_material", {})
@@ -83,6 +89,11 @@ def keep(name, group, mesh):
     # body from poking through it. Not every author uses that word, so the
     # profile can name its own pattern for the same role.
     return bool(KEEP_NAMES.search(name)) if KEEP_NAMES else "Hide" in name
+
+
+def three_name(name):
+    """Node name as GLTFLoader leaves it (PropertyBinding.sanitizeNodeName)."""
+    return re.sub(r"[\[\]\.:/]", "", re.sub(r"\s", "_", name))
 
 
 def armature_of(objects):
@@ -149,12 +160,14 @@ def graft_bones(arm, names):
             d, p = d + 1, p.parent
         return d
 
+    # Bone coordinates are armature-local; carry them through world space.
+    to_main = main_arm.matrix_world.inverted() @ arm.matrix_world
     created = {}
     for b in sorted((arm.data.bones[n] for n in names), key=depth):
         nb = eb.new(b.name)
-        nb.head = b.head_local
-        nb.tail = b.tail_local
-        nb.align_roll(b.matrix_local.to_3x3() @ mathutils.Vector((0, 0, 1)))
+        nb.head = to_main @ b.head_local
+        nb.tail = to_main @ b.tail_local
+        nb.align_roll(to_main.to_3x3() @ b.matrix_local.to_3x3() @ mathutils.Vector((0, 0, 1)))
         created[b.name] = nb
         if b.parent:
             nb.parent = created.get(b.parent.name) or eb.get(b.parent.name)
@@ -228,13 +241,27 @@ for ob in [o for o in bpy.data.objects if o.type == "MESH"]:
         split.append(part.name)
 if split:
     print(f"@@@ split by material -> {split}")
+    print(f"@@@ split as three.js names them -> {[three_name(n) for n in split]}")
 
 # --- relink textures (the absolute Windows paths in the FBX become local ones)
+# Matched by stem, case-insensitively: textures.py writes PNGs whatever the source was.
+tex_by_stem = {}
+if os.path.isdir(TEXDIR):
+    for fn in sorted(os.listdir(TEXDIR)):
+        tex_by_stem.setdefault(os.path.splitext(fn)[0].lower(), os.path.join(TEXDIR, fn))
+
+
+def local_texture(filename):
+    return tex_by_stem.get(os.path.splitext(os.path.basename(filename.replace("\\", "/")))[0].lower())
+
+
 relinked, miss = 0, []
 for im in bpy.data.images:
+    if im.source != "FILE" or im.users == 0 or not im.filepath:
+        continue
     base = os.path.basename(im.filepath.replace("\\", "/"))
-    local = os.path.join(TEXDIR, base)
-    if os.path.exists(local):
+    local = local_texture(base)
+    if local:
         im.filepath = local
         try:
             im.reload()
@@ -254,7 +281,7 @@ print(f"@@@ textures relinked={relinked} missing={sorted(set(miss))}")
 # the profile and wired here.
 #
 # Alpha is connected as well, and the material marked as blended. The runtime
-# turns that into an alpha test (see materials.js); what it cannot do is invent
+# turns that into an alpha test (see materials.ts); what it cannot do is invent
 # transparency for a material that arrived opaque, and without it every
 # alpha-cut piece — lashes, hair cards, the highlights over the iris — renders
 # as an opaque rectangle.
@@ -284,8 +311,8 @@ for mat in bpy.data.materials:
     filename = TEX_BY_MATERIAL.get(mat.name)
     if not filename:
         continue
-    path = os.path.join(TEXDIR, filename)
-    if not os.path.exists(path):
+    path = local_texture(filename)
+    if not path:
         miss.append(filename)
         continue
     wire_texture(mat, path)
@@ -304,7 +331,7 @@ for ob in [o for o in bpy.data.objects if o.type == "MESH"]:
     # Walk in order so each shape knows which separator it sits under.
     group, groups, drop = None, [], []
     for n in names:
-        m = SEPARATOR.match(n)
+        m = SEPARATOR.search(n)  # unanchored, like the runtime's String.match
         if m:
             group = m.group(1)
             groups.append(group)
@@ -315,7 +342,7 @@ for ob in [o for o in bpy.data.objects if o.type == "MESH"]:
     # A separator whose whole group is dropped would be a boundary around
     # nothing, so it goes too.
     drop += [n for n in names
-             if SEPARATOR.match(n) and SEPARATOR.match(n).group(1) not in kept_groups]
+             if SEPARATOR.search(n) and SEPARATOR.search(n).group(1) not in kept_groups]
 
     for n in drop:
         ob.shape_key_remove(sk.key_blocks[n])
@@ -330,16 +357,38 @@ for ob in [o for o in bpy.data.objects if o.type == "MESH" and o.data.shape_keys
     if kept:
         print(f"@@@ KEPT[{ob.name}] {','.join(kept)}")
 
-print("@@@ MESHLIST")
+if miss:
+    print(f"@@@ ERROR textures missing, refusing to export an untextured GLB: {sorted(set(miss))}")
+    raise SystemExit(1)
+
+print("@@@ MESHLIST  (name / name in three.js)")
 for ob in [o for o in bpy.data.objects if o.type == "MESH"]:
     mats = [m.name for m in ob.data.materials]
-    print(f"@@@   {ob.name:18} verts={len(ob.data.vertices):6} mats={','.join(mats)}")
+    print(f"@@@   {ob.name:18} -> {three_name(ob.name):18} verts={len(ob.data.vertices):6} mats={','.join(mats)}")
+
+# glTF carries 4 joint influences per vertex; extra weights are dropped by the exporter.
+def joint_groups(ob):
+    """Indices of the vertex groups that are bones, i.e. become joints."""
+    bones = main_arm.data.bones if main_arm else ()
+    return {g.index for g in ob.vertex_groups if g.name in bones}
+
+
+over = []
+for ob in [o for o in bpy.data.objects if o.type == "MESH"]:
+    joints = joint_groups(ob)
+    if any(sum(1 for g in v.groups if g.group in joints and g.weight > 0) > 4
+           for v in ob.data.vertices):
+        over.append(ob.name)
+if over:
+    print(f"@@@ WARNING more than 4 bone weights on some vertices (truncated to 4): {over}")
 
 kw = dict(
     filepath=dst,
     export_format="GLB",
     export_morph=True,
-    export_morph_normal=False,
+    export_morph_normal=False,  # morph targets carry positions only
+    export_extras=True,  # the root bone's skinPointAnchor travels as glTF extras
+    export_animations=False,  # nothing in the runtime reads GLB animations
     export_skins=True,
     export_yup=True,
     export_apply=False,

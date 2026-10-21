@@ -26,7 +26,13 @@ with tarfile.open(pkg, "r|gz") as tf:
             paths[guid] = tf.extractfile(m).read().decode("utf-8").split("\n")[0]
 
 want = {g: p for g, p in paths.items()
-        if needle in p and p.lower().endswith((".png", ".tga"))}
+        if needle in p and p.lower().endswith((".png", ".tga", ".jpg", ".jpeg", ".psd"))}
+by_name = {}
+for p in want.values():
+    by_name.setdefault(os.path.basename(p).lower(), []).append(p)
+clash = {k: v for k, v in by_name.items() if len(v) > 1}
+if clash:
+    raise SystemExit(f"basename collision, narrow the path filter: {clash}")
 print(f"selected {len(want)} / {len(paths)} assets in total")
 
 # pass 2: write the files out

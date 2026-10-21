@@ -2,8 +2,10 @@
 
 usage: python3 textures.py <profile.json>
 
-Copies textures_src/*.png into textures and downsizes each with sips. The size is
-the px of the first resize entry whose match glob fits the file name, else 1024.
+Converts textures_src/*.{png,tga,jpg,jpeg,psd} to PNG in textures, named after the
+source stem, and downsizes any larger than the target with sips (never upscales).
+The size is the px of the first resize entry whose match glob fits the source file
+name, else 1024. Two sources sharing a stem are an error.
 """
 import fnmatch
 import json
@@ -13,6 +15,13 @@ import subprocess
 import sys
 
 DEFAULT_PX = 1024
+SOURCE_EXTS = (".png", ".tga", ".jpg", ".jpeg", ".psd")
+
+
+def longest_side(path):
+    out = subprocess.run(["sips", "-g", "pixelWidth", "-g", "pixelHeight", path],
+                         check=True, capture_output=True, text=True).stdout
+    return max(int(line.split(":")[1]) for line in out.splitlines() if "pixel" in line)
 
 
 def main(argv):
@@ -38,12 +47,24 @@ def main(argv):
     rules = profile.get("resize", [])
 
     os.makedirs(dst, exist_ok=True)
-    names = sorted(n for n in os.listdir(src) if n.lower().endswith(".png"))
+    names = sorted(n for n in os.listdir(src) if n.lower().endswith(SOURCE_EXTS))
+    stems = {}
     for name in names:
-        out = os.path.join(dst, name)
-        shutil.copyfile(os.path.join(src, name), out)
+        stems.setdefault(os.path.splitext(name)[0].lower(), []).append(name)
+    clash = {k: v for k, v in stems.items() if len(v) > 1}
+    if clash:
+        raise SystemExit(f"textures_src: files share a stem and would overwrite each other: {clash}")
+    for name in names:
+        out = os.path.join(dst, os.path.splitext(name)[0] + ".png")
+        origin = os.path.join(src, name)
+        if name.lower().endswith(".png"):
+            shutil.copyfile(origin, out)
+        else:
+            subprocess.run(["sips", "-s", "format", "png", origin, "--out", out],
+                           check=True, stdout=subprocess.DEVNULL)
         px = next((r["px"] for r in rules if fnmatch.fnmatch(name, r["match"])), DEFAULT_PX)
-        subprocess.run(["sips", "-Z", str(px), out], check=True, stdout=subprocess.DEVNULL)
+        if longest_side(out) > px:
+            subprocess.run(["sips", "-Z", str(px), out], check=True, stdout=subprocess.DEVNULL)
     print(f"textures: {len(names)} file(s) {src} -> {dst}")
 
 
