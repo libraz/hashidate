@@ -104,9 +104,12 @@ export class Blink {
    * and holding it to fire later would put a blink at an instant nothing
    * motivated — which is exactly the mechanical tell the clustering exists to
    * avoid. The next saccade asks again.
+   *
+   * `suppressed` is the same signal `update` takes, so a saccade cannot blink
+   * through eyes the director is holding open.
    */
-  trigger(): void {
-    if (this.#t >= 0 || this.#since < MIN_BLINK_GAP) return;
+  trigger(suppressed = false): void {
+    if (suppressed || this.#t >= 0 || this.#since < MIN_BLINK_GAP) return;
     this.#start();
   }
 

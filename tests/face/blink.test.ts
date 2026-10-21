@@ -130,6 +130,14 @@ describe('Blink / trigger and the minimum gap', () => {
     expect(run(blink, MIN_BLINK_GAP - 0.1, IDLE).every((w) => w === 0)).toBe(true);
   });
 
+  it('refuses a trigger while the eyes are held open', () => {
+    const blink = new Blink({ random: mulberry32(1) });
+    warm(blink);
+    blink.trigger(true);
+    expect(blink.closing).toBe(false);
+    expect(blink.update(DT, SUPPRESSED)).toBe(0);
+  });
+
   it('accepts the trigger again once the gap has elapsed since the last blink', () => {
     const blink = new Blink({ random: mulberry32(1) });
     warm(blink);

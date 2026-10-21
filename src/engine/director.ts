@@ -21,6 +21,7 @@ import {
   dominantEmotion,
   Mouth,
   scaleTrack,
+  softMouthScale,
   textToVisemes,
 } from './face';
 import { Body, HeadBeats, HOPS, type HopDef, type PointCommand, planHeadBeats } from './motion';
@@ -57,7 +58,19 @@ export interface SpeakOptions {
   level?: (seconds: number) => number;
 }
 
-const pickOne = <T>(xs: T[]): T => xs[Math.floor(Math.random() * xs.length)];
+const pickOne = <T>(xs: T[], random: () => number): T => xs[Math.floor(random() * xs.length)];
+
+/** Construction-time choices that are not part of the avatar. */
+export interface DirectorOptions {
+  /** Every draw the director and its blink make; injectable so a run can be replayed. */
+  random?: () => number;
+}
+
+/** Surprise holds the eyes open; blinking through it looks wrong. */
+const holdsEyesOpen = (emotion: EmotionVector): boolean => (emotion.surprise ?? 0) > 0.4;
+
+/** The fade rate of an authored face, shared by the single-preset fallback. */
+const PRESET_RATE = 6;
 
 /**
  * What the autopilot draws from, weighted by repetition rather than by a number:
@@ -172,7 +185,9 @@ export class Director {
    * vector; this class decides when the eyes are held open and routes the one
    * number it produces to whatever the avatar calls its blink shapes.
    */
-  readonly #blink = new Blink();
+  readonly #blink: Blink;
+
+  readonly #random: () => number;
 
   private readonly _emotionPreset: Partial<Record<EmotionName, string>>;
   /** id -> weight, 0..1 */
@@ -189,6 +204,9 @@ export class Director {
   /** the one currently faded in */
   private _preset: string | null = null;
   private _presetW = 0;
+  /** The VRM preset shape the fallback is showing, and its own weight. */
+  private _vrmPreset: string | null = null;
+  private _vrmW = 0;
 
   private readonly _extraFaces: string[];
   private _faceTimer = 0;
@@ -233,9 +251,15 @@ export class Director {
    * object: the profile is built from a descriptor, so it always carries one,
    * and a caller that omits it means "the avatar this profile is of".
    */
-  constructor(profile: Profile, avatar: AvatarDescriptor = profile.avatar) {
+  constructor(
+    profile: Profile,
+    avatar: AvatarDescriptor = profile.avatar,
+    { random = Math.random }: DirectorOptions = {},
+  ) {
     this.p = profile;
     this.a = avatar;
+    this.#random = random;
+    this.#blink = new Blink({ random });
     this.rig = new Rig(profile);
     this.body = new Body(this.rig, profile, { random });
     this.mouth = new Mouth();
@@ -420,7 +444,7 @@ export class Director {
     if (this._auto) this._idleTarget = { neutral: 1 };
     // Hold off the autopilot briefly, or it repoints on the very next frame and
     // the reset never becomes visible.
-    this._faceTimer = 3 + Math.random() * 3;
+    this._faceTimer = 3 + this.#random() * 3;
   }
 
   /**
@@ -593,9 +617,9 @@ export class Director {
     this.body.lookAt = amount;
   }
 
-  /** Ask for a blink. Dropped if one is in flight or the gap has not elapsed. */
+  /** Ask for a blink. Dropped if one is in flight, the gap has not elapsed or the eyes are held open. */
   triggerBlink(): void {
-    this.#blink.trigger();
+    this.#blink.trigger(holdsEyesOpen(this.effectiveEmotion));
   }
 
   // --- per-frame ---------------------------------------------------------
@@ -637,7 +661,7 @@ export class Director {
 
     // Blinks cluster around gaze shifts in life, so let a large saccade pull
     // the next blink forward instead of leaving the two independent.
-    if (this.body.saccade > 0.2 && Math.random() < 0.6) this.triggerBlink();
+    if (this.body.saccade > 0.2 && this.#random() < 0.6) this.triggerBlink();
 
     this.writeFace(dt);
 
@@ -717,14 +741,14 @@ export class Director {
     }
     // Resolve the selected built-in performance before its gesture is played.
     // Loaded motion ids never enter this path: they are not performance rows.
-    const id = chooseAutoAct(AUTO_ACTS, this._recentGestures, this._settle, Math.random);
+    const id = chooseAutoAct(AUTO_ACTS, this._recentGestures, this._settle, this.#random);
     this._settle = false;
     const gesture = performanceDef(id)?.gesture;
     if (gesture) this._recentGestures = [gesture, ...this._recentGestures].slice(0, 2);
     this.autoPerform(id);
     // Long enough that a pose is a pose rather than a flicker, uneven enough
     // that the rotation does not become a beat the viewer can count along with.
-    this._autoTimer = 5.5 + Math.random() * 7;
+    this._autoTimer = 5.5 + this.#random() * 7;
   }
 
   /**
@@ -772,12 +796,12 @@ export class Director {
     if (this._manualPreset || !this._extraFaces.length) return;
     this._faceTimer -= dt;
     if (this._faceTimer > 0) return;
-    if (Math.random() < 0.45) {
-      this._autoPreset = pickOne(this._extraFaces);
-      this._faceTimer = 3.5 + Math.random() * 3;
+    if (this.#random() < 0.45) {
+      this._autoPreset = pickOne(this._extraFaces, this.#random);
+      this._faceTimer = 3.5 + this.#random() * 3;
     } else {
       this._autoPreset = null;
-      this._faceTimer = 7 + Math.random() * 8;
+      this._faceTimer = 7 + this.#random() * 8;
     }
   }
 
@@ -816,7 +840,7 @@ export class Director {
 
   private updatePreset(dt: number): void {
     const want = this.wantedPreset();
-    const k = 1 - Math.exp(-dt * 6);
+    const k = 1 - Math.exp(-dt * PRESET_RATE);
 
     // Two authored faces cannot be crossfaded. They are finished drawings over
     // the same vertices, and adding one to the other lands somewhere neither of
@@ -851,6 +875,35 @@ export class Director {
       return;
     }
     this._presetW += ((want?.w ?? 0) - this._presetW) * k;
+  }
+
+  /**
+   * Advance the single-preset fallback. Two sculpts cannot be crossfaded any
+   * more than two authored faces can, so it takes `updatePreset`'s shape: the
+   * outgoing preset fades out on its own, and only then does the dominant one
+   * take the slot and fade in.
+   */
+  private updateVrmPreset(dt: number, emotion: EmotionVector): void {
+    const name = dominantEmotion(emotion);
+    // `thinking` and `shy` have no VRM preset of their own; the lookup misses
+    // and the slot empties, which is the whole of what this channel can do.
+    const id = this.p.vrmEmotion[name as VrmEmotionName] ?? null;
+    const w = Math.min(1, emotion[name] ?? 1);
+    const k = 1 - Math.exp(-dt * PRESET_RATE);
+    if (this._vrmPreset && id !== this._vrmPreset) {
+      this._vrmW -= this._vrmW * k;
+      if (this._vrmW < 0.02) {
+        this._vrmW = 0;
+        this._vrmPreset = null;
+      }
+      return;
+    }
+    if (!id) {
+      this._vrmW = 0;
+      return;
+    }
+    this._vrmPreset = id;
+    this._vrmW += (w - this._vrmW) * k;
   }
 
   // --- morph writing -----------------------------------------------------
@@ -958,24 +1011,28 @@ export class Director {
     if (this.useArkit && p.arkit.supported) {
       const arkit = composeArkitInto(emotion, mouth.busy, this._composed);
       for (const shape in arkit) this.set(shape, arkit[shape] * composed);
-    } else if (this.a.emotionShapes && composed > 0.02) {
-      const native = composeNativeInto(
-        emotion,
-        this.a.emotionShapes,
-        mouth.busy,
-        this.a.mouthShapePattern ?? null,
-        this._composed,
-      );
-      for (const shape in native) this.set(shape, native[shape] * composed);
-    } else if (composed > 0.02) {
+    } else if (this.a.emotionShapes) {
+      if (composed > 0.02) {
+        const native = composeNativeInto(
+          emotion,
+          this.a.emotionShapes,
+          mouth.busy,
+          this.a.mouthShapePattern ?? null,
+          this._composed,
+        );
+        for (const shape in native) this.set(shape, native[shape] * composed);
+      }
+    } else {
       // One preset at a time. Named presets are whole-face sculpts that fight
       // over the same vertices, so layering "joy 0.55 + relaxed 0.45" distorts
       // the face instead of blending it — which is the reason ARKit is the
       // primary channel. The fallback keeps the dominant one and drops the rest.
-      const name = dominantEmotion(emotion);
-      // `thinking` and `shy` have no VRM preset of their own; the lookup misses
-      // and `set` drops it, which is the whole of what this channel can do.
-      this.set(p.vrmEmotion[name as VrmEmotionName], Math.min(1, emotion[name] ?? 1) * composed);
+      this.updateVrmPreset(dt, emotion);
+      // A whole-face sculpt shapes the mouth without owning it, so it yields to
+      // the visemes the way a soft mouth shape does.
+      if (composed > 0.02 && this._vrmPreset) {
+        this.set(this._vrmPreset, this._vrmW * composed * softMouthScale(mouth.busy));
+      }
     }
 
     // Drawn effects go on top and are not scaled by `composed`: an overlay is
@@ -1011,8 +1068,7 @@ export class Director {
     // writes, not the blink state machine or its existing surprise suppression.
     const blinkCtx = this._blinkCtx;
     blinkCtx.speaking = this.mouth.speaking;
-    // Surprise holds the eyes open; blinking through it looks wrong.
-    blinkCtx.suppressed = (emotion.surprise ?? 0) > 0.4;
+    blinkCtx.suppressed = holdsEyesOpen(emotion);
     this.#blink.update(dt, blinkCtx);
     const blink = this.#blink.weight;
     const preserveBlink = preset?.blink === 'preserve' && pw > 0.02;

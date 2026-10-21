@@ -17,6 +17,7 @@ export {
   dominantEmotion,
   EMOTION_LABELS,
   EMOTIONS,
+  softMouthScale,
 } from './emotions';
 export type {
   MouthViseme,

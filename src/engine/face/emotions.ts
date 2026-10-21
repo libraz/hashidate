@@ -154,6 +154,9 @@ const MOUTH_SOFT = new Set([
 ]);
 const SOFT_FLOOR = 0.4;
 
+/** How much of a mouth-shaping (but not mouth-owning) weight survives speech. */
+export const softMouthScale = (mouthBusy: number): number => 1 - mouthBusy * (1 - SOFT_FLOOR);
+
 /**
  * Compose an emotion vector into an ARKit weight map.
  * `weights` is e.g. { joy: 0.8, surprise: 0.2 }.
@@ -185,7 +188,7 @@ export function composeArkitInto(
     for (const shape in table) {
       let scale = 1;
       if (MOUTH_LOCKED.has(shape)) scale = 1 - mouthBusy;
-      else if (MOUTH_SOFT.has(shape)) scale = 1 - mouthBusy * (1 - SOFT_FLOOR);
+      else if (MOUTH_SOFT.has(shape)) scale = softMouthScale(mouthBusy);
       out[shape] = (out[shape] ?? 0) + (table[shape] ?? 0) * w * scale;
     }
   }
@@ -236,7 +239,7 @@ export function composeNativeInto(
     const shapes = table[name as EmotionName];
     if (!shapes) continue;
     for (const shape in shapes) {
-      const scale = mouthShapes?.test(shape) ? 1 - mouthBusy * (1 - SOFT_FLOOR) : 1;
+      const scale = mouthShapes?.test(shape) ? softMouthScale(mouthBusy) : 1;
       out[shape] = (out[shape] ?? 0) + (shapes[shape] ?? 0) * w * scale;
     }
   }
