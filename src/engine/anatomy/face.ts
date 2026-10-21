@@ -26,7 +26,6 @@ const REACH = 3;
 /** Least radius the skin is read over round a point, metres: a few vertex spacings. */
 const SMOOTH = 0.01;
 
-const _p = new THREE.Vector3();
 const _n = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _at = new THREE.Vector3();
@@ -119,10 +118,44 @@ export class FaceSurface {
   private maxCellZ = Number.NEGATIVE_INFINITY;
   private readonly toHead = new THREE.Matrix4();
   private readonly turn = new THREE.Quaternion();
+  private readonly samplePoint = new THREE.Vector3();
+  private readonly sampleNormal = new THREE.Vector3();
+  private best = Number.POSITIVE_INFINITY;
+  private bi = -1;
+  private R2 = 0;
+  private sum = 0;
+  private weight = 0;
   private readonly cachedSample: FaceSurfaceSample = {
     distance: 0,
     normal: new THREE.Vector3(),
     valid: false,
+  };
+  private readonly findNearest = (i: number) => {
+    const d2 = this.dist2(this.samplePoint, i);
+    if (d2 < this.best) {
+      this.best = d2;
+      this.bi = i;
+    }
+  };
+  private readonly gatherWeighted = (i: number) => {
+    const p = this.samplePoint;
+    const R2 = this.R2;
+    const d2 = this.dist2(p, i);
+    if (d2 >= R2) return;
+    const k = 1 - d2 / R2;
+    const w = k * k;
+    const nx = this.nrm[i * 3];
+    const ny = this.nrm[i * 3 + 1];
+    const nz = this.nrm[i * 3 + 2];
+    this.sum +=
+      w *
+      ((p.x - this.pos[i * 3]) * nx +
+        (p.y - this.pos[i * 3 + 1]) * ny +
+        (p.z - this.pos[i * 3 + 2]) * nz);
+    this.weight += w;
+    this.sampleNormal.x += w * nx;
+    this.sampleNormal.y += w * ny;
+    this.sampleNormal.z += w * nz;
   };
 
   private constructor(
@@ -215,7 +248,7 @@ export class FaceSurface {
     out.distance = 0;
     out.normal.set(0, 0, 0);
     out.valid = false;
-    const p = _p.copy(P).applyMatrix4(this.toHead);
+    const p = this.samplePoint.copy(P).applyMatrix4(this.toHead);
     const cx = Math.floor(p.x / CELL);
     const cy = Math.floor(p.y / CELL);
     const cz = Math.floor(p.z / CELL);
@@ -230,52 +263,30 @@ export class FaceSurface {
     ) {
       return;
     }
-    let best = Number.POSITIVE_INFINITY;
-    let bi = -1;
+    this.best = Number.POSITIVE_INFINITY;
+    this.bi = -1;
     // Widened only when the near cells are empty: a finger sunk deep in a cheek
     // is further from the skin than a cell, and that is the finger to move most.
-    for (let r = 1; r <= REACH && bi < 0; r++) {
-      this.each(cx, cy, cz, r, (i) => {
-        const d2 = this.dist2(p, i);
-        if (d2 < best) {
-          best = d2;
-          bi = i;
-        }
-      });
+    for (let r = 1; r <= REACH && this.bi < 0; r++) {
+      this.each(cx, cy, cz, r, this.findNearest);
     }
+    const bi = this.bi;
     if (bi < 0) return;
-    const R = Math.max(SMOOTH, 2 * Math.sqrt(best));
+    const R = Math.max(SMOOTH, 2 * Math.sqrt(this.best));
     // Too far off the skin to gather round: its nearest vertex's plane says it.
     if (R > REACH * CELL) {
       this.planeSample(p, bi, out);
       return;
     }
-    const R2 = R * R;
-    let sum = 0;
-    let weight = 0;
-    _n.set(0, 0, 0);
-    this.each(cx, cy, cz, Math.ceil(R / CELL), (i) => {
-      const d2 = this.dist2(p, i);
-      if (d2 >= R2) return;
-      const k = 1 - d2 / R2;
-      const w = k * k;
-      const nx = this.nrm[i * 3];
-      const ny = this.nrm[i * 3 + 1];
-      const nz = this.nrm[i * 3 + 2];
-      sum +=
-        w *
-        ((p.x - this.pos[i * 3]) * nx +
-          (p.y - this.pos[i * 3 + 1]) * ny +
-          (p.z - this.pos[i * 3 + 2]) * nz);
-      weight += w;
-      _n.x += w * nx;
-      _n.y += w * ny;
-      _n.z += w * nz;
-    });
-    if (!(weight > 0) || _n.lengthSq() < 1e-12) return;
-    const s = sum / weight;
+    this.R2 = R * R;
+    this.sum = 0;
+    this.weight = 0;
+    this.sampleNormal.set(0, 0, 0);
+    this.each(cx, cy, cz, Math.ceil(R / CELL), this.gatherWeighted);
+    if (!(this.weight > 0) || this.sampleNormal.lengthSq() < 1e-12) return;
+    const s = this.sum / this.weight;
     out.distance = s;
-    out.normal.copy(_n).normalize().applyQuaternion(this.turn);
+    out.normal.copy(this.sampleNormal).normalize().applyQuaternion(this.turn);
     out.valid = true;
   }
 

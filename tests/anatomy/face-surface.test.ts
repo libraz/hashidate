@@ -312,4 +312,42 @@ describe('FaceSurface signed samples', () => {
     expect(fixture.face.shortfall(point, CLEAR, outward)).toBe(0);
     expect(outward.toArray()).toEqual([4, 5, 6]);
   });
+
+  it('reuses traversal callbacks for repeated samples on each surface', () => {
+    type Traversal = {
+      each: (cx: number, cy: number, cz: number, r: number, fn: (i: number) => void) => void;
+    };
+    const fixtures = [makeSurfaceFixture('plane'), makeSurfaceFixture('plane')];
+    const callbacks = fixtures.map(() => new Set<(i: number) => void>());
+    const calls = fixtures.map(() => 0);
+
+    for (const [index, fixture] of fixtures.entries()) {
+      const traversal = fixture.face as unknown as Traversal;
+      const each = traversal.each;
+      traversal.each = (cx, cy, cz, r, fn) => {
+        calls[index]++;
+        callbacks[index]?.add(fn);
+        each.call(fixture.face, cx, cy, cz, r, fn);
+      };
+    }
+
+    for (const fixture of fixtures) {
+      for (let i = 0; i < 2; i++) {
+        const sample = {
+          distance: 123,
+          normal: new THREE.Vector3(4, 5, 6),
+          valid: false,
+        };
+        fixture.face.sample(worldPoint(fixture, new THREE.Vector3(0.013, 0.004, 0.006)), sample);
+        expect(sample.valid).toBe(true);
+        expect(sample.distance).toBeCloseTo(0.006, 8);
+      }
+    }
+
+    expect(calls).toEqual([4, 4]);
+    expect(callbacks.map((set) => set.size)).toEqual([2, 2]);
+    const [firstCallbacks, secondCallbacks] = callbacks;
+    if (!(firstCallbacks && secondCallbacks)) throw new Error('expected two callback sets');
+    expect([...firstCallbacks].some((fn) => secondCallbacks.has(fn))).toBe(false);
+  });
 });
