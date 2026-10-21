@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { restPalmNormals } from '../anatomy/palm-frame';
 import type { FingerName, Profile, Side } from '../types';
 
 /**
@@ -36,37 +37,7 @@ export function solveFingerAxes(p: Profile): FingerAxes {
   const wp = (o: THREE.Object3D) => o.getWorldPosition(new THREE.Vector3());
 
   // --- palm normal per hand, in world space -------------------------------
-  const palm: Partial<Record<Side, THREE.Vector3>> = {};
-  for (const side of SIDES) {
-    const hand = bones[`hand.${side}`];
-    const index = fingerBones[`index.${side}`]?.[0];
-    const little = fingerBones[`little.${side}`]?.[0];
-    const middle = fingerBones[`middle.${side}`]?.[0];
-    if (!(hand && index && little && middle)) continue;
-    hand.updateWorldMatrix(true, false);
-    const across = wp(little).sub(wp(index)).normalize();
-    const along = wp(middle).sub(wp(hand)).normalize();
-    palm[side] = new THREE.Vector3().crossVectors(along, across).normalize();
-  }
-
-  // The sign has to be settled for both hands together.
-  //
-  // Deciding it per hand by simulation does not work: bending a finger a
-  // little brings its tip closer to the wrist whichever way it bends, so the
-  // test is marginal, and a marginal test run twice independently lands on
-  // opposite answers — which is what it did, leaving the two palms 180 degrees
-  // apart. Bind poses put the arms out with the palms facing down and never
-  // up, which settles one hand; the other is its mirror by construction.
-  if (palm.L && palm.R) {
-    if (palm.L.y > 0) palm.L.negate();
-    const mirrored = palm.L.clone().setX(-palm.L.x);
-    if (palm.R.dot(mirrored) < 0) palm.R.negate();
-  } else {
-    for (const s of SIDES) {
-      const n = palm[s];
-      if (n && n.y > 0) n.negate();
-    }
-  }
+  const palm = restPalmNormals(p);
 
   // --- curl axes, plus the palm kept for roll targeting --------------------
   for (const side of SIDES) {

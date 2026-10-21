@@ -5,6 +5,7 @@ import { cost, report, score } from './cost';
 import type { FaceSurface } from './face';
 import { JOINTS } from './joints';
 import type { ArmMeasurement, ArmStrain } from './measurement';
+import { restPalmNormals } from './palm-frame';
 import { clampDof, elevationCeiling } from './strain';
 import { type BodyClearance, type BodyVolumeFrame, BodyVolumes } from './volumes';
 
@@ -119,19 +120,17 @@ export class ArmAnatomy {
   private solveRadial(): void {
     const { bones, fingerBones } = this.p;
     const wp = (o: THREE.Object3D) => o.getWorldPosition(new THREE.Vector3());
+    const palms = restPalmNormals(this.p);
     for (const side of ['L', 'R'] as Side[]) {
       const hand = bones[`hand.${side}`];
       const index = fingerBones[`index.${side}`]?.[0];
       const little = fingerBones[`little.${side}`]?.[0];
       const middle = fingerBones[`middle.${side}`]?.[0];
-      if (!(hand && index && little && middle)) continue;
+      const palm = palms[side];
+      if (!(hand && index && little && middle && palm)) continue;
       hand.updateWorldMatrix(true, false);
       const along = wp(middle).sub(wp(hand)).normalize();
       const across = wp(index).sub(wp(little)).normalize(); // toward the thumb
-      const palm = new THREE.Vector3()
-        .crossVectors(along, wp(little).sub(wp(index)).normalize())
-        .normalize();
-      if (palm.y > 0) palm.negate(); // bind poses hang the palms down
       const n = new THREE.Vector3().crossVectors(palm, along);
       this.radialSign[side] = n.dot(across) >= 0 ? 1 : -1;
     }

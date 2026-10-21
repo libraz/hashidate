@@ -48,6 +48,23 @@ function buildRolledHands(): { profile: Profile; rig: Rig } {
   return { profile, rig: new Rig(profile) };
 }
 
+/** Nearly horizontal palm normals expose world-up sign guesses after a root turn. */
+function buildNearHorizontalHands(
+  rotation: THREE.Quaternion,
+  missingMiddle?: Side,
+): { profile: Profile; rig: Rig } {
+  const built = buildRig();
+  for (const side of SIDES) {
+    const hand = need(built.bones.get(`Hand_${side}`), `Hand_${side}`);
+    hand.quaternion.setFromEuler(new THREE.Euler(Math.PI / 2 - 0.01, 0, side === 'L' ? 0.7 : -0.7));
+  }
+  built.root.quaternion.copy(rotation);
+  built.root.updateMatrixWorld(true);
+  const profile = buildProfile(built.root, built.descriptor);
+  if (missingMiddle) delete profile.fingerBones[`middle.${missingMiddle}`];
+  return { profile, rig: new Rig(profile) };
+}
+
 function aimedFingerShape(
   configuration: ArmConfiguration,
   palmOffset: number,
@@ -200,6 +217,76 @@ describe('solveFingerAxes', () => {
     expect(left.dot(rig.anat.up)).toBeLessThan(0);
     expect(right.dot(rig.anat.up)).toBeLessThan(0);
   });
+
+  it.each([
+    ['root roll', new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0.6))],
+    ['root yaw and tilt', new THREE.Quaternion().setFromEuler(new THREE.Euler(0.9, 0.7, -0.5))],
+  ] as const)('keeps near-horizontal bind palms in the body frame after %s', (_, rotation) => {
+    const baseline = buildNearHorizontalHands(new THREE.Quaternion());
+    const rotated = buildNearHorizontalHands(rotation);
+    rotated.rig.anat.update();
+    const palms = SIDES.map((side) => palmWorld(rotated.profile, rotated.rig, side));
+    for (const [i, side] of SIDES.entries()) {
+      const expected = palmWorld(baseline.profile, baseline.rig, side).applyQuaternion(rotation);
+      expect.soft(palms[i].distanceTo(expected), `${side} rotation covariance`).toBeLessThan(EXACT);
+      expect.soft(palms[i].dot(rotated.rig.anat.up), `${side} downward sign`).toBeLessThan(0);
+      expect(Math.abs(expected.dot(rotated.rig.anat.up))).toBeLessThan(0.01);
+      expect(Math.abs(expected.dot(rotated.rig.anat.right))).toBeGreaterThan(0.6);
+    }
+    const mirrored = palms[0]
+      .clone()
+      .addScaledVector(rotated.rig.anat.right, -2 * palms[0].dot(rotated.rig.anat.right));
+    expect.soft(palms[1].distanceTo(mirrored)).toBeLessThan(EXACT);
+  });
+
+  it.each(SIDES)('uses the actual near-horizontal %s palm for radial and ulnar limits', (side) => {
+    const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0.6));
+    const { profile, rig } = buildNearHorizontalHands(rotation);
+    const wp = (bone: THREE.Bone) => bone.getWorldPosition(new THREE.Vector3());
+    const hand = need(profile.bones[`hand.${side}`], `hand.${side}`);
+    const middle = need(profile.fingerBones[`middle.${side}`], `middle.${side}`)[0];
+    const index = need(profile.fingerBones[`index.${side}`], `index.${side}`)[0];
+    const little = need(profile.fingerBones[`little.${side}`], `little.${side}`)[0];
+    const along = wp(middle).sub(wp(hand)).normalize();
+    const towardThumb = wp(index).sub(wp(little));
+    towardThumb.addScaledVector(along, -towardThumb.dot(along)).normalize();
+    const palm = palmWorld(profile, rig, side);
+    const radial = new THREE.Vector3()
+      .crossVectors(palm, along)
+      .multiplyScalar(rig.anat.radialSign[side])
+      .normalize();
+    expect.soft(radial.dot(towardThumb), 'radial points toward thumb').toBeCloseTo(1, 9);
+
+    const [ulnarLimit, radialLimit] = JOINTS.wrist.dofs.deviation.max;
+    const asked = radialLimit - ulnarLimit;
+    for (const [sign, limit] of [
+      [1, radialLimit],
+      [-1, -ulnarLimit],
+    ]) {
+      const direction = along
+        .clone()
+        .multiplyScalar(Math.cos(asked))
+        .addScaledVector(towardThumb, sign * Math.sin(asked));
+      rig.anat.clampWrist(side, along, direction, palm);
+      expect
+        .soft(Math.abs(direction.angleTo(along) - limit), `deviation sign ${sign}`)
+        .toBeLessThan(EXACT);
+      expect.soft(direction.dot(towardThumb) * sign).toBeGreaterThan(0);
+    }
+  });
+
+  it.each(SIDES)(
+    'uses body up for the remaining palm when %s middle geometry is missing',
+    (missing) => {
+      const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0.6));
+      const { profile, rig } = buildNearHorizontalHands(rotation, missing);
+      const remaining = missing === 'L' ? 'R' : 'L';
+      rig.anat.update();
+      expect(rig.palmLocal[missing]).toBeUndefined();
+      expect(rig.anat.radialSign[missing]).toBe(1);
+      expect(palmWorld(profile, rig, remaining).dot(rig.anat.up)).toBeLessThan(0);
+    },
+  );
 
   it('derives splay axes for proximal bones only', () => {
     const { profile, rig } = buildHands();
