@@ -136,7 +136,7 @@ export class TakeControl {
     this.clearOrphan();
   }
 
-  clearOrphan(): void {
+  private clearOrphan(): void {
     if (this.orphanTimer !== null) clearTimeout(this.orphanTimer);
     this.orphanTimer = null;
     this.orphanOwner = null;
@@ -339,8 +339,14 @@ export class TakeControl {
     this.flushTimer = null;
   }
 
-  clearTimers(): void {
+  private clearTimers(): void {
     this.clearTail();
     this.clearFlush();
+  }
+
+  /** Stop every timer the take owns, for when the control server is torn down. */
+  dispose(): void {
+    this.clearTimers();
+    this.clearOrphan();
   }
 }

@@ -731,8 +731,7 @@ export class Hub {
   /** Stop Hub-owned timers when the control server is torn down. */
   dispose(): void {
     this.stopIdleClock();
-    this.take.clearTimers();
-    this.take.clearOrphan();
+    this.take.dispose();
     for (const timer of this.onAirTimers.values()) clearTimeout(timer);
     this.onAirTimers.clear();
     this.onAirOwners.clear();
