@@ -47,6 +47,11 @@ import type {
 export interface DirectorContext {
   /** Where the gaze chain is aimed, in world space. */
   headWorldTarget?: THREE.Vector3 | null;
+  /**
+   * The camera got where it is by a cut this frame rather than by moving, so
+   * the look re-seeds on it instead of following it there.
+   */
+  cameraCut?: boolean;
 }
 
 /** What `speak` may know about a line beyond its words. */

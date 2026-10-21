@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import type { Rig } from '../rig';
 import type { Profile } from '../types';
-import type { Gaze } from './gaze';
+import { DirFollower, OMEGA_PER_RATE } from './follow';
+import { type Gaze, HEAD_OMEGA } from './gaze';
 import { saturate } from './idle';
 
 /**
@@ -13,7 +14,19 @@ import { saturate } from './idle';
  * head is already carrying — and every channel is bounded by the profile's own
  * measured limits, because unbounded tracking of an off-axis camera rotates the
  * iris out of the painted sclera and the eyes go blank white.
+ *
+ * The bearing to the target is followed rather than taken, so a camera that
+ * glides is tracked the way a head turns; a cut re-seeds it, because the
+ * picture has already jumped and a swing across the cut would be the only
+ * thing on screen still travelling.
  */
+
+/**
+ * How fast the applied camera-tracking share, and the bearing it is applied
+ * to, follow their targets: the head's own settle frequency, so either change
+ * moves like a glance.
+ */
+export const LOOK_FOLLOW = HEAD_OMEGA / OMEGA_PER_RATE;
 
 const _tmp = new THREE.Vector3();
 const _dir = new THREE.Vector3();
@@ -27,15 +40,27 @@ export interface LookSettings {
   gazeAmount: number;
 }
 
+/** The eye aim one frame prepares, plus the bearing it carries to the next. */
 export interface GazeFrame {
   active: boolean;
   gazeHead: THREE.Quaternion;
   eyeYaw: number;
   eyePitch: number;
+  /** The followed root-space bearing to the target; meaningful while `seeded`. */
+  bearing: DirFollower;
+  /** False until a target is seen, and again after one goes away. */
+  seeded: boolean;
 }
 
 export function makeGazeFrame(): GazeFrame {
-  return { active: false, gazeHead: new THREE.Quaternion(), eyeYaw: 0, eyePitch: 0 };
+  return {
+    active: false,
+    gazeHead: new THREE.Quaternion(),
+    eyeYaw: 0,
+    eyePitch: 0,
+    bearing: new DirFollower(new THREE.Vector3(0, 0, 1)),
+    seeded: false,
+  };
 }
 
 const _gazeEuler = new THREE.Euler();
@@ -49,15 +74,21 @@ export function prepareGaze(
   { lookAt, gazeAmount }: LookSettings,
   headWorldTarget: THREE.Vector3 | null,
   frame: GazeFrame,
+  dt: number,
+  cut: boolean,
 ): void {
   frame.active = false;
   const head = p.bones.head;
-  if (headWorldTarget && head) {
+  if (!(headWorldTarget && head)) frame.seeded = false;
+  else {
     head.updateWorldMatrix(true, false);
     const hp = head.getWorldPosition(_tmp);
     const dir = _dir.copy(headWorldTarget).sub(hp).normalize();
     // Bearing in root space, so tracking follows the avatar's placement, not the room.
     dir.applyQuaternion(p.root.getWorldQuaternion(_rootQ).invert());
+    if (cut || !frame.seeded) frame.bearing.reset(dir);
+    else dir.copy(frame.bearing.step(dir, dt, LOOK_FOLLOW));
+    frame.seeded = true;
     // Partial aim only: a full aim would cancel the idle motion above.
     const k = lookAt;
     const camYaw = Math.atan2(dir.x, dir.z) * k;

@@ -937,11 +937,15 @@ export class AvatarRuntime {
 
     const cur = this.current;
     if (cur) {
-      this.camera.getWorldPosition(this.camWorld);
       // Before the director: a turn started this frame has to have its emotion
       // and gesture in place before the director composes the frame.
       cur.session.update(dt);
-      cur.director.update(dt, { headWorldTarget: this.camWorld });
+      // After the session, whose camera cue may have just cut to this shot.
+      this.camera.getWorldPosition(this.camWorld);
+      cur.director.update(dt, {
+        headWorldTarget: this.camWorld,
+        cameraCut: this.shotCamera.takeCut(),
+      });
 
       this.hudAcc += dt;
       if (this.hudAcc >= HUD_INTERVAL && this.hudListeners.size > 0) {

@@ -217,6 +217,8 @@ describe('eye compensation after the displayed head pose', () => {
       { lookAt: 1, gazeAmount: 1 },
       h.target(yaw, pitch),
       frame,
+      DT,
+      false,
     ]);
     h.rig.commitSpine();
     const head = h.delta('head');
@@ -292,6 +294,8 @@ it('reads the actual later head pose when the eye phase runs', () => {
     { lookAt: 1, gazeAmount: 0 },
     h.target(),
     frame,
+    DT,
+    false,
   ]);
   h.rig.addOffset('head', 0.01, 0, 0);
   h.rig.commitSpine();

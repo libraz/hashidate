@@ -67,6 +67,8 @@ export class ShotCamera {
   /** True while `place` is moving the camera, so its own change is not published. */
   private placing = false;
   private shotSentAt = 0;
+  /** Set when `place` moved the camera, until the frame loop takes it. See `takeCut`. */
+  private cut = false;
   private shotTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly listeners = new Set<Listener<CameraFrame>>();
 
@@ -213,6 +215,19 @@ export class ShotCamera {
     this.placing = true;
     this.controls.update();
     this.placing = false;
+    this.cut = true;
+  }
+
+  /**
+   * Whether the camera was placed since the last call: a cut, as opposed to the
+   * pointer and its damping moving it over frames. Every placement is one,
+   * because `place` puts the camera down in a single step — so is each shot
+   * of a drag relayed from the panel, which this page draws as a step too.
+   */
+  takeCut(): boolean {
+    const cut = this.cut;
+    this.cut = false;
+    return cut;
   }
 
   /**

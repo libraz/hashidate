@@ -22,14 +22,14 @@ import { ArmTransaction } from './arm-transaction';
 import { claspMeasure, claspSpread } from './clasp';
 import { gestureDef, SPINE_SLOTS } from './custom';
 import { FingerLife, type HandSensePose } from './finger-life';
-import { DirFollower, OMEGA_PER_RATE, ScalarFollower, slerpDir } from './follow';
+import { DirFollower, ScalarFollower, slerpDir } from './follow';
 import { CharacterFrame, sideMirror } from './frame';
-import { Gaze, HEAD_OMEGA, type SpeechGaze } from './gaze';
+import { Gaze, type SpeechGaze } from './gaze';
 import { BASE_FINGERS, BASE_PALM, BASE_POSE, pointHand } from './gestures';
 import { OPEN_HAND } from './gestures/hands';
 import { HipsMetric } from './hips-metric';
 import { CROUCH_T, type HopSpec, type JumpArc, planJump, sampleJump } from './jump';
-import { aimEyes, makeGazeFrame, prepareGaze } from './look';
+import { aimEyes, LOOK_FOLLOW, makeGazeFrame, prepareGaze } from './look';
 import { type BreathTerms, IdlePosture, type PostureInput } from './posture';
 import { ArmResolver, mkReachScratch, type ResolvedArm } from './resolve';
 import { SpineCarry } from './spine-carry';
@@ -117,12 +117,6 @@ const fingerRate = (f: FingerName): number => FINGER_FOLLOW * FINGER_STAGGER[f];
  * frames and the rest of the path runs where it was aimed.
  */
 const TRAVEL_FOLLOW = ARM_FOLLOW * 4;
-
-/**
- * How fast the applied camera-tracking share follows `lookAt`: the head's own
- * settle frequency, so a change in how much it tracks moves like a glance.
- */
-const LOOK_FOLLOW = HEAD_OMEGA / OMEGA_PER_RATE;
 
 /**
  * Sides, in the order the arm loop walks them.
@@ -291,6 +285,8 @@ interface Envelope {
 /** What the director hands the body layer each frame. */
 export interface BodyContext {
   headWorldTarget?: THREE.Vector3 | null;
+  /** The target got where it is by a cut this frame. See `DirectorContext`. */
+  cameraCut?: boolean;
 }
 
 const mkDirs = (): Record<ArmSlot, Vec3Tuple> => ({
@@ -1482,7 +1478,7 @@ export class Body {
   }
 
   /** Advance the gaze and prepare the eye aim. */
-  private stepGaze(dt: number, headWorldTarget: THREE.Vector3 | null): void {
+  private stepGaze(dt: number, headWorldTarget: THREE.Vector3 | null, cut: boolean): void {
     const { rig, p } = this;
     const speech = this._speech;
     speech.speaking = this.speaking;
@@ -1498,6 +1494,8 @@ export class Body {
       { lookAt: this._look.step(this.lookAt, dt, LOOK_FOLLOW), gazeAmount: this.gazeAmount },
       headWorldTarget,
       this._gazeFrame,
+      dt,
+      cut,
     );
   }
 
@@ -1643,7 +1641,7 @@ export class Body {
     const idle = this.idleAmount;
 
     // --- gaze -------------------------------------------------------------
-    this.stepGaze(dt, headWorldTarget);
+    this.stepGaze(dt, headWorldTarget, ctx?.cameraCut ?? false);
 
     rig.commitSpine();
     // Before the live frame and reach origins are read; springs still see the pose last.
