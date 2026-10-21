@@ -98,29 +98,26 @@ const reverseRatio = ({ dot, len }: Projection): number =>
  * The blink shapes are taken from the profile rather than named here, because
  * the avatar that needs this measured is not necessarily the one that calls
  * them `eyeBlinkLeft`.
+ *
+ * Summed over every mesh the shape shares with each eye's blink, the way the
+ * parking and mouth measurements below are, so an eye whose blink lives on
+ * another mesh is measured there. Also used for the emotion channel's squints.
  */
-function lidClosure(profile: Profile, id: string): LidClosure {
-  const blinkL = profile.blink.L ? profile.morphTargets.get(profile.blink.L) : undefined;
-  const blinkR = profile.blink.R ? profile.morphTargets.get(profile.blink.R) : undefined;
-  const own = profile.morphTargets.get(id);
-  if (!(blinkL && blinkR && own)) return { L: 0, R: 0 };
+export function lidClosure(profile: Profile, id: string): LidClosure {
+  if (!(profile.blink.L && profile.blink.R)) return { L: 0, R: 0 };
+  const own = attributesOf(profile.morphTargets.get(id));
+  if (!own.size) return { L: 0, R: 0 };
 
-  // All three have to live on the same mesh for the deltas to be comparable.
-  const mesh = blinkL[0].mesh;
-  const on = (list: MorphTarget[]): MorphTarget | undefined => list.find((t) => t.mesh === mesh);
-  const [a, l, r] = [on(own), on(blinkL), on(blinkR)];
-  const attrs: MorphAttribute[] | undefined = mesh.geometry?.morphAttributes?.position;
-  if (!(a && l && r && attrs)) return { L: 0, R: 0 };
-
-  const project = (target: MorphAttribute, onto: MorphAttribute): number => {
+  // The deltas are only comparable within one mesh, so only shared meshes count.
+  const side = (blink: string): number => {
     const p: Projection = { dot: 0, len: 0 };
-    accumulate(target, onto, p);
+    for (const [mesh, onto] of attributesOf(profile.morphTargets.get(blink))) {
+      const target = own.get(mesh);
+      if (target) accumulate(target, onto, p);
+    }
     return ratio(p);
   };
-  return {
-    L: project(attrs[a.index], attrs[l.index]),
-    R: project(attrs[a.index], attrs[r.index]),
-  };
+  return { L: side(profile.blink.L), R: side(profile.blink.R) };
 }
 
 /** Every mesh this shape writes on, with the deltas it writes there. */

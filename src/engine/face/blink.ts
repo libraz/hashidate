@@ -30,6 +30,12 @@ export const blinkCurve = (u: number): number =>
 // eyes flutter.
 export const MIN_BLINK_GAP = 0.55;
 
+/**
+ * Longest a suppressed stare holds the eyes open, in seconds: the longest gap
+ * the speaking rhythm draws (2.0 + 3.0 s). Past it a stare reads as a fixed glare.
+ */
+export const STARE_HOLD = 5.0;
+
 /** What the caller knows and the blink does not. */
 export interface BlinkContext {
   /** Drives the rate: blinks come faster while speaking than while listening. */
@@ -79,6 +85,8 @@ export class Blink {
   #since = 0;
   #next = 2.5;
   #pendingDouble = 0;
+  /** Seconds the current suppressed stare has held the eyes open. */
+  #held = 0;
 
   constructor({ random = Math.random }: BlinkOptions = {}) {
     this.#random = random;
@@ -123,8 +131,13 @@ export class Blink {
     }
 
     // Surprise holds the eyes open; blinking through it looks wrong. A blink
-    // already in flight finishes rather than snapping the lid open.
-    if (ctx.suppressed && this.#t < 0) {
+    // already in flight finishes rather than snapping the lid open. The hold
+    // is capped, and the interval keeps running under it so the overdue blink
+    // arrives as soon as the stare ends.
+    if (!ctx.suppressed) this.#held = 0;
+    else if (this.#t < 0 && this.#held < STARE_HOLD) {
+      this.#held += dt;
+      this.#since += dt;
       this.#weight = this.#floor();
       return this.#weight;
     }
@@ -175,6 +188,7 @@ export class Blink {
    */
   #start(depth = 1, allowDouble = true): void {
     this.#t = 0;
+    this.#held = 0;
     // 160-260 ms end to end, which puts the closing phase around 50-85 ms and
     // the opening around 110-175 ms. Shorter than this and the lid reads as a
     // flicker rather than as a blink, however correct the curve is.

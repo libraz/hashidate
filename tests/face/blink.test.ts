@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BlinkContext } from '@/engine/face';
-import { BLINK_CLOSE, Blink, blinkCurve, MIN_BLINK_GAP } from '@/engine/face';
+import { BLINK_CLOSE, Blink, blinkCurve, MIN_BLINK_GAP, STARE_HOLD } from '@/engine/face';
 
 /**
  * mulberry32. Small, seeded and entirely in the test, so a run is reproducible
@@ -284,8 +284,24 @@ describe('Blink / double blinks', () => {
 describe('Blink / context', () => {
   it('holds the lids open while suppressed', () => {
     const blink = new Blink({ random: mulberry32(5) });
-    expect(run(blink, 30, SUPPRESSED).every((w) => w === 0)).toBe(true);
+    expect(run(blink, STARE_HOLD - 0.05, SUPPRESSED).every((w) => w === 0)).toBe(true);
     expect(blink.closing).toBe(false);
+  });
+
+  it('breaks a held stare once it has lasted STARE_HOLD', () => {
+    const blink = new Blink({ random: mulberry32(5) });
+    run(blink, STARE_HOLD - 0.05, SUPPRESSED);
+    expect(countBlinks(blink, 0.1, SUPPRESSED)).toBe(1);
+  });
+
+  it('keeps blinking through a sustained stare, at least one hold apart', () => {
+    for (const seed of [1, 2, 3]) {
+      const n = countBlinks(new Blink({ random: mulberry32(seed) }), 60, SUPPRESSED);
+      // Each blink re-arms the hold; past it the ordinary listening draw (up to 7.4 s) decides.
+      expect(n).toBeGreaterThanOrEqual(Math.floor(60 / (Math.max(STARE_HOLD, 7.4) + 0.26)));
+      // A double counts twice, so the ceiling allows one pair per hold.
+      expect(n).toBeLessThanOrEqual(2 * Math.ceil(60 / STARE_HOLD));
+    }
   });
 
   it('lets a blink already in flight finish when suppression arrives, then starts no more', () => {
@@ -299,7 +315,7 @@ describe('Blink / context', () => {
     expect(blink.update(DT, SUPPRESSED)).toBeGreaterThan(at * 0.5);
     run(blink, 0.5, SUPPRESSED);
     expect(blink.closing).toBe(false);
-    expect(countBlinks(blink, 30, SUPPRESSED)).toBe(0);
+    expect(countBlinks(blink, STARE_HOLD - 0.6, SUPPRESSED)).toBe(0);
   });
 
   it('produces nothing at all while disabled', () => {
@@ -364,13 +380,20 @@ describe('Blink / context', () => {
     expect(a).toEqual(b);
   });
 
-  it('holds the schedule while suppressed rather than dropping the backlog', () => {
-    // Suppression neither advances nor resets the clock toward the next blink,
-    // so the eyes are ready to blink as soon as it lifts.
+  it('keeps the interval clock running while suppressed, so the overdue blink comes on release', () => {
+    // The first interval is 2.5 s. One second of it passes open, one held.
     const blink = new Blink({ random: mulberry32(13) });
-    run(blink, 10, IDLE);
-    run(blink, 30, SUPPRESSED);
-    expect(countBlinks(blink, 10, IDLE)).toBeGreaterThan(0);
+    run(blink, 1, IDLE);
+    run(blink, 1, SUPPRESSED);
+    expect(blink.closing).toBe(false);
+    expect(countBlinks(blink, 0.6, IDLE)).toBe(1);
+  });
+
+  it('blinks on release when the interval ran out during the hold', () => {
+    const blink = new Blink({ random: mulberry32(13) });
+    run(blink, 1, IDLE);
+    run(blink, 3, SUPPRESSED);
+    expect(countBlinks(blink, 2 * DT, IDLE)).toBe(1);
   });
 });
 

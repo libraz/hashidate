@@ -10,7 +10,7 @@
  */
 
 import type * as THREE from 'three';
-import type { BlinkContext, ExpressionPreset, MouthViseme, VisemeTrack } from './face';
+import type { BlinkContext, ExpressionPreset, LidClosure, MouthViseme, VisemeTrack } from './face';
 import {
   Blink,
   buildIdleFaces,
@@ -19,6 +19,8 @@ import {
   composeArkitInto,
   composeNativeInto,
   dominantEmotion,
+  EMOTIONS,
+  lidClosure,
   Mouth,
   scaleTrack,
   softMouthScale,
@@ -240,6 +242,10 @@ export class Director {
   private readonly _composed: Record<string, number> = {};
   private readonly _blinkCtx: BlinkContext = { speaking: false, suppressed: false };
   private readonly _want: WantedPreset = { id: '', w: 0 };
+  /** Lid travel each emotion-channel shape carries, measured at load; only shapes that carry some. */
+  private readonly _emotionLid = new Map<string, LidClosure>();
+  /** Lid travel the emotion channel has written this frame, per eye. */
+  private readonly _emotionLidNow: LidClosure = { L: 0, R: 0 };
 
   /** The current line's phrase-final nods. */
   private readonly _beats = new HeadBeats();
@@ -297,6 +303,28 @@ export class Director {
     // keeps out of the idle. They are the bulk of the set and the semantic API
     // cannot ask for them, so the autopilot picks from here directly.
     this._extraFaces = buildIdleFaces(this.presets, avatar);
+
+    // Squints and whole-face sculpts close the lids on the same vertices the
+    // blink does, so the blink is measured against them the way it is against
+    // the presets.
+    const emotionShapes = new Set<string>();
+    for (const table of [...Object.values(EMOTIONS), ...Object.values(avatar.emotionShapes ?? {})])
+      for (const shape in table) emotionShapes.add(shape);
+    for (const shape of Object.values(profile.vrmEmotion)) if (shape) emotionShapes.add(shape);
+    for (const shape of emotionShapes) {
+      const lid = lidClosure(profile, shape);
+      if (lid.L > 0 || lid.R > 0) this._emotionLid.set(shape, lid);
+    }
+  }
+
+  /** Write one emotion-channel shape and count the lid travel it carries. */
+  private setEmotionShape(shape: string, w: number): void {
+    this.set(shape, w);
+    const lid = this._emotionLid.get(shape);
+    if (!lid) return;
+    const v = Math.min(1, w);
+    this._emotionLidNow.L += lid.L * v;
+    this._emotionLidNow.R += lid.R * v;
   }
 
   /**
@@ -1005,6 +1033,8 @@ export class Director {
       }
     }
     const composed = 1 - pw;
+    this._emotionLidNow.L = 0;
+    this._emotionLidNow.R = 0;
 
     // Expression, in order of preference: the portable ARKit composition, the
     // avatar's own composition table, then a single VRM preset.
@@ -1016,7 +1046,7 @@ export class Director {
     // profile for it yet.
     if (this.useArkit && p.arkit.supported) {
       const arkit = composeArkitInto(emotion, mouth.busy, this._composed);
-      for (const shape in arkit) this.set(shape, arkit[shape] * composed);
+      for (const shape in arkit) this.setEmotionShape(shape, arkit[shape] * composed);
     } else if (this.a.emotionShapes) {
       if (composed > 0.02) {
         const native = composeNativeInto(
@@ -1026,7 +1056,7 @@ export class Director {
           this.a.mouthShapePattern ?? null,
           this._composed,
         );
-        for (const shape in native) this.set(shape, native[shape] * composed);
+        for (const shape in native) this.setEmotionShape(shape, native[shape] * composed);
       }
     } else {
       // One preset at a time. Named presets are whole-face sculpts that fight
@@ -1037,7 +1067,7 @@ export class Director {
       // A whole-face sculpt shapes the mouth without owning it, so it yields to
       // the visemes the way a soft mouth shape does.
       if (composed > 0.02 && this._vrmPreset) {
-        this.set(this._vrmPreset, this._vrmW * composed * softMouthScale(mouth.busy));
+        this.setEmotionShape(this._vrmPreset, this._vrmW * composed * softMouthScale(mouth.busy));
       }
     }
 
@@ -1072,6 +1102,7 @@ export class Director {
     // at a squint gets the remainder, and a wink blinks on the open side alone.
     // A drawing may instead preserve its authored eyes. That changes the morph
     // writes, not the blink state machine or its existing surprise suppression.
+    // An emotion's squint is subtracted the same way, as it stacks on the lid too.
     const blinkCtx = this._blinkCtx;
     blinkCtx.speaking = this.mouth.speaking;
     blinkCtx.suppressed = holdsEyesOpen(emotion);
@@ -1080,9 +1111,10 @@ export class Director {
     const preserveBlink = preset?.blink === 'preserve' && pw > 0.02;
     if (blink > 0.001 && !preserveBlink) {
       const lid = preset ? preset.lid : null;
-      // The travel the preset has left the lid, per side.
-      const roomL = lid ? Math.max(0, 1 - (lid.L ?? 0) * pw) : 1;
-      const roomR = lid ? Math.max(0, 1 - (lid.R ?? 0) * pw) : 1;
+      const squint = this._emotionLidNow;
+      // The travel the preset and the emotion have left the lid, per side.
+      const roomL = Math.max(0, 1 - (lid ? (lid.L ?? 0) * pw : 0) - squint.L);
+      const roomR = Math.max(0, 1 - (lid ? (lid.R ?? 0) * pw : 0) - squint.R);
       if (p.blink.L && p.blink.R) {
         this.set(p.blink.L, blink * roomL);
         this.set(p.blink.R, blink * roomR);

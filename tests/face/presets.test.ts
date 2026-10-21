@@ -298,6 +298,53 @@ describe('buildPresets / lid closure', () => {
     ]);
   });
 
+  it('measures each eye on whichever mesh carries its blink shape', () => {
+    // The left lid lives on the face, the right on the body, and the drawing
+    // reaches both.
+    const rig = buildRig({
+      arkit: false,
+      groups: [
+        [LID_GROUP, ['MyLidL']],
+        [FACE_GROUP, ['F_WINK']],
+      ],
+      ungrouped: ['MyLidR', 'F_WINK'],
+      deltas: { MyLidL: 4e-3, MyLidR: 8e-3, F_WINK: 2e-3 },
+    });
+    const descriptor: AvatarDescriptor = {
+      ...rig.descriptor,
+      shapes: { blink: { L: ['MyLidL'], R: ['MyLidR'] } },
+      presets: { group: FACE_GROUP },
+    };
+    const profile = buildProfile(rig.root, descriptor);
+    const [preset] = buildPresets(profile, descriptor);
+    expect(preset.lid.L).toBeCloseTo(0.5, 6);
+    expect(preset.lid.R).toBeCloseTo(0.25, 6);
+  });
+
+  it('sums the lid over every mesh it shares with the drawing, not the first one listed', () => {
+    // Both lids are on the face and the body; the drawing is only on the body.
+    const rig = buildRig({
+      arkit: false,
+      groups: [
+        [LID_GROUP, ['MyLidL', 'MyLidR']],
+        [FACE_GROUP, ['F_OTHER']],
+      ],
+      ungrouped: ['MyLidL', 'MyLidR', '___Body___', 'B_SHUT'],
+      deltas: { MyLidL: 4e-3, MyLidR: 4e-3, B_SHUT: 3e-3 },
+    });
+    const descriptor: AvatarDescriptor = {
+      ...rig.descriptor,
+      shapes: { blink: { L: ['MyLidL'], R: ['MyLidR'] } },
+      presets: { group: 'Body' },
+    };
+    const profile = buildProfile(rig.root, descriptor);
+    expect(profile.morphTargets.get('MyLidL')?.[0].mesh.name).toBe('Face');
+    const [preset] = buildPresets(profile, descriptor);
+    expect(preset.id).toBe('B_SHUT');
+    expect(preset.lid.L).toBeCloseTo(0.75, 6);
+    expect(preset.lid.R).toBeCloseTo(0.75, 6);
+  });
+
   it('reports no closure when the avatar has no blink shapes to measure against', () => {
     const { profile, descriptor } = setup({ presets: { group: FACE_GROUP } });
     profile.blink.L = null;

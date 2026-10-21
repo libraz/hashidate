@@ -8,7 +8,7 @@
  */
 
 export type { BlinkContext, BlinkOptions } from './blink';
-export { BLINK_CLOSE, Blink, blinkCurve, MIN_BLINK_GAP } from './blink';
+export { BLINK_CLOSE, Blink, blinkCurve, MIN_BLINK_GAP, STARE_HOLD } from './blink';
 export {
   composeArkit,
   composeArkitInto,
@@ -29,4 +29,4 @@ export type {
 } from './lipsync';
 export { Mouth, scaleTrack, textToVisemes } from './lipsync';
 export type { ExpressionPreset, LidClosure } from './presets';
-export { buildIdleFaces, buildOverlays, buildPresets } from './presets';
+export { buildIdleFaces, buildOverlays, buildPresets, lidClosure } from './presets';
