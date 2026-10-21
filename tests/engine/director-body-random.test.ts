@@ -24,3 +24,25 @@ it('passes the Director random source through to Body gesture playback', () => {
   });
   expect(director.body.gesture?.speed).toBe(0.93 + 0.25 * 0.14);
 });
+
+it('plans head beats from the Director random source', () => {
+  const lcg = (seed: number) => () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 2 ** 32;
+  };
+  const run = (random: () => number): number[] => {
+    const built = buildRig();
+    const profile = buildProfile(built.root, built.descriptor);
+    const director = new Director(profile, profile.avatar, { random });
+    director.speak('はい、そうです、ね、それで、まあ、いい、でしょう、うん、はい、そう。');
+    const nods: number[] = [];
+    for (let i = 0; i < 400; i++) {
+      director.update(1 / 60);
+      nods.push(director.body.speechNod);
+    }
+    return nods;
+  };
+  const a = run(lcg(7));
+  expect(a.some((n) => n !== 0)).toBe(true);
+  expect(run(lcg(7))).toEqual(a);
+});

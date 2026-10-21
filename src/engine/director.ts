@@ -472,7 +472,13 @@ export class Director {
         scheduled.breaks = written.breaks.map((b) => ({ kind: b.kind, t: (b.t * tEndR) / tEndT }));
       }
     }
-    this._beats.start(planHeadBeats(scheduled, { level: opts.level, closes: this.speechCloses }));
+    this._beats.start(
+      planHeadBeats(scheduled, {
+        level: opts.level,
+        closes: this.speechCloses,
+        random: this.#random,
+      }),
+    );
     this._beatsLive = true;
     return this.mouth.schedule(scheduled);
   }
