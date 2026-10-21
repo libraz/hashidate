@@ -8,7 +8,8 @@
 
 export type { FingerAxes } from './finger-axes';
 export { solveFingerAxes } from './finger-axes';
+export { handFrame } from './finger-clearance';
 export type { ArmSolution, ReachLinks } from './reach';
 export { poleAngle, reachRef, solveReach } from './reach';
 export type { OffsetSlot, PointRequest } from './rig';
-export { handFrame, Rig } from './rig';
+export { Rig } from './rig';
