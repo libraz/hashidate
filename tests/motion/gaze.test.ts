@@ -78,17 +78,32 @@ class ReferenceGaze {
       this.oy = this.fy + (this.ty - this.fy) * e;
     }
 
-    const OMEGA = 3.4;
-    const ZETA = 0.72;
     const mag = Math.hypot(this.ox, this.oy);
     const follow = mag > 0.05 ? (mag - 0.05) / mag : 0;
     const tx = this.ox * follow;
     const ty = this.oy * follow;
-    this.vx += (-2 * ZETA * OMEGA * this.vx - OMEGA * OMEGA * (this.sx - tx)) * dt;
-    this.vy += (-2 * ZETA * OMEGA * this.vy - OMEGA * OMEGA * (this.sy - ty)) * dt;
-    this.sx += this.vx * dt;
-    this.sy += this.vy * dt;
+    [this.sx, this.vx] = headStep(this.sx - tx, this.vx, dt);
+    [this.sy, this.vy] = headStep(this.sy - ty, this.vy, dt);
+    this.sx += tx;
+    this.sy += ty;
   }
+}
+
+/**
+ * The head settle in closed form, poles read off the explicit step at 3.4 rad/s
+ * and damping 0.72 that it was tuned with at 50 Hz. See `gaze-head.test.ts`.
+ */
+function headStep(y: number, v: number, dt: number): [number, number] {
+  const tuned = 1 / 50;
+  const h = 3.4 * tuned;
+  const det = 1 - 2 * 0.72 * h;
+  const decay = -Math.log(det) / (2 * tuned);
+  const freq = Math.acos((2 - h * h - 2 * 0.72 * h) / (2 * Math.sqrt(det))) / tuned;
+  const e = Math.exp(-decay * dt);
+  const c = Math.cos(freq * dt);
+  const s = Math.sin(freq * dt);
+  const b = (v + decay * y) / freq;
+  return [e * (y * c + b * s), e * ((freq * b - decay * y) * c - (decay * b + freq * y) * s)];
 }
 
 interface Frame {

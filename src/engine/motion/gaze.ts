@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { REF_DT } from './follow';
 import { smoothstep } from './idle';
 
 /**
@@ -10,6 +11,36 @@ import { smoothstep } from './idle';
 
 /** Natural frequency of the head settling after the eyes, rad/s. See `Gaze.update`. */
 export const HEAD_OMEGA = 3.4;
+const HEAD_ZETA = 0.72;
+
+/**
+ * The head spring's poles, in closed form, as `HEAD_OMEGA` and `HEAD_ZETA`
+ * played under the explicit step they were tuned with at `REF_DT`: that step's
+ * per-frame decay and turn, read back as a continuous decay rate and frequency.
+ */
+const HEAD_POLES = (() => {
+  const h = HEAD_OMEGA * REF_DT;
+  const det = 1 - 2 * HEAD_ZETA * h;
+  const trace = 2 - h * h - 2 * HEAD_ZETA * h;
+  return {
+    decay: -Math.log(det) / (2 * REF_DT),
+    freq: Math.acos(trace / (2 * Math.sqrt(det))) / REF_DT,
+  };
+})();
+
+/**
+ * One exact step of the head spring: error `y` from the target and velocity
+ * `v` advanced by `dt`, into `out`. Stable at any timestep.
+ */
+function headStep(out: { x: number; v: number }, y: number, v: number, dt: number): void {
+  const { decay, freq } = HEAD_POLES;
+  const e = Math.exp(-decay * dt);
+  const c = Math.cos(freq * dt);
+  const sn = Math.sin(freq * dt);
+  const b = (v + decay * y) / freq;
+  out.x = e * (y * c + b * sn);
+  out.v = e * ((freq * b - decay * y) * c - (decay * b + freq * y) * sn);
+}
 
 // Below this the head does not commit to a glance at all — small saccades are
 // eyes-only, and driving the neck off every one of them makes the body fidget.
@@ -77,6 +108,7 @@ export class Gaze {
   saccade = 0;
 
   private readonly _vel = new THREE.Vector2(); // spring velocity for `settled`
+  private readonly _spring = { x: 0, v: 0 };
   private readonly _target = new THREE.Vector2();
   private readonly _from = new THREE.Vector2();
   private _sacT = 1;
@@ -189,16 +221,18 @@ export class Gaze {
     // a neck does. Modelled as a spring left slightly under-damped, because a
     // critically damped head arrives dead and an exponential ease never
     // overshoots at all — and a real head does, slightly, every time.
-    const OMEGA = HEAD_OMEGA;
-    const ZETA = 0.72;
+    // Stepped in closed form, so the overshoot is the same on every display.
     const mag = Math.hypot(this.offset.x, this.offset.y);
     const follow = mag > HEAD_DEADZONE ? (mag - HEAD_DEADZONE) / mag : 0;
     const tx = this.offset.x * follow;
     const ty = this.offset.y * follow;
-    this._vel.x += (-2 * ZETA * OMEGA * this._vel.x - OMEGA * OMEGA * (this.settled.x - tx)) * dt;
-    this._vel.y += (-2 * ZETA * OMEGA * this._vel.y - OMEGA * OMEGA * (this.settled.y - ty)) * dt;
-    this.settled.x += this._vel.x * dt;
-    this.settled.y += this._vel.y * dt;
+    const s = this._spring;
+    headStep(s, this.settled.x - tx, this._vel.x, dt);
+    this.settled.x = tx + s.x;
+    this._vel.x = s.v;
+    headStep(s, this.settled.y - ty, this._vel.y, dt);
+    this.settled.y = ty + s.x;
+    this._vel.y = s.v;
   }
 
   /** Start a saccade from wherever the eyes are now. */
