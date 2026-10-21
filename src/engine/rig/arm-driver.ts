@@ -192,6 +192,8 @@ export class ArmDriver {
   private readonly anatomy: ArmAnatomy;
   private readonly fingerClearance: number;
   private readonly pointsPerSample: number;
+  private readonly clearancePointIds: string[];
+  private readonly clearanceKeys: string[];
   private readonly requestWrist = new THREE.Vector3();
   private readonly requestElbow = new THREE.Vector3();
   private readonly requestHand = new THREE.Vector3();
@@ -256,6 +258,12 @@ export class ArmDriver {
     );
     this.output = makeArmPathPlanOutput(calibration, handGeometry, rowCount);
     this.bridgeOutput = makeArmPathPlanOutput(calibration, handGeometry, rowCount);
+    this.clearancePointIds = this.output.points.map((point) => point.id);
+    this.clearanceKeys = this.clearancePointIds.flatMap((id) => [
+      `${id}:torso`,
+      `${id}:head`,
+      `${id}:face`,
+    ]);
     this.bounds = { lower: this.lowerBounds, upper: this.upperBounds };
     this.bridgeBounds = { lower: this.bridgeLowerBounds, upper: this.bridgeUpperBounds };
     this.request = {
@@ -652,17 +660,26 @@ export class ArmDriver {
     let cursor = 0;
     for (let i = 0; i < points.length; i++) {
       const point = points[i];
+      const id = point.id;
+      // Solver proxy identities stay fixed; direct callers may reorder or rename them.
+      if (this.clearancePointIds[i] !== id) {
+        this.clearancePointIds[i] = id;
+        for (let surface = 0; surface < this.bodyRows.length; surface++) {
+          this.clearanceKeys[cursor + surface] = `${id}:${this.bodyRows[surface].surface}`;
+        }
+        this.clearanceKeys[cursor + this.bodyRows.length] = `${id}:face`;
+      }
       this.anatomy.sampleVolumeClearances(this.volumeFrame, point.position, this.bodyRows);
       for (const row of this.bodyRows) {
-        const target = out[cursor++];
-        target.key = `${point.id}:${row.surface}`;
+        const target = out[cursor];
+        target.key = this.clearanceKeys[cursor++];
         target.pointIndex = i;
         target.valid = row.valid;
         target.distance = row.distance;
         target.normal.copy(row.normal);
       }
-      const face = out[cursor++];
-      face.key = `${point.id}:face`;
+      const face = out[cursor];
+      face.key = this.clearanceKeys[cursor++];
       face.pointIndex = i;
       face.valid = false;
       face.distance = Number.POSITIVE_INFINITY;
