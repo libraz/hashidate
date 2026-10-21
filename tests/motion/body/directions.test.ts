@@ -66,54 +66,6 @@ describe('character-space arm directions', () => {
     }
   });
 
-  it('mirrors raw reach elbow angles semantically after a root turn', () => {
-    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
-    try {
-      const anglesAt = (yaw: number): Record<Side, number | undefined> => {
-        const h = harness(yaw);
-        const angles: Partial<Record<Side, number>> = {};
-        const solveReach = vi
-          .spyOn(h.rig, 'solveReach')
-          .mockImplementation((side, _target, angle) => {
-            angles[side] = angle;
-            return null;
-          });
-        const def: GestureDef = {
-          label: { en: 'Raw reach', ja: '到達' },
-          group: 'pose',
-          sustain: true,
-          lead: 0.1,
-          hold: 1,
-          build: () => ({
-            reach: {
-              L: { at: 'mouth', elbow: 0.6 },
-              R: { at: 'mouth', elbow: 0.6 },
-            },
-          }),
-        };
-        h.rig.reset();
-        h.body.update(DT);
-        h.body.playDef(def, `raw-reach.${yaw}`);
-        solveReach.mockClear();
-        angles.L = undefined;
-        angles.R = undefined;
-        h.rig.reset();
-        h.body.update(DT);
-        solveReach.mockRestore();
-        return { L: angles.L, R: angles.R };
-      };
-
-      const neutral = anglesAt(0);
-      const turned = anglesAt(Math.PI / 2);
-      expect(neutral.L).toBeCloseTo(0.6, 10);
-      expect(neutral.R).toBeCloseTo(-0.6, 10);
-      expect(turned.L).toBeCloseTo(neutral.L ?? 0, 10);
-      expect(turned.R).toBeCloseTo(neutral.R ?? 0, 10);
-    } finally {
-      random.mockRestore();
-    }
-  });
-
   it('keeps an absolute point direction unmirrored and normalized without a body frame', () => {
     const h = harnessWithoutBodyFrame();
     const seen: Record<Side, PointCapture | null> = {

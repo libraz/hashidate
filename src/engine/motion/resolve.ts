@@ -556,24 +556,10 @@ export class ArmResolver {
     // elbow search, which holds the elbow there unless the body is in the way:
     // solved at the pole outright, every hand brought inside the shoulder line
     // put its elbow in the chest and left the limiter to lift it out, part by
-    // part and a frame at a time. `elbow` remains for a pose that wants the raw
-    // angle, and a pose that states neither is searched from the predicted
-    // elbow instead.
+    // part and a frame at a time. A pose that states no pole is searched from
+    // the predicted elbow instead.
     const poleW = r.pole ? this.anchors.pole(r.pole, side) : null;
-    let solved = false;
-    if (!poleW && r.elbow !== undefined) {
-      // Authored in character terms, so the two arms mirror. A rotation about a
-      // mirrored axis runs the other way; this is axial, not the lateral sign
-      // used to project point bearings and directions.
-      solved = !!this.rig.solveReach(
-        side,
-        target,
-        r.elbow * this.axes.axialMirror(side, frameReady),
-        out,
-      );
-    } else {
-      solved = !!this.rig.solveReachNatural(side, target, hint, out, poleW);
-    }
+    const solved = !!this.rig.solveReachNatural(side, target, hint, out, poleW);
     if (!solved) return pose?.arms?.[side] ?? null;
 
     // Back to character space before blending. The solver's world result is

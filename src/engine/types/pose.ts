@@ -54,8 +54,6 @@ export interface ReachSpec {
   palm?: Vec3Tuple;
   /** Where the elbow is drawn toward, from the shoulder, in body spans. */
   pole?: Vec3Tuple;
-  /** Raw elbow angle about the reach line. `pole` is preferred; see `rig/reach.ts`. */
-  elbow?: number;
   twist?: number;
 }
 
