@@ -213,22 +213,19 @@ export function surfaceOf(
   const s0 = ((Math.floor(fs) % t.sectors) + t.sectors) % t.sectors;
   const s1 = (s0 + 1) % t.sectors;
   const ts = fs - Math.floor(fs);
-  const g = (b: number, s: number) => tr[b * t.sectors + s];
+  // The cell's four corners, read once rather than through a per-call closure.
+  const r00 = tr[b0 * t.sectors + s0];
+  const r01 = tr[b0 * t.sectors + s1];
+  const r10 = tr[b1 * t.sectors + s0];
+  const r11 = tr[b1 * t.sectors + s1];
   if (gradient) {
     // The selected cell also fixes the one-sided derivative at a table knot.
     // Clamped half-bands have constant radius in height.
     gradient.height =
       rawBand > 0 && rawBand < t.bands - 1
-        ? ((g(b1, s0) * (1 - ts) + g(b1, s1) * ts - (g(b0, s0) * (1 - ts) + g(b0, s1) * ts)) *
-            t.bands) /
-          (t.top - t.bottom)
+        ? ((r10 * (1 - ts) + r11 * ts - (r00 * (1 - ts) + r01 * ts)) * t.bands) / (t.top - t.bottom)
         : 0;
-    gradient.bearing =
-      (((g(b0, s1) - g(b0, s0)) * (1 - tb) + (g(b1, s1) - g(b1, s0)) * tb) * t.sectors) /
-      (Math.PI * 2);
+    gradient.bearing = (((r01 - r00) * (1 - tb) + (r11 - r10) * tb) * t.sectors) / (Math.PI * 2);
   }
-  return (
-    (g(b0, s0) * (1 - ts) + g(b0, s1) * ts) * (1 - tb) +
-    (g(b1, s0) * (1 - ts) + g(b1, s1) * ts) * tb
-  );
+  return (r00 * (1 - ts) + r01 * ts) * (1 - tb) + (r10 * (1 - ts) + r11 * ts) * tb;
 }

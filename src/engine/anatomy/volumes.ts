@@ -278,21 +278,20 @@ export class BodyVolumes {
     );
     result.valid = true;
     result.distance = r - R * (1 - TORSO_DEPTH_TOLERANCE);
-    if (surface === 'head') {
-      const top = h - vol.top;
-      const bottom = vol.bottom - h;
-      // The radial table is flat in its end half-bands. The head still has
-      // caps there; choose the outward cap gradient on a tied boundary.
-      if (top >= result.distance && top >= bottom) {
-        result.distance = top;
-        result.normal.copy(pose.up);
-        return;
-      }
-      if (bottom >= result.distance) {
-        result.distance = bottom;
-        result.normal.copy(pose.up).negate();
-        return;
-      }
+    const top = h - vol.top;
+    const bottom = vol.bottom - h;
+    // The radial table is flat in its end half-bands. Both volumes still have
+    // caps there, or clearance jumps from buried to absent across one; choose
+    // the outward cap gradient on a tied boundary.
+    if (top >= result.distance && top >= bottom) {
+      result.distance = top;
+      result.normal.copy(pose.up);
+      return;
+    }
+    if (bottom >= result.distance) {
+      result.distance = bottom;
+      result.normal.copy(pose.up).negate();
+      return;
     }
     if (r > 1e-9) {
       const toleranceScale = 1 - TORSO_DEPTH_TOLERANCE;

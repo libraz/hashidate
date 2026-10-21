@@ -213,7 +213,7 @@ describe('signed body volume clearances', () => {
           const height = points[index].point.clone().sub(bodyPose.O).dot(bodyPose.up);
           const top = height - volume.top;
           const bottom = volume.bottom - height;
-          if (entry.surface === 'head' && entry.distance === Math.max(top, bottom)) {
+          if (entry.distance === Math.max(top, bottom)) {
             expect(entry.normal.dot(bodyPose.up)).toBeCloseTo(top >= bottom ? 1 : -1, 10);
           } else {
             // A radial surface's gradient has unit radial component, but its
