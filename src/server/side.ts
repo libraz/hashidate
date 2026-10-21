@@ -41,6 +41,8 @@ function commandMovement(command: Command): Movement | null {
       return { gesture: command.id, side: command.side };
     case 'perform':
       return { perform: command.id, side: command.side };
+    case 'idleAct':
+      return { perform: command.act, side: command.side };
     case 'say':
       return command;
     default:

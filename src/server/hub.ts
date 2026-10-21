@@ -1,3 +1,4 @@
+import { Autopilot, IDLE_AFTER } from '../engine/autopilot';
 import type {
   AvatarStatus,
   BloomReport,
@@ -104,6 +105,28 @@ const TURN_EVENTS = new Set<SessionEvent['type']>(['turn.start', 'turn.end', 'tu
 
 /** The verbs that act on the server's queue, and are applied to it before any renderer. */
 const QUEUE_VERBS = new Set<Command['cmd']>(['say', 'queue', 'clear', 'interrupt']);
+
+/**
+ * How often the idle clock ticks. A choice lands within one tick of falling
+ * due, which nobody watching a pose held for seconds can see.
+ */
+export const IDLE_TICK_MS = 100;
+
+/**
+ * The direct face and body verbs. Each restarts the renderer's grace before the
+ * idle resumes (`Session.wake`), so each restarts the idle clock's here too.
+ */
+const WAKE_VERBS = new Set<Command['cmd']>([
+  'emotion',
+  'expression',
+  'overlay',
+  'reset',
+  'gesture',
+  'perform',
+  'hop',
+  'point',
+  'look',
+]);
 
 /** What became of one command in a caller's batch. See `commandFateSchema`. */
 export interface CommandOutcome {
@@ -232,6 +255,15 @@ export class Hub {
   private readonly standing: Standing;
 
   /**
+   * The idle autopilot, run here once rather than in each renderer, so the
+   * preview shows the idle that is on air. See `engine/autopilot.ts`.
+   */
+  private readonly autopilot: Autopilot;
+  private idleClock: ReturnType<typeof setInterval> | null = null;
+  /** Seconds with nothing to say and no direct face or body command. */
+  private idleQuiet = 0;
+
+  /**
    * The documents on disk, or nothing when the server was started without any.
    *
    * Handed in rather than reached for, because it is the one thing here that
@@ -262,6 +294,7 @@ export class Hub {
     private readonly random: Random = Math.random,
   ) {
     this.queue = new TurnQueue(random);
+    this.autopilot = new Autopilot(random);
     this.standing = new Standing(
       (deckId) => this.decks?.current.find((deck) => deck.id === deckId)?.pages,
     );
@@ -675,6 +708,7 @@ export class Hub {
       origin.splice(at, 0, -1);
     }
     const { viewers, kept } = this.dispatch(out);
+    this.observeIdle(commands);
     const fates: CommandFate[] = commands.map((command) =>
       viewers > 0
         ? 'delivered'
@@ -761,6 +795,54 @@ export class Hub {
 
   get viewers(): number {
     return this.clients.size;
+  }
+
+  // --- idle -----------------------------------------------------------------
+
+  /** Restart the quiet for a direct command, and run the clock while idle is on. */
+  private observeIdle(commands: readonly Command[]): void {
+    for (const command of commands) {
+      if (WAKE_VERBS.has(command.cmd)) this.idleQuiet = 0;
+      if (command.cmd === 'reset') this.autopilot.holdFace();
+    }
+    if (!this.standing.idle) {
+      this.stopIdleClock();
+      return;
+    }
+    if (this.idleClock !== null) return;
+    this.idleQuiet = 0;
+    this.idleClock = setInterval(() => this.idleTick(), IDLE_TICK_MS);
+    this.idleClock.unref?.();
+  }
+
+  private stopIdleClock(): void {
+    if (this.idleClock === null) return;
+    clearInterval(this.idleClock);
+    this.idleClock = null;
+    this.autopilot.advance(0, false);
+  }
+
+  /**
+   * One tick of the idle clock: engaged once the queue has been quiet for
+   * `IDLE_AFTER`, by the same rule each renderer gates its own idle on — a held
+   * queue's lines are not work. Each choice goes to every renderer as it is,
+   * with its side drawn here; a renderer whose idle is not engaged drops it.
+   */
+  private idleTick(): void {
+    const dt = IDLE_TICK_MS / 1000;
+    const working =
+      this.queue.airing().length > 0 || (this.queue.length > 0 && !this.standing.paused);
+    this.idleQuiet = working ? 0 : this.idleQuiet + dt;
+    const choices = this.autopilot.advance(dt, this.idleQuiet > IDLE_AFTER);
+    if (choices.length === 0) return;
+    const commands = choices.map(
+      (choice): Command =>
+        'act' in choice
+          ? withSide({ cmd: 'idleAct', act: choice.act }, this.random)
+          : { cmd: 'idleFace', draw: choice.face },
+    );
+    // Not through `dispatch`: a choice is a moment, never part of the setup.
+    this.broadcast({ type: 'command', commands });
   }
 
   // --- recording ------------------------------------------------------------
@@ -970,6 +1052,7 @@ export class Hub {
 
   /** Stop Hub-owned timers when the control server is torn down. */
   dispose(): void {
+    this.stopIdleClock();
     this.clearTimers();
     this.clearOrphan();
     for (const timer of this.onAirTimers.values()) clearTimeout(timer);

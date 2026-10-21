@@ -111,3 +111,29 @@ export const idleCommandSchema = z.object({
   id: correlationId,
   on: z.boolean().optional(),
 });
+
+/**
+ * One idle performance the autopilot chose. Issued by the server, which makes
+ * each choice once so every renderer plays the same one; see
+ * `engine/autopilot.ts`. Unlike `perform` it leaves the baseline mood alone,
+ * and a renderer whose idle is not engaged drops it.
+ */
+export const idleActCommandSchema = z.object({
+  cmd: z.literal('idleAct'),
+  id: correlationId,
+  /** A performance id from the autopilot's pool. */
+  act: z.string(),
+  /** Which hand its movement uses, drawn once by the server. */
+  side: sideSchema.optional(),
+});
+
+/**
+ * One idle face the autopilot chose, issued by the server like `idleAct`.
+ * `draw` indexes the faces the avatar offers the idle — the same list on every
+ * renderer, since they load the same avatar — and null takes the face down.
+ */
+export const idleFaceCommandSchema = z.object({
+  cmd: z.literal('idleFace'),
+  id: correlationId,
+  draw: z.number().min(0).lt(1).nullable(),
+});

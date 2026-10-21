@@ -14,6 +14,7 @@ Every command goes to `POST /api/command`, one at a time or several under `batch
 | `point` | Aim a fingertip at a bearing — degrees on the wire, and any of the five fingers. Held until released. |
 | `look` | How much the gaze tracks the camera, 0 to 1. |
 | `idle` | The autopilot, on or off. |
+| `idleAct` / `idleFace` | Issued by the server, not by a caller: the autopilot's choices, made once and sent to every renderer so they all show the same idle. `idleAct` is a performance and the hand drawn for it, played without touching the baseline mood and after any running gesture ends; `idleFace` is a draw in [0, 1) onto the avatar's idle faces, or `null` to take the face down. A renderer whose idle is not engaged drops both, and neither is replayed to one that attaches later. |
 | `camera` | Where the camera stands: a framing — `face`, `bust`, `upper`, `full` — and how far off it, as a yaw, a pitch and a zoom. The offsets are relative to the framing so they survive an avatar swap, and every field is optional: naming a shot does not straighten one that was deliberately tilted. |
 | `room` | The space the voice is heard in. No id is dry. Persistent, like the camera. |
 | `backdrop` | The room the character is seen in. No id is the flat background. A separate axis from `room`, so a set can be cut without the microphone appearing to move. |

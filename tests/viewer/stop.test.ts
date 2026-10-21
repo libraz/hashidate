@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '@/engine/session';
-import { stopSpeech } from '@/viewer/stop';
+import { stopSpeech, switchIdle } from '@/viewer/stop';
 
 const session = () => ({ interrupt: vi.fn() }) as unknown as Session & { interrupt: () => void };
 
@@ -36,5 +36,31 @@ describe('stopSpeech', () => {
     const s = session();
     await stopSpeech(s, 'online');
     expect(s.interrupt).toHaveBeenCalledOnce();
+  });
+});
+
+describe('switchIdle', () => {
+  const idleSession = () =>
+    ({ setIdle: vi.fn() }) as unknown as Session & { setIdle: (on: boolean) => void };
+
+  it('switches the server autopilot when connected, leaving the session to the reply', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    const s = idleSession();
+    await switchIdle(s, 'online', true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/command',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ cmd: 'idle', on: true }) }),
+    );
+    expect(s.setIdle).not.toHaveBeenCalled();
+  });
+
+  it('switches the local session when offline', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const s = idleSession();
+    await switchIdle(s, 'offline', false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(s.setIdle).toHaveBeenCalledWith(false);
   });
 });

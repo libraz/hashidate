@@ -706,6 +706,13 @@ export class ControlClient {
       case 'idle':
         s.setIdle(c.on ?? true);
         return;
+      // The server's autopilot choices, the same on every renderer.
+      case 'idleAct':
+        s.idleAct(c.act, c.side);
+        return;
+      case 'idleFace':
+        s.idleFace(c.draw);
+        return;
       // The whole shot, not just the framing: an absent field is left where it
       // was, so a drag on the panel's preview sends two angles and nothing else.
       case 'camera':

@@ -4,7 +4,9 @@ import { bloomCommandSchema } from './bloom';
 import {
   gestureCommandSchema,
   hopCommandSchema,
+  idleActCommandSchema,
   idleCommandSchema,
+  idleFaceCommandSchema,
   lookCommandSchema,
   performCommandSchema,
   pointCommandSchema,
@@ -107,7 +109,9 @@ export {
 export {
   gestureCommandSchema,
   hopCommandSchema,
+  idleActCommandSchema,
   idleCommandSchema,
+  idleFaceCommandSchema,
   lookCommandSchema,
   performCommandSchema,
   pointCommandSchema,
@@ -192,6 +196,8 @@ export const commandSchema = z.discriminatedUnion('cmd', [
   pointCommandSchema,
   lookCommandSchema,
   idleCommandSchema,
+  idleActCommandSchema,
+  idleFaceCommandSchema,
   debugCommandSchema,
   recordCommandSchema,
   cameraCommandSchema,

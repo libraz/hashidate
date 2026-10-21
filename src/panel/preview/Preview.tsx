@@ -30,9 +30,10 @@ import { SpeakingLine } from './SpeakingLine';
  *
  * What that means in practice: the state is identical — emotion, expression,
  * performance, gesture, camera, wardrobe, room, and the queue itself, because
- * all of it is command-driven. What differs is the autopilot's improvisation:
- * blink timing, saccades, breathing phase, which idle gesture came up. Those run
- * on `Math.random()` and two renderers do not agree about them. It is a monitor
+ * all of it is command-driven, and so are the idle's picks, which the server
+ * makes once for every renderer. What differs is the cosmetic improvisation:
+ * blink timing, saccades, breathing phase, each gesture's small variation. Those
+ * run on `Math.random()` and two renderers do not agree about them. It is a monitor
  * of the performance, not a frame-accurate program feed, and there is no way to
  * make it the latter.
  *

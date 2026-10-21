@@ -43,7 +43,7 @@ Its mood is the exception and persists, for the same reason a turn's emotion doe
 
 For what the table has no name for, `emotion`, `expression`, `overlay`, `gesture` and `hop` are all still commands of their own. See [Commands](commands.md).
 
-The idle autopilot draws from a selected pool in the same table. The six groups above play when selected explicitly; they do not change the idle pool. `idle on` lets the character keep performing between turns without the caller sending anything. The autopilot does not repeat a gesture it used in either of its last two picks, and its first pick each time it starts (after a line, at session start, or when switched on) is a standing mood rather than a gesture.
+The idle autopilot draws from a selected pool in the same table. The six groups above play when selected explicitly; they do not change the idle pool. `idle on` lets the character keep performing between turns without the caller sending anything. The autopilot does not repeat a gesture it used in either of its last two picks, and its first pick each time it starts (after a line, at session start, or when switched on) is a standing mood rather than a gesture. The server makes these choices once and sends them to every renderer, so the preview, the stage and a capture all show the same idle.
 
 ## What runs continuously
 

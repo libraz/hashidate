@@ -72,6 +72,15 @@ export const SWITCH_CASES: Record<CommandName, Command[]> = {
   ],
   look: [{ cmd: 'look', amount: 0 }, { cmd: 'look', amount: 1 }, { cmd: 'look' }],
   idle: [{ cmd: 'idle', on: true }, { cmd: 'idle', on: false }, { cmd: 'idle' }],
+  idleAct: [
+    { cmd: 'idleAct', act: 'peace', side: 'L' },
+    { cmd: 'idleAct', act: 'blank' },
+  ],
+  idleFace: [
+    { cmd: 'idleFace', draw: 0 },
+    { cmd: 'idleFace', draw: 0.75 },
+    { cmd: 'idleFace', draw: null },
+  ],
   debug: [{ cmd: 'debug', on: true }, { cmd: 'debug', on: false }, { cmd: 'debug' }],
   camera: [
     { cmd: 'camera', frame: 'face' },

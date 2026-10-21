@@ -30,6 +30,7 @@
  * same command set over whatever channel it prefers.
  */
 
+import { IDLE_AFTER } from '../autopilot';
 import type { Director } from '../director';
 import type { Wardrobe } from '../scene';
 import type { Tuning, TuningPatch } from '../tuning';
@@ -61,11 +62,6 @@ import { TuningControl } from './tuning';
 import { TurnQueue } from './turns';
 
 export type { SessionListener } from './events';
-
-// How long the queue has to stay empty before the idle takes over. Short enough
-// not to look dead between turns, long enough that the autopilot does not
-// barge in during the pause in a two-part answer.
-const IDLE_AFTER = 1.6;
 
 export interface SessionOptions {
   wardrobe?: Wardrobe | null;
@@ -347,6 +343,19 @@ export class Session {
   setIdle(on: boolean): void {
     this.idleEnabled = !!on;
     if (!this.idleEnabled) this.d.auto = false;
+  }
+
+  /**
+   * One choice the autopilot made, played if the idle is engaged here and
+   * dropped otherwise. Not a direct command: it does not restart the grace.
+   */
+  idleAct(id: string, side?: Side): void {
+    this.d.idleAct(id, side);
+  }
+
+  /** The autopilot's idle face, by draw; null takes it down. See `idleAct`. */
+  idleFace(draw: number | null): void {
+    this.d.idleFace(draw);
   }
 
   // --- staging ------------------------------------------------------------

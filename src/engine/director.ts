@@ -27,12 +27,7 @@ import {
   textToVisemes,
 } from './face';
 import { Body, HeadBeats, HOPS, type HopDef, type PointCommand, planHeadBeats } from './motion';
-import {
-  holdsUntilReleased,
-  type PerformanceDef,
-  type PerformanceId,
-  performanceDef,
-} from './performance';
+import { holdsUntilReleased, type PerformanceDef, performanceDef } from './performance';
 import { Rig } from './rig';
 import { Spring, Tail } from './secondary';
 import type {
@@ -60,11 +55,13 @@ export interface SpeakOptions {
   level?: (seconds: number) => number;
 }
 
-const pickOne = <T>(xs: T[], random: () => number): T => xs[Math.floor(random() * xs.length)];
-
 /** Construction-time choices that are not part of the avatar. */
 export interface DirectorOptions {
-  /** Every draw the director and its blink make; injectable so a run can be replayed. */
+  /**
+   * Every draw the director, its blink and its body make; injectable so a run
+   * can be replayed. Cosmetic draws only — blink, saccade, per-play variation —
+   * since the idle choices arrive as commands.
+   */
   random?: () => number;
 }
 
@@ -73,66 +70,6 @@ const holdsEyesOpen = (emotion: EmotionVector): boolean => (emotion.surprise ?? 
 
 /** The fade rate of an authored face, shared by the single-preset fallback. */
 const PRESET_RATE = 6;
-
-/**
- * What the autopilot draws from, weighted by repetition rather than by a number:
- * the rows show the weighting, which a table of probabilities does not.
- *
- * Performances rather than moods and gestures picked separately. Choosing the
- * two independently is what produced the tell this replaced — a character whose
- * face and hands were reliably about different things, waving cheerfully while
- * looking thoughtful, because nothing ever related the two choices.
- *
- * Mostly quiet, on purpose. An idle stream is a character standing there being
- * in some mood, punctuated by something; the `mood` rows are that standing, and
- * they outnumber everything else three to one. Poses are in the pool and sulking
- * and startlement are not — a held pose is fine because the next pick releases
- * it, whereas a character who is periodically furious at nothing is not.
- *
- * `calm` is absent for a third reason. A mood the autopilot holds for the better
- * part of ten seconds is what the character looks like between turns, and a
- * settled, half-lidded face held that long reads as drowsy rather than as
- * composed — the standing rows have to leave the character awake. Its weight
- * went to `blank` and `wonder`, so the amount of standing is unchanged and only
- * what is being felt while standing moved. `sleepy` stays: a yawn that arrives
- * and passes is a punctuation mark, which is the row it sits in.
- *
- * This is also the idle movement pool. It names built-in performances only;
- * motions loaded from `show/motions/` are absent here and can run only when a
- * caller names them through the gesture command.
- */
-// biome-ignore format: the repetition is the weighting, and the rows show it
-const AUTO_ACTS: PerformanceId[] = [
-  'blank', 'blank', 'blank', 'blank', 'blank', 'blank',
-  'wonder', 'wonder', 'wonder',
-  'bashful', 'gloomy',
-  'agree', 'agree', 'curious', 'curious', 'ponder', 'dunno', 'interested',
-  'giggle', 'peace', 'applause',
-  'shy', 'catPaw', 'sparkle', 'secret', 'sleepy', 'refresh', 'bouncy', 'plead',
-  'polite', 'bored', 'guarded', 'nice', 'love', 'listening',
-];
-
-/**
- * One autopilot draw from the pool, weighted by its repetition.
- *
- * A gesture shared by two rows (`sparkle`) is one gesture, so repeats are
- * judged by gesture rather than by row. Rows with no gesture are never excluded.
- * After something has just ended (`settle`) the character stands in a mood
- * before moving again, so only rows with no gesture are eligible.
- */
-export function chooseAutoAct(
-  pool: readonly PerformanceId[],
-  recentGestures: readonly string[],
-  settle: boolean,
-  random: () => number,
-): PerformanceId {
-  const rows = pool.filter((id) => {
-    const gesture = performanceDef(id)?.gesture;
-    if (!gesture) return true;
-    return !(settle || recentGestures.includes(gesture));
-  });
-  return rows[Math.floor(random() * rows.length)];
-}
 
 /** Where a track's last mora ends, or 0 for a track with none. */
 function spokenEnd({ events }: VisemeTrack): number {
@@ -211,15 +148,13 @@ export class Director {
   private _vrmW = 0;
 
   private readonly _extraFaces: string[];
-  private _faceTimer = 0;
-  private _autoTimer = 4;
 
   /** autopilot: performances, and the avatar's own faces between them */
   private _auto = false;
-  /** Gestures of the last two autopilot picks, newest first. */
-  private _recentGestures: string[] = [];
-  /** Set when the autopilot starts, so its first pick is a standing one. */
-  private _settle = false;
+  /** An idle act waiting for a running gesture to finish; a newer one replaces it. */
+  private _pendingAct: { id: string; side?: Side } | null = null;
+  /** A face that arrived behind the pending act, put up once the act plays. */
+  private _pendingFace: { draw: number | null } | null = null;
 
   /** The baseline performance in flight, and what it will have to put back. */
   private _act: string | null = null;
@@ -301,7 +236,7 @@ export class Director {
 
     // Authored faces that no canonical emotion maps to, less the ones the avatar
     // keeps out of the idle. They are the bulk of the set and the semantic API
-    // cannot ask for them, so the autopilot picks from here directly.
+    // cannot ask for them, so the autopilot's face draw indexes here directly.
     this._extraFaces = buildIdleFaces(this.presets, avatar);
 
     // Squints and whole-face sculpts close the lids on the same vertices the
@@ -345,8 +280,9 @@ export class Director {
     if (on === this._auto) return;
     if (on && this.baselinePerformanceHeld) return;
     this._auto = on;
+    this._pendingAct = null;
+    this._pendingFace = null;
     if (on) {
-      this._settle = true;
       // Idle starts from what the baseline has actually reached. The baseline
       // continues easing underneath it, so turning idle off reveals the state
       // the caller has been driving rather than the mood idle happened to pick.
@@ -470,9 +406,6 @@ export class Director {
     this._autoOverlay.clear();
     this.setEmotion({ neutral: 1 });
     if (this._auto) this._idleTarget = { neutral: 1 };
-    // Hold off the autopilot briefly, or it repoints on the very next frame and
-    // the reset never becomes visible.
-    this._faceTimer = 3 + this.#random() * 3;
   }
 
   /**
@@ -688,7 +621,7 @@ export class Director {
     this.body.speechOpens = this.speechOpens;
     this.body.speechCloses = this.speechCloses;
 
-    this.autopilot(dt);
+    this.autopilot();
 
     this.rig.reset();
     this.body.update(dt, ctx);
@@ -734,29 +667,42 @@ export class Director {
 
   // --- autopilot ---------------------------------------------------------
   //
-  // Stands in for the orchestrator. In production the LLM decides what the
-  // character feels and does; this picks plausible values on a timer so the
-  // idle can be watched for minutes at a stretch. Several of the problems in
-  // this layer — a face that never resets, motion that locks into a rhythm —
-  // only show up when it is left running.
+  // The choices are made once, by the control server, and arrive here as
+  // commands — see `engine/autopilot.ts`. This side only plays them, and only
+  // while the autopilot is engaged: a choice arriving outside that is dropped.
 
-  private autopilot(dt: number): void {
+  /**
+   * Play an idle performance the autopilot chose, without touching
+   * caller-owned state. Waits for a running gesture rather than cutting it.
+   */
+  idleAct(id: string, side?: Side): void {
     if (!this._auto) return;
-    this.autoAct(dt);
-    this.autoFace(dt);
+    this._pendingAct = { id, side };
+    this._pendingFace = null;
+    this.autopilot();
   }
 
   /**
-   * One channel, one pick from the fixed performance pool.
-   *
-   * Face and body used to be chosen on two independent timers, which is what
-   * made the idle read as two unrelated animations sharing a body. A
-   * performance decides both at once, so whatever the character does, they are
-   * plausibly feeling it.
+   * Put up one of the avatar's idle faces, or take it down with null. `draw`
+   * is in [0, 1) and indexes the faces this avatar offers the idle; every
+   * renderer loads the same avatar, so every renderer lands on the same face.
    */
-  private autoAct(dt: number): void {
-    this._autoTimer -= dt;
-    if (this._autoTimer > 0) return;
+  idleFace(draw: number | null): void {
+    if (!this._auto) return;
+    // Kept in order behind a waiting act, which would otherwise clear it.
+    if (this._pendingAct) {
+      this._pendingFace = { draw };
+      return;
+    }
+    // An explicit pick outranks the autopilot and holds until it is cleared.
+    if (this._manualPreset || !this._extraFaces.length) return;
+    this._autoPreset =
+      draw === null ? null : this._extraFaces[Math.floor(draw * this._extraFaces.length)];
+  }
+
+  private autopilot(): void {
+    const pending = this._pendingAct;
+    if (!(this._auto && pending)) return;
     // Nothing is cut short: a pick waits for a running gesture to finish rather
     // than crossfading out of it.
     //
@@ -769,20 +715,12 @@ export class Director {
     // pose behind that no performance owns, and the autopilot has to be able to
     // move on from that too.
     const running = this.body.gesture;
-    if (running && !running.def.sustain && !running.released) {
-      this._autoTimer = 1.2;
-      return;
-    }
-    // Resolve the selected built-in performance before its gesture is played.
-    // Loaded motion ids never enter this path: they are not performance rows.
-    const id = chooseAutoAct(AUTO_ACTS, this._recentGestures, this._settle, this.#random);
-    this._settle = false;
-    const gesture = performanceDef(id)?.gesture;
-    if (gesture) this._recentGestures = [gesture, ...this._recentGestures].slice(0, 2);
-    this.autoPerform(id);
-    // Long enough that a pose is a pose rather than a flicker, uneven enough
-    // that the rotation does not become a beat the viewer can count along with.
-    this._autoTimer = 5.5 + this.#random() * 7;
+    if (running && !running.def.sustain && !running.released) return;
+    this._pendingAct = null;
+    this.autoPerform(pending.id, pending.side);
+    const face = this._pendingFace;
+    this._pendingFace = null;
+    if (face) this.idleFace(face.draw);
   }
 
   /**
@@ -792,7 +730,7 @@ export class Director {
    * persistent mood and clears an explicit expression. Idle needs the same
    * authored movement and transient effects, but none of those baseline writes.
    */
-  private autoPerform(id: string): void {
+  private autoPerform(id: string, side?: Side): void {
     this.releaseAutoAct();
     const def = performanceDef(id);
     if (!def) return;
@@ -812,31 +750,9 @@ export class Director {
       this._autoLookBefore = this.body.lookAt;
       this.body.lookAt = def.look;
     }
-    if (def.gesture) this.body.play(def.gesture);
+    if (def.gesture) this.body.play(def.gesture, side);
     else if (this.body.gesture?.def.sustain && !this.body.gesture.released) this.body.stopGesture();
     if (def.hop) this.hop(def.hop);
-  }
-
-  /**
-   * The avatar's own extra vocabulary: authored faces that no canonical emotion
-   * maps to, so a performance cannot reach them and nothing else will.
-   *
-   * A second channel and a slower one. It only ever puts a face on top of
-   * whatever the body is already doing, which is why it can run beside the
-   * performance channel without the two disagreeing.
-   */
-  private autoFace(dt: number): void {
-    // An explicit pick outranks the autopilot and holds until it is cleared.
-    if (this._manualPreset || !this._extraFaces.length) return;
-    this._faceTimer -= dt;
-    if (this._faceTimer > 0) return;
-    if (this.#random() < 0.45) {
-      this._autoPreset = pickOne(this._extraFaces, this.#random);
-      this._faceTimer = 3.5 + this.#random() * 3;
-    } else {
-      this._autoPreset = null;
-      this._faceTimer = 7 + this.#random() * 8;
-    }
   }
 
   // --- native expression presets -----------------------------------------

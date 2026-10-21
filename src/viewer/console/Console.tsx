@@ -12,7 +12,7 @@ import { backdropList, backdropNote } from '../scene/backdrop';
 import { CAMERA_FRAMES, CAMERA_LABELS } from '../scene/framing';
 import type { AvatarRuntime, RuntimeStatus } from '../scene/runtime';
 import { rememberBackdrop, rememberTransparent } from '../stage-mode';
-import { stopSpeech } from '../stop';
+import { stopSpeech, switchIdle } from '../stop';
 import styles from './Console.module.css';
 import { DemoBar } from './DemoBar';
 import { DressTab } from './tabs/DressTab';
@@ -249,7 +249,7 @@ export function Console({ runtime, avatars, status, control, rejected, onSwitch 
           label={t('console.idle.auto')}
           checked={state?.idleEnabled ?? false}
           onChange={(v) => {
-            session?.setIdle(v);
+            if (session) void switchIdle(session, control, v);
             if (!v) session?.resetExpression();
           }}
         />

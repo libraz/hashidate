@@ -1,3 +1,4 @@
+import { Autopilot } from '@/engine/autopilot';
 import { Director } from '@/engine/director';
 import { buildProfile } from '@/engine/profile';
 import { Wardrobe } from '@/engine/scene';
@@ -13,6 +14,8 @@ import type {
   WardrobeTable,
 } from '@/engine/types';
 import { same } from '@/i18n/locale';
+import type { Command } from '@/protocol';
+import { withSide } from '@/server/side';
 import { buildRig } from '../helpers/scene';
 
 /**
@@ -20,6 +23,10 @@ import { buildRig } from '../helpers/scene';
  * first, then `director.update(dt)`, at a fixed step. Everything below the
  * session is real — a synthetic rig, a resolved profile and a live director —
  * because the session's contract is with a director and not with a stub of one.
+ *
+ * The idle's choices are made by the control server, so the harness stands in
+ * for it: an `Autopilot` engaged exactly when the director's idle is, its side
+ * drawn as the hub draws it, and its choices fed in through the session.
  *
  * One harness, shared by every file in this directory. The suites are split by
  * what they are about — the queue, one turn's aftermath, the idle, the cues,
@@ -34,8 +41,7 @@ export const DT = 1 / 60;
 /** `TURN_GAP` in `session/turns.ts`. */
 export const TURN_GAP = 0.28;
 
-/** `IDLE_AFTER` in `session/index.ts`. */
-export const IDLE_AFTER = 1.6;
+export { IDLE_AFTER } from '@/engine/autopilot';
 
 /** `VOICE_WAIT` in `session/turns.ts`. */
 export const VOICE_WAIT = 5;
@@ -109,9 +115,20 @@ export function build({
     composition,
   });
 
+  // Read at call time, so a test that spies on `Math.random` pins the choices too.
+  const random = () => Math.random();
+  const pilot = new Autopilot(random);
   const step = (frames: number): void => {
     for (let i = 0; i < frames; i++) {
       session.update(DT);
+      for (const choice of pilot.advance(DT, director.auto)) {
+        if ('face' in choice) session.idleFace(choice.face);
+        else {
+          const act: Command = { cmd: 'idleAct', act: choice.act };
+          const command = withSide(act, random) as Extract<Command, { cmd: 'idleAct' }>;
+          session.idleAct(command.act, command.side);
+        }
+      }
       director.update(DT);
       clock += DT;
     }

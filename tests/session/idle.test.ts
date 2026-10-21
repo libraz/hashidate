@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { chooseAutoAct } from '@/engine/director';
+import { chooseAutoAct } from '@/engine/autopilot';
 import { clearMotions, GESTURES, HOPS, loadMotions, planJump } from '@/engine/motion';
 import { CROUCH_T, RECOVER_T } from '@/engine/motion/jump';
 import { PERFORMANCE_TABLE, type PerformanceId, performanceDef } from '@/engine/performance';

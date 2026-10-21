@@ -61,3 +61,26 @@ describe('point angles', () => {
     }
   });
 });
+
+describe('the idle choices the server sends', () => {
+  it('carry a performance and the hand drawn for it', () => {
+    expect(parseCommand({ cmd: 'idleAct', act: 'peace', side: 'R' })).toEqual({
+      cmd: 'idleAct',
+      act: 'peace',
+      side: 'R',
+    });
+  });
+
+  it('take a face draw in [0, 1), or null to take the face down', () => {
+    expect(parseCommand({ cmd: 'idleFace', draw: 0 })).toEqual({ cmd: 'idleFace', draw: 0 });
+    expect(parseCommand({ cmd: 'idleFace', draw: null })).toEqual({ cmd: 'idleFace', draw: null });
+    for (const draw of [1, -0.1, 2, undefined]) {
+      expect(parseCommand({ cmd: 'idleFace', draw })).toBeNull();
+    }
+  });
+
+  it('refuse an act with no performance or a hand the engine has none of', () => {
+    expect(parseCommand({ cmd: 'idleAct' })).toBeNull();
+    expect(parseCommand({ cmd: 'idleAct', act: 'peace', side: 'left' })).toBeNull();
+  });
+});

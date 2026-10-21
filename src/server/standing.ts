@@ -337,6 +337,14 @@ export class Standing {
     return command.on ?? true;
   }
 
+  /** Whether the idle autopilot is on, read back on the same footing as `paused`. */
+  get idle(): boolean {
+    const command = this.last.get('idle') as Of<'idle'> | undefined;
+    if (command === undefined) return false;
+    // Absent `on` means on, as the schema states.
+    return command.on ?? true;
+  }
+
   private dress(command: Of<'wear'>): void {
     // A whole outfit is a fresh start: it sets every slot it names and is the
     // only thing here that can undo an earlier one.
