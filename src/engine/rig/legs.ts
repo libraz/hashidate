@@ -9,6 +9,7 @@ interface LegState {
   toe: THREE.Bone | undefined;
   upperLength: number;
   lowerLength: number;
+  softZone: number;
   upperRestQ: THREE.Quaternion;
   lowerRestQ: THREE.Quaternion;
   /** Full root-relative rest matrix, retaining affine scale/shear context. */
@@ -69,6 +70,9 @@ export class GroundedLegs {
   static readonly STANDING_RATIO = 0.9;
   static readonly STANDING_DESCENT = 0.8;
   static readonly ANKLE_LEVEL = 0.05;
+  /** 0.45 m bones: hard lock drops 5° in the first 1 mm; a full 1% zone gives
+   * about 0.9°/mm. Capped at captured rest slack; needs a render check. */
+  static readonly SOFT_REACH = 0.01;
   /** A few Float32 ULPs from GLB export are still an authored uniform scale. */
   static readonly SCALE_ISOTROPY_EPS = 1e-6;
 
@@ -258,6 +262,10 @@ export class GroundedLegs {
         toe: supportedToe,
         upperLength,
         lowerLength,
+        softZone: Math.min(
+          GroundedLegs.SOFT_REACH * (upperLength + lowerLength),
+          Math.max(0, upperLength + lowerLength - Math.sqrt(restReachSq)),
+        ),
         upperRestQ,
         lowerRestQ,
         footRestRootMatrix: footRootMatrix,
@@ -423,8 +431,17 @@ export class GroundedLegs {
     const root = Math.sqrt(Math.max(0, discriminant));
     const one = (b - root) / a;
     const two = (b + root) / a;
-    const lower = Math.max(0, Math.min(one, two));
+    let lower = Math.max(0, Math.min(one, two));
     const upper = Math.max(one, two);
+    // Settle the pelvis onto soft reach without moving either ankle anchor.
+    // Captured rest slack caps the zone so the authored pose stays a fixed point.
+    const distance = Math.sqrt(this.intervalV.lengthSq());
+    const soft = softReach(distance, state.upperLength + state.lowerLength, state.softZone);
+    if (soft < distance) {
+      const softC = this.intervalV.lengthSq() - soft * soft;
+      const softRoot = Math.sqrt(Math.max(0, b * b - a * softC));
+      lower = Math.max(lower, (b - softRoot) / a);
+    }
     if (!(Number.isFinite(lower) && Number.isFinite(upper)) || upper < -GroundedLegs.EPS) {
       return false;
     }
@@ -551,6 +568,13 @@ function validQuaternion(q: THREE.Quaternion): boolean {
   return (
     Number.isFinite(q.x) && Number.isFinite(q.y) && Number.isFinite(q.z) && Number.isFinite(q.w)
   );
+}
+
+/** Identity below the rest-capped join, C1 above it; straight rest uses hard reach. */
+function softReach(distance: number, maximum: number, zone: number): number {
+  const start = maximum - zone;
+  if (!(distance > start && zone > GroundedLegs.EPS)) return distance;
+  return start - zone * Math.expm1(-(distance - start) / zone);
 }
 
 function uniformScale(scale: THREE.Vector3): boolean {
