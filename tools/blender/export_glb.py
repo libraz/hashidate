@@ -347,5 +347,6 @@ kw = dict(
 try:
     bpy.ops.export_scene.gltf(**kw, export_image_format="WEBP", export_image_quality=85)
 except TypeError:
+    print("@@@ WARNING exporter rejected WEBP options; textures fall back to PNG")
     bpy.ops.export_scene.gltf(**kw)
 print(f"@@@ EXPORTED {dst} {os.path.getsize(dst)} bytes")
