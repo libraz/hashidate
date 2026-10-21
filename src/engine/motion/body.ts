@@ -16,10 +16,10 @@ import type {
   SpineOffsets,
   Vec3Tuple,
 } from '../types';
-import { ReachAnchors } from './anchors';
+import { type HandControls, ReachAnchors } from './anchors';
 import { claspMeasure, claspSpread } from './clasp';
 import { gestureDef, SPINE_SLOTS } from './custom';
-import { FingerLife } from './finger-life';
+import { FingerLife, type HandSensePose } from './finger-life';
 import { DirFollower, OMEGA_PER_RATE, ScalarFollower, slerpDir } from './follow';
 import { CharacterFrame, sideMirror } from './frame';
 import { Gaze, HEAD_OMEGA, type SpeechGaze } from './gaze';
@@ -607,6 +607,11 @@ export class Body {
   private _curReach = mkReachScratch();
   /** Solver output for `travel`'s probe, so a probe moves no live slot's elbow. */
   private readonly _probeReach = mkReachScratch();
+  private readonly _probeHandControls: Record<Side, HandControls> = {
+    L: { curls: {}, spread: {} },
+    R: { curls: {}, spread: {} },
+  };
+  private readonly _effectiveHandControls: Record<Side, HandControls>;
 
   /** Where each arm link rests; the standing pose unless the avatar overrides it. */
   private readonly _rest: Record<ArmSlot, THREE.Vector3>;
@@ -747,6 +752,10 @@ export class Body {
       R: mkFingerState(),
     };
     this._fingerSpreadSpec = { L: mkFingerSpread(), R: mkFingerSpread() };
+    this._effectiveHandControls = {
+      L: { curls: this._fingerSpec.L, spread: this._fingerSpreadSpec.L },
+      R: { curls: this._fingerSpec.R, spread: this._fingerSpreadSpec.R },
+    };
     this._fingerSpreadState = { L: mkFingerSpreadState(), R: mkFingerSpreadState() };
     const spreadFor = (side: Side, role: 'lead' | 'follow') => {
       const m = claspMeasure(profile.limb, side);
@@ -1172,9 +1181,25 @@ export class Body {
       worst = Math.max(worst, d.length());
     }
     for (const side of SIDES) {
+      const controls = this._probeHandControls[side];
+      for (const finger of FINGER_NAMES) {
+        controls.curls[finger] = pose.fingers?.[side]?.[finger] ?? BASE_FINGERS[finger];
+        controls.spread[finger] = pose.fingerSpread?.[side]?.[finger] ?? 0;
+      }
+    }
+    for (const side of SIDES) {
       const mirror = sideMirror(side);
       this._probeReach[side].swivelDir.set(0, 0, 0);
-      const arm = this._arm.resolve(pose, side, mirror, this._probeReach, 1);
+      const arm = this._arm.resolve(
+        pose,
+        side,
+        mirror,
+        this._probeReach,
+        1,
+        false,
+        undefined,
+        this._probeHandControls,
+      );
       if (!arm) continue;
       for (const slot of ARM_SLOTS) {
         const dir = arm[slot];
@@ -1185,6 +1210,72 @@ export class Body {
     return worst;
   }
 
+  private advanceFingerControls(
+    side: Side,
+    g: Pose | null,
+    dt: number,
+    idle: number,
+    br: number,
+    d: number,
+    handSource: Outgoing | undefined,
+    sensePose?: HandSensePose | null,
+  ): void {
+    const cf = g?.fingers?.[side];
+    const cfSpread = g?.fingerSpread?.[side];
+    const spec = this._fingerSpec[side];
+    const spread = this._fingerSpreadSpec[side];
+    const fw = plain(this._fingerEnv);
+    // A clasp's fingers open toward flat over the first part of the exit, or of
+    // the fade once it is no longer the current gesture.
+    const cc = g?.clasp;
+    const cSpread = cc ? this._claspSpread[side][side === cc.lead ? 'lead' : 'follow'] : null;
+    const cK = minJerk((this._exiting ? this._exitU : 0) / UNTHREAD);
+    // Interlaced fingers are not free to drift or trail; the life fades with
+    // whatever share of the hand a clasp still holds.
+    let held = cc ? fw * (1 - cK) : 0;
+    for (const o of this._fading) {
+      if (o.pose?.clasp) held += o.w * (1 - minJerk((1 - o.w) / UNTHREAD));
+    }
+    const free = Math.max(0, 1 - held);
+    // A switch hands the hand straight over. The outgoing shape fades on its
+    // own decay and the incoming one starts late (FINGER_ONSET); weighted
+    // as they are, the gap between sagged even fist-to-point a quarter open.
+    // The hold goes to `handSource` alone, never to an older slot left last.
+    // Held so that rest shows through only as far as the new gesture's own
+    // exit lets it: (1 - hold)(1 - fw) = 1 - exit.
+    const fx = this._fingerEnv.exit;
+    const handHold = (cf || cfSpread) && fw < 1 ? 1 - (1 - fx) / (1 - fw) : 0;
+    this._fingerLife.sense(side, dt, sensePose);
+    for (const f of FINGER_NAMES) {
+      let val = BASE_FINGERS[f];
+      let spreadVal = 0;
+      for (const o of this._fading) {
+        const oc = o.pose?.clasp;
+        const oSpread = oc ? this._claspSpread[side][side === oc.lead ? 'lead' : 'follow'] : null;
+        const oK = minJerk((1 - o.w) / UNTHREAD);
+        let pv = o.pose?.fingers?.[side]?.[f];
+        if (pv !== undefined && oSpread) pv = claspCurl(side !== oc?.lead, f, pv, oK);
+        const ow = o === handSource ? Math.max(o.w, handHold) : o.w;
+        if (pv !== undefined) val += (pv - val) * ow;
+        const pvSpread = oSpread ? (oSpread[f] ?? 0) * (1 - oK) : o.pose?.fingerSpread?.[side]?.[f];
+        if (pvSpread !== undefined) spreadVal += (pvSpread - spreadVal) * ow;
+      }
+      let cv = cf?.[f];
+      if (cv !== undefined && cSpread) cv = claspCurl(side !== cc?.lead, f, cv, cK);
+      if (cv !== undefined) val += (cv - val) * fw;
+      val += this._fingerLife.offset(side, f, val, this.t, idle, br * d, free);
+      spec[f] = val;
+
+      const cvSpread = cSpread ? (cSpread[f] ?? 0) * (1 - cK) : cfSpread?.[f];
+      if (cvSpread !== undefined) spreadVal += (cvSpread - spreadVal) * fw;
+      spreadVal += this._fingerLife.spread(side, f, val, free);
+      spread[f] = this._fingerSpreadState[side][f].step(spreadVal, dt, FINGER_FOLLOW);
+    }
+    const state = this._fingerState[side];
+    this._fingerLife.enslave(side, spec, dt, fingerRate, free);
+    for (const f of FINGER_NAMES) spec[f] = state[f].step(spec[f], dt, fingerRate(f));
+  }
+
   /** Add one gesture slot's girdle turn for `side`, if it is a reach that states no shoulder. */
   private girdleShare(
     pose: Pose | null,
@@ -1193,10 +1284,11 @@ export class Body {
     dir: Vec3Tuple,
     turn: THREE.Vector3,
     frameReady: boolean,
+    controls?: Readonly<Record<Side, HandControls>>,
   ): void {
     const gr = pose?.reach?.[side];
     if (!gr || pose?.arms?.[side]?.shoulder || weight <= 0) return;
-    const gt = this.anchors.target(gr, side, frameReady);
+    const gt = this.anchors.target(gr, side, frameReady, controls?.[side]);
     if (gt) this.rig.girdleRoom(side, gt, dir, weight, turn);
   }
 
@@ -1819,8 +1911,10 @@ export class Body {
           break;
         }
         if (
-          !this.classifyArmBridgeInterval(from, middle, depth + 1) ||
-          !this.classifyArmBridgeInterval(middle, to, depth + 1)
+          !(
+            this.classifyArmBridgeInterval(from, middle, depth + 1) &&
+            this.classifyArmBridgeInterval(middle, to, depth + 1)
+          )
         )
           valid = false;
       }
@@ -2227,6 +2321,22 @@ export class Body {
     // so every direction sent to Rig in this frame uses the same live basis.
     const frameReady = rig.anat.update();
     const armTransaction = rig.beginBodyArmFrame();
+    const handOrder = g?.clasp ? (g.clasp.lead === 'L' ? ORDER_L : ORDER_R) : SIDES;
+    if (armTransaction) {
+      for (const side of handOrder) {
+        this.advanceFingerControls(
+          side,
+          g,
+          dt,
+          idle,
+          br,
+          d,
+          handSource,
+          rig.lastAcceptedHandPose(side),
+        );
+      }
+    }
+    const handControls = armTransaction ? this._effectiveHandControls : undefined;
 
     // --- arms -------------------------------------------------------------
     const armDrift = 0.016 * idle;
@@ -2236,7 +2346,7 @@ export class Body {
     env.armDrift = armDrift;
     env.dt = dt;
 
-    for (const side of g?.clasp ? (g.clasp.lead === 'L' ? ORDER_L : ORDER_R) : SIDES) {
+    for (const side of handOrder) {
       const mirror = sideMirror(side);
       const dirs = this._armDirs[side];
       const worldDirs = this._armWorld[side];
@@ -2269,9 +2379,9 @@ export class Body {
       const turn = _girdleTurn.set(0, 0, 0);
       this.axes.tupleToWorld(worldDirs.shoulder, sv, side, mirror, frameReady);
       for (const f of this._fading) {
-        this.girdleShare(f.pose, side, f.w, worldDirs.shoulder, turn, frameReady);
+        this.girdleShare(f.pose, side, f.w, worldDirs.shoulder, turn, frameReady, handControls);
       }
-      this.girdleShare(g, side, this.blend, worldDirs.shoulder, turn, frameReady);
+      this.girdleShare(g, side, this.blend, worldDirs.shoulder, turn, frameReady, handControls);
       if (turn.lengthSq() > 0) {
         rig.turnGirdle(worldDirs.shoulder, turn);
         this.axes.toCharacter(sv, _girdleDir.fromArray(worldDirs.shoulder), side, frameReady);
@@ -2289,6 +2399,7 @@ export class Body {
           this._armEnv.hand.entrance,
           false,
           frameReady,
+          handControls,
         );
       }
       const cArm = this._arm.resolve(
@@ -2299,6 +2410,7 @@ export class Body {
         this._armEnv.hand.entrance,
         true,
         frameReady,
+        handControls,
       );
 
       /**
@@ -2433,62 +2545,10 @@ export class Body {
         this._arm.note(side, dirs.upperArm, dirs.lowerArm, dirs.hand);
       }
 
-      const cf = g?.fingers?.[side];
-      const cfSpread = g?.fingerSpread?.[side];
+      if (!armTransaction) this.advanceFingerControls(side, g, dt, idle, br, d, handSource);
       const spec = this._fingerSpec[side];
       const spread = this._fingerSpreadSpec[side];
-      const fw = plain(this._fingerEnv);
-      // A clasp's fingers open toward flat over the first part of the exit, or of
-      // the fade once it is no longer the current gesture.
       const cc = g?.clasp;
-      const cSpread = cc ? this._claspSpread[side][side === cc.lead ? 'lead' : 'follow'] : null;
-      const cK = minJerk((this._exiting ? this._exitU : 0) / UNTHREAD);
-      // Interlaced fingers are not free to drift or trail; the life fades with
-      // whatever share of the hand a clasp still holds.
-      let held = cc ? fw * (1 - cK) : 0;
-      for (const o of this._fading) {
-        if (o.pose?.clasp) held += o.w * (1 - minJerk((1 - o.w) / UNTHREAD));
-      }
-      const free = Math.max(0, 1 - held);
-      // A switch hands the hand straight over. The outgoing shape fades on its
-      // own decay and the incoming one starts late (FINGER_ONSET); weighted
-      // as they are, the gap between sagged even fist-to-point a quarter open.
-      // The hold goes to `handSource` alone, never to an older slot left last.
-      // Held so that rest shows through only as far as the new gesture's own
-      // exit lets it: (1 - hold)(1 - fw) = 1 - exit.
-      const fx = this._fingerEnv.exit;
-      const handHold = (cf || cfSpread) && fw < 1 ? 1 - (1 - fx) / (1 - fw) : 0;
-      this._fingerLife.sense(side, dt, armTransaction ? rig.lastAcceptedHandPose(side) : undefined);
-      for (const f of FINGER_NAMES) {
-        let val = BASE_FINGERS[f];
-        let spreadVal = 0;
-        for (const o of this._fading) {
-          const oc = o.pose?.clasp;
-          const oSpread = oc ? this._claspSpread[side][side === oc.lead ? 'lead' : 'follow'] : null;
-          const oK = minJerk((1 - o.w) / UNTHREAD);
-          let pv = o.pose?.fingers?.[side]?.[f];
-          if (pv !== undefined && oSpread) pv = claspCurl(side !== oc?.lead, f, pv, oK);
-          const ow = o === handSource ? Math.max(o.w, handHold) : o.w;
-          if (pv !== undefined) val += (pv - val) * ow;
-          const pvSpread = oSpread
-            ? (oSpread[f] ?? 0) * (1 - oK)
-            : o.pose?.fingerSpread?.[side]?.[f];
-          if (pvSpread !== undefined) spreadVal += (pvSpread - spreadVal) * ow;
-        }
-        let cv = cf?.[f];
-        if (cv !== undefined && cSpread) cv = claspCurl(side !== cc?.lead, f, cv, cK);
-        if (cv !== undefined) val += (cv - val) * fw;
-        val += this._fingerLife.offset(side, f, val, this.t, idle, br * d, free);
-        spec[f] = val;
-
-        const cvSpread = cSpread ? (cSpread[f] ?? 0) * (1 - cK) : cfSpread?.[f];
-        if (cvSpread !== undefined) spreadVal += (cvSpread - spreadVal) * fw;
-        spreadVal += this._fingerLife.spread(side, f, val, free);
-        spread[f] = this._fingerSpreadState[side][f].step(spreadVal, dt, FINGER_FOLLOW);
-      }
-      const state = this._fingerState[side];
-      this._fingerLife.enslave(side, spec, dt, fingerRate, free);
-      for (const f of FINGER_NAMES) spec[f] = state[f].step(spec[f], dt, fingerRate(f));
       if (armTransaction) {
         const driver = rig.armDriver(side);
         if (cc && side === cc.lead && driver) {

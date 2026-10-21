@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { ArmSolution, Rig } from '../rig';
 import type { ArmSlot, FingerName, Pose, Profile, Side, Vec3Tuple } from '../types';
-import type { ReachAnchors } from './anchors';
+import type { HandControls, ReachAnchors } from './anchors';
 import { type ClaspLeader, type ClaspPlacement, claspMeasure, placeFollower } from './clasp';
 import type { CharacterFrame } from './frame';
 import { BASE_PALM } from './gestures';
@@ -322,6 +322,7 @@ export class ArmResolver {
     timed: boolean,
     mirror: number,
     frameReady?: boolean,
+    controls?: Readonly<Record<Side, HandControls>>,
   ): ResolvedArm | null {
     const c = pose.clasp;
     if (!c || side === c.lead) return null;
@@ -357,11 +358,11 @@ export class ArmResolver {
     // Until the leader's hand has arrived, placing against it drags the
     // follower low across the belly; head for the mirrored reach instead and
     // hand over to the placement by how far the leader has actually come.
-    const arrived = this.leaderArrival(pose, lead, l.wrist, frameReady);
+    const arrived = this.leaderArrival(pose, lead, l.wrist, frameReady, controls);
     if (arrived < 1) {
       const r = pose.reach?.[side];
       const k = minJerk(onset(arrived, HANDOVER_ONSET));
-      const mirrored = this.anchors.target(r, side, frameReady);
+      const mirrored = this.anchors.target(r, side, frameReady, controls?.[side]);
       if (mirrored) f.wrist.lerpVectors(mirrored, f.wrist, k);
       // The leader's hand still hangs as it rises, and as the elbow's hint it
       // picks a different elbow from the leader's.
@@ -390,9 +391,10 @@ export class ArmResolver {
     lead: Side,
     wrist: THREE.Vector3,
     frameReady?: boolean,
+    controls?: Readonly<Record<Side, HandControls>>,
   ): number {
     if (!this._wristKnown[lead]) return 1;
-    const target = this.anchors.target(pose.reach?.[lead], lead, frameReady);
+    const target = this.anchors.target(pose.reach?.[lead], lead, frameReady, controls?.[lead]);
     if (!target) return 1;
     const span = target.distanceTo(this._wristFrom[lead]);
     if (span < 1e-4) return 1;
@@ -449,6 +451,7 @@ export class ArmResolver {
     handEntrance: number,
     timed = false,
     frameReady?: boolean,
+    controls?: Readonly<Record<Side, HandControls>>,
   ): ResolvedArm | null {
     const pt = pose?.point?.[side];
     if (pt) {
@@ -501,7 +504,16 @@ export class ArmResolver {
     }
 
     if (pose?.clasp) {
-      const arm = this.resolveClasp(pose, side, reach, handEntrance, timed, mirror, frameReady);
+      const arm = this.resolveClasp(
+        pose,
+        side,
+        reach,
+        handEntrance,
+        timed,
+        mirror,
+        frameReady,
+        controls,
+      );
       if (arm) return arm;
     }
 
@@ -520,7 +532,7 @@ export class ArmResolver {
     // head, and no choice of elbow could fix it — sampling the whole elbow
     // circle for a hand held beside the temple, the *shallowest* candidate was
     // still 28% inside. The elbow has no authority over where the wrist is.
-    const target = this.anchors.target(r, side, frameReady);
+    const target = this.anchors.target(r, side, frameReady, controls?.[side]);
     if (!target) return pose?.arms?.[side] ?? null;
 
     // Carry the wrist through the room rather than through joint space.

@@ -12,6 +12,7 @@ import type {
   ArmSlot,
   FingerName,
   FingerSpec,
+  HandContact,
   JointReading,
   JointTable,
   Profile,
@@ -30,7 +31,15 @@ import {
 import type { ArmPathEnvironment, ArmPathPlanOutput } from './arm-path';
 import { ArmTwists } from './arm-twists';
 import { ElbowSearch } from './elbow';
-import { FINGER_TIP_EXTENSION } from './hand-geometry';
+import {
+  captureHandContactGeometry,
+  FINGER_TIP_EXTENSION,
+  type HandContactCalibration,
+  type HandGeometrySample,
+  makeHandGeometrySample,
+  sampleHandContact,
+  sampleHandGeometry,
+} from './hand-geometry';
 import { Hands } from './hands';
 import { GroundedLegs } from './legs';
 import { type PointRequest, PointSolver, worldDirection } from './point';
@@ -391,6 +400,18 @@ export class Rig {
     L: new THREE.Vector3(),
     R: new THREE.Vector3(),
   };
+  private readonly _contactPrediction: Partial<
+    Record<
+      Side,
+      {
+        calibration: HandContactCalibration;
+        sample: HandGeometrySample;
+        contact: THREE.Vector3;
+        shape: readonly THREE.Vector3[];
+        bindFrame: THREE.Matrix3;
+      }
+    >
+  > = {};
   private readonly _armDrivers: Record<Side, ArmDriver | null> = { L: null, R: null };
   private readonly _armFrameSnapshots: Record<Side, ArmFrameSnapshot> = {
     L: makeArmFrameSnapshot(),
@@ -573,6 +594,24 @@ export class Rig {
       )
         continue;
       this._armDrivers[side] = driver;
+      const bindFrame = handFrame(
+        driver.calibration.hand.axis.clone(),
+        driver.calibration.hand.palm.clone(),
+        new THREE.Matrix3(),
+      );
+      if (bindFrame) {
+        const sample = makeHandGeometrySample(driver.handGeometry);
+        this._contactPrediction[side] = {
+          calibration: captureHandContactGeometry(
+            driver.handGeometry,
+            driver.calibration.hand.palm,
+          ),
+          sample,
+          contact: new THREE.Vector3(),
+          shape: sample.points.map((point) => point.position),
+          bindFrame,
+        };
+      }
       this._nativeArmEnvironment[side] = {
         environment: driver.environment,
         sample: driver.environment.sample,
@@ -773,6 +812,38 @@ export class Rig {
 
   armDriver(side: Side): ArmDriver | null {
     return this._armDrivers[side];
+  }
+
+  /** Borrowed metric hand-bone geometry; valid until the next prediction for this side. */
+  predictHandContact(
+    side: Side,
+    selector: HandContact,
+    curls: FingerSpec,
+    spread: FingerSpec,
+  ): {
+    readonly contact: Readonly<THREE.Vector3>;
+    readonly shape: readonly THREE.Vector3[];
+    readonly bindFrame: Readonly<THREE.Matrix3>;
+  } | null {
+    const prediction = this._contactPrediction[side];
+    if (!(prediction && this._limitsEnabled && this.bothArmFramesSupported())) return null;
+    if (
+      !sampleHandContact(
+        prediction.calibration,
+        curls,
+        spread,
+        selector,
+        this.fingerClearance(side),
+        prediction.contact,
+      )
+    )
+      return null;
+    sampleHandGeometry(prediction.calibration.geometry, curls, spread, prediction.sample);
+    for (const point of prediction.shape) {
+      if (!(Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.z)))
+        return null;
+    }
+    return prediction;
   }
 
   private captureArmFrameMetrics(): void {

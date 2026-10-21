@@ -2,9 +2,14 @@ import * as THREE from 'three';
 import { HAND_CONTACT } from '../anatomy';
 import { BODY_ANCHORS, FACE_ANCHORS } from '../profile';
 import { handFrame, type Rig } from '../rig';
-import type { Profile, ReachSpec, Side, Vec3Tuple } from '../types';
+import type { FingerSpec, Profile, ReachSpec, Side, Vec3Tuple } from '../types';
 import { slerpDir } from './follow';
 import { type CharacterFrame, sideMirror } from './frame';
+
+export interface HandControls {
+  readonly curls: FingerSpec;
+  readonly spread: FingerSpec;
+}
 
 /** Halvings that settle how far a target slides out of the face, below a finger's half-thickness. */
 const CLEAR_REFINE = 3;
@@ -37,6 +42,8 @@ export class ReachAnchors {
   private readonly _clearM = new THREE.Vector3();
   private readonly _clearN = new THREE.Vector3();
   private readonly _clearF = new THREE.Matrix3();
+  private readonly _contactRotation = new THREE.Matrix3();
+  private readonly _contactBind = new THREE.Matrix3();
   private readonly _clearAt = new THREE.Vector3();
   private readonly _travelS = new THREE.Vector3();
   private readonly _travelA = new THREE.Vector3();
@@ -131,7 +138,12 @@ export class ReachAnchors {
    * the shoulder is posed, and the shoulder has to be posed before the arm can
    * be solved from it. Nothing here depends on the arm, so the order works out.
    */
-  target(r: ReachSpec | undefined, side: Side, frameReady?: boolean): THREE.Vector3 | null {
+  target(
+    r: ReachSpec | undefined,
+    side: Side,
+    frameReady?: boolean,
+    controls?: HandControls,
+  ): THREE.Vector3 | null {
     if (!r) return null;
     const target =
       r.space === 'body'
@@ -140,6 +152,40 @@ export class ReachAnchors {
           ? this.face(r.at, r.offset, side)
           : null;
     if (!target) return null;
+    if (
+      r.contact &&
+      controls &&
+      r.hand?.length === 3 &&
+      r.palm?.length === 3 &&
+      r.hand.every(Number.isFinite) &&
+      r.palm.every(Number.isFinite)
+    ) {
+      const requested = handFrame(
+        this.axes.toWorld(this._clearX, r.hand, side, sideMirror(side), frameReady),
+        this.axes.toWorld(this._clearY, r.palm, side, sideMirror(side), frameReady),
+        this._contactRotation,
+      );
+      const prediction = requested
+        ? this.rig.predictHandContact(side, r.contact, controls.curls, controls.spread)
+        : null;
+      if (prediction && requested) {
+        const anchor = this._clearAt.copy(target);
+        requested.multiply(this._contactBind.copy(prediction.bindFrame).transpose());
+        target.sub(this._hand.copy(prediction.contact).applyMatrix3(requested));
+        if (r.space !== 'body')
+          this.clearFace(
+            target,
+            anchor,
+            r.hand,
+            r.palm,
+            side,
+            frameReady,
+            prediction.shape,
+            requested,
+          );
+        return target;
+      }
+    }
     if (r.hand && r.space !== 'body') {
       const anchor = this._clearAt.copy(target);
       const back = (this.p.limb?.[`tip.${side}.middle`] ?? 0) * HAND_CONTACT;
@@ -176,16 +222,20 @@ export class ReachAnchors {
     palm: Vec3Tuple,
     side: Side,
     frameReady?: boolean,
+    predictedShape?: readonly THREE.Vector3[],
+    contactRotation?: THREE.Matrix3,
   ): void {
     const face = this.rig.anat?.face;
     if (!face) return;
-    const F = handFrame(
-      this.axes.toWorld(this._clearX, hand, side, sideMirror(side), frameReady),
-      this.axes.toWorld(this._clearY, palm, side, sideMirror(side), frameReady),
-      this._clearF,
-    );
+    const F =
+      contactRotation ??
+      handFrame(
+        this.axes.toWorld(this._clearX, hand, side, sideMirror(side), frameReady),
+        this.axes.toWorld(this._clearY, palm, side, sideMirror(side), frameReady),
+        this._clearF,
+      );
     if (!F) return;
-    const shape = this.rig.fingerShape(side);
+    const shape = predictedShape ?? this.rig.fingerShape(side);
     const clear = this.rig.fingerClearance(side);
     if (!(shape.length && clear > 0)) return;
     face.refresh();
