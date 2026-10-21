@@ -1416,7 +1416,7 @@ export class Body {
     for (let attempt = 0; attempt <= 6; attempt++) {
       if (attempt > 0) this._armFrameWork.contextRetries++;
       const alpha = attempt === 0 ? 1 : attempt === 6 ? 0 : 2 ** -attempt;
-      const candidateRise = rig.applyBodyContext(alpha);
+      const candidateRise = rig.applyBodyContext(alpha, 1);
       this._bridgeAlpha = alpha;
       this._bridgeSampleCount = 0;
       const leftDriver = rig.armDriver('L');
@@ -1555,8 +1555,11 @@ export class Body {
       if (!feasible) continue;
     }
 
+    // A failed articulation must not hold back the common signed jump
+    // translation. This is its own accepted result, not a passed arm bridge.
+    if (!committed) committed = rig.commitArmTransport(this._rise);
     if (!committed) {
-      rig.applyBodyContext(0);
+      rig.applyBodyContext(0, 0);
       for (const side of ['L', 'R'] as Side[]) {
         const driver = rig.armDriver(side);
         const context = rig.armForwardContext(side);
@@ -1576,7 +1579,7 @@ export class Body {
     }
     this._bridgeSampleCount++;
     this._armFrameWork.bridgeSamples++;
-    this.rig.applyBodyContext(alpha);
+    this.rig.applyBodyContext(alpha, 1);
     let valid = true;
     for (const side of ['L', 'R'] as Side[]) {
       const driver = this.rig.armDriver(side);
@@ -1634,7 +1637,7 @@ export class Body {
   }
 
   private restoreArmBridgeContext(alpha: number): boolean {
-    this.rig.applyBodyContext(alpha);
+    this.rig.applyBodyContext(alpha, 1);
     for (const side of ['L', 'R'] as Side[]) {
       const driver = this.rig.armDriver(side);
       const plan = this._frameCommit[side];
@@ -1656,7 +1659,7 @@ export class Body {
     if (!sample) return null;
     this._armFrameWork.bridgeSamples++;
     sample.s = s;
-    this.rig.applyBodyContext(this._bridgeAlpha * s);
+    this.rig.applyBodyContext(this._bridgeAlpha * s, s);
 
     for (const side of ['L', 'R'] as Side[]) {
       const driver = this.rig.armDriver(side);

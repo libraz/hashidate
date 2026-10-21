@@ -334,18 +334,18 @@ export class GroundedLegs {
    * caller posed it for this frame; slipping one foot to make the other reach
    * would be much more visible than retaining the authored pose.
    */
-  apply(rise: number): void {
+  apply(rise: number): boolean {
     this.root.updateMatrixWorld(true);
     this.metric.updateWorldMatrix(true, false);
     this.metricInverse.copy(this.metric.matrixWorld).invert();
     this.metricInverseLinear.setFromMatrix4(this.metricInverse);
     this.metricUp.copy(this.worldUp).applyMatrix3(this.metricInverseLinear);
-    if (this.metricUp.lengthSq() <= GroundedLegs.EPS) return;
+    if (this.metricUp.lengthSq() <= GroundedLegs.EPS) return false;
 
     const lift = Number.isFinite(rise) ? Math.max(0, rise) : 0;
     this.rootMetricFrame.copy(this.metricInverse).multiply(this.root.matrixWorld);
     this.rootMetricFrame.decompose(this.decomposePosition, this.rootMetricQ, this.decomposeScale);
-    if (!validQuaternion(this.rootMetricQ)) return;
+    if (!validQuaternion(this.rootMetricQ)) return false;
 
     // Root-relative anchors follow the root's current placement. The lift is
     // stated in world metres, then converted to metric coordinates below.
@@ -358,15 +358,16 @@ export class GroundedLegs {
     }
     // The same downward pelvis correction has to satisfy both legs. Solve the
     // outer-reach intervals first, intersect them, and only then touch hips.
-    if (!(this.reachInterval(this.legs.L) && this.reachInterval(this.legs.R))) return;
+    if (!(this.reachInterval(this.legs.L) && this.reachInterval(this.legs.R))) return false;
     const lower = Math.max(0, this.legs.L.interval.lower, this.legs.R.interval.lower);
     const upper = Math.min(this.legs.L.interval.upper, this.legs.R.interval.upper);
     if (!(Number.isFinite(lower) && Number.isFinite(upper)) || lower > upper + GroundedLegs.EPS) {
-      return;
+      return false;
     }
 
     const delta = lower;
-    if (!(this.kneeSolution(this.legs.L, delta) && this.kneeSolution(this.legs.R, delta))) return;
+    if (!(this.kneeSolution(this.legs.L, delta) && this.kneeSolution(this.legs.R, delta)))
+      return false;
 
     // Everything above this point is validation and geometry. Apply the one
     // common translation, then aim parent-first so every child reads the new
@@ -397,7 +398,7 @@ export class GroundedLegs {
         this.footTargetQ,
         this.decomposeScale,
       );
-      if (!validQuaternion(this.footTargetQ)) return;
+      if (!validQuaternion(this.footTargetQ)) return false;
       this.parentMetricQuaternion(state.foot, this.parentQ);
       this.parentInverseQ.copy(this.parentQ).invert();
       state.foot.quaternion.copy(this.parentInverseQ).multiply(this.footTargetQ).normalize();
@@ -407,6 +408,7 @@ export class GroundedLegs {
         state.toe.updateWorldMatrix(false, true);
       }
     }
+    return true;
   }
 
   /** Solve the outer reach interval for one leg under a downward world shift. */

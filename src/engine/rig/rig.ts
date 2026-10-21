@@ -27,7 +27,7 @@ import {
   LIMIT_SLEW,
   positiveConformalScale,
 } from './arm-driver';
-import type { ArmPathPlanOutput } from './arm-path';
+import type { ArmPathEnvironment, ArmPathPlanOutput } from './arm-path';
 import { ElbowSearch } from './elbow';
 import { FINGER_TIP_EXTENSION } from './hand-geometry';
 import { Hands } from './hands';
@@ -141,6 +141,7 @@ const BODY_SNAPSHOT_SLOTS: readonly BodySnapshotSlot[] = [
 export interface RigBodyPoseSnapshot {
   readonly slots: Partial<Record<BodySnapshotSlot, THREE.Quaternion>>;
   readonly hipsPosition: THREE.Vector3;
+  /** Signed authored jump translation; the foot solver clamps its anchor lift. */
   rise: number;
 }
 
@@ -420,6 +421,22 @@ export class Rig {
   private _externalArmRevision = 0;
   private _standingBootstrapClaimed = false;
   private _acceptedRise = 0;
+  private _lastPlantSuccess = true;
+  private readonly _prePlantHips = new THREE.Vector3();
+  private readonly _postPlantHips = new THREE.Vector3();
+  private readonly _transportUp = new THREE.Vector3();
+  private readonly _transportInverse = new THREE.Matrix3();
+  private readonly _nativeArmEnvironment: Partial<
+    Record<
+      Side,
+      {
+        environment: ArmPathEnvironment;
+        sample: ArmPathEnvironment['sample'];
+        rowCount: number;
+        sampleEnvironment: ArmDriver['sampleEnvironment'];
+      }
+    >
+  > = {};
   private readonly _actualUpper = new THREE.Vector3();
   private readonly _actualLower = new THREE.Vector3();
   private readonly _actualHand = new THREE.Vector3();
@@ -513,6 +530,11 @@ export class Rig {
         this._humeralFront[side] = front.normalize().applyQuaternion(q.invert());
     }
 
+    const initialHips = profile.bones.hips;
+    if (initialHips) {
+      this._prePlantHips.copy(initialHips.position);
+      this._postPlantHips.copy(initialHips.position);
+    }
     this._acceptedBodyPose = this.makeBodyPoseSnapshot();
     this._proposedBodyPose = this.makeBodyPoseSnapshot();
     this.captureBodyPose(this._acceptedBodyPose, 0);
@@ -548,6 +570,12 @@ export class Rig {
       )
         continue;
       this._armDrivers[side] = driver;
+      this._nativeArmEnvironment[side] = {
+        environment: driver.environment,
+        sample: driver.environment.sample,
+        rowCount: driver.environment.rowCount,
+        sampleEnvironment: driver.sampleEnvironment,
+      };
       this._acceptedHandPose[side] = this.captureHandPose(side);
       this.foreRoll[side] = driver.acceptedConfiguration.forearmRoll;
       this.captureAcceptedArmState(
@@ -879,6 +907,7 @@ export class Rig {
     const hips = this.p.bones.hips;
     if (hips) hips.position.lerpVectors(a.hipsPosition, b.hipsPosition, blend);
     const rise = THREE.MathUtils.lerp(a.rise, b.rise, blend);
+    this.p.root.updateMatrixWorld(true);
     this.p.root.updateMatrixWorld(true);
     this.plantLegs(rise);
     this.p.root.updateMatrixWorld(true);
