@@ -400,3 +400,118 @@ describe('bridge certificate physical geometry', () => {
     expect(hips.position.distanceTo(proposed.hipsPosition)).toBeLessThan(1e-12);
   });
 });
+
+it('fully certifies a smaller arm step after native release capacity exhaustion', () => {
+  const make = () => {
+    const scene = buildRig();
+    const profile = buildProfile(scene.root, scene.descriptor);
+    const rig = new Rig(profile);
+    const body = new Body(rig, profile, { random: () => 0.5 });
+    body.breathDepth = 1;
+    body.weightShift = 1;
+    body.idleAmount = 0;
+    body.gazeAmount = 0;
+    return { profile, rig, body };
+  };
+  const h = make();
+  const idle = make();
+  const step = () => {
+    h.rig.reset();
+    h.body.update(1 / 20);
+    idle.rig.reset();
+    idle.body.update(1 / 20);
+  };
+  step();
+  h.body.play('sparkle', 'L');
+  for (let i = 0; i < 24; i++) step();
+  h.body.play('beg', 'L');
+  for (let i = 0; i < 24; i++) step();
+  h.body.stopGesture();
+  const sides = ['L', 'R'] as const;
+  const drivers = sides.map((side) => {
+    const driver = h.rig.armDriver(side);
+    if (!driver) throw new Error(`missing ${side} arm driver`);
+    return driver;
+  });
+  let before = drivers.map((d) => Array.from(d.acceptedQ));
+  let wristsBefore = sides.map((side) => wristOf(h.profile, side));
+  const body = h.body as unknown as {
+    _bridgeSampleCount: number;
+    _bridgeCapacityScope?: 'context' | 'frame' | null;
+    _fullArmQ: Record<'L' | 'R', Float64Array>;
+    evaluateArmCandidate(alpha: number, beta: number): boolean;
+    validateArmBridge(alpha: number, dt: number): boolean;
+  };
+  let beta = 1;
+  let validation = false;
+  let committed = false;
+  let expected: number[][] = [];
+  const slotsByAlpha = new Map<number, number>();
+  let capacityAlpha: number | null = null;
+  let capacityCandidate = false;
+  const evaluate = body.evaluateArmCandidate;
+  body.evaluateArmCandidate = function (alpha, candidate) {
+    capacityCandidate = capacityAlpha === alpha && candidate < beta;
+    capacityAlpha = null;
+    beta = candidate;
+    slotsByAlpha.set(alpha, (slotsByAlpha.get(alpha) ?? 0) + 1);
+    return evaluate.call(this, alpha, candidate);
+  };
+  const validate = body.validateArmBridge;
+  body.validateArmBridge = function (alpha, dt) {
+    if (this._bridgeSampleCount === 0) {
+      beta = 1;
+      capacityCandidate = false;
+      slotsByAlpha.set(alpha, (slotsByAlpha.get(alpha) ?? 0) + 1);
+    }
+    const result = validate.call(this, alpha, dt);
+    expect(this._bridgeSampleCount).toBeLessThanOrEqual(96);
+    capacityAlpha = !result && this._bridgeCapacityScope != null ? alpha : null;
+    if (result && beta < 1 && capacityCandidate) {
+      validation = true;
+      expected = sides.map((side, index) =>
+        Array.from(
+          this._fullArmQ[side],
+          (full, i) => before[index][i] + beta * (full - before[index][i]),
+        ),
+      );
+    }
+    return result;
+  };
+  const commit = h.rig.commitArmFrame;
+  h.rig.commitArmFrame = function (...args) {
+    const result = commit.apply(this, args);
+    if (result && validation) committed = true;
+    return result;
+  };
+  let witnessed = false;
+  for (let frame = 0; frame < 7; frame++) {
+    before = drivers.map((d) => Array.from(d.acceptedQ));
+    wristsBefore = sides.map((side) => wristOf(h.profile, side));
+    beta = 1;
+    validation = false;
+    committed = false;
+    slotsByAlpha.clear();
+    capacityAlpha = null;
+    capacityCandidate = false;
+    step();
+    for (const slots of slotsByAlpha.values()) expect(slots).toBeLessThanOrEqual(6);
+    expect(work(h.body).bridgeSamples).toBeLessThanOrEqual(192);
+    if (!committed) continue;
+    expect(validation).toBe(true);
+    expect(drivers.map((d) => Array.from(d.acceptedQ))).toEqual(expected);
+    const resolution = Math.min(...drivers.map((d) => d.sweepResolution));
+    expect(
+      sides.some((side, index) => {
+        const after = wristOf(h.profile, side);
+        const target = wristOf(idle.profile, side);
+        return (
+          after.distanceTo(wristsBefore[index]) > resolution &&
+          after.distanceTo(target) < wristsBefore[index].distanceTo(target)
+        );
+      }),
+    ).toBe(true);
+    witnessed = true;
+  }
+  expect(witnessed).toBe(true);
+});

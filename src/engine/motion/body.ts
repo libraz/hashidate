@@ -552,6 +552,8 @@ export class Body {
     R: new Float64Array(7),
   };
   private _bridgeFailure: 'speed' | 'geometry' | 'budget' = 'geometry';
+  private _bridgeCapacityScope: 'context' | 'frame' | null = null;
+  private _bridgeCapacityMinimum = 0;
   /** `_armVec` before breathing and drift, which is what a child link is carried by. */
   private _armBlend: Record<Side, Record<ArmSlot, THREE.Vector3>>;
   private readonly _carryDir = new THREE.Vector3();
@@ -1569,6 +1571,7 @@ export class Body {
       const right = this._frameCommit.R;
       if (!(left && right)) continue;
 
+      let capacityProposalUsed = false;
       for (let backtrack = 0; backtrack < ARM_STEP_BACKTRACKS.length; backtrack++) {
         const beta = ARM_STEP_BACKTRACKS[backtrack];
         if (beta === undefined) continue;
@@ -1622,6 +1625,60 @@ export class Body {
           break;
         }
 
+        if (capacityProposalUsed) {
+          feasible = false;
+          break;
+        }
+        // Measured sparkle release: three alpha-1 quarter-steps certified in 83 samples each.
+        // This capacity-driven trajectory choice needs a render check.
+        if (this._bridgeCapacityScope !== null) {
+          let changesArm = false;
+          for (const side of SIDES) {
+            const accepted = rig.armDriver(side)?.acceptedQ;
+            const full = this._fullArmQ[side];
+            if (accepted) {
+              for (let index = 0; index < full.length; index++) {
+                if (full[index] !== accepted[index]) changesArm = true;
+              }
+            }
+          }
+          if (!changesArm) {
+            feasible = false;
+            break;
+          }
+          const available = Math.min(
+            ARM_BRIDGE_MAX_SAMPLES - this._bridgeSampleCount,
+            ARM_FRAME_BRIDGE_BUDGET - this._armFrameWork.bridgeSamples,
+          );
+          const minimum = this._bridgeCapacityMinimum;
+          const knots = ARM_BRIDGE_STARTS.length;
+          let proposal = -1;
+          if (
+            Number.isInteger(this._bridgeSampleCount) &&
+            Number.isInteger(this._armFrameWork.bridgeSamples) &&
+            Number.isInteger(minimum) &&
+            minimum >= knots &&
+            Number.isFinite(available) &&
+            available > 0
+          ) {
+            for (let index = backtrack + 1; index < ARM_STEP_BACKTRACKS.length; index++) {
+              const smaller = ARM_STEP_BACKTRACKS[index];
+              // Proposal estimate only: endpoint plus a new, complete native bridge.
+              if (1 + knots + (smaller / beta) * (minimum - knots) <= available) {
+                proposal = index;
+                break;
+              }
+            }
+          }
+          if (proposal < 0) {
+            feasible = false;
+            break;
+          }
+          capacityProposalUsed = true;
+          this._armFrameWork.armStepRetries++;
+          backtrack = proposal - 1;
+          continue;
+        }
         if (this._bridgeFailure !== 'speed' || backtrack + 1 === ARM_STEP_BACKTRACKS.length) {
           feasible = false;
           break;
@@ -1682,6 +1739,9 @@ export class Body {
 
   private validateArmBridge(alpha: number, dt: number): boolean {
     this._bridgePendingCount = 0;
+    this._bridgeCapacityScope = null;
+    this._bridgeCapacityMinimum = 0;
+    const entrySamples = this._bridgeSampleCount;
     const left = this.rig.armDriver('L');
     const right = this.rig.armDriver('R');
     if (!(left && right)) {
@@ -1724,11 +1784,17 @@ export class Body {
         // Every unresolved interval needs its own distinct midpoint to certify.
         if (this._armFrameWork.bridgeSamples + this._bridgePendingCount > ARM_FRAME_BRIDGE_BUDGET) {
           this._bridgeFailure = 'budget';
+          this._bridgeCapacityScope = 'frame';
+          this._bridgeCapacityMinimum =
+            this._bridgeSampleCount - entrySamples + this._bridgePendingCount;
           valid = false;
           break;
         }
         if (this._bridgeSampleCount + this._bridgePendingCount > ARM_BRIDGE_MAX_SAMPLES) {
           this._bridgeFailure = 'geometry';
+          this._bridgeCapacityScope = 'context';
+          this._bridgeCapacityMinimum =
+            this._bridgeSampleCount - entrySamples + this._bridgePendingCount;
           valid = false;
           break;
         }
@@ -1761,7 +1827,11 @@ export class Body {
     } finally {
       restored = this.restoreArmBridgeContext(alpha);
     }
-    if (!restored) this._bridgeFailure = 'geometry';
+    if (!restored) {
+      this._bridgeFailure = 'geometry';
+      this._bridgeCapacityScope = null;
+      this._bridgeCapacityMinimum = 0;
+    }
     return valid && restored;
   }
 
