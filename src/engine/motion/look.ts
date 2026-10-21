@@ -27,13 +27,30 @@ export interface LookSettings {
   gazeAmount: number;
 }
 
-export function aimGaze(
+export interface GazeFrame {
+  active: boolean;
+  gazeHead: THREE.Quaternion;
+  eyeYaw: number;
+  eyePitch: number;
+}
+
+export function makeGazeFrame(): GazeFrame {
+  return { active: false, gazeHead: new THREE.Quaternion(), eyeYaw: 0, eyePitch: 0 };
+}
+
+const _gazeEuler = new THREE.Euler();
+const _gazeQ = new THREE.Quaternion();
+const _headOffset = new THREE.Quaternion();
+
+export function prepareGaze(
   rig: Rig,
   p: Profile,
   gaze: Gaze,
   { lookAt, gazeAmount }: LookSettings,
   headWorldTarget: THREE.Vector3 | null,
+  frame: GazeFrame,
 ): void {
+  frame.active = false;
   const head = p.bones.head;
   if (headWorldTarget && head) {
     head.updateWorldMatrix(true, false);
@@ -71,11 +88,63 @@ export function aimGaze(
       C(bodyYaw * 0.28, -L.headYaw, L.headYaw),
       0,
     );
-    // Eyes lead the head, as they do in life, but over a range small enough
-    // that turning to look at something is carried almost entirely by the
-    // head. Saturated rather than clamped, per `saturate` above.
-    const ey = saturate(eyeYaw * 0.5, L.eyeYaw);
-    const ep = saturate(-eyePitch * 0.5, L.eyePitch);
-    for (const side of ['L', 'R'] as const) rig.addOffset(`eye.${side}`, ep, ey, 0);
+    frame.gazeHead.identity();
+    if (p.bones.neck) {
+      frame.gazeHead.setFromEuler(
+        _gazeEuler.set(
+          C(-bodyPitch * 0.16, -L.neckPitch, L.neckPitch),
+          C(bodyYaw * 0.16, -L.neckYaw, L.neckYaw),
+          0,
+          'XYZ',
+        ),
+      );
+    }
+    frame.gazeHead.multiply(
+      _gazeQ.setFromEuler(
+        _gazeEuler.set(
+          C(-bodyPitch * 0.28, -L.headPitch, L.headPitch),
+          C(bodyYaw * 0.28, -L.headYaw, L.headYaw),
+          0,
+          'XYZ',
+        ),
+      ),
+    );
+    frame.eyeYaw = eyeYaw;
+    frame.eyePitch = eyePitch;
+    frame.active = true;
   }
+}
+
+function unwrapEyeAngle(angle: number, reference: number): number {
+  const turn = 2 * Math.PI;
+  return angle + turn * Math.round((reference - angle) / turn);
+}
+
+/** Select the equivalent XYZ branch nearest the unsaturated authored eye angles. */
+function nearestEyeBranch(angles: THREE.Euler, rawX: number, rawY: number): void {
+  const x0 = unwrapEyeAngle(angles.x, rawX);
+  const y0 = unwrapEyeAngle(angles.y, rawY);
+  const z0 = unwrapEyeAngle(angles.z, 0);
+  const x1 = unwrapEyeAngle(angles.x + Math.PI, rawX);
+  const y1 = unwrapEyeAngle(Math.PI - angles.y, rawY);
+  const z1 = unwrapEyeAngle(angles.z + Math.PI, 0);
+  const d0 = (x0 - rawX) ** 2 + (y0 - rawY) ** 2 + z0 ** 2;
+  const d1 = (x1 - rawX) ** 2 + (y1 - rawY) ** 2 + z1 ** 2;
+  if (d1 < d0) angles.set(x1, y1, z1, 'XYZ');
+  else angles.set(x0, y0, z0, 'XYZ');
+}
+
+/** Compensate against the head pose actually displayed after body acceptance. */
+export function aimEyes(rig: Rig, p: Profile, frame: GazeFrame): void {
+  if (!(frame.active && rig.readHeadOffset(_headOffset))) return;
+  _gazeQ.setFromEuler(_gazeEuler.set(-frame.eyePitch * 0.5, frame.eyeYaw * 0.5, 0, 'XYZ'));
+  _headOffset.invert().multiply(frame.gazeHead).multiply(_gazeQ);
+  _gazeEuler.setFromQuaternion(_headOffset, 'XYZ');
+  nearestEyeBranch(_gazeEuler, -frame.eyePitch * 0.5, frame.eyeYaw * 0.5);
+  // Eyes lead the head, as they do in life, but over a range small enough
+  // that turning to look at something is carried almost entirely by the
+  // head. Saturated rather than clamped, per `saturate` above.
+  const ey = saturate(_gazeEuler.y, p.gaze.eyeYaw);
+  const ep = saturate(_gazeEuler.x, p.gaze.eyePitch);
+  for (const side of ['L', 'R'] as const) rig.addOffset(`eye.${side}`, ep, ey, 0);
 }

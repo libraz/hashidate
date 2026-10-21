@@ -122,6 +122,7 @@ function poseOffsets(scene: SpineCase, offsets: Partial<Record<OffsetSlot, Offse
     scene.spine.add(slot, offset.x, offset.y, offset.z);
   }
   scene.spine.commit(scene.profile, (bone) => required(scene.rest.get(bone), bone.name));
+  scene.spine.commitEyes(scene.profile, (bone) => required(scene.rest.get(bone), bone.name));
   scene.profile.root.updateMatrixWorld(true);
   return snapshot(scene.markers);
 }
@@ -143,6 +144,24 @@ function expectSameMarkers(standard: MarkerPositions, rebased: MarkerPositions):
 }
 
 describe('spine offsets', () => {
+  it('commits the head and eyes in separate phases', () => {
+    const scene = makeCase(false);
+    const head = required(scene.profile.bones.head, 'head');
+    const eye = required(scene.profile.bones['eye.L'], 'eye');
+    const headRest = head.quaternion.clone();
+    const eyeRest = eye.quaternion.clone();
+    const restOf = (bone: THREE.Bone) => required(scene.rest.get(bone), bone.name);
+    scene.spine.add('head', 0.02, 0, 0);
+    scene.spine.add('eye.L', -0.01, 0, 0);
+    scene.spine.commit(scene.profile, restOf);
+    expect(head.quaternion.angleTo(headRest)).toBeGreaterThan(0.01);
+    expect(eye.quaternion.equals(eyeRest)).toBe(true);
+    const displayedHead = head.quaternion.clone();
+    scene.spine.commitEyes(scene.profile, restOf);
+    expect(eye.quaternion.angleTo(eyeRest)).toBeGreaterThan(0.005);
+    expect(head.quaternion.equals(displayedHead)).toBe(true);
+  });
+
   it('keeps every standard slot equal to restLocal * EulerXYZ', () => {
     const scene = makeCase(false);
     for (const slot of SLOTS) {
@@ -153,6 +172,9 @@ describe('spine offsets', () => {
         scene.spine.clear();
         scene.spine.add(slot, offset.x, offset.y, offset.z);
         scene.spine.commit(scene.profile, (current) =>
+          required(scene.rest.get(current), current.name),
+        );
+        scene.spine.commitEyes(scene.profile, (current) =>
           required(scene.rest.get(current), current.name),
         );
         const expected = rest

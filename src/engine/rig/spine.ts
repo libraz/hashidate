@@ -112,6 +112,24 @@ export class SpineOffsets {
       if (basis) authored.premultiply(basis.q).multiply(basis.inverse);
       bone.quaternion.copy(restOf(bone)).multiply(authored);
     }
+  }
+
+  /** Read the displayed head rotation relative to its root-space bind pose. */
+  readHeadOffset(p: Profile, out: THREE.Quaternion): boolean {
+    const head = p.bones.head;
+    const basis = this.basis.get('head');
+    if (!(head && basis)) return false;
+    head.updateWorldMatrix(true, false);
+    _rootInverse.copy(p.root.matrixWorld).invert();
+    _relativeRest
+      .multiplyMatrices(_rootInverse, head.matrixWorld)
+      .decompose(_relativePosition, out, _relativeScale);
+    out.multiply(basis.q).normalize();
+    return true;
+  }
+
+  /** Bake eye offsets after the final displayed head pose is known. */
+  commitEyes(p: Profile, restOf: (bone: THREE.Bone) => THREE.Quaternion): void {
     for (const side of SIDES) {
       const bone = p.bones[`eye.${side}`];
       const o = this.offset.get(`eye.${side}`);

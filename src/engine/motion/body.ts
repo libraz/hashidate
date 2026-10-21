@@ -27,7 +27,7 @@ import { Gaze, HEAD_OMEGA, type SpeechGaze } from './gaze';
 import { BASE_FINGERS, BASE_PALM, BASE_POSE, pointHand } from './gestures';
 import { OPEN_HAND } from './gestures/hands';
 import { CROUCH_T, type HopSpec, type JumpArc, planJump, sampleJump } from './jump';
-import { aimGaze } from './look';
+import { aimEyes, makeGazeFrame, prepareGaze } from './look';
 import { IdlePosture, type PostureInput } from './posture';
 import { ArmResolver, mkReachScratch, type ResolvedArm } from './resolve';
 import { FINGER_ONSET, LINK_ONSET, minJerk, onset, reachEnvelope, UNTHREAD } from './timing';
@@ -478,6 +478,7 @@ export class Body {
   private _gaze: Gaze;
   /** The tracking share actually applied; chases `lookAt`. */
   private readonly _look = new ScalarFollower(1);
+  private readonly _gazeFrame = makeGazeFrame();
 
   private _armDirs: Record<Side, Record<ArmSlot, Vec3Tuple>>;
   private _armWorld: Record<Side, Record<ArmSlot, Vec3Tuple>>;
@@ -2000,12 +2001,13 @@ export class Body {
     speech.closes = this.speechCloses;
     this._gaze.update(dt, this.t, speech);
     this.saccade = this._gaze.saccade;
-    aimGaze(
+    prepareGaze(
       rig,
       p,
       this._gaze,
       { lookAt: this._look.step(this.lookAt, dt, LOOK_FOLLOW), gazeAmount: this.gazeAmount },
       headWorldTarget,
+      this._gazeFrame,
     );
 
     rig.commitSpine();
@@ -2319,5 +2321,7 @@ export class Body {
 
     if (armTransaction) this.commitArmTransaction(dt);
     else rig.finishLegacyBodyFrame(this._rise);
+    aimEyes(rig, p, this._gazeFrame);
+    rig.commitEyes();
   }
 }

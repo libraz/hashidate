@@ -1342,6 +1342,14 @@ export class Rig {
     this.spine.commit(this.p, (bone) => this.restOf(bone));
   }
 
+  readHeadOffset(out: THREE.Quaternion): boolean {
+    return this.spine.readHeadOffset(this.p, out);
+  }
+
+  commitEyes(): void {
+    this.spine.commitEyes(this.p, (bone) => this.restOf(bone));
+  }
+
   /** Keep standing feet planted, or carry their contact points through a hop. */
   plantLegs(rise: number): void {
     const hips = this.p.bones.hips;
