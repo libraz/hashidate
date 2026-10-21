@@ -2,7 +2,7 @@ import type { GestureDef } from '../../types';
 import { V } from './base';
 import type { ArmPose } from './builders';
 import { both, one } from './builders';
-import { OPEN_HAND, SOFT_HAND } from './hands';
+import { FIST, mixHand, OPEN_HAND, SOFT_HAND } from './hands';
 
 /**
  * Greeting — arriving, beckoning, and thanking.
@@ -47,8 +47,17 @@ export const GREETING = {
       // Both arms opened forward, palms up. The opening is the gesture — held
       // spread from the first frame it reads as a shrug — so the arms travel
       // outward over the first second and settle.
-      const o = Math.min(1, t / 0.9);
+      const openingDuration = 0.9;
+      const o = Math.min(1, t / openingDuration);
       const b = Math.sin(t * 1.6 * v.rate) * 0.03;
+      // The original 0.9 s opening leaves about two cycles in the nominal 2.6 s hold.
+      // The fingers use the invitation and existing FIST endpoints; needs a render check.
+      const beckonTime = Math.max(0, t - openingDuration) * v.rate;
+      const curl = (1 - Math.cos((2 * Math.PI * beckonTime) / openingDuration)) / 2;
+      const fingers = {
+        ...mixHand({ thumb: 0.18, index: 0.14, middle: 0.16, ring: 0.2, little: 0.26 }, FIST, curl),
+        thumb: 0.18,
+      };
       // The palm has to be stated. Aiming the hand forward leaves the roll
       // free, and an invitation with the palms rolled over is a shove. The
       // fully skyward target pinned one shoulder at its stop; this diagonal
@@ -61,7 +70,7 @@ export const GREETING = {
           hand: V(0.14, 0.2, 0.97),
           palm: V(-0.68, 0.48, -0.16),
         },
-        { thumb: 0.18, index: 0.14, middle: 0.16, ring: 0.2, little: 0.26 },
+        fingers,
         { head: [-0.03, 0, 0], chest: [0.02, 0, 0] },
       );
     },
