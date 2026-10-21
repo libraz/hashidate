@@ -53,7 +53,7 @@ export interface ArmSolution extends ReachLinks {
   /** Where the fingertip actually ended up, for a caller checking it arrived. */
   tip: THREE.Vector3;
   twist: number;
-  /** Cost of the winning elbow, from a fingertip solve. */
+  /** Anatomical strain of the solved pose, from a fingertip solve. */
   strain?: number;
   /**
    * Where the elbow search left this slot's elbow: the direction it stands off
@@ -76,9 +76,16 @@ export interface ArmSolution extends ReachLinks {
  * Built perpendicular rather than projected, for the reason set out in
  * `solveReach`, and shared with `poleAngle` so that converting a pole point
  * to an angle and solving with it agree on where zero is.
+ *
+ * `framed` is the result of an `anat.update()` the caller already made this
+ * frame; omitted, the frame is refreshed here.
  */
-export function reachRef(anat: ArmAnatomy, n: THREE.Vector3, perp: THREE.Vector3): THREE.Vector3 {
-  const framed = anat.update();
+export function reachRef(
+  anat: ArmAnatomy,
+  n: THREE.Vector3,
+  perp: THREE.Vector3,
+  framed: boolean = anat.update(),
+): THREE.Vector3 {
   perp.copy(framed ? anat.fwd : _fallbackFwd);
   // Reaching straight forward is the one case where forward says nothing.
   // Up is perpendicular to it and cannot be degenerate at the same time.
@@ -86,6 +93,19 @@ export function reachRef(anat: ArmAnatomy, n: THREE.Vector3, perp: THREE.Vector3
     perp.copy(framed ? anat.up : _fallbackUp);
   }
   return perp.addScaledVector(n, -perp.dot(n)).normalize();
+}
+
+/**
+ * The nearest the wrist can come to the shoulder, which is the elbow's
+ * flexion stop rather than a folded-flat arm. See `solveReach` for why.
+ */
+export function nearReach(La: number, Lf: number, joints: JointTable): number {
+  const flexMax = joints?.elbow?.dofs?.flexion?.max?.[1] ?? Math.PI;
+  const fold = Math.cos(Math.PI - flexMax);
+  return Math.max(
+    Math.abs(La - Lf) + 1e-3,
+    Math.sqrt(La * La + Lf * Lf - 2 * La * Lf * fold) * 1.001,
+  );
 }
 
 /**
@@ -104,6 +124,8 @@ export function reachRef(anat: ArmAnatomy, n: THREE.Vector3, perp: THREE.Vector3
  * fixed: the elbow can sit anywhere on a circle around the shoulder-to-wrist
  * line, and the angle says where on that circle. Zero puts it straight in
  * front of the chest; positive swings it outward and up.
+ *
+ * `framed` is as for `reachRef`.
  */
 export function solveReach(
   p: Profile,
@@ -113,6 +135,7 @@ export function solveReach(
   targetWorld: THREE.Vector3,
   elbowAngle: number,
   out: ReachLinks,
+  framed?: boolean,
 ): ReachLinks | null {
   const { bones, limb } = p;
   const upper = bones[`upperArm.${side}`];
@@ -141,12 +164,7 @@ export function solveReach(
   // the joint clamp had to take back what the solver had granted. Bounded
   // here, the hand instead stops short along the same bearing, which is what
   // an arm that cannot quite reach actually looks like.
-  const flexMax = joints?.elbow?.dofs?.flexion?.max?.[1] ?? Math.PI;
-  const fold = Math.cos(Math.PI - flexMax);
-  const dMin = Math.max(
-    Math.abs(La - Lf) + 1e-3,
-    Math.sqrt(La * La + Lf * Lf - 2 * La * Lf * fold) * 1.001,
-  );
+  const dMin = nearReach(La, Lf, joints);
   const dMax = (La + Lf) * 0.999;
   d = Math.min(dMax, Math.max(dMin, d));
   const n = _reachN.copy(D).normalize();
@@ -170,7 +188,7 @@ export function solveReach(
   // takes to the face, and because in front of the chest is where an elbow
   // belongs when the arm is folded up. The angle then swings it around the
   // reach line from there, and can never be degenerate.
-  const perp = reachRef(anat, n, _reachP);
+  const perp = reachRef(anat, n, _reachP, framed);
   if (elbowAngle) perp.applyAxisAngle(n, elbowAngle);
 
   // Angle between the reach line and the upper arm.
@@ -239,7 +257,12 @@ export function poleAngle(
  * Shared by the pole conversion and by the elbow search reading back where it
  * left the elbow, so a point and a remembered direction agree on where zero is.
  */
-export function swivelOf(anat: ArmAnatomy, n: THREE.Vector3, w: THREE.Vector3): number | null {
+export function swivelOf(
+  anat: ArmAnatomy,
+  n: THREE.Vector3,
+  w: THREE.Vector3,
+  framed?: boolean,
+): number | null {
   const len = w.length();
   if (len < 1e-6) return null;
   const r = _swivelW.copy(w).addScaledVector(n, -w.dot(n));
@@ -250,7 +273,7 @@ export function swivelOf(anat: ArmAnatomy, n: THREE.Vector3, w: THREE.Vector3): 
   // hole the earlier pole-as-vector attempt fell through.
   if (r.length() / len < POLE_MIN_SINE) return null;
   r.normalize();
-  const ref = reachRef(anat, n, _poleR);
+  const ref = reachRef(anat, n, _poleR, framed);
   const bi = _poleB.copy(n).cross(ref);
   return Math.atan2(r.dot(bi), r.dot(ref));
 }

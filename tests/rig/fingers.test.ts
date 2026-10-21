@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { fingerCurl, JOINTS } from '@/engine/anatomy';
+import { restPalmNormals } from '@/engine/anatomy/palm-frame';
 import { buildProfile } from '@/engine/profile';
 import { Rig, solveFingerAxes } from '@/engine/rig';
 import { type ArmConfiguration, forwardArm } from '@/engine/rig/arm-configuration';
@@ -62,6 +63,24 @@ function buildNearHorizontalHands(
   built.root.updateMatrixWorld(true);
   const profile = buildProfile(built.root, built.descriptor);
   if (missingMiddle) delete profile.fingerBones[`middle.${missingMiddle}`];
+  return { profile, rig: new Rig(profile) };
+}
+
+/**
+ * Arms hanging just past vertical with the palms facing the thighs, so each
+ * palm tips slightly upward and nothing about world up says which side it is.
+ */
+function buildPalmsInHands(): { profile: Profile; rig: Rig } {
+  const built = buildRig();
+  for (const side of SIDES) {
+    const upper = need(built.bones.get(`UpperArm_${side}`), `UpperArm_${side}`);
+    upper.quaternion.setFromAxisAngle(
+      new THREE.Vector3(0, 0, 1),
+      side === 'L' ? Math.PI / 2 + 0.1 : -Math.PI / 2 - 0.1,
+    );
+  }
+  built.root.updateMatrixWorld(true);
+  const profile = buildProfile(built.root, built.descriptor);
   return { profile, rig: new Rig(profile) };
 }
 
@@ -287,6 +306,24 @@ describe('solveFingerAxes', () => {
       expect(palmWorld(profile, rig, remaining).dot(rig.anat.up)).toBeLessThan(0);
     },
   );
+
+  it('reads each palm from the hand, not from which way is up', () => {
+    const { profile, rig } = buildPalmsInHands();
+    rig.anat.update();
+    const palms = restPalmNormals(profile);
+    for (const side of SIDES) {
+      const upper = need(profile.bones[`upperArm.${side}`], `upperArm.${side}`);
+      // Down in the unrotated bind, carried round with the arm.
+      const expected = new THREE.Vector3(0, -1, 0).applyQuaternion(
+        upper.getWorldQuaternion(new THREE.Quaternion()),
+      );
+      const inward = rig.anat.right.clone().multiplyScalar(side === 'L' ? 1 : -1);
+      const palm = need(palms[side], `palm.${side}`);
+      expect.soft(expected.dot(rig.anat.up), `${side} palm tips up`).toBeGreaterThan(0.05);
+      expect.soft(palm.distanceTo(expected), `${side} palm`).toBeLessThan(EXACT);
+      expect.soft(palm.dot(inward), `${side} faces the body`).toBeGreaterThan(0.99);
+    }
+  });
 
   it('derives splay axes for proximal bones only', () => {
     const { profile, rig } = buildHands();

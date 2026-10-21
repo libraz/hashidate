@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { ArmAnatomy } from '../anatomy';
-import type { PointSpec, Profile, Side, Vec3Tuple } from '../types';
-import type { ArmSolution } from './reach';
+import type { JointTable, PointSpec, Profile, Side, Vec3Tuple } from '../types';
+import { type ArmSolution, nearReach } from './reach';
 
 /**
  * A fingertip request, back-solved into an arm.
@@ -22,7 +22,7 @@ const _t = new THREE.Vector3();
  * Hands back one shared scratch vector, so the result is only valid until the
  * next call — anything needing two directions at once has to copy them out.
  */
-function target(a: Vec3Tuple | THREE.Vector3): THREE.Vector3 {
+export function worldDirection(a: Vec3Tuple | THREE.Vector3): THREE.Vector3 {
   return Array.isArray(a) ? _t.set(a[0], a[1], a[2]).normalize() : _t.copy(a).normalize();
 }
 
@@ -59,6 +59,7 @@ export class PointSolver {
 
   constructor(
     private readonly p: Profile,
+    private readonly joints: JointTable,
     private readonly anat: ArmAnatomy,
     private readonly search: ElbowSearchFn,
   ) {}
@@ -123,8 +124,16 @@ export class PointSolver {
     // pointing *is* — the line from the shoulder through the fingertip is the
     // line being indicated — and it also keeps the hand from having to bend to
     // an angle the wrist does not have.
-    s.finger.copy(spec.point ? target(spec.point) : s.dir).normalize();
-    s.wrist.copy(s.tip).addScaledVector(s.finger, -Lt);
+    s.finger.copy(spec.point ? worldDirection(spec.point) : s.dir).normalize();
+    if (spec.point) {
+      s.wrist.copy(s.tip).addScaledVector(s.finger, -Lt);
+    } else {
+      // An extent shorter than the hand would put the wrist behind the
+      // shoulder and flip the bearing; it stops at the elbow's fold instead.
+      s.wrist
+        .copy(S)
+        .addScaledVector(s.dir, Math.max(nearReach(La, Lf, this.joints), reach * extent - Lt));
+    }
 
     // Palm. An explicit one constrains the wrist; without one the palm is a
     // free roll about the pointing axis, and it is *derived* from the solve
@@ -136,14 +145,14 @@ export class PointSolver {
     const wanted = spec.palm;
     const fixedPalm = !!wanted;
     if (wanted) {
-      s.palm.copy(target(wanted));
+      s.palm.copy(worldDirection(wanted));
       s.palm.addScaledVector(s.finger, -s.palm.dot(s.finger));
       if (s.palm.lengthSq() < 1e-8) s.palm.copy(anat.up).negate();
       s.palm.normalize();
     }
 
-    const bestC = this.search(side, s.wrist, s.finger, fixedPalm ? s.palm : null, out);
-    if (bestC === null) return null;
+    const strain = this.search(side, s.wrist, s.finger, fixedPalm ? s.palm : null, out);
+    if (strain === null) return null;
 
     // Derive the palm from the pose that won: point it along the direction the
     // hand had to bend, which makes that bend flexion rather than deviation.
@@ -169,8 +178,12 @@ export class PointSolver {
     out.palm.copy(s.palm);
     // Where the fingertip actually ended up, so a caller can tell a request
     // that was honoured from one the arm was too short for.
-    out.tip.copy(s.tip);
-    out.strain = bestC;
+    out.tip
+      .copy(S)
+      .addScaledVector(out.upperArm, La)
+      .addScaledVector(out.lowerArm, Lf)
+      .addScaledVector(s.finger, Lt);
+    out.strain = strain;
     return out;
   }
 }

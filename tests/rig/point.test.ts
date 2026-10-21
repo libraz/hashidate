@@ -159,10 +159,39 @@ describe('solvePoint bearing', () => {
     const tipLen = need(arm.profile.limb[`tip.${arm.side}.index`], 'tip length');
     const reach = arm.upperLen + arm.foreLen + tipLen;
 
-    for (const extent of [0.4, 0.6, 0.8, 1]) {
+    // Nearer than this the wrist would pass the elbow's fold; see the next test.
+    for (const extent of [0.6, 0.8]) {
       solve(arm, { azimuth: 0.2, elevation: 0.1, extent }, out);
       expect(out.tip.distanceTo(arm.shoulder)).toBeCloseTo(reach * extent, 9);
     }
+    // Full extent is held just inside a straight arm, and the tip reports that.
+    solve(arm, { azimuth: 0.2, elevation: 0.1, extent: 1 }, out);
+    expect(out.tip.distanceTo(arm.shoulder)).toBeLessThan(reach);
+    expect(out.tip.distanceTo(arm.shoulder)).toBeGreaterThan(
+      reach - 0.002 * (arm.upperLen + arm.foreLen),
+    );
+  });
+
+  it('keeps the wrist ahead of the shoulder when the extent is shorter than the hand', () => {
+    const arm = buildArm();
+    const anat = arm.rig.anat;
+    const out = solution();
+    const tipLen = need(arm.profile.limb[`tip.${arm.side}.index`], 'tip length');
+    const reach = arm.upperLen + arm.foreLen + tipLen;
+    expect(reach * 0.1).toBeLessThan(tipLen);
+
+    solve(arm, { azimuth: 0.2, elevation: 0.1, extent: 0.1 }, out);
+    const bearing = anat.fwd
+      .clone()
+      .multiplyScalar(Math.cos(0.1) * Math.cos(0.2))
+      .addScaledVector(anat.right, Math.cos(0.1) * Math.sin(0.2))
+      .addScaledVector(anat.up, Math.sin(0.1))
+      .normalize();
+    const wrist = wristOf(arm, out);
+    expect(wrist.clone().sub(arm.shoulder).normalize().dot(bearing)).toBeGreaterThan(1 - 1e-6);
+    // The fingertip is reported where it went, not where it was asked for.
+    expect(out.tip.distanceTo(wrist.clone().addScaledVector(out.hand, tipLen))).toBeLessThan(EXACT);
+    expect(out.tip.distanceTo(arm.shoulder)).toBeGreaterThan(tipLen);
   });
 });
 
@@ -264,6 +293,23 @@ describe('solvePoint strain', () => {
     // Reaching across the body drives the arm into the trunk, which outbids
     // every joint term.
     expect(hard.strain as number).toBeGreaterThan((easy.strain as number) * 10);
+  });
+
+  it('reports the strain of the pose it returned, without the elbow prior', () => {
+    for (const spec of [
+      { azimuth: 0.3, elevation: 0.2, extent: 0.75 },
+      { azimuth: -0.9, elevation: 0.6, extent: 0.7 },
+    ]) {
+      const arm = buildArm();
+      const out = solution();
+      // The first frame tracks only part of the way toward the winner, so the
+      // returned pose is not the one the search scored best.
+      solve(arm, spec, out);
+      solve(arm, { ...spec, azimuth: spec.azimuth + 0.4 }, out);
+      const anat = arm.rig.anat;
+      anat.measure(arm.side, out.upperArm, out.lowerArm, out.hand, null, 0);
+      expect(out.strain as number).toBeCloseTo(anat.cost(), 12);
+    }
   });
 });
 
@@ -408,10 +454,17 @@ describe('solvePoint guards', () => {
     const tipLen = need(arm.profile.limb[`tip.${arm.side}.index`], 'tip length');
     const reach = arm.upperLen + arm.foreLen + tipLen;
 
+    const lowest = solution();
+    const highest = solution();
+
     solve(arm, { azimuth: 0, elevation: 0, extent: -3 }, low);
     solve(arm, { azimuth: 0, elevation: 0, extent: 4 }, high);
-    expect(low.tip.distanceTo(arm.shoulder)).toBeCloseTo(reach * 0.1, 9);
-    expect(high.tip.distanceTo(arm.shoulder)).toBeCloseTo(reach, 9);
+    solve(arm, { azimuth: 0, elevation: 0, extent: 0.1 }, lowest);
+    solve(arm, { azimuth: 0, elevation: 0, extent: 1 }, highest);
+    expect(low.tip.distanceTo(lowest.tip)).toBeLessThan(EXACT);
+    expect(high.tip.distanceTo(highest.tip)).toBeLessThan(EXACT);
+    expect(high.tip.distanceTo(arm.shoulder)).toBeLessThan(reach);
+    expect(low.tip.distanceTo(arm.shoulder)).toBeGreaterThan(reach * 0.1);
   });
 
   it('refuses an arm the profile has no segment lengths for', () => {

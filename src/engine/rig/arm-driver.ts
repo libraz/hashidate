@@ -22,12 +22,29 @@ import {
   type ArmPathPlanOutput,
   type ArmPathRequest,
   ArmStepSolver,
+  configurationFromQ,
+  configurationToQ,
+  copyForward,
   makeArmPathPlanOutput,
 } from './arm-path';
 import { captureHandGeometry, type HandGeometryCalibration } from './hand-geometry';
 
 const FINGERS: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
 export const FRAME_TOLERANCE = 1e-4;
+/**
+ * How fast the limiter's own correction may travel, in radians a second.
+ *
+ * The lowest value that leaves the movement alone, which is the only property
+ * that matters: a cap has to be invisible to everything except a seam. Measured
+ * over every gesture in the table, a link asks for more than ten radians a
+ * second on one frame in a hundred and more than fifteen on one in five hundred,
+ * while a seam asks for seventy and upward — the two do not overlap, and
+ * fourteen sits in the gap. Played from rest at this cap, every entrance in the
+ * table is unchanged to the last digit of its peak speed and its path length
+ * except the two that were teleporting. At ten, half a dozen of them lose about
+ * a tenth of their peak, which is the movement being damped rather than a jump
+ * being caught.
+ */
 export const LIMIT_SLEW = 14;
 
 const makeConfiguration = (): ArmConfiguration => ({
@@ -50,43 +67,6 @@ const makeSpec = (): Record<FingerName, number> => ({
 
 function copySpec(source: FingerSpec, target: Record<FingerName, number>): void {
   for (const finger of FINGERS) target[finger] = source[finger] ?? 0;
-}
-
-function copyForward(source: ArmForwardResult, target: ArmForwardResult): void {
-  for (const key of ['u', 'l', 'h', 'palm', 'elbow', 'wrist'] as const) {
-    target[key].copy(source[key]);
-  }
-  for (const key of [
-    'upperWorld',
-    'lowerWorld',
-    'handWorld',
-    'upperLocal',
-    'lowerLocal',
-    'handLocal',
-  ] as const) {
-    target[key].copy(source[key]);
-  }
-}
-
-function configurationToQ(configuration: ArmConfiguration, out: Float64Array): void {
-  out[0] = configuration.shoulderPlane;
-  out[1] = configuration.shoulderLift * Math.PI;
-  out[2] = configuration.humeralRotation;
-  out[3] = configuration.elbowFlex;
-  out[4] = configuration.forearmRoll;
-  out[5] = configuration.wristFlex;
-  out[6] = configuration.wristDev;
-}
-
-function qToConfiguration(q: Float64Array, out: ArmConfiguration): ArmConfiguration {
-  out.shoulderPlane = q[0];
-  out.shoulderLift = q[1] / Math.PI;
-  out.humeralRotation = q[2];
-  out.elbowFlex = q[3];
-  out.forearmRoll = q[4];
-  out.wristFlex = q[5];
-  out.wristDev = q[6];
-  return out;
 }
 
 /** Return the common scale only when this affine world frame is a proper similarity. */
@@ -197,6 +177,8 @@ export class ArmDriver {
   private readonly requestWrist = new THREE.Vector3();
   private readonly requestElbow = new THREE.Vector3();
   private readonly requestHand = new THREE.Vector3();
+  private readonly requestUpper = new THREE.Vector3();
+  private readonly requestLower = new THREE.Vector3();
   private readonly requestPalm = new THREE.Vector3();
   private readonly neutralConfiguration = makeConfiguration();
   private readonly neutralDirections = {
@@ -472,9 +454,13 @@ export class ArmDriver {
     spread: FingerSpec,
     advanceRoll = true,
   ): ArmPathRequest {
+    // Normalised once, and only these copies are used below: the link
+    // lengths, the palm projections and the roll axis all assume unit vectors.
+    upper = this.requestUpper.copy(upper).normalize();
+    lower = this.requestLower.copy(lower).normalize();
+    hand = this.requestHand.copy(hand).normalize();
     this.requestElbow.copy(context.shoulder).addScaledVector(upper, context.upperLength);
     this.requestWrist.copy(this.requestElbow).addScaledVector(lower, context.lowerLength);
-    this.requestHand.copy(hand).normalize();
     copySpec(curls, this.proposedCurls);
     copySpec(spread, this.proposedSpread);
 
@@ -704,7 +690,7 @@ export class ArmDriver {
   accept(q: Float64Array, context: ArmForwardContext, curls: FingerSpec, spread: FingerSpec): void {
     // q must not alias the reusable solver output. Copy before any future solve.
     this.acceptedQ.set(q);
-    qToConfiguration(this.acceptedQ, this.acceptedConfiguration);
+    configurationFromQ(this.acceptedQ, this.acceptedConfiguration);
     forwardArm(this.acceptedConfiguration, this.calibration, context, this.acceptedForward);
     copySpec(curls, this.acceptedCurls);
     copySpec(spread, this.acceptedSpread);

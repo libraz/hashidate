@@ -24,6 +24,7 @@ import {
   ArmDriver,
   type ArmDriverAcceptedSnapshot,
   FRAME_TOLERANCE,
+  LIMIT_SLEW,
   positiveConformalScale,
 } from './arm-driver';
 import type { ArmPathPlanOutput } from './arm-path';
@@ -31,7 +32,7 @@ import { ElbowSearch } from './elbow';
 import { FINGER_TIP_EXTENSION } from './hand-geometry';
 import { Hands } from './hands';
 import { GroundedLegs } from './legs';
-import { type PointRequest, PointSolver } from './point';
+import { type PointRequest, PointSolver, worldDirection } from './point';
 import type { ArmSolution, ReachLinks } from './reach';
 import { solveReach } from './reach';
 import { type OffsetSlot, SpineOffsets } from './spine';
@@ -71,21 +72,6 @@ const _gX = new THREE.Vector3();
 const GIRDLE_ROM = 0.38;
 const _slewAxis = new THREE.Vector3();
 const _slewPerp = new THREE.Vector3();
-/**
- * How fast the limiter's own correction may travel, in radians a second.
- *
- * The lowest value that leaves the movement alone, which is the only property
- * that matters: a cap has to be invisible to everything except a seam. Measured
- * over every gesture in the table, a link asks for more than ten radians a
- * second on one frame in a hundred and more than fifteen on one in five hundred,
- * while a seam asks for seventy and upward — the two do not overlap, and
- * fourteen sits in the gap. Played from rest at this cap, every entrance in the
- * table is unchanged to the last digit of its peak speed and its path length
- * except the two that were teleporting. At ten, half a dozen of them lose about
- * a tenth of their peak, which is the movement being damped rather than a jump
- * being caught.
- */
-const LIMIT_SLEW = 14;
 const _palmCur = new THREE.Vector3();
 const _palmWant = new THREE.Vector3();
 const _palmAxis = new THREE.Vector3();
@@ -494,12 +480,16 @@ export class Rig {
     // geometry to work out which side of the hand the thumb is on.
     this.anat = new ArmAnatomy(profile);
     this.elbow = new ElbowSearch(profile, this.anat, {
-      solveReach: (side, target, angle, out) => this.solveReach(side, target, angle, out),
+      solveReach: (side, target, angle, out, framed) =>
+        this.solveReach(side, target, angle, out, framed),
       armContext: (side) => this.armContext(side),
       dt: () => this.dt,
     });
-    this.point = new PointSolver(profile, this.anat, (side, wrist, handDir, palmN, out) =>
-      this.elbow.search(side, wrist, handDir, palmN, out),
+    this.point = new PointSolver(
+      profile,
+      this.joints,
+      this.anat,
+      (side, wrist, handDir, palmN, out) => this.elbow.search(side, wrist, handDir, palmN, out),
     );
 
     const trio = (): LimitedDirs => ({
@@ -1343,13 +1333,14 @@ export class Rig {
   aimShoulder(side: Side, dir: Vec3Tuple | THREE.Vector3 | null): void {
     const { bones, restDir } = this.p;
     const bone = bones[`shoulder.${side}`];
-    const chest = bones.chest ?? bones.spine ?? bones.hips;
-    if (!(bone && chest && dir)) return;
+    // The clavicle's own parent, which a rig may not have put on the chest slot.
+    const parent = bone?.parent;
+    if (!(bone && parent && dir)) return;
     this.aim(
       bone,
       restDir[`shoulder.${side}`],
-      chest.getWorldQuaternion(this._chainQ[0]),
-      _vTarget(dir),
+      parent.getWorldQuaternion(this._chainQ[0]),
+      worldDirection(dir),
       0,
       this._chainQ[1],
     );
@@ -1631,7 +1622,7 @@ export class Rig {
     // The chain walk below only ever holds one link at a time.
     const lim = this.limit(side, dirs, palm);
 
-    // The bounded directions, each in its own vector. `_vTarget` hands back one
+    // The bounded directions, each in its own vector. `worldDirection` hands back one
     // shared scratch, which was enough while the chain was walked a link at a
     // time; the roll budget needs all three at once to know how much of a
     // shoulder rotation would reach the palm.
@@ -1656,7 +1647,8 @@ export class Rig {
     const handDir = restDir[`hand.${side}`];
 
     // --- down as far as the upper arm ---------------------------------------
-    let q = chest.getWorldQuaternion(this._chainQ[0]);
+    // From the chain's real parent, which a rig may not have put on the chest slot.
+    let q = ((clav ?? upper)?.parent ?? chest).getWorldQuaternion(this._chainQ[0]);
     if (clav) {
       q = sD
         ? this.aim(clav, restDir[`shoulder.${side}`], q, sD, 0, this._chainQ[1])
@@ -1871,9 +1863,9 @@ export class Rig {
     if (!(u && l && h)) return null;
     this.armContext(side);
     const out = this._limited[side];
-    out.upperArm.copy(_vTarget(u));
-    out.lowerArm.copy(_vTarget(l));
-    out.hand.copy(_vTarget(h));
+    out.upperArm.copy(worldDirection(u));
+    out.lowerArm.copy(worldDirection(l));
+    out.hand.copy(worldDirection(h));
     this.anat.clamp(side, out.upperArm, out.lowerArm, out.hand, this.palmWorld(side, palm));
     this.slew(side, out);
     return out;
@@ -2009,15 +2001,16 @@ export class Rig {
 
   /**
    * Solve a two-link reach so the wrist lands on `targetWorld`. See
-   * `reach.ts`, which holds the geometry.
+   * `reach.ts`, which holds the geometry, and `reachRef` for `framed`.
    */
   solveReach(
     side: Side,
     targetWorld: THREE.Vector3,
     elbowAngle: number,
     out: ReachLinks,
+    framed?: boolean,
   ): ReachLinks | null {
-    return solveReach(this.p, this.joints, this.anat, side, targetWorld, elbowAngle, out);
+    return solveReach(this.p, this.joints, this.anat, side, targetWorld, elbowAngle, out, framed);
   }
 
   /** Curl a finger. See `Hands.curlFinger`. */
@@ -2260,15 +2253,4 @@ export function handFrame(
   y.normalize();
   const z = _hfZ.crossVectors(x, y);
   return out.set(x.x, y.x, z.x, x.y, y.y, z.y, x.z, y.z, z.z);
-}
-
-const _t = new THREE.Vector3();
-/**
- * A world direction from either form a caller holds one in.
- *
- * Hands back one shared scratch vector, so the result is only valid until the
- * next call — anything needing two directions at once has to copy them out.
- */
-function _vTarget(a: Vec3Tuple | THREE.Vector3): THREE.Vector3 {
-  return Array.isArray(a) ? _t.set(a[0], a[1], a[2]).normalize() : _t.copy(a).normalize();
 }

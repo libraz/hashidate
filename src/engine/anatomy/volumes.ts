@@ -729,9 +729,9 @@ export class BodyVolumes {
    * frame, which is the same frame the cylinder used — so it still follows the
    * chest when the spine turns, and the query is still a couple of lookups.
    *
-   * Read at bind pose, where skinning is the identity and a vertex's world
-   * position is just its position through the mesh's world matrix. This runs at
-   * load, before anything is posed, which is the only time that holds.
+   * Read at load, before anything is posed, with each vertex put through
+   * three's own skinning transform (see `measureVolume`), so what is measured is
+   * the rest shape where the mesh actually draws it.
    *
    * Only vertices whose *dominant* bone is part of the trunk are counted. The
    * arms rest inside the trunk's height band in a bind pose, and a maximum over

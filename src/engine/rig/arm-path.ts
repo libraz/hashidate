@@ -116,7 +116,19 @@ interface ResolvedBounds {
   readonly upper: Float64Array;
 }
 
-function configurationFromQ(q: Float64Array, out: ArmConfiguration): ArmConfiguration {
+/** Encode one configuration in the solver's stable seven-value order. */
+export function configurationToQ(configuration: ArmConfiguration, out: Float64Array): void {
+  out[0] = configuration.shoulderPlane;
+  out[1] = configuration.shoulderLift * Math.PI;
+  out[2] = configuration.humeralRotation;
+  out[3] = configuration.elbowFlex;
+  out[4] = configuration.forearmRoll;
+  out[5] = configuration.wristFlex;
+  out[6] = configuration.wristDev;
+}
+
+/** Decode the solver's seven-value order back into a configuration. */
+export function configurationFromQ(q: Float64Array, out: ArmConfiguration): ArmConfiguration {
   out.shoulderPlane = q[0];
   out.shoulderLift = q[1] / Math.PI;
   out.humeralRotation = q[2];
@@ -345,7 +357,8 @@ function createBounds(
   return true;
 }
 
-function copyForward(source: ArmForwardResult, target: ArmForwardResult): void {
+/** Copy every landmark and frame of one forward result into another. */
+export function copyForward(source: ArmForwardResult, target: ArmForwardResult): void {
   target.u.copy(source.u);
   target.l.copy(source.l);
   target.h.copy(source.h);
