@@ -569,6 +569,22 @@ describe('buildRestDirections', () => {
     expect(restDir['hand.L'].x).toBeCloseTo(-1, 12);
   });
 
+  it('aims a hand with no middle finger between the fingers either side of it', () => {
+    const rig = buildRig();
+    const bonesByName = collectBones(rig.root);
+    const { value: bones } = resolveBones(bonesByName);
+    const { value: fingers } = resolveFingers(bonesByName);
+    delete fingers['middle.L'];
+    delete fingers['middle.R'];
+
+    const restDir = buildRestDirections(bones, fingers);
+
+    for (const side of ['L', 'R'] as const) {
+      expect(restDir[`hand.${side}`].z, side).toBeCloseTo(0, 12);
+      expect(Math.abs(restDir[`hand.${side}`].x), side).toBeCloseTo(1, 12);
+    }
+  });
+
   it('aims a limb past a twist helper the exporter happened to write first', () => {
     const rig = buildRig();
     const upper = must(rig.bones.get('UpperArm_L'), 'UpperArm_L');

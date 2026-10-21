@@ -201,7 +201,20 @@ export function buildRestDirections(
     // runs straight out from the wrist.
     let next: THREE.Bone | undefined;
     if (slot === 'hand.L' || slot === 'hand.R') {
-      next = fingerBones[`middle.${slot.slice(-1) as Side}`]?.[0];
+      const side = slot.slice(-1) as Side;
+      next = fingerBones[`middle.${side}`]?.[0];
+      // Without it, the index and ring fingers straddle that line; first child is the thumb.
+      const index = fingerBones[`index.${side}`]?.[0];
+      const ring = fingerBones[`ring.${side}`]?.[0];
+      if (!next && (index || ring)) {
+        const v = new THREE.Vector3();
+        if (index) v.add(chainDirection(bone, index));
+        if (ring) v.add(chainDirection(bone, ring));
+        if (v.lengthSq() > 1e-12) {
+          restDir[slot] = v.normalize();
+          continue;
+        }
+      }
     } else {
       const nextSlot = NEXT_IN_CHAIN[slot];
       next = nextSlot ? bones[nextSlot] : undefined;
