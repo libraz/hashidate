@@ -111,6 +111,8 @@ else:
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.fbx(filepath=src)
 main_arm = armature_of(bpy.data.objects)
+if main_arm is None:
+    raise SystemExit(f"{src}: no armature in the source, nothing to skin the meshes to")
 print(f"@@@ main armature '{main_arm.name}' bones={len(main_arm.data.bones)}")
 
 # --- re-parent extra outfits onto the main skeleton
@@ -445,6 +447,14 @@ def encode_lossy(image, path):
     image.filepath = path
     image.reload()
 
+
+# export_apply=False writes the base mesh, so any other modifier is lost.
+for ob in bpy.data.objects:
+    if ob.type != "MESH":
+        continue
+    unapplied = [f"{m.name}({m.type})" for m in ob.modifiers if m.type != "ARMATURE"]
+    if unapplied:
+        print(f"@@@ WARNING {ob.name}: modifiers not applied: {', '.join(unapplied)}")
 
 kw = dict(
     filepath=dst,

@@ -17,12 +17,18 @@ needle = sys.argv[3] if len(sys.argv) > 3 else "/Texture_1K/"
 
 os.makedirs(out, exist_ok=True)
 
+
+def guid_of(name):
+    """The <guid> directory of a member name, tolerating a leading './'."""
+    return name.removeprefix("./").split("/")[0]
+
+
 # pass 1: guid -> Unity path
 paths = {}
 with tarfile.open(pkg, "r|gz") as tf:
     for m in tf:
         if m.name.endswith("/pathname"):
-            guid = m.name.split("/")[0]
+            guid = guid_of(m.name)
             paths[guid] = tf.extractfile(m).read().decode("utf-8").split("\n")[0]
 
 want = {g: p for g, p in paths.items()
@@ -41,7 +47,7 @@ with tarfile.open(pkg, "r|gz") as tf:
     for m in tf:
         if not m.name.endswith("/asset"):
             continue
-        guid = m.name.split("/")[0]
+        guid = guid_of(m.name)
         if guid not in want:
             continue
         dst = os.path.join(out, os.path.basename(want[guid]))
