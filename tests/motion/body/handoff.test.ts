@@ -330,4 +330,114 @@ describe('spine switch envelope', () => {
     expect(times).toHaveLength(retiredCount);
     expect(h.body.gesture).toBeNull();
   });
+
+  const advanceBy = (h: Harness, dt: number) => {
+    h.rig.reset();
+    h.body.update(dt);
+    return headAngle(h);
+  };
+
+  it('keeps a natural exit deadline when stopped after that exit has started', () => {
+    const h = isolated();
+    const def = { ...headPose(0.2), sustain: undefined, hold: 0.1 };
+    h.body.playDef(def, 'natural');
+    advanceBy(h, 0.4);
+    expect(headAngle(h)).toBeGreaterThan(0);
+    h.body.stopGesture();
+    advanceBy(h, 0.16);
+    expect(headAngle(h)).toBeLessThan(1e-7);
+  });
+
+  const relative = (h: Harness) => {
+    const head = h.profile.bones.head;
+    if (!head) throw new Error('synthetic rig has no head');
+    const rest = h.rig.rest.get(head) ?? new THREE.Quaternion();
+    return rest.clone().invert().multiply(head.quaternion);
+  };
+  let positive: THREE.Vector3 | undefined;
+  /** Head pitch, signed by the way a positive authored pitch turns it. */
+  const headPitch = (h: Harness) => {
+    if (!positive) {
+      const q = relative(held(0.2));
+      positive = new THREE.Vector3(q.x, q.y, q.z).normalize();
+    }
+    const q = relative(h);
+    return Math.sign(new THREE.Vector3(q.x, q.y, q.z).dot(positive)) * headAngle(h);
+  };
+  const velocities = (xs: number[]) => xs.slice(1).map((x, i) => (x - xs[i]) / DT);
+  /** Largest frame-to-frame velocity change: what a smooth curve already moves by in one step. */
+  const accel = (vs: number[]) => Math.max(...vs.slice(1).map((v, i) => Math.abs(v - vs[i])));
+  /**
+   * The velocity change across the interruption at `at` against the steps
+   * either side of it. A one-sided difference differs by acceleration times
+   * the frame step, so a carried velocity stays inside it and a jump does not.
+   */
+  const continuity = (xs: number[], at: number) => {
+    const v = velocities(xs);
+    const step = Math.abs(v[at] - v[at - 1]);
+    const around = Math.max(accel(v.slice(1, at)), accel(v.slice(at, at + 10)));
+    return { v, step, around };
+  };
+
+  it('keeps the velocity a release already had toward rest', () => {
+    const h = held(0.2);
+    h.body.playDef(headPose(-0.1, 0.6), 'back');
+    // Stopped at the entrance's inflection, where its weight moves fastest.
+    const half = Math.round((h.body.gesture?.lead ?? 0) / 2 / DT);
+    const before = [headPitch(h), ...track(h, half, headPitch)];
+    h.body.stopGesture();
+    const after = track(h, 120, headPitch);
+    const at = before.length - 1;
+    const { v, step, around } = continuity([...before, ...after], at);
+    expect(before.at(-1)).toBeGreaterThan(0);
+    expect(v[at - 1]).toBeLessThan(0);
+    expect(step).toBeLessThanOrEqual(1.5 * around);
+    expect(Math.abs(after.at(-1) ?? 1)).toBeLessThan(1e-7);
+  });
+
+  it('never carries a release away from rest, even with a switch still settling', () => {
+    const h = isolated();
+    h.body.playDef(headPose(0.2, 0.6), 'out');
+    track(h, 10, headPitch);
+    h.body.playDef(headPose(0.2, 0.6), 'again');
+    const before = track(h, 3, headPitch);
+    h.body.stopGesture();
+    const after = [before.at(-1) ?? 0, ...track(h, 90, headPitch)];
+    for (let i = 1; i < after.length; i++) {
+      expect(after[i]).toBeLessThanOrEqual(after[i - 1] + 1e-9);
+      expect(after[i]).toBeGreaterThanOrEqual(-1e-9);
+    }
+    expect(after.at(-1)).toBeLessThan(1e-7);
+  });
+
+  it.each([0.1, -0.1])(
+    'switches mid-entrance to %s with position and velocity continuous',
+    (pitch) => {
+      const h = isolated();
+      h.body.playDef(headPose(0.2, 0.6), 'out');
+      const before = track(h, 12, headPitch);
+      h.body.playDef(headPose(pitch, 0.6), 'next');
+      const after = track(h, 90, headPitch);
+      const at = before.length - 1;
+      const { v, step, around } = continuity([...before, ...after], at);
+      expect(v[at - 1]).toBeGreaterThan(0.1);
+      expect(step).toBeLessThanOrEqual(1.5 * around);
+      expect(after.at(-1)).toBeCloseTo(pitch, 10);
+    },
+  );
+
+  it('stays within the authored poses under a hundred switches at ten a second', () => {
+    const h = isolated();
+    const pitches = [0.2, -0.2, 0.05, -0.15];
+    for (let i = 0; i < 100; i++) {
+      h.body.playDef(headPose(pitches[i % 4], i % 3 ? 0.2 : 0.6), `rapid-${i}`);
+      for (const p of track(h, 6, headPitch)) {
+        expect(p).toBeGreaterThanOrEqual(-0.2 - 1e-9);
+        expect(p).toBeLessThanOrEqual(0.2 + 1e-9);
+      }
+    }
+    h.body.stopGesture();
+    track(h, 120, headPitch);
+    expect(headAngle(h)).toBeLessThan(1e-7);
+  });
 });
