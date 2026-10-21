@@ -227,7 +227,7 @@ export function buildRestDirections(
       const chain = fingerBones[key];
       if (!chain) continue;
       chain.forEach((b, i) => {
-        restDir[`${key}.${i}`] = childDirection(b);
+        restDir[`${key}.${i}`] = chainDirection(b, chain[i + 1]);
       });
     }
   }

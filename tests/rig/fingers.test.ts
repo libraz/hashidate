@@ -611,3 +611,33 @@ describe('curlHand', () => {
     }
   });
 });
+
+it('keeps finger axes and curled bones invariant under helper sibling ordering', () => {
+  const hands = [undefined, 'before', 'after'].map((fingerHelpers) => {
+    const built = buildRig({ fingerHelpers: fingerHelpers as 'before' | 'after' | undefined });
+    const profile = buildProfile(built.root, built.descriptor);
+    const rig = new Rig(profile);
+    for (const side of SIDES)
+      rig.curlHand(side, { thumb: 0.7, index: 0.6 }, { thumb: 0.2, index: -0.1 });
+    built.root.updateMatrixWorld(true);
+    return { profile, rig };
+  });
+  for (const side of SIDES) {
+    for (const finger of ['thumb', 'index'] as const) {
+      const baseline = need(hands[0].profile.fingerBones[`${finger}.${side}`], 'baseline');
+      for (const actual of hands.slice(1)) {
+        const chain = need(actual.profile.fingerBones[`${finger}.${side}`], 'actual');
+        for (let i = 0; i < chain.length; i++) {
+          expect
+            .soft(actual.rig.fingerAxis.get(chain[i])?.toArray())
+            .toEqual(hands[0].rig.fingerAxis.get(baseline[i])?.toArray());
+          expect
+            .soft(actual.rig.fingerSplayAxis.get(chain[i])?.toArray())
+            .toEqual(hands[0].rig.fingerSplayAxis.get(baseline[i])?.toArray());
+          expect.soft(chain[i].quaternion.toArray()).toEqual(baseline[i].quaternion.toArray());
+          expect.soft(chain[i].matrixWorld.elements).toEqual(baseline[i].matrixWorld.elements);
+        }
+      }
+    }
+  }
+});

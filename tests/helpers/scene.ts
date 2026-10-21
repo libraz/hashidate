@@ -39,6 +39,8 @@ export interface RigOptions {
   armatureScale?: number;
   /** Include finger chains. Off produces a rig whose hands never curl. */
   fingers?: boolean;
+  /** Off-axis leaf siblings exercise resolved finger-chain ordering. */
+  fingerHelpers?: 'before' | 'after';
   /** Optional asymmetric finger geometry for calibrating hand-local solvers. */
   fingerGeometry?: Partial<Record<FingerName, FingerGeometryOverride>>;
   /** Include the optional bilateral hip-to-toe leg chains. */
@@ -324,6 +326,25 @@ export function buildRig(opts: RigOptions = {}): SyntheticRig {
           (rootOffset?.[1] ?? 0) + (segmentOffset?.[1] ?? 0),
           (i === 0 ? spread : 0) + (rootOffset?.[2] ?? 0) + (segmentOffset?.[2] ?? 0),
         );
+      }
+    }
+  }
+
+  if (opts.fingerHelpers) {
+    for (const side of ['L', 'R'] as const) {
+      for (const finger of ['Thumb', 'Index'] as const) {
+        for (const i of [0, 1]) {
+          const parent = bones.get(naming.finger(finger, side, i));
+          if (!parent) throw new Error('missing synthetic finger');
+          const helper = new THREE.Bone();
+          helper.name = `FingerHelper_${finger}_${side}_${i}`;
+          helper.position.set(0, 0.02 / scale, 0.01 / scale);
+          parent.add(helper);
+          if (opts.fingerHelpers === 'before') {
+            parent.children.splice(parent.children.indexOf(helper), 1);
+            parent.children.unshift(helper);
+          }
+        }
       }
     }
   }

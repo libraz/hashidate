@@ -645,3 +645,22 @@ describe('buildRestDirections', () => {
     expect(restDir['eye.L'].toArray()).toEqual([0, 1, 0]);
   });
 });
+
+it('keeps resolved finger directions independent of helper sibling order', () => {
+  const profiles = [undefined, 'before', 'after'].map((fingerHelpers) => {
+    const built = buildRig({ fingerHelpers: fingerHelpers as 'before' | 'after' | undefined });
+    return buildProfile(built.root, built.descriptor);
+  });
+  for (const side of ['L', 'R']) {
+    for (const finger of ['thumb', 'index']) {
+      for (const i of [0, 1, 2]) {
+        const key = `${finger}.${side}.${i}`;
+        for (const profile of profiles.slice(1)) {
+          expect
+            .soft(profile.restDir[key].toArray(), key)
+            .toEqual(profiles[0].restDir[key].toArray());
+        }
+      }
+    }
+  }
+});
