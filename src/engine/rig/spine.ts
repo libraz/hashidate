@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { EyeSlot, Profile, Side, SpineSlot } from '../types';
+import { type EyeSlot, type Profile, type Side, SPINE_LIMITS, type SpineSlot } from '../types';
 
 /**
  * The additive half of a frame.
@@ -24,6 +24,21 @@ const _relativeQ = new THREE.Quaternion();
 
 const SPINE_CHAIN: readonly SpineSlot[] = ['hips', 'spine', 'chest', 'neck', 'head'];
 const SIDES: readonly Side[] = ['L', 'R'];
+
+/**
+ * One summed component, bounded by `SPINE_LIMITS`.
+ *
+ * Identity up to the knee, so every built-in pose commits bit-identically; past
+ * it a tanh carries on at slope 1 and approaches `max` without reaching it, so a
+ * stack that runs long eases to a stop instead of hitting one.
+ */
+export function boundSpineOffset(slot: SpineSlot, value: number): number {
+  const { knee, max } = SPINE_LIMITS[slot];
+  const over = Math.abs(value) - knee;
+  if (over <= 0) return value;
+  const band = max - knee;
+  return Math.sign(value) * (knee + band * Math.tanh(over / band));
+}
 
 /** Spine-chain slots plus the eyes, which take the same additive treatment. */
 export type OffsetSlot = SpineSlot | EyeSlot;
@@ -100,13 +115,18 @@ export class SpineOffsets {
     o.z += z;
   }
 
-  /** Bake accumulated spine offsets into local quaternions. */
+  /** Bake accumulated spine offsets, bounded per slot, into local quaternions. */
   commit(p: Profile, restOf: (bone: THREE.Bone) => THREE.Quaternion): void {
     for (const slot of SPINE_CHAIN) {
       const bone = p.bones[slot];
       const o = this.offset.get(slot);
       if (!(bone && o)) continue;
-      _e.set(o.x, o.y, o.z, 'XYZ');
+      _e.set(
+        boundSpineOffset(slot, o.x),
+        boundSpineOffset(slot, o.y),
+        boundSpineOffset(slot, o.z),
+        'XYZ',
+      );
       const authored = _q.setFromEuler(_e);
       const basis = this.basis.get(slot);
       if (basis) authored.premultiply(basis.q).multiply(basis.inverse);

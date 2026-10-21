@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { MotionArm, MotionDef, MotionFrame } from '../engine/motion';
-import type { GestureGroup, SpineSlot } from '../engine/types';
+import { type GestureGroup, SPINE_LIMITS, type SpineSlot } from '../engine/types';
 import { type Equals, type Expect, fingerNameSchema, sideSchema } from './commands';
 import { localizedSchema, vec3Schema } from './messages/primitives';
 import { gestureGroupSchema } from './messages/session';
@@ -29,6 +29,31 @@ type _GestureGroupsMatchEngine = Expect<Equals<z.infer<typeof gestureGroupSchema
 const spineSlotSchema = z.enum(['hips', 'spine', 'chest', 'neck', 'head']);
 type _SpineSlotsMatchEngine = Expect<Equals<z.infer<typeof spineSlotSchema>, SpineSlot>>;
 
+/**
+ * Spine offsets per slot, each component within the slot's `SPINE_LIMITS.max`.
+ *
+ * The commit saturates toward that figure anyway, so a keyframe past it states
+ * a turn the body cannot show — and a head at 1.5 rad is a typo, not a pose.
+ */
+const spineOffsetsSchema = z
+  .partialRecord(spineSlotSchema, vec3Schema)
+  .superRefine((spine, ctx) => {
+    for (const slot of spineSlotSchema.options) {
+      const value = spine[slot];
+      if (!value) continue;
+      const { max } = SPINE_LIMITS[slot];
+      value.forEach((component, axis) => {
+        if (Math.abs(component) > max) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [slot, axis],
+            message: `${slot} turns at most ${max} rad about each axis`,
+          });
+        }
+      });
+    }
+  });
+
 export const motionArmSchema = z.object({
   shoulder: direction.optional(),
   upperArm: direction.optional(),
@@ -56,7 +81,7 @@ export const motionFrameSchema = z.object({
   at: z.number().finite().min(0),
   arms: z.partialRecord(sideSchema, motionArmSchema).optional(),
   fingers: z.partialRecord(sideSchema, fingerCurlSchema).optional(),
-  spine: z.partialRecord(spineSlotSchema, vec3Schema).optional(),
+  spine: spineOffsetsSchema.optional(),
 });
 
 type _MotionFrameMatchesEngine = Expect<Equals<z.infer<typeof motionFrameSchema>, MotionFrame>>;

@@ -1,10 +1,21 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { buildProfile } from '@/engine/profile';
-import { type OffsetSlot, SpineOffsets } from '@/engine/rig/spine';
+import { GESTURES } from '@/engine/motion/gestures';
+import { IdlePosture } from '@/engine/motion/posture';
+import { NOD_PITCH } from '@/engine/motion/prosody';
+import { buildProfile, DEFAULT_GAZE_LIMITS } from '@/engine/profile';
+import type { Rig } from '@/engine/rig';
+import { boundSpineOffset, type OffsetSlot, SpineOffsets } from '@/engine/rig/spine';
+import { TUNING_RANGES } from '@/engine/tuning';
+import {
+  SPINE_LIMITS,
+  type SpineOffsets as SpineOffsetsPose,
+  type SpineSlot,
+} from '@/engine/types';
 import { buildRig } from '../helpers/scene';
 
 const SLOTS: readonly OffsetSlot[] = ['hips', 'spine', 'chest', 'neck', 'head', 'eye.L', 'eye.R'];
+const SPINE_CHAIN: readonly SpineSlot[] = ['hips', 'spine', 'chest', 'neck', 'head'];
 
 const OFFSETS = [
   { x: 0.17, y: 0, z: 0 },
@@ -274,5 +285,152 @@ describe('spine offsets', () => {
       'eye.L': { x: -0.08, y: 0.1, z: 0.06 },
     } satisfies Partial<Record<OffsetSlot, OffsetValue>>;
     expectSameMarkers(poseOffsets(standard, offsets), poseOffsets(rebased, offsets));
+  });
+});
+
+/** Sum of every built-in layer's worst reach on one slot and axis, radians. */
+function builtInStack(): Record<SpineSlot, [number, number, number]> {
+  const out = {} as Record<SpineSlot, [number, number, number]>;
+  for (const slot of SPINE_CHAIN) out[slot] = [0, 0, 0];
+
+  // Posture at every tuning maximum, with two overlapping nods at full amplitude.
+  const built = buildRig();
+  const profile = buildProfile(built.root, built.descriptor);
+  const frame = new Map<string, [number, number, number]>();
+  const rig = {
+    addOffset(slot: string, x: number, y: number, z: number) {
+      const o = frame.get(slot) ?? [0, 0, 0];
+      o[0] += x;
+      o[1] += y;
+      o[2] += z;
+      frame.set(slot, o);
+    },
+  } as unknown as Rig;
+  const idle = TUNING_RANGES.idle;
+  const jumpHeight = TUNING_RANGES.hop.height.max;
+  for (const speaking of [false, true]) {
+    for (const [rise, load] of [
+      [0, 0],
+      [-0.05, 1],
+      [jumpHeight, 0],
+    ] as const) {
+      const posture = new IdlePosture();
+      for (let t = 0; t < 400; t += 1 / 30) {
+        frame.clear();
+        posture.apply(rig, profile, 1 / 30, {
+          t,
+          speaking,
+          speechEnergy: speaking ? 1 : 0,
+          nod: 2 * 1.2 * NOD_PITCH * Math.sin(t * 1.3),
+          breathPeriod: idle.breathPeriod.min,
+          breathDepth: idle.breathDepth.max,
+          weightShift: idle.weightShift.max,
+          idleAmount: idle.idleAmount.max,
+          hipsRest: new THREE.Vector3(),
+          hipsRight: new THREE.Vector3(1, 0, 0),
+          hipsUp: new THREE.Vector3(0, 1, 0),
+          jumpHeight,
+          rise,
+          load,
+        });
+        for (const [slot, o] of frame) {
+          const reach = out[slot as SpineSlot];
+          for (let i = 0; i < 3; i++) reach[i] = Math.max(reach[i], Math.abs(o[i]));
+        }
+      }
+    }
+  }
+
+  // Gaze is clamped to the profile's limits before it is added.
+  const gaze = DEFAULT_GAZE_LIMITS;
+  out.neck[0] += gaze.neckPitch;
+  out.neck[1] += gaze.neckYaw;
+  out.head[0] += gaze.headPitch;
+  out.head[1] += gaze.headYaw;
+  return out;
+}
+
+/** Every spine component the built-in gesture table produces, at every variation extreme. */
+function gestureSamples(visit: (slot: SpineSlot, axis: number, value: number) => void): void {
+  for (const g of Object.values(GESTURES)) {
+    const end = g.lead + g.hold + 4;
+    for (const rate of [0.92, 1, 1.08]) {
+      for (const scale of [0.9, 1, 1.1]) {
+        for (const side of [-1, 1]) {
+          for (let t = 0; t <= end; t += 1 / 60) {
+            const entrance = Math.min(1, t / Math.max(1e-3, g.lead));
+            const held = Math.max(0, t - g.lead);
+            const spine: SpineOffsetsPose | undefined = g.build(
+              t,
+              { rate, scale, side },
+              { entrance, held },
+            ).spine;
+            if (!spine) continue;
+            for (const slot of SPINE_CHAIN) {
+              const v = spine[slot];
+              if (v) for (let i = 0; i < 3; i++) visit(slot, i, v[i]);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+describe('spine offset bound', () => {
+  it('keeps an extreme stacked head offset inside the slot bound', () => {
+    const scene = makeCase(true);
+    const head = required(scene.profile.bones.head, 'head');
+    const rest = required(scene.rest.get(head), 'head rest');
+    const restOf = (bone: THREE.Bone) => required(scene.rest.get(bone), bone.name);
+    for (const sign of [1, -1]) {
+      for (const axis of [0, 1, 2]) {
+        restore(scene);
+        scene.spine.clear();
+        // A loaded motion at its limit, plus the gaze and a nod on top.
+        const stack = [1.5, DEFAULT_GAZE_LIMITS.headPitch, 0.1];
+        for (const amount of stack) {
+          const o = [0, 0, 0];
+          o[axis] = sign * amount;
+          scene.spine.add('head', o[0], o[1], o[2]);
+        }
+        scene.spine.commit(scene.profile, restOf);
+        const angle = head.quaternion.angleTo(rest);
+        expect(angle).toBeLessThan(SPINE_LIMITS.head.max);
+        expect(angle).toBeGreaterThan(SPINE_LIMITS.head.knee);
+      }
+    }
+  });
+
+  it('saturates smoothly rather than stopping', () => {
+    for (const slot of SPINE_CHAIN) {
+      const { knee, max } = SPINE_LIMITS[slot];
+      let last = boundSpineOffset(slot, knee);
+      for (let x = knee + 0.01; x < knee + 4 * (max - knee); x += 0.01) {
+        const y = boundSpineOffset(slot, x);
+        expect(y).toBeGreaterThan(last);
+        expect(y).toBeLessThan(max);
+        expect(boundSpineOffset(slot, -x)).toBe(-y);
+        last = y;
+      }
+      // Slope 1 at the knee: no visible kink where saturation begins.
+      const h = 1e-4;
+      expect((boundSpineOffset(slot, knee + h) - knee) / h).toBeGreaterThan(0.99);
+    }
+  });
+
+  it('leaves every built-in gesture stack bit-identical', () => {
+    const stack = builtInStack();
+    let samples = 0;
+    const changed: string[] = [];
+    gestureSamples((slot, axis, value) => {
+      samples++;
+      const worst = value + Math.sign(value || 1) * stack[slot][axis];
+      for (const v of [value, worst]) {
+        if (!Object.is(boundSpineOffset(slot, v), v)) changed.push(`${slot}[${axis}] ${v}`);
+      }
+    });
+    expect(samples).toBeGreaterThan(1000);
+    expect(changed.slice(0, 5)).toEqual([]);
   });
 });

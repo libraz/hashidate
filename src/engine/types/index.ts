@@ -83,6 +83,7 @@ export type {
   ReachSpec,
   SpineOffsets,
 } from './pose';
+export { SPINE_LIMITS } from './pose';
 export type {
   ArmBoneSlot,
   ArmSlot,

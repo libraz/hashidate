@@ -103,6 +103,26 @@ export interface PointSpec {
 /** Additive spine offsets for a frame, in radians, per slot. */
 export type SpineOffsets = Partial<Record<SpineSlot, Vec3Tuple>>;
 
+/**
+ * How far the summed offset on one spine slot may turn about each axis, radians.
+ *
+ * Read by the motion schema, which refuses a keyframe past `max`, and by the
+ * commit, which passes everything up to `knee` through untouched and saturates
+ * smoothly toward `max` beyond it. Not anatomy: the neck and trunk ranges in
+ * `anatomy/joints.ts` bound a whole region, and the built-in layers already
+ * stack past them on one slot.
+ */
+export const SPINE_LIMITS: Readonly<Record<SpineSlot, { knee: number; max: number }>> = {
+  // Each knee sits above the worst built-in stack on that slot — gesture table at
+  // full variation, posture at every tuning maximum with two overlapping nods,
+  // default gaze limits: hips 0.06, spine 0.23, chest 0.28, neck 0.60, head 0.94.
+  hips: { knee: 0.25, max: 0.45 },
+  spine: { knee: 0.3, max: 0.5 },
+  chest: { knee: 0.35, max: 0.55 },
+  neck: { knee: 0.7, max: 0.9 },
+  head: { knee: 1.05, max: 1.2 },
+};
+
 /** What one frame of a gesture asks for. Every field is optional. */
 export interface Pose {
   arms?: Partial<Record<Side, ArmDirections>>;

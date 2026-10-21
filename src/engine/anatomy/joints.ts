@@ -169,7 +169,7 @@ export const JOINTS: JointTable = {
   // framing limits in `profile.gaze` are far tighter than anatomy, because a
   // bust shot runs out of room long before a neck does. Neither this entry nor
   // `spine` is applied: gaze is bounded by its framing limits alone, and the
-  // summed spine offsets are committed unclamped (`rig/spine.ts`).
+  // summed spine offsets by the per-slot `SPINE_LIMITS` (`rig/spine.ts`).
   neck: {
     label: { en: 'Neck', ja: '首' },
     dofs: {

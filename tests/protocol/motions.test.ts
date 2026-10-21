@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SPINE_LIMITS } from '@/engine/types';
 import {
   gestureGroupSchema,
   localizedSchema,
@@ -123,6 +124,23 @@ describe('motionBodySchema', () => {
   it('refuses a spine slot that is not one', () => {
     expect(
       motionBodySchema.safeParse(body({ frames: [{ at: 0, spine: { tail: [0, 1, 0] } }] })).success,
+    ).toBe(false);
+  });
+
+  it('refuses a spine offset past what the slot can display', () => {
+    for (const slot of ['hips', 'spine', 'chest', 'neck', 'head'] as const) {
+      const max = SPINE_LIMITS[slot].max;
+      const at = (value: number) =>
+        motionBodySchema.safeParse(body({ frames: [{ at: 0, spine: { [slot]: [0, value, 0] } }] }))
+          .success;
+      expect(at(max)).toBe(true);
+      expect(at(-max)).toBe(true);
+      expect(at(max + 1e-6)).toBe(false);
+      expect(at(-max - 1e-6)).toBe(false);
+    }
+    expect(
+      motionBodySchema.safeParse(body({ frames: [{ at: 0, spine: { head: [1.5, 0, 0] } }] }))
+        .success,
     ).toBe(false);
   });
 
