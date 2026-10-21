@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildProfile } from '@/engine/profile';
 import { Spring, Tail } from '@/engine/secondary';
 import type { AvatarDescriptor, Profile, SwayGroupSpec } from '@/engine/types';
@@ -243,5 +243,37 @@ describe('tail wag phase', () => {
     const typical = sorted[Math.floor(sorted.length / 2)] ?? 0;
     // A reset of the slow term shows as one frame many times the usual step.
     expect(Math.max(...steps)).toBeLessThan(typical * 3);
+  });
+});
+
+describe('tail collider calibration', () => {
+  it('samples the widest sweep the drive can reach, energy included', () => {
+    const calibrate = vi.spyOn(Spring.prototype, 'calibrateDrive');
+    const fixture = makeFixture({ passive: false });
+    const poses = calibrate.mock.calls.at(-1)?.[1] ?? [];
+    calibrate.mockRestore();
+    const { tail } = fixture;
+    const swingOf = (q: THREE.Quaternion, lift: THREE.Quaternion): number =>
+      q.clone().multiply(lift.clone().invert()).angleTo(new THREE.Quaternion());
+
+    // Poses are swing-major over the two lift corners, so the middle pair is lift alone.
+    const lifts = poses.slice(2, 4);
+    let calibrated = 0;
+    for (const [i, q] of poses.entries())
+      calibrated = Math.max(calibrated, swingOf(q, lifts[i % 2]));
+
+    // Joy at full speech is the widest the table goes.
+    const lift = new THREE.Quaternion().setFromAxisAngle(
+      tail.liftAxis,
+      tail.liftRange * Math.min(1, tail.restLift + 0.55) * tail.amount,
+    );
+    let reached = 0;
+    for (let i = 0; i < 60 * 120; i++) {
+      tail.update(STEP, { joy: 1 }, 1);
+      reached = Math.max(reached, swingOf(tail.joints[0].drive, lift));
+    }
+    expect(reached).toBeGreaterThan(tail.swingRange * tail.amount);
+    expect(calibrated).toBeGreaterThanOrEqual(reached);
+    expect(calibrated).toBeCloseTo(tail.swingRange * 1.25 * tail.amount, 9);
   });
 });

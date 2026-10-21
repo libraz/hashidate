@@ -83,6 +83,15 @@ const MOOD: Record<EmotionName, Mood> = {
   shy: { rate: 0.7, swing: 0.2, lift: -0.55 },
 };
 
+/** How much full speech energy widens the sweep. */
+const SPEECH_SWING = 0.25;
+
+/**
+ * The widest sweep the drive reaches, as a multiple of `swingRange * amount`:
+ * the widest mood at full speech, with the wave and the wander both at their peak of 1.
+ */
+const MAX_SWING = Math.max(...Object.values(MOOD).map((m) => m.swing)) * (1 + SPEECH_SWING);
+
 const _v = new THREE.Vector3();
 const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
@@ -192,7 +201,7 @@ export class Tail {
     // avatar actually ships with and no more; an operator winding the slider
     // past it gets clamped, which is what an override is supposed to feel like.
     const poses: THREE.Quaternion[] = [];
-    for (const s of [-1, 0, 1]) {
+    for (const s of [-MAX_SWING, 0, MAX_SWING]) {
       for (const l of [-1, 1]) {
         const q = new THREE.Quaternion().setFromAxisAngle(
           this.swingAxis,
@@ -243,7 +252,7 @@ export class Tail {
     // Talking lifts the whole performance a little. Small on purpose: a tail
     // that tracks the voice closely reads as lip-sync rather than as mood.
     rate *= 1 + 0.35 * energy;
-    swing *= 1 + 0.25 * energy;
+    swing *= 1 + SPEECH_SWING * energy;
 
     // Phase is accumulated rather than taken from absolute time, so a change of
     // rate eases instead of teleporting the tail to the other side of its arc.
