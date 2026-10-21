@@ -125,6 +125,6 @@ it('reuses the completed body refresh for both native arm readers in every candi
   expect(candidates).toBeGreaterThan(0);
   for (const side of ['L', 'R'] as const) {
     expect(captures[side].length).toBeGreaterThan(0);
-    expect(new Set(captures[side])).toEqual(new Set([2]));
+    expect(new Set(captures[side])).toEqual(new Set([1]));
   }
 });

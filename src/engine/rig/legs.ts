@@ -345,6 +345,8 @@ export class GroundedLegs {
    * would be much more visible than retaining the authored pose.
    */
   apply(rise: number): boolean {
+    // Unconditional and first: `Rig.applyBodyContext` relies on this pass, plus
+    // each write below refreshing its own subtree, to leave the scene fresh.
     this.root.updateMatrixWorld(true);
     this.metric.updateWorldMatrix(true, false);
     this.metricInverse.copy(this.metric.matrixWorld).invert();

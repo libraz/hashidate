@@ -566,3 +566,35 @@ function makeMesh(
   root.updateMatrixWorld(true);
   return mesh;
 }
+
+/**
+ * Interpose a bone between `child` and its parent without moving anything.
+ *
+ * Some rigs carry a carrier bone inside an arm link — a twist segment between
+ * the upper arm and the forearm — so the next canonical bone's parent is not
+ * the previous canonical bone. The new bone sits `fraction` of the way along the
+ * link with its own non-identity rotation, and `child` keeps its world rest
+ * transform.
+ */
+export function interposeBone(
+  rig: SyntheticRig,
+  child: string,
+  name: string,
+  rotation: [number, number, number],
+  fraction = 0.5,
+): THREE.Bone {
+  const bone = rig.bones.get(child);
+  const parent = bone?.parent;
+  if (!(bone && parent)) throw new Error(`the rig has no parented ${child}`);
+  rig.root.updateMatrixWorld(true);
+  const carrier = new THREE.Bone();
+  carrier.name = name;
+  carrier.position.copy(bone.position).multiplyScalar(fraction);
+  carrier.rotation.set(...rotation);
+  parent.add(carrier);
+  carrier.updateMatrixWorld(true);
+  carrier.attach(bone);
+  rig.bones.set(name, carrier);
+  rig.root.updateMatrixWorld(true);
+  return carrier;
+}

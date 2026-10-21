@@ -1,15 +1,8 @@
 import * as THREE from 'three';
 import { fingerCurl } from '../anatomy';
-import type {
-  FingerName,
-  FingerSpec,
-  HandContact,
-  JointSpec,
-  JointTable,
-  Profile,
-  Side,
-} from '../types';
-import { composeFingerRotation } from './hands';
+import type { FingerName, FingerSpec, HandContact, JointTable, Profile, Side } from '../types';
+import { cloneJointTable } from './arm-configuration';
+import { composeFingerRotation, FINGER_NAMES } from './hands';
 
 /** The virtual fingertip carries this much of the final bone past the last joint. */
 export const FINGER_TIP_EXTENSION = 0.75;
@@ -54,40 +47,12 @@ export interface HandGeometrySample {
   readonly points: HandGeometryPoint[];
 }
 
-const FINGERS: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
 const _pathMatrix = new THREE.Matrix4();
 const _localMatrix = new THREE.Matrix4();
 const _localQuaternion = new THREE.Quaternion();
 const _rotationScratch = new THREE.Quaternion();
 const _position = new THREE.Vector3();
 const _tipDelta = new THREE.Vector3();
-
-function cloneJointSpec(spec: JointSpec): JointSpec {
-  return {
-    label: { ...spec.label },
-    dofs: Object.fromEntries(
-      Object.entries(spec.dofs).map(([name, dof]) => [
-        name,
-        { label: { ...dof.label }, free: [...dof.free], max: [...dof.max] },
-      ]),
-    ),
-    ...(spec.elevation
-      ? { elevation: spec.elevation.map((row) => [...row] as [number, number, number]) }
-      : {}),
-  };
-}
-
-function cloneJointTable(table: JointTable): JointTable {
-  return {
-    shoulder: cloneJointSpec(table.shoulder) as JointTable['shoulder'],
-    elbow: cloneJointSpec(table.elbow),
-    wrist: cloneJointSpec(table.wrist),
-    finger: cloneJointSpec(table.finger),
-    thumb: cloneJointSpec(table.thumb),
-    neck: cloneJointSpec(table.neck),
-    spine: cloneJointSpec(table.spine),
-  };
-}
 
 function pathFromHand(hand: THREE.Bone, target: THREE.Bone): THREE.Object3D[] | null {
   const path: THREE.Object3D[] = [];
@@ -119,7 +84,7 @@ export function captureHandGeometry(
   const hand = profile.bones[`hand.${side}`];
 
   if (hand) {
-    for (const finger of FINGERS) {
+    for (const finger of FINGER_NAMES) {
       const chain = profile.fingerBones[`${finger}.${side}`];
       if (!chain?.length) continue;
 
@@ -288,7 +253,7 @@ export function captureHandContactGeometry(
     finiteVector(palmLocal) && palmLocal.lengthSq() > 0 ? palmLocal.clone().normalize() : null;
   const segments: ContactSegment[] = [];
   let palmCenter: THREE.Vector3 | null = geometry.handPresent === true ? new THREE.Vector3() : null;
-  for (const finger of FINGERS) {
+  for (const finger of FINGER_NAMES) {
     const real = geometry.points.filter((point) => point.finger === finger && !point.tip);
     if (finger !== 'thumb' && palmCenter) {
       const mcp = real.find((point) => point.jointIndex === 0);

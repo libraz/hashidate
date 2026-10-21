@@ -14,7 +14,8 @@ import { solveFingerAxes } from './finger-axes';
 
 const _q = new THREE.Quaternion();
 
-const FINGERS: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
+/** Every finger, thumb first: the order each per-finger walk takes. */
+export const FINGER_NAMES: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
 
 /** Compose the bind rotation with the same optional splay-then-curl order everywhere. */
 export function composeFingerRotation(
@@ -87,7 +88,7 @@ export class Hands {
   }
 
   curlHand(side: Side, spec: FingerSpec, spread: FingerSpec = {}): void {
-    for (const f of FINGERS) {
+    for (const f of FINGER_NAMES) {
       const chain = this.p.fingerBones[`${f}.${side}`];
       if (!chain) continue;
       const joints = this.joints[f === 'thumb' ? 'thumb' : 'finger'];

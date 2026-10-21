@@ -49,7 +49,7 @@ describe('static constrained arm operations', () => {
     const beforeRoll = driver.requestRollHistory;
     const beforeRevision = rig.externalArmRevision;
 
-    rig.aimArm('R', dirs([Number.NaN, 0.2, 0.9]));
+    expect(rig.aimArm('R', dirs([Number.NaN, 0.2, 0.9]))).toBe(false);
 
     expect(armQuaternions(profile)).toEqual(beforeBones);
     expect(Array.from(driver.acceptedQ)).toEqual(beforeQ);
@@ -178,8 +178,8 @@ describe('static constrained arm operations', () => {
       ring: 0.5,
       little: 0.6,
     };
-    rig.aimArm('R', dirs([0.38, -0.79, 0.48]));
-    rig.curlHand('R', curls);
+    expect(rig.aimArm('R', dirs([0.38, -0.79, 0.48]))).toBe(true);
+    expect(rig.curlHand('R', curls)).toBe(true);
     const revision = rig.externalArmRevision;
     const beforeArms = armQuaternions(profile);
     const beforeFingers = fingerQuaternions(profile);

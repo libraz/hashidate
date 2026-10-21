@@ -63,7 +63,7 @@ describe('body context matrix refresh boundary', () => {
     h.rig.captureProposedBodyContext(0);
     const refresh = vi.spyOn(h.profile.root, 'updateMatrixWorld');
     h.rig.applyBodyContext(0.5, 1);
-    expect(refresh).toHaveBeenCalledTimes(legs ? 2 : 1);
+    expect(refresh).toHaveBeenCalledTimes(1);
     refresh.mockClear();
     expect(context(h.rig, 'L')).not.toBeNull();
     expect(context(h.rig, 'R')).not.toBeNull();

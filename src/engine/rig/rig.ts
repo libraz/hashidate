@@ -40,7 +40,7 @@ import {
   sampleHandContact,
   sampleHandGeometry,
 } from './hand-geometry';
-import { Hands } from './hands';
+import { FINGER_NAMES, Hands } from './hands';
 import { GroundedLegs } from './legs';
 import { type PointRequest, PointSolver, worldDirection } from './point';
 import type { ArmSolution, ReachLinks } from './reach';
@@ -88,7 +88,6 @@ const _palmAxis = new THREE.Vector3();
 const _hingeFront = new THREE.Vector3();
 const _hingeFold = new THREE.Vector3();
 const _hingeAxis = new THREE.Vector3();
-const FINGER_NAMES: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
 /** Turns per hand per frame: the later ones catch a finger an earlier one brought in. */
 const FINGER_PASSES = 3;
 /** Damping on the fingers' turn, in squared finger half-thicknesses. */
@@ -369,7 +368,9 @@ export class Rig {
   // — and by then the alternating buffers have been overwritten.
   private readonly _upperParentQ = new THREE.Quaternion();
   private readonly _upperQ = new THREE.Quaternion();
+  private readonly _foreParentQ = new THREE.Quaternion();
   private readonly _foreQ = new THREE.Quaternion();
+  private readonly _handParentQ = new THREE.Quaternion();
   private readonly _handQ = new THREE.Quaternion();
   private readonly _aim: Record<ArmSlot, THREE.Vector3> = {
     shoulder: new THREE.Vector3(),
@@ -1021,7 +1022,9 @@ export class Rig {
       hips.position.addScaledVector(this.transportUp(), rise);
     }
     this.plantLegs(rise);
-    this.p.root.updateMatrixWorld(true);
+    // Grounded legs refresh the whole scene before they read it and every bone
+    // they write after that, so only a body without them still needs a pass.
+    if (!this.legs) this.p.root.updateMatrixWorld(true);
     this.anat.update();
     return rise;
   }
@@ -1053,13 +1056,15 @@ export class Rig {
   /** Apply and accept both sides only after the common-alpha frame is complete. */
   commitArmFrame(plans: Record<Side, ArmFrameSideCommit>, rise: number): boolean {
     for (const side of ['L', 'R'] as Side[]) if (!this.canWriteArm(side)) return false;
+    // Each side writes only its own chain and reads its parents fresh, so one
+    // pass after both covers what either side's fingers left stale.
     for (const side of ['L', 'R'] as Side[]) {
       const plan = plans[side];
       this.writeArmForward(side, plan.output.forward);
       this.hands.curlHand(side, plan.curls, plan.spread);
       this.copyPosedFingerSpec(side, plan.curls, plan.spread);
-      this.p.root.updateMatrixWorld(true);
     }
+    this.p.root.updateMatrixWorld(true);
     for (const side of ['L', 'R'] as Side[]) {
       const plan = plans[side];
       const driver = this._armDrivers[side];
@@ -1068,7 +1073,7 @@ export class Rig {
       this.foreRoll[side] = driver.acceptedConfiguration.forearmRoll;
       this.upperRoll[side] = 0;
       this.noteFingers(side);
-      this._acceptedHandPose[side] = this.captureHandPose(side);
+      this._acceptedHandPose[side] = this.captureHandPose(side, false);
       this.captureAcceptedArmState(side, driver.acceptedForward, plan.curls, plan.spread);
     }
     this.captureBodyPose(this._acceptedBodyPose, rise);
@@ -1143,7 +1148,7 @@ export class Rig {
     for (const side of ['L', 'R'] as Side[]) {
       const driver = this._armDrivers[side] as ArmDriver;
       this.noteFingers(side);
-      this._acceptedHandPose[side] = this.captureHandPose(side);
+      this._acceptedHandPose[side] = this.captureHandPose(side, false);
       this.captureAcceptedArmState(
         side,
         driver.acceptedForward,
@@ -1319,7 +1324,8 @@ export class Rig {
     return true;
   }
 
-  private captureHandPose(side: Side): HandSensePose | null {
+  /** `refreshScene` false: the caller refreshed the scene and wrote nothing since. */
+  private captureHandPose(side: Side, refreshScene = true): HandSensePose | null {
     const hand = this.p.bones[`hand.${side}`];
     const elbow = this.p.bones[`lowerArm.${side}`];
     const palmLocal = this.palmLocal[side];
@@ -1327,7 +1333,7 @@ export class Rig {
     const index = this.p.fingerBones[`index.${side}`]?.[0];
     const little = this.p.fingerBones[`little.${side}`]?.[0];
     if (!(hand && elbow && palmLocal && knuckle && index && little)) return null;
-    this.p.root.updateMatrixWorld(true);
+    if (refreshScene) this.p.root.updateMatrixWorld(true);
     const out = this._handPoseScratch[side];
     knuckle.getWorldPosition(out.knuckle);
     hand.getWorldQuaternion(this._measureQ);
@@ -1430,9 +1436,33 @@ export class Rig {
   }
 
   /**
+   * World rotation of `bone`'s actual parent, given the world rotation of the
+   * chain bone `above` it. On a direct chain that is `aboveWorld` itself; a
+   * carrier bone interposed between the two adds its own local rotation, which
+   * a chain walked link by link would otherwise silently drop.
+   */
+  private parentWorld(
+    bone: THREE.Bone,
+    above: THREE.Object3D,
+    aboveWorld: THREE.Quaternion,
+    out: THREE.Quaternion,
+  ): THREE.Quaternion {
+    const parent = bone.parent;
+    if (parent === above) return aboveWorld;
+    out.identity();
+    for (let node = parent; node; node = node.parent) {
+      if (node === above) return out.premultiply(aboveWorld);
+      out.premultiply(node.quaternion);
+    }
+    // Not below the chain bone at all: read the parent the scene actually has.
+    return parent ? parent.getWorldQuaternion(out) : out.identity();
+  }
+
+  /**
    * Aim one bone so its child direction points along `targetWorld`.
    * Writes this bone's world rotation into `out` and returns it, so the next
-   * bone down can use it as its parent rotation.
+   * bone down can derive its parent rotation from it. `parentWorldQ` must be
+   * the world rotation of `bone.parent` itself — see `parentWorld`.
    */
   private aim(
     bone: THREE.Bone,
@@ -1697,7 +1727,7 @@ export class Rig {
     this.foreRoll[side] = driver.acceptedConfiguration.forearmRoll;
     this.upperRoll[side] = 0;
     this.noteFingers(side);
-    this._acceptedHandPose[side] = this.captureHandPose(side);
+    this._acceptedHandPose[side] = this.captureHandPose(side, false);
     this.captureAcceptedArmState(side, driver.acceptedForward, curls, spread);
     this.captureBodyPose(this._acceptedBodyPose, this._acceptedRise);
     if (bumpRevision) this._externalArmRevision++;
@@ -1784,7 +1814,7 @@ export class Rig {
     this.armTwists?.accept(side);
     if (!this.captureAcceptedArmState(side, null, this._posedCurls[side], this._posedSpread[side]))
       return;
-    this._acceptedHandPose[side] = this.captureHandPose(side);
+    this._acceptedHandPose[side] = this.captureHandPose(side, false);
     this.captureBodyPose(this._acceptedBodyPose, this._acceptedRise);
     this._externalArmRevision++;
   }
@@ -1868,6 +1898,10 @@ export class Rig {
   /**
    * Pose one arm. `dirs` holds world-space unit directions keyed by chain slot;
    * omitted slots keep their rest orientation relative to the parent.
+   *
+   * @returns false when a constrained side rejected the request: the arm, its
+   * clavicle and the accepted history stay exactly as they were. Falling back
+   * to the unconstrained writer there would publish a pose no limit certified.
    */
   aimArm(
     side: Side,
@@ -1875,13 +1909,13 @@ export class Rig {
     twist = 0,
     palmTarget: Vec3Tuple | null = null,
     palmWeight = 1,
-  ): void {
+  ): boolean {
     if (this.constrainedSideSupported(side)) {
-      this.tryStaticAimArm(side, dirs, twist, palmTarget, palmWeight);
-      return;
+      return this.tryStaticAimArm(side, dirs, twist, palmTarget, palmWeight);
     }
     this.aimArmLegacy(side, dirs, twist, palmTarget, palmWeight);
     this.noteExternalArmEdit(side);
+    return true;
   }
 
   /** Legacy single-chain path, used only when limiting is explicitly disabled or unsupported. */
@@ -1938,13 +1972,18 @@ export class Rig {
 
     // --- down as far as the upper arm ---------------------------------------
     // From the chain's real parent, which a rig may not have put on the chest slot.
-    let q = ((clav ?? upper)?.parent ?? chest).getWorldQuaternion(this._chainQ[0]);
+    const top = (clav ?? upper)?.parent ?? chest;
+    let q = top.getWorldQuaternion(this._chainQ[0]);
     if (clav) {
       q = sD
         ? this.aim(clav, restDir[`shoulder.${side}`], q, sD, 0, this._chainQ[1])
         : this._chainQ[1].copy(q).multiply(this.restOf(clav));
     }
-    this._upperParentQ.copy(q);
+    // The chain bone each link hangs from, whose world rotation the walk holds.
+    const aboveUpper = clav ?? top;
+    const aboveFore = upper ?? aboveUpper;
+    const aboveHand = fore ?? aboveFore;
+    this._upperParentQ.copy(upper ? this.parentWorld(upper, aboveUpper, q, this._upperParentQ) : q);
     if (upper) {
       if (uD) this.aim(upper, restDir[`upperArm.${side}`], this._upperParentQ, uD, 0, this._upperQ);
       else this._upperQ.copy(q).multiply(this.restOf(upper));
@@ -1960,21 +1999,23 @@ export class Rig {
     const below = (carry: number, hw: number): number => {
       let p = this._upperQ;
       if (fore) {
-        if (lD) this.aim(fore, foreDir, this._upperQ, lD, 0, this._foreQ);
-        else this._foreQ.copy(this._upperQ).multiply(this.restOf(fore));
+        const fp = this.parentWorld(fore, aboveFore, this._upperQ, this._foreParentQ);
+        if (lD) this.aim(fore, foreDir, fp, lD, 0, this._foreQ);
+        else this._foreQ.copy(fp).multiply(this.restOf(fore));
         if (carry) {
           fore.quaternion.multiply(_twistQ.setFromAxisAngle(foreDir, carry));
-          this._foreQ.copy(this._upperQ).multiply(fore.quaternion);
+          this._foreQ.copy(fp).multiply(fore.quaternion);
         }
         p = this._foreQ;
       }
       if (!hand) return 0;
+      const hp = this.parentWorld(hand, aboveHand, p, this._handParentQ);
       if (!hD) {
         hand.quaternion.copy(this.restOf(hand));
-        this._handQ.copy(p).multiply(hand.quaternion);
+        this._handQ.copy(hp).multiply(hand.quaternion);
         return 0;
       }
-      this.aim(hand, handDir, p, hD, hw, this._handQ, palm);
+      this.aim(hand, handDir, hp, hD, hw, this._handQ, palm);
       return this._roll;
     };
 
@@ -2304,25 +2345,30 @@ export class Rig {
     return solveReach(this.p, this.joints, this.anat, side, targetWorld, elbowAngle, out, framed);
   }
 
-  /** Curl a finger. See `Hands.curlFinger`. */
-  curlFinger(name: FingerName, side: Side, amount: number): void {
+  /**
+   * Curl a finger. See `Hands.curlFinger`.
+   *
+   * @returns false when a constrained side rejected the shape, as `aimArm`.
+   */
+  curlFinger(name: FingerName, side: Side, amount: number): boolean {
     if (this.constrainedSideSupported(side)) {
       const curls = { ...this._posedCurls[side], [name]: amount };
-      this.tryStaticHand(side, curls, this._posedSpread[side]);
-      return;
+      return this.tryStaticHand(side, curls, this._posedSpread[side]);
     }
     this.curlFingerLegacy(name, side, amount);
     this._posedCurls[side][name] = amount;
     this.noteExternalArmEdit(side);
+    return true;
   }
 
-  curlHand(side: Side, spec: FingerSpec, spread: FingerSpec = {}): void {
+  /** @returns false when a constrained side rejected the shape, as `aimArm`. */
+  curlHand(side: Side, spec: FingerSpec, spread: FingerSpec = {}): boolean {
     if (this.constrainedSideSupported(side)) {
-      this.tryStaticHand(side, spec, spread);
-      return;
+      return this.tryStaticHand(side, spec, spread);
     }
     this.curlHandLegacy(side, spec, spread);
     this.noteExternalArmEdit(side);
+    return true;
   }
 
   /** Legacy direct finger write, used by Body only for an explicit limiter opt-out. */

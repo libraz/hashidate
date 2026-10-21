@@ -177,7 +177,8 @@ function cloneSpec(spec: JointSpec): JointSpec {
   };
 }
 
-function cloneJointTable(table: JointTable): JointTable {
+/** Deep copy of a joint table, so a calibration cannot be changed through its source. */
+export function cloneJointTable(table: JointTable): JointTable {
   return {
     shoulder: cloneSpec(table.shoulder) as JointTable['shoulder'],
     elbow: cloneSpec(table.elbow),
