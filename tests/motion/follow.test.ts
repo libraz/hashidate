@@ -168,3 +168,69 @@ describe('OMEGA_PER_RATE', () => {
     expect(at(Math.LN10 / RATE)).toBeCloseTo(0.9, 2);
   });
 });
+
+/** Step at `hz` for exactly `seconds`, finishing with a partial frame if needed. */
+const stepFor = (seconds: number, hz: number, step: (dt: number) => unknown): void => {
+  let left = seconds;
+  while (left > 1e-12) {
+    const dt = Math.min(1 / hz, left);
+    step(dt);
+    left -= dt;
+  }
+};
+
+describe('refresh-rate independence', () => {
+  /** Angle to target after `seconds`, stepping at `hz`. */
+  const angleAt = (hz: number, seconds: number): number => {
+    const to = V(0.6, 0.5, 0.2);
+    const f = new DirFollower(V(0.3, -0.94, 0.14));
+    stepFor(seconds, hz, (dt) => f.step(to, dt, RATE));
+    return f.dir.angleTo(to);
+  };
+
+  it('gives the same step response at 50, 60 and 144 Hz', () => {
+    for (const t of [0.1, 0.25, 0.5]) {
+      const ref = angleAt(50, t);
+      expect(angleAt(60, t)).toBeCloseTo(ref, 3);
+      expect(angleAt(144, t)).toBeCloseTo(ref, 3);
+    }
+  });
+
+  it('scalar follower agrees across rates and stays stable on a long frame', () => {
+    const at = (hz: number, seconds: number) => {
+      const f = new ScalarFollower(0);
+      stepFor(seconds, hz, (dt) => f.step(1, dt, RATE));
+      return f.value;
+    };
+    expect(at(144, 0.3)).toBeCloseTo(at(50, 0.3), 3);
+    expect(at(60, 0.3)).toBeCloseTo(at(50, 0.3), 3);
+    const f = new ScalarFollower(0);
+    expect(f.step(1, 5, RATE)).toBeGreaterThan(0.9);
+    expect(f.step(1, 5, RATE)).toBeLessThanOrEqual(1.0001);
+  });
+
+  it('stays close to the former backward-Euler trajectory at 50 Hz', () => {
+    // Reference: the discrete implicit step the follower used before. The two
+    // are different integrators of the same filter (the old one closes the
+    // step slightly sooner), so compare the curve, not the samples: max
+    // deviation under 7% of the step, and the same 90% time within 25 ms.
+    const w = RATE * OMEGA_PER_RATE;
+    const dt = 1 / 50;
+    let x = 0;
+    let v = 0;
+    const f = new ScalarFollower(0);
+    let worst = 0;
+    let tOld = -1;
+    let tNew = -1;
+    for (let i = 0; i < 50; i++) {
+      v = (v + w * w * dt * (1 - x)) / (1 + 2 * w * dt + w * w * dt * dt);
+      x += v * dt;
+      const n = f.step(1, dt, RATE);
+      worst = Math.max(worst, Math.abs(n - x));
+      if (tOld < 0 && x >= 0.9) tOld = i * dt;
+      if (tNew < 0 && n >= 0.9) tNew = i * dt;
+    }
+    expect(worst).toBeLessThan(0.07);
+    expect(Math.abs(tNew - tOld)).toBeLessThanOrEqual(0.025);
+  });
+});

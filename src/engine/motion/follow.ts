@@ -39,6 +39,19 @@ import * as THREE from 'three';
  */
 export const OMEGA_PER_RATE = 3.89 / Math.LN10;
 
+/**
+ * The refresh interval the rates were tuned at. A backward-Euler step realises
+ * ln(1 + w*dt)/dt rather than w, so the response used to drift with the
+ * display; the exact step below uses that same expression evaluated at this
+ * interval, which keeps the 50 Hz decay rate and makes every other rate match it.
+ */
+const REF_DT = 1 / 50;
+
+/** The rate the exact step must use so its response equals the tuned one at `REF_DT`. */
+function effectiveOmega(rate: number): number {
+  return Math.log(1 + rate * OMEGA_PER_RATE * REF_DT) / REF_DT;
+}
+
 const _axis = new THREE.Vector3();
 const _step = new THREE.Vector3();
 const _perp = new THREE.Vector3();
@@ -87,17 +100,23 @@ export class DirFollower {
       ax.set(0, 0, 0);
     }
 
-    // Semi-implicit critically damped step. Written in the implicit form so it
-    // stays stable at any timestep: an explicit integrator at a rate this high
-    // diverges the first time a frame is long, and a frame is long every time
-    // the tab comes back from the background.
-    const w = rate * OMEGA_PER_RATE;
-    const denom = 1 + 2 * w * dt + w * w * dt * dt;
-    this._vel.addScaledVector(ax, w * w * dt).divideScalar(denom);
+    // Exact critically damped step on the error y = -ax. A closed form is
+    // stable at any timestep, which matters: an explicit integrator at a rate
+    // this high diverges the first time a frame is long, and a frame is long
+    // every time the tab comes back from the background.
+    const w = effectiveOmega(rate);
+    const e = Math.exp(-w * dt);
+    const y = ax.negate();
+    // c = v + w*y, reused for both updates.
+    const c3 = _perp.copy(this._vel).addScaledVector(y, w);
+    // Displacement of the position is y' - y; the new velocity follows.
+    const yNew = _step.copy(y).addScaledVector(c3, dt).multiplyScalar(e);
+    this._vel.addScaledVector(c3, -w * dt).multiplyScalar(e);
+    const delta = yNew.sub(y);
 
-    const speed = this._vel.length();
-    if (speed > 1e-9) {
-      this.dir.applyAxisAngle(_step.copy(this._vel).divideScalar(speed), speed * dt);
+    const dist = delta.length();
+    if (dist > 1e-12) {
+      this.dir.applyAxisAngle(delta.divideScalar(dist), dist);
     }
     return this.dir.normalize();
   }
@@ -118,10 +137,12 @@ export class ScalarFollower {
   }
 
   step(target: number, dt: number, rate: number): number {
-    const w = rate * OMEGA_PER_RATE;
-    const denom = 1 + 2 * w * dt + w * w * dt * dt;
-    this._vel = (this._vel + w * w * dt * (target - this.value)) / denom;
-    this.value += this._vel * dt;
+    const w = effectiveOmega(rate);
+    const e = Math.exp(-w * dt);
+    const y = this.value - target;
+    const c = this._vel + w * y;
+    this._vel = (this._vel - w * c * dt) * e;
+    this.value = target + (y + c * dt) * e;
     return this.value;
   }
 }
