@@ -7,6 +7,7 @@ import type {
   FingerSpec,
   GestureDef,
   GestureGroup,
+  GesturePhase,
   GestureVariation,
   Pose,
   Side,
@@ -327,8 +328,16 @@ export function compileMotion(motion: MotionDef): GestureDef {
     lead: motion.lead,
     hold: motion.hold,
     ...(motion.sustain ? { sustain: true as const } : {}),
-    build(t: number, v: GestureVariation): Pose {
-      const scaled = t * v.rate;
+    build(t: number, v: GestureVariation, phase?: GesturePhase): Pose {
+      // The authored lead is a floor: arm travel can stretch the real entrance.
+      // Map it onto the authored lead, then run the keyframes from arrival, so
+      // a beat written at `lead + 0.4` lands 0.4 s after the pose is reached.
+      const authored = phase
+        ? phase.entrance < 1
+          ? phase.entrance * motion.lead
+          : motion.lead + phase.held
+        : t;
+      const scaled = authored * v.rate;
       const at =
         motion.loop && duration > 0 ? scaled % duration : Math.min(Math.max(scaled, 0), duration);
       const arms: NonNullable<Pose['arms']> = {};

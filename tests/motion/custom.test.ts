@@ -52,6 +52,35 @@ describe('compileMotion', () => {
     expect(built.build(1, PLAIN).arms?.R?.upperArm?.y).toBeCloseTo(1);
   });
 
+  it('times a beat from arrival, whatever the entrance was stretched to', () => {
+    // lead 0.2: frame at 0.2 + 0.4 is the authored beat, 0.4 s after arrival.
+    const built = compileMotion(
+      motion({
+        frames: [
+          { at: 0, arms: { R: { upperArm: [0, -1, 0] } } },
+          { at: 0.6, arms: { R: { upperArm: [0, 1, 0] } } },
+        ],
+      }),
+    );
+    const y = (t: number, entrance: number, held: number) =>
+      built.build(t, PLAIN, { entrance, held }).arms?.R?.upperArm?.y;
+    // Same 0.4 s after arrival, with a short and a long actual entrance.
+    expect(y(0.6, 1, 0.4)).toBeCloseTo(1);
+    expect(y(1.4, 1, 0.4)).toBeCloseTo(1);
+    expect(y(0.9, 1, 0.2)).toBeCloseTo(y(0.4, 1, 0.2) as number);
+    // During the entrance the authored lead is spread across the real one.
+    expect(y(0.05, 0.5, 0)).toBeCloseTo(y(0.1, 0.5, 0) as number);
+    expect(y(0, 1, 0)).toBeCloseTo(y(0.2, 1, 0) as number);
+  });
+
+  it('scales the whole authored timeline by the rate', () => {
+    const built = compileMotion(motion());
+    const fast = { ...PLAIN, rate: 2 };
+    expect(built.build(0, fast, { entrance: 1, held: 0.15 }).arms?.R?.twist).toBeCloseTo(
+      built.build(0, PLAIN, { entrance: 1, held: 0.5 }).arms?.R?.twist as number,
+    );
+  });
+
   it('interpolates between two keyframes', () => {
     const built = compileMotion(motion());
     expect(built.build(0.5, PLAIN).arms?.R?.twist).toBeCloseTo(0.5);
