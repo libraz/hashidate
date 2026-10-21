@@ -141,6 +141,11 @@ function isRootOrDescendant(root: THREE.Object3D, node: THREE.Object3D): boolean
 /**
  * Translate one spring root to a weighted, skinned point without refreshing any
  * source Object3D matrices. All source transforms are composed in private scratch.
+ *
+ * Bone skinning only. The spec names bones and bind-space positions rather than
+ * a mesh vertex, so there is no morph data to read: a shape key that moves the
+ * skin under the point is not followed, and the root sits where the skeleton
+ * alone puts the skin.
  */
 export class SkinPointAnchor {
   readonly root: THREE.Bone;
