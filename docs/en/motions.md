@@ -58,7 +58,7 @@ frames:
 |---|---|
 | `label` | Both languages, like everything user-visible in the engine. |
 | `group` | One of `reaction`, `greeting`, `explain`, `emote`, `cute`, `pose`, `affection`, `playful`, `idol`, `cheer`, `dance`, `photo`. |
-| `lead` | Seconds of entrance. A floor — the real lead scales with how far the arms have to travel. |
+| `lead` | Seconds of entrance. A floor — the real lead scales with how far the arms and spine have to travel, and is never under 0.12 s. |
 | `hold` | Seconds held at full weight before the exit begins. |
 | `sustain` | Hold the pose until something else is asked for, instead of running out. |
 | `loop` | Run the keyframes round again rather than settling on the last one. |
@@ -75,6 +75,8 @@ Sides are written out. The built-in table authors one pose and mirrors it onto w
 ### Omitted fields are unstated, not zero
 
 Each arm direction, palm direction, twist, finger curl and spine slot has its own keyframes. Values interpolate between the nearest keyframes that specify that channel; omitted fields do not reset it. Before the first and after the last specified value, that value is held. A channel specified once stays constant throughout the motion, so the arms can move over four keyframes while the spine is specified once.
+
+A direction interpolates along the arc between its two keyframes, at an even rate. Between two keyframes that state it, one direction may turn at most 150°; a file that turns further is refused with the keyframe named. Near 180° there is no single arc to follow, so write a wider turn as two steps, which also says which way it goes.
 
 ### What the format does not support
 

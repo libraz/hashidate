@@ -75,6 +75,25 @@ export const MOTION_MAX_SECONDS = 60;
 export const MOTION_MAX_FRAMES = 240;
 
 /**
+ * The widest turn one direction may make between two keyframes that state it.
+ *
+ * Interpolation follows the arc, and near 180 degrees there is no one arc to
+ * follow: the side the limb swings by is decided by rounding. A wider turn is
+ * written as two steps, which also says which way it goes.
+ */
+export const MOTION_MAX_TURN_DEGREES = 150;
+
+const DIRECTION_SLOTS = ['shoulder', 'upperArm', 'lowerArm', 'hand', 'palm'] as const;
+const SIDES = ['L', 'R'] as const;
+
+/** Angle between two nonzero tuples, degrees. */
+function turnDegrees(a: readonly number[], b: readonly number[]): number {
+  const dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const c = dot / (Math.hypot(a[0], a[1], a[2]) * Math.hypot(b[0], b[1], b[2]));
+  return (Math.acos(Math.min(1, Math.max(-1, c))) * 180) / Math.PI;
+}
+
+/**
  * A motion as the file states it.
  *
  * There is no `id` here: the filename is the id, on the same rule a document's
@@ -93,7 +112,7 @@ const motionFields = z.object({
 });
 
 /**
- * The two things about a keyframe list that the field types cannot say.
+ * The three things about a keyframe list that the field types cannot say.
  *
  * Written once and applied to both schemas below rather than to a shared base:
  * a refined schema is no longer an object and cannot be extended with an id, so
@@ -117,6 +136,24 @@ const wellFormed = (motion: z.infer<typeof motionFields>, ctx: z.RefinementCtx):
       path: ['frames'],
       message: `a motion may not run longer than ${MOTION_MAX_SECONDS}s`,
     });
+  }
+  // Per channel, so a keyframe that leaves a direction unstated is skipped.
+  for (const side of SIDES) {
+    for (const slot of DIRECTION_SLOTS) {
+      let last: readonly number[] | undefined;
+      for (let i = 0; i < motion.frames.length; i += 1) {
+        const value = motion.frames[i].arms?.[side]?.[slot];
+        if (value === undefined) continue;
+        if (last && turnDegrees(last, value) > MOTION_MAX_TURN_DEGREES) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['frames', i, 'arms', side, slot],
+            message: `a direction may not turn more than ${MOTION_MAX_TURN_DEGREES}° between keyframes; add one between`,
+          });
+        }
+        last = value;
+      }
+    }
   }
 };
 
