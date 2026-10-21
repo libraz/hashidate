@@ -1,0 +1,11 @@
+{
+  "source": "unpacked/yoka/fbx/TabimakuraYoka.fbx",
+  "extras": ["unpacked/yoka/fbx/Bottoms_long.fbx", "unpacked/yoka/fbx/Pillow.fbx"],
+  "textures": "unpacked/yoka/tex_web",
+  "textures_src": "unpacked/yoka/tex",
+  "resize": [{ "match": "Face*", "px": 2048 }, { "match": "Body*", "px": 2048 }],
+  "separator": "^_{2,}(.+?)_{2,}$",
+  "keep_groups": ["BSL52", "VRM", "VRChat", "YOKA", "YOKA_Hide"],
+  "keep_groups_by_mesh": {},
+  "texture_by_material": {}
+}

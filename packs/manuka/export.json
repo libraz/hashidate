@@ -1,0 +1,17 @@
+{
+  "source": "unpacked/manuka/MANUKA_ver1.02/MANUKA.fbx",
+  "textures": "unpacked/manuka/tex_web",
+  "textures_src": "unpacked/manuka/MANUKA_ver1.02/PNG",
+  "resize": [{ "match": "Manuka_face*", "px": 2048 }, { "match": "Manuka_body*", "px": 2048 }],
+  "separator": "^\\*{3,}(.+?)\\*{3,}$",
+  "keep_groups": ["EYE MORPH", "EYELID", "EYE OPTION", "MOUTH", "BROW", "OPTION", "MMD"],
+  "keep_groups_by_mesh": {},
+  "keep_names": "^Shrink_",
+  "texture_by_material": {
+    "Manuka_body": "Manuka_body.png",
+    "Manuka_costume": "Manuka_costume.png",
+    "Manuka_face": "Manuka_face.png",
+    "Manuka_hair": "Manuka_hair.png",
+    "Manuka_option": "Manuka_face.png"
+  }
+}

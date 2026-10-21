@@ -1,0 +1,932 @@
+{
+  "label": {
+    "en": "Manuka",
+    "ja": "マヌカ"
+  },
+  "author": {
+    "en": "Jingo",
+    "ja": "ジンゴ"
+  },
+  "separator": {
+    "pattern": "^\\*{3,}(.+?)\\*{3,}$"
+  },
+  "gaze": null,
+  "shapes": {
+    "blink": {
+      "both": [
+        "eye_close"
+      ],
+      "L": [
+        "eye_close_L"
+      ],
+      "R": [
+        "eye_close_R"
+      ]
+    }
+  },
+  "presets": null,
+  "emotionShapes": {
+    "neutral": {},
+    "joy": {
+      "eye_joy": 0.85,
+      "brow_joy": 0.7,
+      "mouth_smile": 0.7,
+      "option_cheek 1": 0.25
+    },
+    "anger": {
+      "eye_angry": 0.85,
+      "brow_anger": 0.9,
+      "mouth_∧": 0.5,
+      "eyelid_center_down": 0.3
+    },
+    "sadness": {
+      "eye_sad": 0.8,
+      "brow_sad": 0.9,
+      "mouth_sad": 0.7,
+      "eye_tare": 0.3
+    },
+    "surprise": {
+      "eye_big": 0.7,
+      "eyelid_up": 0.8,
+      "brow_surprised": 0.85,
+      "mouth_○": 0.55,
+      "eye_pupil_small": 0.35
+    },
+    "relaxed": {
+      "eye_nagomi": 0.75,
+      "brow_nagomi": 0.6,
+      "mouth_smile": 0.4
+    },
+    "thinking": {
+      "eye_jito": 0.5,
+      "eye_up": 0.5,
+      "brow_straight": 0.5,
+      "brow_down": 0.3,
+      "mouth_narrow": 0.45
+    },
+    "shy": {
+      "eye_nagomi": 0.5,
+      "brow_trouble": 0.65,
+      "mouth_smile": 0.3,
+      "option_cheek 2": 0.8
+    }
+  },
+  "mouthShapePattern": {
+    "pattern": "^mouth_"
+  },
+  "overlays": {
+    "group": "OPTION",
+    "exclude": [
+      "option_neck_hole_shrink"
+    ],
+    "label": {
+      "stripPrefix": "option_"
+    }
+  },
+  "materials": {
+    "doubleSided": {
+      "pattern": "Manuka_hair|Manuka_costume",
+      "ignoreCase": true
+    },
+    "faceDecal": {
+      "pattern": "Manuka_option",
+      "ignoreCase": true
+    }
+  },
+  "wardrobe": {
+    "slots": {
+      "top": {
+        "label": {
+          "en": "Top",
+          "ja": "トップス"
+        },
+        "items": [
+          {
+            "id": "shirt",
+            "label": {
+              "en": "Shirt",
+              "ja": "シャツ"
+            },
+            "meshes": [
+              "Manuka_costume_shirt"
+            ]
+          }
+        ]
+      },
+      "bottom": {
+        "label": {
+          "en": "Bottoms",
+          "ja": "ボトムス"
+        },
+        "items": [
+          {
+            "id": "shorts",
+            "label": {
+              "en": "Shorts",
+              "ja": "ショートパンツ"
+            },
+            "meshes": [
+              "Manuka_costume_shorts"
+            ]
+          }
+        ]
+      },
+      "apron": {
+        "label": {
+          "en": "Apron",
+          "ja": "エプロン"
+        },
+        "items": [
+          {
+            "id": "apron",
+            "label": {
+              "en": "Apron",
+              "ja": "エプロン"
+            },
+            "meshes": [
+              "Manuka_costume_apron",
+              "Manuka_costume_apron_nameplate"
+            ]
+          }
+        ]
+      },
+      "neck": {
+        "label": {
+          "en": "Neck",
+          "ja": "首"
+        },
+        "items": [
+          {
+            "id": "tie",
+            "label": {
+              "en": "Tie",
+              "ja": "タイ"
+            },
+            "meshes": [
+              "Manuka_costume_tie"
+            ],
+            "hide": [
+              "Shrink_tie (default)"
+            ]
+          }
+        ]
+      },
+      "legs": {
+        "label": {
+          "en": "Legs",
+          "ja": "脚"
+        },
+        "items": [
+          {
+            "id": "stocking",
+            "label": {
+              "en": "Stockings",
+              "ja": "ストッキング"
+            },
+            "meshes": [
+              "Manuka_underwear_stocking"
+            ],
+            "hide": [
+              "Shrink_stocking (default)"
+            ]
+          }
+        ]
+      },
+      "shoes": {
+        "label": {
+          "en": "Shoes",
+          "ja": "靴"
+        },
+        "items": [
+          {
+            "id": "shoes",
+            "label": {
+              "en": "Shoes",
+              "ja": "靴"
+            },
+            "meshes": [
+              "Manuka_costume_shoes"
+            ]
+          }
+        ]
+      },
+      "inner": {
+        "label": {
+          "en": "Underwear",
+          "ja": "インナー"
+        },
+        "items": [
+          {
+            "id": "underwear",
+            "label": {
+              "en": "Underwear",
+              "ja": "下着"
+            },
+            "meshes": [
+              "Manuka_underwear_bra",
+              "Manuka_underwear_panty"
+            ]
+          }
+        ]
+      },
+      "hair": {
+        "label": {
+          "en": "Hair",
+          "ja": "髪"
+        },
+        "items": [
+          {
+            "id": "bun",
+            "label": {
+              "en": "Bun",
+              "ja": "お団子"
+            },
+            "meshes": [
+              "Manuka_hair_bun"
+            ]
+          },
+          {
+            "id": "twin",
+            "label": {
+              "en": "Twin tails",
+              "ja": "ツイン"
+            },
+            "meshes": [
+              "Manuka_hair_twin"
+            ]
+          }
+        ]
+      },
+      "ears": {
+        "label": {
+          "en": "Animal ears",
+          "ja": "獣耳"
+        },
+        "items": [
+          {
+            "id": "kemono",
+            "label": {
+              "en": "Ears and tail",
+              "ja": "耳と尻尾"
+            },
+            "meshes": [
+              "Manuka_kemono_ear",
+              "Manuka_kemono_tail"
+            ]
+          }
+        ]
+      },
+      "accessory": {
+        "label": {
+          "en": "Accessory",
+          "ja": "小物"
+        },
+        "items": [
+          {
+            "id": "set",
+            "label": {
+              "en": "Ribbon, hairpin and bracelet",
+              "ja": "リボン・髪飾り・腕輪"
+            },
+            "meshes": [
+              "Manuka_hair_ribbon",
+              "Manuka_hairpin",
+              "Manuka_costume_bracelet"
+            ]
+          }
+        ]
+      }
+    },
+    "presets": {
+      "default": {
+        "label": {
+          "en": "Standard",
+          "ja": "標準"
+        },
+        "set": {
+          "top": "shirt",
+          "bottom": "shorts",
+          "apron": "apron",
+          "neck": "tie",
+          "legs": "stocking",
+          "shoes": "shoes",
+          "inner": null,
+          "hair": "bun",
+          "ears": "kemono",
+          "accessory": "set"
+        }
+      },
+      "stream": {
+        "label": {
+          "en": "On stream",
+          "ja": "配信用"
+        },
+        "set": {
+          "top": "shirt",
+          "bottom": "shorts",
+          "apron": null,
+          "neck": "tie",
+          "legs": "stocking",
+          "shoes": "shoes",
+          "inner": null,
+          "hair": "twin",
+          "ears": "kemono",
+          "accessory": "set"
+        }
+      },
+      "roomwear": {
+        "label": {
+          "en": "At home",
+          "ja": "部屋着"
+        },
+        "set": {
+          "top": "shirt",
+          "bottom": "shorts",
+          "apron": null,
+          "neck": null,
+          "legs": null,
+          "shoes": null,
+          "inner": "underwear",
+          "hair": "bun",
+          "ears": "kemono",
+          "accessory": null
+        }
+      }
+    },
+    "note": {
+      "en": "Worn a piece at a time. The stockings and the tie also raise the body’s own Shrink shapes so nothing pokes through — this model narrows the body rather than hiding it.",
+      "ja": "パーツ単位で着脱する。ストッキングとタイは素体側の Shrink シェイプを併用して貫通を防ぐ（このモデルは Hide ではなく縮小方式）。"
+    }
+  },
+  "sway": {
+    "colliders": {
+      "head": [
+        {
+          "bone": "Head",
+          "offset": [
+            0,
+            0.0561,
+            0
+          ],
+          "radius": 0.075
+        },
+        {
+          "bone": "Head",
+          "offset": [
+            0,
+            0.0475,
+            -0.0007
+          ],
+          "radius": 0.075
+        }
+      ],
+      "bust": [
+        {
+          "bone": "Chest",
+          "offset": [
+            0,
+            0.0689,
+            0.0478
+          ],
+          "radius": 0.087
+        }
+      ],
+      "chest": [
+        {
+          "bone": "Chest",
+          "offset": [
+            0,
+            0.0385,
+            0.0107
+          ],
+          "radius": 0.1
+        }
+      ],
+      "hips": [
+        {
+          "bone": "Hips",
+          "offset": [
+            -0.03,
+            0,
+            0.06
+          ],
+          "radius": 0.1
+        },
+        {
+          "bone": "Hips",
+          "offset": [
+            0.03,
+            0,
+            0.06
+          ],
+          "radius": 0.1
+        }
+      ],
+      "upperArmL": [
+        {
+          "bone": "UpperArm_L",
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.047
+        },
+        {
+          "bone": "UpperArm_L",
+          "offset": [
+            0.0015,
+            0.075,
+            0
+          ],
+          "radius": 0.047
+        },
+        {
+          "bone": "UpperArm_L",
+          "offset": [
+            0.0029,
+            0.15,
+            0
+          ],
+          "radius": 0.047
+        }
+      ],
+      "upperArmR": [
+        {
+          "bone": "UpperArm_R",
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.047
+        },
+        {
+          "bone": "UpperArm_R",
+          "offset": [
+            -0.0015,
+            0.075,
+            0
+          ],
+          "radius": 0.047
+        },
+        {
+          "bone": "UpperArm_R",
+          "offset": [
+            -0.0029,
+            0.15,
+            0
+          ],
+          "radius": 0.047
+        }
+      ],
+      "lowerArmL": [
+        {
+          "bone": "LowerArm_L",
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.034
+        },
+        {
+          "bone": "LowerArm_L",
+          "offset": [
+            -0.0032,
+            0.0749,
+            0.0001
+          ],
+          "radius": 0.034
+        },
+        {
+          "bone": "LowerArm_L",
+          "offset": [
+            -0.0064,
+            0.1499,
+            0.0001
+          ],
+          "radius": 0.034
+        }
+      ],
+      "lowerArmR": [
+        {
+          "bone": "LowerArm_R",
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "radius": 0.034
+        },
+        {
+          "bone": "LowerArm_R",
+          "offset": [
+            0.0032,
+            0.0749,
+            0.0001
+          ],
+          "radius": 0.034
+        },
+        {
+          "bone": "LowerArm_R",
+          "offset": [
+            0.0064,
+            0.1499,
+            0.0001
+          ],
+          "radius": 0.034
+        }
+      ],
+      "upperLegL": [
+        {
+          "bone": "UpperLeg_L",
+          "offset": [
+            0,
+            -0.0006,
+            -0.055
+          ],
+          "radius": 0.1
+        },
+        {
+          "bone": "UpperLeg_L",
+          "offset": [
+            0,
+            0.0897,
+            -0.0309
+          ],
+          "radius": 0.1
+        }
+      ],
+      "upperLegR": [
+        {
+          "bone": "UpperLeg_R",
+          "offset": [
+            0,
+            -0.0006,
+            -0.055
+          ],
+          "radius": 0.1
+        },
+        {
+          "bone": "UpperLeg_R",
+          "offset": [
+            0,
+            0.0897,
+            -0.0309
+          ],
+          "radius": 0.1
+        }
+      ],
+      "tailBase": [
+        {
+          "bone": "Hips",
+          "offset": [
+            0,
+            -0.1829,
+            -0.1145
+          ],
+          "radius": 0.204
+        }
+      ],
+      "apronBack": [
+        {
+          "bone": "Hips",
+          "offset": [
+            0,
+            0.0242,
+            0.0346
+          ],
+          "radius": 0.1
+        },
+        {
+          "bone": "Hips",
+          "offset": [
+            0,
+            -0.0606,
+            0.0249
+          ],
+          "radius": 0.1
+        }
+      ]
+    },
+    "groups": [
+      {
+        "id": "hairFront",
+        "label": {
+          "en": "Fringe",
+          "ja": "前髪"
+        },
+        "stiffness": 2.31,
+        "drag": 0.945,
+        "radius": 0.012,
+        "roots": [
+          "Manuka_hair_front_1",
+          "Manuka_hair_front_2",
+          "Manuka_hair_front_side_L",
+          "Manuka_hair_front_side_R"
+        ],
+        "colliders": [
+          "head"
+        ]
+      },
+      {
+        "id": "hairAhoge",
+        "label": {
+          "en": "Cowlick",
+          "ja": "アホ毛"
+        },
+        "stiffness": 0.67,
+        "drag": 0.779,
+        "radius": 0.004,
+        "roots": [
+          "Manuka_hair_ahoge"
+        ]
+      },
+      {
+        "id": "hairSide",
+        "label": {
+          "en": "Side hair",
+          "ja": "サイドの髪"
+        },
+        "stiffness": 0.39,
+        "drag": 0.831,
+        "radius": 0.019,
+        "roots": [
+          "Manuka_hair_side_L",
+          "Manuka_hair_side_R"
+        ],
+        "colliders": [
+          "head",
+          "bust",
+          "upperArmL",
+          "upperArmR"
+        ]
+      },
+      {
+        "id": "hairBun",
+        "label": {
+          "en": "Buns",
+          "ja": "お団子"
+        },
+        "stiffness": 1.57,
+        "drag": 0.926,
+        "radius": 0.037,
+        "roots": [
+          "Manuka_hair_bun_L",
+          "Manuka_hair_bun_R"
+        ]
+      },
+      {
+        "id": "hairTwin",
+        "label": {
+          "en": "Twin tails",
+          "ja": "ツインテール"
+        },
+        "stiffness": 1.56,
+        "drag": 0.942,
+        "gravity": 0.1,
+        "radius": 0.025,
+        "roots": [
+          "Manuka_hair_twin_L",
+          "Manuka_hair_twin_R"
+        ],
+        "colliders": [
+          "head",
+          "chest",
+          "upperArmL",
+          "upperArmR",
+          "lowerArmL",
+          "lowerArmR"
+        ]
+      },
+      {
+        "id": "hairRibbon",
+        "label": {
+          "en": "Hair ribbons",
+          "ja": "髪リボン"
+        },
+        "stiffness": 0.59,
+        "drag": 0.853,
+        "radius": 0.02,
+        "roots": [
+          "Manuka_hair_ribbon_1_L",
+          "Manuka_hair_ribbon_2_L",
+          "Manuka_hair_ribbon_3_L",
+          "Manuka_hair_ribbon_4_L",
+          "Manuka_hair_ribbon_1_R",
+          "Manuka_hair_ribbon_2_R",
+          "Manuka_hair_ribbon_3_R",
+          "Manuka_hair_ribbon_4_R"
+        ]
+      },
+      {
+        "id": "ear",
+        "label": {
+          "en": "Animal ears",
+          "ja": "獣耳"
+        },
+        "stiffness": 0.08,
+        "drag": 0.138,
+        "radius": 0.02,
+        "roots": [
+          "Manuka_ear_L",
+          "Manuka_ear_R"
+        ]
+      },
+      {
+        "id": "tail",
+        "label": {
+          "en": "Tail",
+          "ja": "尻尾"
+        },
+        "stiffness": 0.47,
+        "drag": 0.286,
+        "radius": 0.091,
+        "roots": [
+          "Manuka_tail"
+        ],
+        "colliders": [
+          "tailBase"
+        ]
+      },
+      {
+        "id": "breast",
+        "label": {
+          "en": "Chest",
+          "ja": "胸"
+        },
+        "stiffness": 0.68,
+        "drag": 0.167,
+        "radius": 0.02,
+        "roots": [
+          "Breast_L",
+          "Breast_R"
+        ]
+      },
+      {
+        "id": "butt",
+        "label": {
+          "en": "Hips",
+          "ja": "腰まわり"
+        },
+        "stiffness": 0.41,
+        "drag": 0.265,
+        "radius": 0.048,
+        "roots": [
+          "Butt_L",
+          "Butt_R"
+        ]
+      },
+      {
+        "id": "shirt",
+        "label": {
+          "en": "Shirt hem",
+          "ja": "シャツの裾"
+        },
+        "stiffness": 3.46,
+        "drag": 0.934,
+        "radius": 0.02,
+        "roots": [
+          "Manuka_shirt_root_1_L",
+          "Manuka_shirt_root_2_L",
+          "Manuka_shirt_root_3_L",
+          "Manuka_shirt_root_4_L",
+          "Manuka_shirt_root_1_R",
+          "Manuka_shirt_root_2_R",
+          "Manuka_shirt_root_3_R",
+          "Manuka_shirt_root_4_R"
+        ]
+      },
+      {
+        "id": "apron",
+        "label": {
+          "en": "Apron",
+          "ja": "エプロン"
+        },
+        "stiffness": 2.1,
+        "drag": 0.819,
+        "radius": 0.028,
+        "roots": [
+          "Manuka_apron_1_L",
+          "Manuka_apron_1_R",
+          "Manuka_apron_2_L",
+          "Manuka_apron_2_R"
+        ],
+        "colliders": [
+          "hips",
+          "upperLegL",
+          "upperLegR"
+        ]
+      },
+      {
+        "id": "apronRibbon",
+        "label": {
+          "en": "Apron strings",
+          "ja": "エプロンの紐"
+        },
+        "stiffness": 0.41,
+        "drag": 0.432,
+        "radius": 0.009,
+        "roots": [
+          "Manuka_apron_ribbon_1_L",
+          "Manuka_apron_ribbon_1_R",
+          "Manuka_apron_ribbon_2_L",
+          "Manuka_apron_ribbon_2_R"
+        ],
+        "colliders": [
+          "apronBack"
+        ]
+      },
+      {
+        "id": "nameplate",
+        "label": {
+          "en": "Name plate",
+          "ja": "ネームプレート"
+        },
+        "stiffness": 0.8,
+        "drag": 0.34,
+        "radius": 0.009,
+        "roots": [
+          "Manuka_apron_nameplate"
+        ]
+      },
+      {
+        "id": "smallRibbon",
+        "label": {
+          "en": "Small ribbons",
+          "ja": "小リボン"
+        },
+        "stiffness": 0.21,
+        "drag": 0.905,
+        "radius": 0.009,
+        "roots": [
+          "Manuka_pants_ribbon_L",
+          "Manuka_pants_ribbon_R",
+          "Manuka_shoes_ribbon_L",
+          "Manuka_shoes_ribbon_R"
+        ]
+      }
+    ]
+  },
+  "drive": {
+    "tail": {
+      "group": "tail",
+      "swing": 0.36,
+      "lift": 0.24
+    }
+  },
+  "script": [
+    {
+      "emotion": {
+        "joy": 0.55,
+        "relaxed": 0.45
+      },
+      "gesture": "wave",
+      "text": "こんばんは、マヌカです。今日はよろしくね。"
+    },
+    {
+      "emotion": {
+        "relaxed": 0.8
+      },
+      "gesture": "explain",
+      "text": "わたしはARKitのブレンドシェイプを持っていません。"
+    },
+    {
+      "emotion": {
+        "thinking": 0.9
+      },
+      "gesture": "think",
+      "text": "だから表情は、目と眉と口を別々に組み合わせて作っています。"
+    },
+    {
+      "emotion": {
+        "surprise": 0.85
+      },
+      "gesture": "pointUp",
+      "text": "あっ、それでもちゃんと笑えますよ。"
+    },
+    {
+      "emotion": {
+        "joy": 0.9
+      },
+      "gesture": "present",
+      "text": "ほら、こんなふうに。"
+    },
+    {
+      "emotion": {
+        "shy": 0.7
+      },
+      "gesture": "cover",
+      "text": "……あんまり見られると照れます。"
+    },
+    {
+      "emotion": {
+        "joy": 0.4,
+        "relaxed": 0.6
+      },
+      "gesture": "bow",
+      "text": "というわけで、今日はここまで。またね。"
+    }
+  ]
+}

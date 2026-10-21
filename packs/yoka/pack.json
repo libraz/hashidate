@@ -1,0 +1,21 @@
+{
+  "store": "https://avatarchan.booth.pm/items/8217336",
+  "packages": [
+    {
+      "file": "TabimakuraYoka_Avatar_1.0.0.zip",
+      "sha256": "a6d81c632df1598e3f872680ca93ffb88d46beabc4a7d69bf7ee1cb3e7231a57"
+    }
+  ],
+  "extract": [
+    {
+      "from": "TabimakuraYoka_Avatar_1.0.0/TabimakuraYokaVRChat_1.0.0.unitypackage",
+      "match": "/FBX/",
+      "into": "fbx"
+    },
+    {
+      "from": "TabimakuraYoka_Avatar_1.0.0/TabimakuraYokaVRChat_1.0.0.unitypackage",
+      "match": "/Texture_4K/",
+      "into": "tex"
+    }
+  ]
+}

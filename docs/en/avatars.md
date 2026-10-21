@@ -6,6 +6,43 @@ The engine holds no avatar data. Everything that is a property of one particular
 
 The reference for the format is `src/protocol/avatars.ts`: the schema that both the server and the renderer parse with. This page says what the fields are for; that file says what is well formed.
 
+## Which model to start with
+
+The quickest start is to buy a model that has a pack. A pack in `packs/<id>/` carries the descriptor and export profile the model was tuned with, so one command turns the purchased package into an avatar that behaves the way these pages describe, with nothing to adjust by eye. Two exist, for the two models every tuned number in the engine was set by watching:
+
+| Pack | Model | Author | Where to get it | Face |
+|---|---|---|---|---|
+| `manuka` | Manuka ver1.02 | Jingo (STUDIO JINGO) | [BOOTH](https://jingo1016.booth.pm/items/5058077) | The author's own shape keys and no ARKit set, composed through `emotionShapes`. |
+| `yoka` | Tabimakura Yoka 1.0.0 | Kotobukiya | [BOOTH](https://avatarchan.booth.pm/items/8217336), [official site](https://avatar.kotobukiya.co.jp/daminzoku/) | The ARKit 52 set plus drawn expressions, selected through `presets`. |
+
+Between them they cover both kinds of face the engine tells apart. Both licences allow publishing rendered video and forbid redistributing the model data, modified or not. Read each author's terms before broadcasting; see also [Licensing](#licensing-is-why-the-runtime-is-loopback-only).
+
+Any other humanoid with VRChat, Unity, VRM or Mixamo bone names loads as well, but expect to tune sway and expressions by eye. See [Building your own](#building-your-own), and `packs/README.md` for turning the result into a pack.
+
+## Importing a pack
+
+```sh
+make import                                                    # the packs, and where to buy each model
+make import PACK=manuka PACKAGE=~/Downloads/MANUKA_ver1.02.zip
+make import PACK=yoka PACKAGE=~/Downloads/TabimakuraYoka_Avatar_1.0.0.zip
+```
+
+`make import` unpacks the zip into `unpacked/<id>/`, which is git-ignored, pulls the FBX files and textures out of any `.unitypackage` the pack names, puts the pack's descriptor and export profile in place as `avatars/<id>.json` and `avatars/export/<id>.json`, and runs `make textures` and `make glb`. Run it from the repository root. It refuses a package that lacks a file the export profile names, imports one whose hash the pack does not list with a warning, and overwrites nothing: to re-import, move aside `unpacked/<id>/` and any descriptor in `avatars/` that differs from the pack's.
+
+The steps have been run on macOS with Blender 5.2 LTS and on no other platform: `make textures` resizes with the macOS `sips` tool, and `make glb` expects Blender at `/Applications/Blender.app` unless `BLENDER=<path>` says otherwise.
+
+### Checking the result
+
+```sh
+make dev                     # in one terminal
+yarn ctl avatar manuka       # in another
+yarn ctl avatars             # the id is listed, nothing is rejected, nothing unresolved
+yarn ctl vocab               # emotions, drawn expressions and wardrobe from the model
+yarn ctl play demo --replace
+```
+
+Open `http://127.0.0.1:5173/` to see it; the renderer has to be open for `avatars` to report what it loaded, and it reads the avatar list when it connects, so reload the page after importing. Right after `avatar`, the report can still name the previous avatar or say `loading`; run `avatars` again until it names the one asked for. The import is done when `yarn ctl avatars` prints `loaded: manuka (ready) nothing unresolved` and the avatar stands, blinks and mouths the demo's lines. The unresolved report lists, by name, any bone, shape, wardrobe mesh, sway group or tail the descriptor names and the GLB lacks. For a pack it should be empty. A name in it means the package differs from the one the pack was verified with: look the name up in the descriptor and correct it against [Inspecting a model](#inspecting-a-model).
+
 ## Where the files go
 
 ```
@@ -36,7 +73,7 @@ The id is the filename without its extension. It is at most 64 characters, has n
 }
 ```
 
-Only `label` is required. An avatar that states nothing else still loads, and whatever the engine cannot resolve on its own is reported in the vocabulary rather than failing.
+Only `label` is required. An avatar that states nothing else still loads, and whatever the engine cannot resolve on its own is reported by `yarn ctl avatars` rather than failing.
 
 ```sh
 yarn ctl avatars
@@ -134,6 +171,8 @@ yarn ctl avatars
 
 lists each avatar found with its label and `url`, and the files that were rejected beside them, each with the reason and the path of the offending key. The renderer writes the same reasons to the browser console as warnings when it fetches the list.
 
+Below the list comes the avatar a renderer has loaded, as `loaded: <id> (<phase>)`. A ready one is followed by `nothing unresolved`, or by `unresolved:` and a line for each layer that could not find what it looked for: the profile (bones, visemes, blink shapes), the wardrobe, the sway chains and the tail drive. Each line names what is absent. A failed one carries the load error. The same report reaches `GET /api/state` as `avatar.problems`.
+
 With no avatar in the directory the stage stays empty, and the console shows a note in place of the picker.
 
 ## The vocabulary is discovered from the model
@@ -184,6 +223,26 @@ Either way the result is judged on screen. The engine's own constants were arriv
 
 The engine is a runtime, not an editor. Rigging, weighting and garment authoring happen in Blender, and `tools/blender` is the interface between the two. A model that comes out of that pipeline needs one file in `avatars/`, as above.
 
+Starting from whichever pack is closer saves most of the work: `packs/yoka/` for a model with the ARKit set and drawn expressions, `packs/manuka/` for one with only its own shape keys. The order is the one the sections below follow:
+
+1. Inspect the model, to find its separator, its shape groups, its meshes and its materials.
+2. Write the export profile and run `make textures` and `make glb`.
+3. Write a descriptor with `label` alone, load it, and read what `yarn ctl avatars` reports as unresolved.
+4. Add fields until that report is empty, then tune emotions, sway and gaze by watching the render.
+
+The last step cannot be checked from the command line. A value that reads well on screen is the only test, which is why the packs carry figures rather than defaults. Once it looks right, `packs/README.md` says how to publish the result as a pack.
+
+### Inspecting a model
+
+Two headless Blender scripts report what a package contains before anything is written:
+
+```sh
+blender -b -P tools/blender/inspect_fbx.py -- <model.fbx>
+blender -b -P tools/blender/inspect_shapekeys.py -- <model.fbx|model.blend> [out.txt]
+```
+
+`inspect_fbx.py` lists the armatures with their bone counts, every mesh with its vertex, triangle, material and shape key counts, and the materials and images; the mesh and material names are what `wardrobe`, `materials` and `texture_by_material` refer to. `inspect_shapekeys.py` counts shape keys per mesh and scores them against the ARKit 52 set, the VRChat visemes and the common MMD expressions, which decides which example to start from. With `out.txt` it also writes every shape key name in order, so the separator shapes and the groups under them can be read off for `separator` and `keep_groups`.
+
 ### Converting a model to a GLB
 
 The conversion is described by an export profile at `avatars/export/<id>.json`, and two make targets read it:
@@ -228,7 +287,7 @@ Unpacking is not automated, because packages differ in shape. The steps are the 
 
 1. Unzip the archive into a directory outside git. Everything under `backup/` and `public/models/` is ignored.
 2. Find the FBX files and, if there is one, the `.blend`. Put their paths in the profile's `source` and `extras`.
-3. For a `.unitypackage`, which is a gzip-compressed tar, pull the textures out with `python3 tools/blender/extract_textures.py <package> <outdir> [path substring]`. The substring filters the paths inside the Unity project and defaults to `/Texture_1K/`. Point `textures_src` at the result.
+3. For a `.unitypackage`, which is a gzip-compressed tar, pull the textures and FBX files out with `python3 tools/blender/extract_textures.py <package> <outdir> [path substring]`. The substring filters the paths inside the Unity project and defaults to `/Texture_1K/`. Point `textures_src` and `source` at the results.
 4. Run `make textures AVATAR=<id>` and then `make glb AVATAR=<id>`.
 
 `make check-assets` fails if anything over 1 MB has found its way into git. It runs against what git is actually tracking rather than against a list of paths, because a `.gitignore` only covers the paths someone thought of and a single half-gigabyte blob in the history is permanent.

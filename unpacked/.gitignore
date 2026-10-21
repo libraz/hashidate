@@ -1,0 +1,6 @@
+# Purchased avatar packages, unpacked by `make import`, one directory per
+# avatar id. Meshes, textures and FBX files that are not ours to redistribute,
+# so nothing that lands here is ever tracked. The directory itself is, so a
+# checkout arrives with somewhere for the import to go; see packs/README.md.
+*
+!.gitignore

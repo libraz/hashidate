@@ -6,6 +6,8 @@ TOOLS    = tools/blender
 # Descriptors and their export profiles (<AVATARS>/export/<id>.json).
 AVATARS ?= avatars
 PROFILE  = $(AVATARS)/export/$(AVATAR).json
+# Import recipes for purchasable models, one directory per avatar id.
+PACKS    = packs
 
 # The two ports `make dev` brings up, named once so that `help` and `stop`
 # cannot drift apart. Control honours the same environment variable the runtime
@@ -34,7 +36,7 @@ endif
 # HASHIDATE_VOICE_DIR moves both together.
 CLIPS    = $(TTS)/reference/clips
 
-.PHONY: help dev stop textures glb \
+.PHONY: help dev stop import textures glb \
         voice tts-setup tts-vet tts-refs tts \
         check-assets clean
 
@@ -45,6 +47,7 @@ help:
 	@echo "  dev              start viewer, control and speech at once"
 	@echo "  stop             free :$(VIEWER_PORT), :$(CONTROL_PORT) and the speech socket if something is left holding one"
 	@echo "-- Model"
+	@echo "  import PACK=<id> PACKAGE=<zip>  unpack a purchased model through $(PACKS)/<id> and build it; no PACK lists the packs"
 	@echo "  glb AVATAR=<id>       build $(OUT)/<id>.glb from $(AVATARS)/export/<id>.json"
 	@echo "  textures AVATAR=<id>  copy and shrink the profile's textures for the web"
 	@echo "-- Speech"
@@ -174,6 +177,15 @@ stop:
 	echo "stopped"
 
 # ------------------------------------------------------------------- Model
+
+# A pack is data, so this runs no code a pack author wrote: the importer unpacks
+# the package and puts the pack's descriptor and profile in place, then the two
+# targets below build it as they would any other avatar.
+import:
+	@if [ -z "$(PACK)" ]; then python3 $(TOOLS)/import_pack.py $(PACKS); exit 0; fi; \
+	test -n "$(PACKAGE)" || { echo "usage: make $@ PACK=<id> PACKAGE=<path to the zip>" >&2; exit 2; }; \
+	python3 $(TOOLS)/import_pack.py $(PACKS) "$(PACK)" "$(PACKAGE)" $(AVATARS)
+	@if [ -n "$(PACK)" ]; then $(MAKE) --no-print-directory textures glb AVATAR=$(PACK); fi
 
 # Both targets read a profile rather than taking paths; see tools/blender.
 textures:
