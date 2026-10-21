@@ -202,7 +202,6 @@ export class ArmDriver {
     lowerArm: new THREE.Vector3(),
     hand: new THREE.Vector3(),
   };
-  private readonly neutralSwing = new THREE.Quaternion();
   private readonly neutralPalm = new THREE.Vector3();
   private readonly projectedPalm = new THREE.Vector3();
   private readonly rollAxis = new THREE.Vector3();
@@ -472,7 +471,7 @@ export class ArmDriver {
     copySpec(spread, this.proposedSpread);
 
     // Build a neutral palm by solving the requested links with the hand aligned
-    // to the forearm, then minimally swing it to the desired hand direction.
+    // to the forearm, then use the same palm-normal projection as anatomical FK.
     this.neutralDirections.upperArm.copy(upper);
     this.neutralDirections.lowerArm.copy(lower);
     this.neutralDirections.hand.copy(lower);
@@ -488,8 +487,12 @@ export class ArmDriver {
       )
     ) {
       forwardArm(this.neutralConfiguration, this.calibration, context, this.neutralForward);
-      this.neutralSwing.setFromUnitVectors(lower, hand);
-      this.neutralPalm.copy(this.neutralForward.palm).applyQuaternion(this.neutralSwing);
+      // cos(theta) * N - sin(theta) * (wristFlex / theta) * L, with N perpendicular to L.
+      this.neutralPalm
+        .copy(this.neutralForward.palm)
+        .multiplyScalar(lower.dot(hand))
+        .addScaledVector(lower, -this.neutralForward.palm.dot(hand))
+        .normalize();
       this.neutralPalm.addScaledVector(hand, -this.neutralPalm.dot(hand));
       if (this.neutralPalm.lengthSq() > 1e-12) this.neutralPalm.normalize();
     }
