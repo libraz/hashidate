@@ -116,7 +116,11 @@ function entrance(id: string, side: Side, limits: boolean, frames = 90): Run {
     }
     run.wrist.push(shoulderRelative(h, side));
   }
-  const route = (h.body as unknown as { _routes: Record<Side, { goalQ: Float64Array }> })._routes;
+  const route = (
+    h.body as unknown as {
+      _transaction: { _routes: Record<Side, { goalQ: Float64Array }> };
+    }
+  )._transaction._routes;
   const driver = h.rig.armDriver(side);
   const context = h.rig.armForwardContext(side);
   if (limits && driver && context) {

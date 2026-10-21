@@ -24,7 +24,8 @@ interface Work {
   environmentBatches: number;
 }
 
-const work = (body: unknown): Work => (body as { _armFrameWork: Work })._armFrameWork;
+const work = (body: unknown): Work =>
+  (body as { _transaction: { _armFrameWork: Work } })._transaction._armFrameWork;
 
 /** One solver call's own cap on environment batches (`arm-path.ts`). */
 const SOLVER_CALL = 96;
