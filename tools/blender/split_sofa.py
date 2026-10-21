@@ -98,7 +98,9 @@ parts = [obj for obj in bpy.context.selected_objects if obj.type == "MESH"]
 if len(parts) != 2:
     raise SystemExit(f"expected two sofa parts, got {len(parts)}")
 for part in parts:
-    material_name = part.data.materials[0].name if part.data.materials else ""
+    mi = part.data.polygons[0].material_index if part.data.polygons else 0
+    mats = part.data.materials
+    material_name = mats[mi].name if mi < len(mats) and mats[mi] else ""
     part.name = "Sofa_01_upholstery" if material_name == cloth_material.name else "Sofa_01_frame"
 
 os.makedirs(os.path.dirname(destination) or ".", exist_ok=True)
