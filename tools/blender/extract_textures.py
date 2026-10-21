@@ -1,4 +1,4 @@
-"""Pull the textures out of a unitypackage.
+"""Pull the textures, and the FBX models, out of a unitypackage.
 
 A .unitypackage is a gzip-compressed tar holding, for every asset, the pair
   <guid>/asset      … the file itself
@@ -26,7 +26,7 @@ with tarfile.open(pkg, "r|gz") as tf:
             paths[guid] = tf.extractfile(m).read().decode("utf-8").split("\n")[0]
 
 want = {g: p for g, p in paths.items()
-        if needle in p and p.lower().endswith((".png", ".tga", ".jpg", ".jpeg", ".psd"))}
+        if needle in p and p.lower().endswith((".png", ".tga", ".jpg", ".jpeg", ".psd", ".fbx"))}
 by_name = {}
 for p in want.values():
     by_name.setdefault(os.path.basename(p).lower(), []).append(p)
