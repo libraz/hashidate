@@ -74,9 +74,9 @@ describe('gesture slot handoff', () => {
     h.body.playDef(still, 'b');
     const after = [settled, ...track(h, 60, chestAngle)];
     // The fade, not a cut: the first frame keeps most of the lean, and every
-    // frame gives up no more than the outgoing decay allows.
+    // frame stays within the minimum-jerk maximum slope (15/8) over its lead.
     expect(after[1]).toBeGreaterThan(settled * 0.85);
-    expect(Math.max(...steps(after))).toBeLessThan(settled * 0.12);
+    expect(Math.max(...steps(after))).toBeLessThan(settled * (15 / 8) * (DT / still.lead) + 1e-9);
     for (let i = 1; i < after.length; i++)
       expect(after[i]).toBeLessThanOrEqual(after[i - 1] + 1e-9);
   });
@@ -89,7 +89,9 @@ describe('gesture slot handoff', () => {
     h.body.playDef(still, 'b');
     const after = [mid.at(-1) ?? 0, ...track(h, 30, chestAngle)];
     expect(after[1]).toBeGreaterThan((mid.at(-1) ?? 0) * 0.85);
-    expect(Math.max(...steps([settled, ...mid, ...after.slice(1)]))).toBeLessThan(settled * 0.12);
+    expect(Math.max(...steps([settled, ...mid, ...after.slice(1)]))).toBeLessThan(
+      settled * (15 / 8) * (DT / still.lead) + 1e-9,
+    );
   });
 
   it('never raises a gesture released during its entrance', () => {
@@ -204,5 +206,124 @@ describe('variation scale', () => {
       return b.getWorldQuaternion(new THREE.Quaternion());
     };
     expect(upper(small).angleTo(upper(large))).toBeLessThan(1e-6);
+  });
+});
+
+describe('spine switch envelope', () => {
+  const headPose = (pitch: number, lead = 0.2): GestureDef => ({
+    ...lean(pitch, lead),
+    build: () => ({ spine: { head: [pitch, 0, 0] } }),
+  });
+  const isolated = () => {
+    const h = harness();
+    h.rig.limitsEnabled = false;
+    h.body.lookAt = 0;
+    return h;
+  };
+  const headAngle = (h: Harness) => {
+    const head = h.profile.bones.head;
+    if (!head) throw new Error('synthetic rig has no head');
+    return head.quaternion.angleTo(h.rig.rest.get(head) ?? new THREE.Quaternion());
+  };
+  const held = (pitch: number) => {
+    const h = isolated();
+    h.body.playDef(headPose(pitch), 'first');
+    track(h, 30, headAngle);
+    expect(headAngle(h)).toBeCloseTo(pitch, 10);
+    return h;
+  };
+
+  it.each([0.1, 0.2])(
+    'never dips below either held pose when switching from %s to 0.2',
+    (pitch) => {
+      const h = held(pitch);
+      h.body.playDef(headPose(0.2), 'second');
+      const seen = track(h, 30, headAngle);
+      for (const angle of seen) {
+        expect(angle).toBeGreaterThanOrEqual(pitch - 1e-10);
+        expect(angle).toBeLessThanOrEqual(0.2 + 1e-10);
+      }
+      expect(seen.at(-1)).toBeCloseTo(0.2, 10);
+    },
+  );
+
+  it.each(['switch', 'stop'] as const)(
+    'starts a held %s with a cubic-sized increment',
+    (action) => {
+      const firstIncrement = (dt: number) => {
+        const h = held(0.2);
+        if (action === 'switch') h.body.playDef(headPose(0.1), 'second');
+        else h.body.stopGesture();
+        h.rig.reset();
+        h.body.update(dt);
+        return 0.2 - headAngle(h);
+      };
+      const small = firstIncrement(0.001);
+      const large = firstIncrement(0.002);
+      expect(small).toBeGreaterThan(0);
+      // A zero-velocity, zero-acceleration endpoint starts cubically; an
+      // exponential decay instead doubles when the first timestep doubles.
+      expect(large / small).toBeGreaterThan(7.5);
+      expect(large / small).toBeLessThan(8.1);
+    },
+  );
+
+  it.each([0, 3])('preserves equal poses through a nested switch after %s frames', (frames) => {
+    const h = held(0.2);
+    h.body.playDef(headPose(0.2), 'second');
+    track(h, frames, headAngle);
+    h.body.playDef(headPose(0.2), 'third');
+    for (const angle of track(h, 30, headAngle)) expect(angle).toBeCloseTo(0.2, 10);
+  });
+
+  it('keeps phrase nods suppressed while outgoing and incoming head ownership sum to one', () => {
+    const h = held(0.2);
+    h.body.speechNod = 0.05;
+    h.body.playDef(headPose(0.2), 'second');
+    for (const angle of track(h, 30, headAngle)) expect(angle).toBeCloseTo(0.2, 10);
+  });
+
+  it('accepts an instantaneous entrance without a non-finite spine rotation', () => {
+    const h = held(0.2);
+    h.body.playDef(headPose(0.1, 0), 'instant');
+    for (const angle of track(h, 5, headAngle)) {
+      expect(Number.isFinite(angle)).toBe(true);
+      expect(angle).toBeCloseTo(0.1, 10);
+    }
+  });
+
+  it('advances an outgoing pose once per frame and retires it after stopping during a long switch', () => {
+    const h = isolated();
+    const times: number[] = [];
+    const heldTimes: number[] = [];
+    const def = headPose(0.2);
+    def.build = (t, _v, phase) => {
+      times.push(t);
+      heldTimes.push(phase?.held ?? -1);
+      return { spine: { head: [0.2, 0, 0] } };
+    };
+    h.body.playDef(def, 'counted');
+    track(h, 30, headAngle);
+    const speed = h.body.gesture?.speed ?? 0;
+    expect(speed).toBeGreaterThan(0);
+    h.body.playDef(headPose(0.2, 1.2), 'long');
+    times.length = 0;
+    heldTimes.length = 0;
+    track(h, 3, headAngle);
+    h.body.stopGesture();
+    // The arm lifetime ends before this long spine fade. Its pose clock must
+    // still advance once per frame while the spine remains visible.
+    track(h, 57, headAngle);
+    expect(times).toHaveLength(60);
+    for (let i = 1; i < times.length; i++) {
+      expect(times[i] - times[i - 1]).toBeCloseTo(DT * speed, 12);
+      expect(heldTimes[i] - heldTimes[i - 1]).toBeCloseTo(DT * speed, 12);
+    }
+    track(h, 120, headAngle);
+    expect(headAngle(h)).toBeLessThan(1e-7);
+    const retiredCount = times.length;
+    track(h, 30, headAngle);
+    expect(times).toHaveLength(retiredCount);
+    expect(h.body.gesture).toBeNull();
   });
 });

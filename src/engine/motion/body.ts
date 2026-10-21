@@ -194,6 +194,10 @@ export interface ActiveGesture {
 interface Outgoing {
   g: ActiveGesture;
   w: number;
+  spineWeight: number;
+  spineStart: number;
+  armAlive: boolean;
+  spineAlive: boolean;
   /** This slot's own solver output and elbow state. */
   reach: Record<Side, ArmSolution>;
   /** This frame's pose and resolved arms. */
@@ -204,6 +208,10 @@ interface Outgoing {
 const mkOutgoing = (g: ActiveGesture): Outgoing => ({
   g,
   w: 0,
+  spineWeight: 0,
+  spineStart: 0,
+  armAlive: false,
+  spineAlive: false,
   reach: mkReachScratch(),
   pose: null,
   arm: { L: null, R: null },
@@ -528,6 +536,11 @@ export class Body {
 
   /** Gestures on their way out, oldest first. Only `handoff` adds to it. */
   private readonly _fading: Outgoing[] = [];
+  // Spine offsets have no follower. Fade them against the incoming entrance,
+  // independently of the arm/finger lifetime and its exponential decay.
+  private readonly _spineFading: Outgoing[] = [];
+  private _spineFadeTime = 0;
+  private _spineFadeDuration = 0;
   /** Spent outgoing slots, kept so a gesture switch does not allocate. */
   private readonly _spare: Outgoing[] = [];
   /** The current gesture's solver output and elbow state. */
@@ -1016,6 +1029,9 @@ export class Body {
     // however far the arm has to go. The authored lead remains a floor — doze
     // deliberately takes 1.5 seconds so its entrance reads as falling asleep.
     const lead = Math.max(def.lead, Math.min(0.95, this.travel(def, v) * LEAD_PER_RAD));
+    for (const f of this._spineFading) f.spineStart = f.spineWeight;
+    this._spineFadeTime = 0;
+    this._spineFadeDuration = lead;
     this.gesture = {
       def,
       id,
@@ -1101,10 +1117,15 @@ export class Body {
       const reach = out.reach;
       out.g = g;
       out.w = this.blend;
+      out.spineWeight = this.blend;
+      out.spineStart = this.blend;
+      out.armAlive = true;
+      out.spineAlive = true;
       out.reach = this._curReach;
       out.pose = null;
       this._curReach = reach;
       this._fading.push(out);
+      this._spineFading.push(out);
     }
     // A new slot's elbow starts at its own answer; see `ElbowSearch.search`.
     this._curReach.L.swivelDir.set(0, 0, 0);
@@ -1782,8 +1803,11 @@ export class Body {
     for (const f of this._fading) {
       f.w *= Math.exp(-dt * 6);
       if (f.w < 0.01 && !(holdingHand && f === handedOver)) {
-        f.pose = null;
-        this._spare.push(f);
+        f.armAlive = false;
+        if (!f.spineAlive) {
+          f.pose = null;
+          this._spare.push(f);
+        }
         continue;
       }
       // The outgoing gesture keeps moving while it fades. Dissolving a frozen
@@ -1794,10 +1818,36 @@ export class Body {
     }
     this._fading.length = kept;
 
+    // Restarted switches capture the weights already on screen, including all
+    // earlier outgoing slots. Their sum complements the new entrance without
+    // pulling a held pose toward rest. This clock also runs after a release.
+    this._spineFadeTime += dt;
+    const spineFraction =
+      this._spineFadeDuration > 0 ? Math.min(1, this._spineFadeTime / this._spineFadeDuration) : 1;
+    const spineRemaining = 1 - minJerk(spineFraction);
+    kept = 0;
+    for (const f of this._spineFading) {
+      f.spineWeight = f.spineStart * spineRemaining;
+      if (f.spineWeight === 0) {
+        f.spineAlive = false;
+        if (!f.armAlive) {
+          f.pose = null;
+          this._spare.push(f);
+        }
+        continue;
+      }
+      // The arm loop already advanced live arm slots. A spine that outlives
+      // its arm still builds exactly once per frame, using the same pose clock.
+      if (!f.armAlive) f.pose = this.advance(f.g, dt);
+      this._spineFading[kept++] = f;
+    }
+    this._spineFading.length = kept;
+
     // A gesture that moves the head or neck owns it: the nod gives way by the
     // gesture's own weight, keyed on which slots it writes rather than their values.
     let w = this.gesture && touchesHead(g?.spine) ? this.blend : 0;
-    for (const f of this._fading) if (touchesHead(f.pose?.spine)) w = Math.max(w, f.w);
+    for (const f of this._spineFading) if (touchesHead(f.pose?.spine)) w += f.spineWeight;
+    w = Math.min(1, w);
 
     // Everything a standing body does on its own — breathing, the weight
     // shift, the hop's fold through the trunk, the head's drift. See
@@ -1823,10 +1873,10 @@ export class Body {
     const { br, d } = this._posture.apply(rig, p, dt, pin);
     const idle = this.idleAmount;
     // Every gesture slot contributes to the spine; the outgoing ones are fading.
-    for (const f of this._fading) {
+    for (const f of this._spineFading) {
       if (!f.pose?.spine) continue;
       for (const [slot, o] of Object.entries(f.pose.spine) as Array<[SpineSlot, Vec3Tuple]>) {
-        rig.addOffset(slot, o[0] * f.w, o[1] * f.w, o[2] * f.w);
+        rig.addOffset(slot, o[0] * f.spineWeight, o[1] * f.spineWeight, o[2] * f.spineWeight);
       }
     }
     if (g?.spine) {
