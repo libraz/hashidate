@@ -19,6 +19,8 @@ interface ChainSpec {
   parent: string;
   root: string;
   joints?: number;
+  rootOffset?: [number, number, number];
+  segmentOffset?: [number, number, number];
 }
 
 interface SpringFixture {
@@ -1102,5 +1104,90 @@ describe('Spring weighted root attachments', () => {
       broken.spring.update(0.05);
     }
     expect(originalMotionState(broken.spring)).not.toEqual(originalMotionState(plain.spring));
+  });
+});
+
+describe('Spring collision along a link', () => {
+  /** Distance from `c` to the segment `a`–`b`. */
+  const segmentDistance = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3): number => {
+    const ab = new THREE.Vector3().subVectors(b, a);
+    const t = THREE.MathUtils.clamp(
+      new THREE.Vector3().subVectors(c, a).dot(ab) / ab.lengthSq(),
+      0,
+      1,
+    );
+    return a.clone().addScaledVector(ab, t).distanceTo(c);
+  };
+
+  it('stops a long link whose middle would swing through a sphere its tip clears', () => {
+    // One 40 cm link resting sideways, dropped by gravity alone. A 4 cm sphere
+    // 21 cm from its root lies in the swept disc, well inside the tip's arc.
+    const { spring } = makeSpring(
+      [{ id: 'strand', stiffness: 0, drag: 0.4, gravity: 1, colliders: ['ball'], roots: ['Link'] }],
+      [
+        {
+          parent: 'Head',
+          root: 'Link',
+          joints: 1,
+          rootOffset: [0, 0, 0],
+          segmentOffset: [0.4, 0, 0],
+        },
+      ],
+      { ball: [{ bone: 'Head', offset: [0.15, -0.15, 0], radius: 0.04 }] },
+    );
+    const group = must(spring.groups[0], 'strand');
+    const joint = must(group.joints[0], 'link');
+    const ball = must(group.colliders[0], 'ball');
+    const clearance = ball.radius + group.radius;
+
+    spring.update(0);
+    const origin = new THREE.Vector3();
+    let nearest = Number.POSITIVE_INFINITY;
+    for (let frame = 0; frame < 240; frame++) {
+      spring.update(STEP);
+      origin.setFromMatrixPosition(joint.bone.matrixWorld);
+      nearest = Math.min(nearest, segmentDistance(origin, joint.cur, ball.a));
+      expect(joint.cur.distanceTo(origin)).toBeCloseTo(joint.length, 6);
+    }
+
+    expect(nearest).toBeGreaterThan(clearance - 1e-6);
+    // It came to rest against the sphere rather than short of it.
+    expect(nearest).toBeLessThan(clearance + 1e-3);
+    expectFinite(spring);
+  });
+
+  it('stops the same link against a capsule lying across its swing', () => {
+    const { spring } = makeSpring(
+      [{ id: 'strand', stiffness: 0, drag: 0.4, gravity: 1, colliders: ['bar'], roots: ['Link'] }],
+      [
+        {
+          parent: 'Head',
+          root: 'Link',
+          joints: 1,
+          rootOffset: [0, 0, 0],
+          segmentOffset: [0.4, 0, 0],
+        },
+      ],
+      {
+        bar: [
+          { bone: 'Head', offset: [0.15, -0.15, -0.1], tail: [0.15, -0.15, 0.1], radius: 0.04 },
+        ],
+      },
+    );
+    const group = must(spring.groups[0], 'strand');
+    const joint = must(group.joints[0], 'link');
+    const bar = must(group.colliders[0], 'bar');
+    const clearance = bar.radius + group.radius;
+
+    spring.update(0);
+    const origin = new THREE.Vector3();
+    for (let frame = 0; frame < 240; frame++) {
+      spring.update(STEP);
+      origin.setFromMatrixPosition(joint.bone.matrixWorld);
+      // The link stays in the plane z = 0, which crosses the bar at its middle.
+      const middle = bar.a.clone().lerp(bar.b, 0.5);
+      expect(segmentDistance(origin, joint.cur, middle)).toBeGreaterThan(clearance - 1e-6);
+    }
+    expectFinite(spring);
   });
 });

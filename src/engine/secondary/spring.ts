@@ -72,7 +72,11 @@ import { SkinPointAnchor, type SkinPointAnchorDiagnostics } from './skin-point-a
  * instead would show the hair a step late on every frame, including at 60 Hz.
  */
 
-/** Simulation step, seconds. */
+/**
+ * Simulation step, seconds. Every group's figures assume it stays 1/60: drag is
+ * lost per step, and stiffness and gravity move the tail `figure * STEP` per step
+ * rather than being integrated, so another step would retune every avatar.
+ */
 const STEP = 1 / 60;
 
 /**
@@ -116,6 +120,11 @@ const _m = new THREE.Matrix4();
 const _ip = new THREE.Vector3();
 const _iq = new THREE.Quaternion();
 const _is = new THREE.Vector3();
+const _lc = new THREE.Vector3();
+const _lw = new THREE.Vector3();
+const _lu = new THREE.Vector3();
+const _le = new THREE.Vector3();
+const _lr = new THREE.Vector3();
 
 const boneChildren = (bone: THREE.Object3D): THREE.Bone[] =>
   bone.children.filter((c): c is THREE.Bone => c instanceof THREE.Bone);
@@ -154,12 +163,15 @@ export class Joint {
   readonly valid: boolean;
   /** Clearance per collider of this joint's group, filled in by calibration. */
   limits: Float32Array;
+  /** The same for the whole link, root to tail, against outside colliders. */
+  spans: Float32Array;
 
   constructor(bone: THREE.Bone, parent: THREE.Object3D, kids: THREE.Bone[]) {
     this.bone = bone;
     this.parent = parent;
     this.rest = bone.quaternion.clone();
     this.limits = new Float32Array(0);
+    this.spans = new Float32Array(0);
 
     // An additive rotation an outside layer may put on this joint's rest pose,
     // in the *parent's* frame. Only the root of a driven group carries one —
@@ -341,6 +353,77 @@ export class Collider {
     }
     _p.copy(this.a).addScaledVector(_seg, t);
     return _d.subVectors(point, _p).length();
+  }
+
+  /**
+   * Point on the capsule's axis nearest the segment `p0`–`p1`, into `out`.
+   * For a sphere, its centre.
+   */
+  nearestToLink(p0: THREE.Vector3, p1: THREE.Vector3, out: THREE.Vector3): THREE.Vector3 {
+    _seg.subVectors(this.b, this.a);
+    const e = _seg.lengthSq();
+    if (e <= 1e-12) return out.copy(this.a);
+    _d.subVectors(p1, p0);
+    _lr.subVectors(p0, this.a);
+    const a = _d.lengthSq();
+    const b = _d.dot(_seg);
+    const c = _d.dot(_lr);
+    const f = _seg.dot(_lr);
+    // Closest points of two segments (Ericson 5.1.9). Only the axis point is
+    // wanted, so the link parameter is not re-clamped after the axis one.
+    const denom = a * e - b * b;
+    const s = denom > 1e-12 ? THREE.MathUtils.clamp((b * f - c * e) / denom, 0, 1) : 0;
+    const t = THREE.MathUtils.clamp((b * s + f) / e, 0, 1);
+    return out.copy(this.a).addScaledVector(_seg, t);
+  }
+
+  /** Distance from the axis to the segment `p0`–`p1`. */
+  linkDistance(p0: THREE.Vector3, p1: THREE.Vector3): number {
+    this.nearestToLink(p0, p1, _lc);
+    _lw.subVectors(p1, p0);
+    const len2 = _lw.lengthSq();
+    const t =
+      len2 > 1e-12 ? THREE.MathUtils.clamp(_lu.subVectors(_lc, p0).dot(_lw) / len2, 0, 1) : 0;
+    return _lu.copy(p0).addScaledVector(_lw, t).distanceTo(_lc);
+  }
+
+  /**
+   * Swing the link from `root` to `tip` about its root, by the least angle that
+   * holds the whole link at or beyond `min` from the axis. Length is kept. A
+   * tail-only test lets a long link pass through a collider with both ends
+   * outside it. Returns whether the tip had to be moved. Outside colliders only:
+   * a link with both ends inside a convex shape is inside it along its length.
+   */
+  clearLink(root: THREE.Vector3, tip: THREE.Vector3, length: number, min: number): boolean {
+    if (this.inside) return false;
+    this.nearestToLink(root, tip, _lc);
+    _lw.subVectors(_lc, root);
+    const dist = _lw.length();
+    // A root already that close cannot be helped by turning the link.
+    if (dist <= min) return false;
+    _lu.subVectors(tip, root).multiplyScalar(1 / length);
+    const along = _lu.dot(_lw);
+    if (along <= 0) return false;
+    // The widest angle to the axis point that still clears: the tangent from the
+    // root if the link reaches it, otherwise where the tip alone touches.
+    const tangent = Math.sqrt(dist * dist - min * min);
+    const cosMax =
+      length >= tangent
+        ? tangent / dist
+        : (dist * dist + length * length - min * min) / (2 * length * dist);
+    if (along / dist <= cosMax) return false;
+    _lw.multiplyScalar(1 / dist);
+    _le.copy(_lu).addScaledVector(_lw, -_lu.dot(_lw));
+    if (_le.lengthSq() < 1e-12) {
+      _le.crossVectors(_lw, Math.abs(_lw.x) < 0.9 ? _lr.set(1, 0, 0) : _lr.set(0, 1, 0));
+    }
+    _le.normalize();
+    const sinMax = Math.sqrt(Math.max(0, 1 - cosMax * cosMax));
+    tip
+      .copy(root)
+      .addScaledVector(_lw, cosMax * length)
+      .addScaledVector(_le, sinMax * length);
+    return true;
   }
 
   /**
@@ -776,12 +859,15 @@ export class Spring {
       for (const c of g.colliders) c.place();
       for (const j of g.joints) {
         j.limits = new Float32Array(g.colliders.length);
+        j.spans = new Float32Array(g.colliders.length);
+        _bp.setFromMatrixPosition(j.bone.matrixWorld);
         for (let i = 0; i < g.colliders.length; i++) {
           const c = g.colliders[i];
           const dist = c.nearest(j.cur);
           j.limits[i] = c.inside
             ? Math.max(c.radius - g.radius, dist)
             : Math.min(c.radius + g.radius, dist);
+          if (!c.inside) j.spans[i] = Math.min(c.radius + g.radius, c.linkDistance(_bp, j.cur));
         }
       }
     }
@@ -824,10 +910,12 @@ export class Spring {
       for (const j of g.joints) j.seed();
       for (const c of g.colliders) c.place();
       for (const j of g.joints) {
+        _bp.setFromMatrixPosition(j.bone.matrixWorld);
         for (let i = 0; i < g.colliders.length; i++) {
           const c = g.colliders[i];
           const dist = c.nearest(j.cur);
           j.limits[i] = c.inside ? Math.max(j.limits[i], dist) : Math.min(j.limits[i], dist);
+          if (!c.inside) j.spans[i] = Math.min(j.spans[i], c.linkDistance(_bp, j.cur));
         }
       }
     }
@@ -1090,6 +1178,7 @@ export class Spring {
         let inside = false;
         for (let i = 0; i < g.colliders.length; i++) {
           if (g.colliders[i].push(_next, j.limits[i])) inside = true;
+          if (g.colliders[i].clearLink(_bp, _next, j.length, j.spans[i])) inside = true;
         }
         if (!inside) continue;
         j.present(1);
@@ -1189,6 +1278,10 @@ export class Spring {
           _to.subVectors(_next, _bp);
           if (_to.lengthSq() > 1e-12) {
             _next.copy(_bp).addScaledVector(_to.normalize(), j.length);
+          }
+          // Then the rest of the link. This swing keeps the length by itself.
+          for (let i = 0; i < g.colliders.length; i++) {
+            g.colliders[i].clearLink(_bp, _next, j.length, j.spans[i]);
           }
         }
 

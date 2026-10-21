@@ -61,8 +61,10 @@ function overshoot(spring: Spring): number {
     for (const j of g.joints) {
       const drawn = tailAt(j, j.bone.quaternion);
       const solved = tailAt(j, j.solvedQ);
+      const base = new THREE.Vector3().setFromMatrixPosition(j.bone.matrixWorld);
       for (const [i, c] of g.colliders.entries()) {
-        const depth = (p: THREE.Vector3) => Math.max(0, j.limits[i] - c.nearest(p));
+        const depth = (p: THREE.Vector3) =>
+          Math.max(0, j.limits[i] - c.nearest(p), j.spans[i] - c.linkDistance(base, p));
         worst = Math.max(worst, depth(drawn) - depth(solved));
       }
     }
@@ -70,10 +72,16 @@ function overshoot(spring: Spring): number {
   return worst;
 }
 
-/** Whether the solver's own state has a tail lying on its clearance. */
+/** Whether the solver's own state has a tail, or a link, lying on its clearance. */
 function resting(spring: Spring): boolean {
   return spring.groups.some((g) =>
-    g.joints.some((j) => g.colliders.some((c, i) => c.nearest(j.cur) - j.limits[i] < 1e-4)),
+    g.joints.some((j) => {
+      const base = new THREE.Vector3().setFromMatrixPosition(j.bone.matrixWorld);
+      return g.colliders.some(
+        (c, i) =>
+          c.nearest(j.cur) - j.limits[i] < 1e-4 || c.linkDistance(base, j.cur) - j.spans[i] < 1e-4,
+      );
+    }),
   );
 }
 
