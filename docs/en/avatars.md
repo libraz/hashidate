@@ -58,11 +58,13 @@ Every object in a file is strict: an unknown key is an error naming its path, an
 | `separator` | A [pattern](#patterns) matching the dummy shapes an author puts between shape groups, with the group name in its one capture group. |
 | `gaze` | Measured eye, head and neck limits (`eyeYaw`, `eyePitch`, `headYaw`, `headPitch`, `neckYaw`, `neckPitch`). Any left out keep the engine's conservative defaults. |
 | `shapes` | Names for blink (`blink.both`, `blink.L`, `blink.R`) and viseme slots that the engine's own candidate lists do not resolve. |
+| `bones` | Bone names per slot (`hips`, `spine`, `chest`, `neck`, `head`, `eye.L`, `upperArm.R`, `toe.L` and so on), each a list. For a rig whose names no generic candidate list reaches. See [Bone names](#bone-names). |
+| `fingers` | Finger chains by key (`thumb.L`, `index.R`, …), each a list of bone names with the proximal segment first. |
 | `presets` | Finished whole-face drawings: `group` names the shape group, `exclude` lists fitting shapes that are not expressions, `emotion` maps canonical emotions to a drawing, `composition` says how a drawing shares the face with blink and speech, `hideGroup` names the group of parking shapes, `idleExclude` keeps faces away from the idle autopilot, and `label` is a [label rule](#labels). |
 | `emotionShapes` | Emotion composition in the avatar's own shape names, for a model without ARKit shapes. |
 | `mouthShapePattern` | A pattern for the shapes the mouth layer owns while speaking. |
 | `overlays` | A drawn-shape group of effects over the face, with the same `group`, `exclude` and `label` as `presets`. |
-| `materials` | `doubleSided`, `faceDecal`, `blendTransparent` and `preserveImported` as [patterns](#patterns) over material names, and `preservedPbrOverrides`, which sets `metalness`, `roughness` and optionally `reflection` for a named preserved material. |
+| `materials` | `doubleSided`, `faceDecal`, `blendTransparent` and `preserveImported` as [patterns](#patterns) over material names, and `preservedPbrOverrides`, which sets `metalness`, `roughness` and optionally `reflection` for a named preserved material. `metalness` and `roughness` must lie in 0 to 1 and `reflection` may not be negative; a file outside those ranges is rejected with the path of the value. |
 | `wardrobe` | `slots`, each with `items` (`id`, `label`, `meshes`, `hide`), plus `presets` that set a slot to an item or to `null`, and a `note` shown above the slots. |
 | `sway` | Secondary motion: `groups` with their figures and roots, and `colliders` sets that groups refer to by name. See [Sway tuning](#sway-tuning). |
 | `drive` | `tail`: which sway group is posed rather than only simulated, with `swing`, `lift` and `rest`. |
@@ -76,6 +78,23 @@ Two details sit inside sway groups and materials:
 
 - `anchor` on a sway group attaches the group's root to a point weighted across bones that are already simulated, so a part of a garment follows the skin it sits on.
 - `reflection` on a preserved PBR material sets how strongly it reflects the runtime's own studio environment. Without it the material sees only the scene environment, which is empty without a backdrop, and a metal draws dark.
+
+### Bone names
+
+For each slot the profile tries the names a file states, then its own generic candidates (VRChat, Unity, VRM and Mixamo families), and takes the first bone that exists. Stating a name overrides detection without disabling it. A finger chain is taken from `fingers` when its first two segments resolve; otherwise the generic finger patterns run.
+
+```json
+{
+  "bones": { "upperArm.L": ["Arm_Left"], "chest": ["Torso"] },
+  "fingers": { "index.L": ["IdxA_L", "IdxB_L", "IdxC_L"] }
+}
+```
+
+**Names are matched after the loader's sanitisation.** The GLB loader rewrites every node name: whitespace becomes `_` and `[ ] . : /` are dropped. A bone or mesh exported as `Body.001` is `Body001` in the scene, and `Lace Trim` is `Lace_Trim`. Names in a file, including the generic candidates, go through the same rewrite before they are compared, so either spelling works. A leading `mixamorig` is also dropped, so `mixamorig:Hips` (`mixamorigHips` once loaded) matches `Hips`. The rewrite applies to bone names in `bones`, `fingers` and to wardrobe `meshes`. Shape names (`shapes`, `hide`, `emotionShapes`) are not rewritten by the loader and are compared as written.
+
+When the GLB carries a VRM humanoid map, it is read as a `bones` override (and a `fingers` one): VRM 1.0 `VRMC_vrm.humanoid.humanBones` and VRM 0.x `VRM.humanoid.humanBones` both name the node for each humanoid bone, which is better evidence than any guess. Names a file states itself are still tried first.
+
+VRoid shapes (`Fcl_MTH_A` to `Fcl_MTH_O` for the visemes, `Fcl_EYE_Close` and its `_L`/`_R` pair for blink) are among the generic candidates.
 
 ### Patterns
 
@@ -143,6 +162,21 @@ yarn ctl wear --preset casual
 Hair, a skirt hem, a ribbon and a tail are bones with no animation of their own. Their configuration lives in the authoring tool and does not survive export, so the bones arrive in the GLB and the numbers describing how they move have to be restated in `sway`.
 
 Where the package exposes the author's own physics settings, carry those figures over. Someone chose them while watching the model move, so they are the better starting point, but they were chosen for another solver and are still checked against a render here. Where there are none, tune by eye: one group at a time, against a render, until the motion reads as cloth or hair and not as a rod.
+
+### Anchoring a group to the skin
+
+`anchor: { "source": "bone-metadata" }` takes the anchor from the group's root bone instead of from the file. The group must have exactly one explicit root in `roots` and no `childrenOf`. The anchor is a custom property named `skinPointAnchor` on that bone in the authoring tool, written out as glTF extras (the Blender exporter needs custom properties exported), and it holds an object of this shape:
+
+```json
+{
+  "influences": [
+    { "bone": "Spine_Upper", "weight": 0.7, "position": [0.0, 0.12, -0.03] },
+    { "bone": "Hips", "weight": 0.3, "position": [0.0, 0.31, -0.02] }
+  ]
+}
+```
+
+One to four influences; each `bone` names a bone that resolves uniquely and is neither the root nor below it, `weight` is not negative and the weights sum to one, and `position` is the skin point transformed by that bone's inverse bind matrix. A group whose root lacks the property, or whose anchor fails these checks, is left out and reported in the profile's missing list. The same object can be written inline as `anchor` instead.
 
 Either way the result is judged on screen. The engine's own constants were arrived at the same way, which is why a value is not changed to satisfy a test.
 

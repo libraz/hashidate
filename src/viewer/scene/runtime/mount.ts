@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { Director } from '@/engine/director';
-import { buildProfile } from '@/engine/profile';
-import { type MaterialSet, setupMaterials, Wardrobe } from '@/engine/scene';
-import type { AvatarDescriptor, Profile } from '@/engine/types';
+import { buildProfile, readVrmHumanoid, type VrmHumanoid } from '@/engine/profile';
+import { type MaterialSet, releaseTextureImages, setupMaterials, Wardrobe } from '@/engine/scene';
+import type { AvatarDescriptor, BoneOverrides, FingerOverrides, Profile } from '@/engine/types';
 import { getLocale } from '@/i18n/locale';
 import type { MessageKey } from '@/i18n/messages';
 import { translate } from '@/i18n/translate';
@@ -27,12 +27,44 @@ export interface Mounted {
   problems: string[];
 }
 
+/**
+ * Add a VRM file's own humanoid map to a descriptor.
+ *
+ * The descriptor stays authoritative: its bone names are tried first and the
+ * VRM's follow, per slot. A finger is one chain rather than a list of
+ * alternatives, so a stated chain is kept whole and the VRM supplies only the
+ * keys it leaves out.
+ */
+export function withVrmHumanoid(
+  avatar: AvatarDescriptor,
+  vrm: Pick<VrmHumanoid, 'bones' | 'fingers'>,
+): AvatarDescriptor {
+  const bones: BoneOverrides = { ...avatar.bones };
+  for (const [slot, names] of Object.entries(vrm.bones) as Array<[keyof BoneOverrides, string[]]>) {
+    bones[slot] = [...new Set([...(bones[slot] ?? []), ...names])];
+  }
+  const fingers: FingerOverrides = { ...vrm.fingers, ...avatar.fingers };
+  return { ...avatar, bones, fingers };
+}
+
+/**
+ * `gltfJson` is the file's JSON, read for a VRM humanoid map. A VRM 0.x model
+ * faces -Z, so it is turned to face +Z before anything measures it.
+ */
 export function mountAvatar(
   root: THREE.Object3D,
-  avatar: AvatarDescriptor,
+  descriptor: AvatarDescriptor,
   toon: boolean,
-  environment: THREE.Texture | null,
+  environment: () => THREE.Texture | null,
+  gltfJson?: unknown,
 ): Mounted {
+  const vrm = readVrmHumanoid(gltfJson);
+  const avatar = vrm ? withVrmHumanoid(descriptor, vrm) : descriptor;
+  if (vrm?.legacy) {
+    root.rotateY(Math.PI);
+    root.updateMatrixWorld(true);
+  }
+
   // Casts, but does not receive. The shadow the avatar throws on the wall
   // behind it is what puts it in the room rather than in front of a picture of
   // one, and costs a second pass over geometry that is already skinned.
@@ -93,36 +125,13 @@ export function disposeRawAvatar(root: THREE.Object3D): void {
   const skeletons = new Set<DisposableResource>();
   const materials = new Set<DisposableResource>();
   const textures = new Set<DisposableResource>();
-  const images = new Set<object>();
+  const owners = new Set<THREE.Texture>();
   const visited = new Set<object>();
-  const visitedImages = new Set<object>();
-
-  const collectImage = (value: unknown): void => {
-    if (!value || typeof value !== 'object') return;
-    if (Array.isArray(value)) {
-      for (const image of value) collectImage(image);
-      return;
-    }
-    const image = value as object;
-    if (visitedImages.has(image)) return;
-    visitedImages.add(image);
-    // ImageBitmap has `close`; test and host image wrappers sometimes expose
-    // `dispose` instead. Plain HTMLImageElement/canvas instances need no call:
-    // once the texture and graph references are gone they are collectible.
-    if (
-      typeof (image as { close?: unknown }).close === 'function' ||
-      typeof (image as { dispose?: unknown }).dispose === 'function'
-    ) {
-      images.add(image);
-    }
-  };
 
   const collectTexture = (value: unknown): void => {
     if (!texture(value)) return;
     if (disposable(value)) textures.add(value);
-    const source = (value as THREE.Texture & { source?: { data?: unknown } }).source?.data;
-    collectImage(source);
-    collectImage((value as THREE.Texture & { image?: unknown }).image);
+    owners.add(value);
   };
 
   const collectMaterial = (value: unknown): void => {
@@ -173,14 +182,7 @@ export function disposeRawAvatar(root: THREE.Object3D): void {
   for (const skeleton of skeletons) skeleton.dispose();
   for (const material of materials) material.dispose();
   for (const resource of textures) resource.dispose();
-  for (const image of images) {
-    const close = (image as { close?: unknown }).close;
-    if (typeof close === 'function') close.call(image);
-    else {
-      const dispose = (image as { dispose?: unknown }).dispose;
-      if (typeof dispose === 'function') dispose.call(image);
-    }
-  }
+  releaseTextureImages(owners);
 }
 
 /** Release a loaded avatar: every GPU resource it brought. */

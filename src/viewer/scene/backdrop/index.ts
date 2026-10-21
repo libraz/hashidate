@@ -37,7 +37,9 @@ import type { TextureBin } from './textures';
  * receiver, so the shadow pass has nothing to draw and costs a state change —
  * whereas toggling `shadowMap.enabled` invalidates every compiled program in
  * the scene, which is a visible hitch at exactly the moment the operator is
- * looking at the render.
+ * looking at the render. For the same reason `prewarm` compiles the state a
+ * transition is about to switch to, since the tone mapping, fog and light set
+ * it changes are all part of every program's key.
  */
 
 /** A mounted backdrop, and everything needed to take it apart. */
@@ -196,6 +198,47 @@ export class BackdropStage {
     if (!this.suspended) return;
     this.suspended = false;
     if (this.mounted) this.raise();
+  }
+
+  /**
+   * Compile the programs for the state the next `suspend` or `resume` switches
+   * to, so the transition does not recompile the avatar on the frame it happens.
+   *
+   * Compiling starts synchronously inside `compileAsync`, so the other state is
+   * only borrowed for the length of the call and put back before anything draws.
+   * The background is not part of any program and is restored by hand, since
+   * `lower` leaves it alone while suspended.
+   *
+   * `target` is where the scene is really drawn when it is not the canvas
+   * (bloom): three keys programs on the target's colour space and drops tone
+   * mapping for it, so compiling against the canvas would warm the wrong ones.
+   */
+  async prewarm(
+    camera: THREE.Camera,
+    target: THREE.WebGLRenderTarget | null = null,
+  ): Promise<void> {
+    if (!this.mounted) return;
+    const background = this.scene.background;
+    const compile = (): Promise<unknown> => {
+      if (!target) return this.renderer.compileAsync(this.scene, camera);
+      const previous = this.renderer.getRenderTarget();
+      this.renderer.setRenderTarget(target);
+      const done = this.renderer.compileAsync(this.scene, camera);
+      this.renderer.setRenderTarget(previous);
+      return done;
+    };
+    const compiles = [compile()];
+    if (this.suspended) {
+      this.raise();
+      compiles.push(compile());
+      this.lower();
+    } else {
+      this.lower();
+      compiles.push(compile());
+      this.raise();
+    }
+    this.scene.background = background;
+    await Promise.all(compiles);
   }
 
   /** Take the room down and put the scene back exactly as it was found. */

@@ -267,7 +267,7 @@ describe('avatar material conversion', () => {
           Matte: { metalness: 0.8, roughness: 0.3 },
         },
       }),
-      environment,
+      () => environment,
     );
     materials.apply(true);
     const clone = reflecting.material as THREE.MeshStandardMaterial;
@@ -281,6 +281,26 @@ describe('avatar material conversion', () => {
     const environmentDispose = vi.spyOn(environment, 'dispose');
     materials.dispose();
     expect(environmentDispose).not.toHaveBeenCalled();
+  });
+
+  it('asks for the environment only when an override wants a reflection', () => {
+    const provider = vi.fn(() => new THREE.Texture());
+    const matte = new THREE.MeshStandardMaterial();
+    matte.name = 'Matte';
+    const root = new THREE.Group().add(mesh(matte));
+
+    const materials = setupMaterials(
+      root,
+      avatar({
+        preserveImported: /^Matte$/,
+        preservedPbrOverrides: { Matte: { metalness: 0.8, roughness: 0.3 } },
+      }),
+      provider,
+    );
+    materials.apply(true);
+    materials.dispose();
+
+    expect(provider).not.toHaveBeenCalled();
   });
 
   it('moves borrowers to a rebuilt environment and still never disposes the shared map', () => {
@@ -304,7 +324,7 @@ describe('avatar material conversion', () => {
           Matte: { metalness: 0.8, roughness: 0.3 },
         },
       }),
-      lost,
+      () => lost,
     );
     materials.apply(true);
     materials.rebindEnvironment(rebuilt);
@@ -447,8 +467,26 @@ describe('avatar material conversion', () => {
     expect(flatObject.material).toBeInstanceOf(THREE.MeshToonMaterial);
     expect((flatObject.material as THREE.MeshToonMaterial).side).toBe(THREE.DoubleSide);
     expect((flatObject.material as THREE.MeshToonMaterial).alphaTest).toBe(0.25);
+    expect((flatObject.material as THREE.MeshToonMaterial).alphaToCoverage).toBe(true);
+    expect((decalObject.material as THREE.MeshToonMaterial).alphaToCoverage).toBe(false);
 
     materials.dispose();
+  });
+
+  it('closes the images behind disposed textures once, except the shared environment', () => {
+    const image = { close: vi.fn() };
+    const map = new THREE.Texture(image as unknown as HTMLImageElement);
+    const environmentImage = { close: vi.fn() };
+    const environment = new THREE.Texture(environmentImage as unknown as HTMLImageElement);
+    const source = new THREE.MeshStandardMaterial({ map });
+    const root = new THREE.Group().add(mesh(source));
+
+    const materials = setupMaterials(root, avatar(), () => environment);
+    materials.apply(true);
+    materials.dispose();
+
+    expect(image.close).toHaveBeenCalledOnce();
+    expect(environmentImage.close).not.toHaveBeenCalled();
   });
 
   it('blends fractional V054 cloth while preserving alpha-one legacy handling', () => {

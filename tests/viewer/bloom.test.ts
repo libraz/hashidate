@@ -27,6 +27,30 @@ function harness(): {
   return { stage: new BloomStage(renderer, factory), renderer, pipelines, factory };
 }
 
+describe('BloomStage target', () => {
+  it('is the pipeline target while bloom runs and null otherwise', () => {
+    const target = new THREE.WebGLRenderTarget(1, 1);
+    const renderer = {
+      getSize: (v: THREE.Vector2) => v.set(64, 64),
+      render: vi.fn(),
+    } as unknown as THREE.WebGLRenderer;
+    const stage = new BloomStage(renderer, () => ({
+      target,
+      render: vi.fn(),
+      resize: vi.fn(),
+      setSettings: vi.fn(),
+      dispose: vi.fn(),
+    }));
+    expect(stage.target).toBeNull();
+    stage.setBloom({ enabled: true });
+    stage.render(new THREE.Scene(), new THREE.PerspectiveCamera());
+    expect(stage.target).toBe(target);
+    stage.setBloom({ enabled: false });
+    expect(stage.target).toBeNull();
+    target.dispose();
+  });
+});
+
 describe('BloomStage', () => {
   it('keeps the default and zero-strength paths on direct rendering', () => {
     const { stage, renderer, factory } = harness();

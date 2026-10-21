@@ -7,5 +7,5 @@
  */
 
 export type { MaterialSet } from './materials';
-export { setupMaterials } from './materials';
+export { releaseTextureImages, setupMaterials } from './materials';
 export { Wardrobe } from './wardrobe';

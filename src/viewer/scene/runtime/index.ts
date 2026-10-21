@@ -38,7 +38,7 @@ import {
 import { SlideStage } from '../slides';
 import { FOV, ShotCamera } from './camera';
 import { buildHud, HUD_INTERVAL, type Hud } from './hud';
-import { disposeAvatar, disposeRawAvatar, mountAvatar } from './mount';
+import { disposeAvatar, disposeRawAvatar, type Mounted, mountAvatar } from './mount';
 import { bloomPort, sceneryPort, shadingPort } from './ports';
 import type { Listener, LoadedAvatar, RuntimeStatus, StageFrame } from './types';
 
@@ -84,6 +84,8 @@ export class AvatarRuntime {
   private readonly shotCamera: ShotCamera;
   /** The optional postprocess stage, allocated only after bloom is enabled. */
   private readonly bloomStage: BloomStage;
+  /** The bloom target the last prewarm was built for, null for the canvas. */
+  private warmedTarget: THREE.WebGLRenderTarget | null = null;
   /**
    * The flat background, held rather than built where it is set.
    *
@@ -210,7 +212,7 @@ export class AvatarRuntime {
     // none up the scene's background paints every pixel opaque, so this costs
     // an alpha channel nothing ever reads.
     this.embedded = window.parent !== window;
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true, alpha: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(this.pixelRatio());
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     // Above the document layer. Both are stated, because an absolutely
@@ -460,6 +462,7 @@ export class AvatarRuntime {
    */
   setBackdrop(id: string | null): void {
     this.backdrop.setBackdrop(id);
+    this.prewarm();
     // A room taken down restores the background the scene was built with, which
     // is the flat colour — right for a page somebody is looking at and wrong for
     // a source over a game capture. Re-deciding here is what keeps the two
@@ -711,16 +714,7 @@ export class AvatarRuntime {
       gltf = await this.loader.loadAsync(avatar.url);
     } catch (e) {
       if (!this.isLoadCurrent(generation, avatar.id)) return;
-      this.loading = null;
-      this.setStatus({
-        phase: 'failed',
-        avatar,
-        message: translate('console.problem.load', getLocale(), {
-          url: avatar.url,
-          reason: String(e instanceof Error ? e.message : e),
-        }),
-      });
-      this.drainQueued();
+      this.failLoad(avatar, e);
       return;
     }
 
@@ -735,48 +729,89 @@ export class AvatarRuntime {
     const root = gltf.scene;
     this.scene.add(root);
 
-    const mounted = mountAvatar(root, avatar, this.toon, this.environment.texture);
-    const { profile, director, wardrobe, materials, problems } = mounted;
+    let mounted: Mounted | undefined;
+    try {
+      mounted = mountAvatar(
+        root,
+        avatar,
+        this.toon,
+        () => this.environment.texture,
+        gltf.parser?.json,
+      );
+      const { profile, director, wardrobe, materials, problems } = mounted;
 
-    this.shotCamera.rebuild(buildFramings(root, profile, FOV));
+      this.shotCamera.rebuild(buildFramings(root, profile, FOV));
 
-    const session = new Session(director, {
-      wardrobe,
-      camera: (shot) => this.setShot(shot),
-      // A port rather than the stage itself, narrow enough that a session
-      // cannot reach anything else here — and routed through `setBackdrop` so
-      // that a room changed by a line settles the background the same way a
-      // room changed from the console does. See `sceneryPort`. A new session is
-      // built on every avatar swap and the room it is handed is the one already
-      // standing — the set does not change because the actor did.
-      scenery: sceneryPort(this),
-      voice: this.voice,
-      // The renderer's own switch, narrowed to a port for the same reason the
-      // backdrop is: a session tuning the shading has to be able to say so
-      // without being handed everything else that draws.
-      shading: shadingPort(this),
-      // Bloom is a renderer option on the same footing as shading. Its report
-      // returns the whole resolved state so the panel and control heartbeat
-      // stay in step with changes made by a session line.
-      bloom: bloomPort(this),
-      // The document layer directly, on the same footing as the backdrop: it is
-      // already exactly the port, and it survives an avatar swap because what
-      // is being presented has nothing to do with who is presenting it.
-      slides: this.slides,
-      // The frame's layout, which is neither of the two above — it moves both
-      // of them, and the character's half is the canvas rather than the scene.
-      // It answers from what is being drawn rather than from what it was told,
-      // which is the only version a panel can be drawn at.
-      composition: {
-        setPlacement: (placement) => this.setPlacement(placement),
-        report: () => this.placement,
-      },
-    });
+      const session = new Session(director, {
+        wardrobe,
+        camera: (shot) => this.setShot(shot),
+        // A port rather than the stage itself, narrow enough that a session
+        // cannot reach anything else here — and routed through `setBackdrop` so
+        // that a room changed by a line settles the background the same way a
+        // room changed from the console does. See `sceneryPort`. A new session is
+        // built on every avatar swap and the room it is handed is the one already
+        // standing — the set does not change because the actor did.
+        scenery: sceneryPort(this),
+        voice: this.voice,
+        // The renderer's own switch, narrowed to a port for the same reason the
+        // backdrop is: a session tuning the shading has to be able to say so
+        // without being handed everything else that draws.
+        shading: shadingPort(this),
+        // Bloom is a renderer option on the same footing as shading. Its report
+        // returns the whole resolved state so the panel and control heartbeat
+        // stay in step with changes made by a session line.
+        bloom: bloomPort(this),
+        // The document layer directly, on the same footing as the backdrop: it is
+        // already exactly the port, and it survives an avatar swap because what
+        // is being presented has nothing to do with who is presenting it.
+        slides: this.slides,
+        // The frame's layout, which is neither of the two above — it moves both
+        // of them, and the character's half is the canvas rather than the scene.
+        // It answers from what is being drawn rather than from what it was told,
+        // which is the only version a panel can be drawn at.
+        composition: {
+          setPlacement: (placement) => this.setPlacement(placement),
+          report: () => this.placement,
+        },
+      });
 
-    this.current = { avatar, root, profile, director, session, wardrobe, materials, problems };
+      this.current = { avatar, root, profile, director, session, wardrobe, materials, problems };
+    } catch (e) {
+      // Nothing is published yet: take the half-built avatar back out so the
+      // queue can move on instead of waiting on a load that already ended.
+      this.scene.remove(root);
+      mounted?.materials.dispose();
+      disposeRawAvatar(root);
+      this.failLoad(avatar, e);
+      return;
+    }
     this.showAvatar();
     this.resize();
+    this.prewarm();
     this.setStatus({ phase: 'ready', loaded: this.current });
+    this.drainQueued();
+  }
+
+  /**
+   * Compile the programs a slide or room transition will need, now rather than
+   * on the frame it happens. A failed warm-up costs only that hitch.
+   */
+  private prewarm(): void {
+    if (this.disposed) return;
+    this.backdrop.prewarm(this.camera, this.bloomStage.target).catch(() => {});
+  }
+
+  /** Report a load that ended without an avatar, then start whatever was waiting. */
+  private failLoad(avatar: AvatarDescriptor, e: unknown): void {
+    this.loading = null;
+    this.setStatus({
+      phase: 'failed',
+      avatar,
+      message: translate('console.problem.load', getLocale(), {
+        url: avatar.url,
+        reason: String(e instanceof Error ? e.message : e),
+      }),
+    });
     this.drainQueued();
   }
 
@@ -897,6 +932,12 @@ export class AvatarRuntime {
     }
 
     this.bloomStage.render(this.scene, this.camera);
+    // The composer exists from the first bloom frame, and its target is what the
+    // scene's programs are keyed on, so warm again when it appears or goes.
+    if (this.bloomStage.target !== this.warmedTarget) {
+      this.warmedTarget = this.bloomStage.target;
+      this.prewarm();
+    }
 
     // After the render and inside the same frame, which is the whole contract:
     // the drawing buffer is readable here and is gone by the next tick. See

@@ -8,6 +8,8 @@ import { BLOOM_DEFAULTS, BLOOM_RANGES } from '@/engine/types';
 
 /** The renderer resources owned by one active bloom configuration. */
 export interface BloomPipeline {
+  /** The target the scene is drawn into, for compiling against the right program keys. */
+  readonly target?: THREE.WebGLRenderTarget;
   render(scene: THREE.Scene, camera: THREE.Camera): void;
   resize(width: number, height: number): void;
   setSettings(settings: BloomSettings): void;
@@ -85,6 +87,11 @@ export class BloomStage {
   }
 
   /** The complete settings used by the runtime and its control surfaces. */
+  /** Where the scene is drawn while bloom is on, or null when it goes to the canvas. */
+  get target(): THREE.WebGLRenderTarget | null {
+    return this.pipeline?.target ?? null;
+  }
+
   report(): BloomSettings {
     return { ...this.settings };
   }
@@ -140,7 +147,6 @@ function createBloomPipeline(
   const target = new THREE.WebGLRenderTarget(1, 1, {
     type: THREE.HalfFloatType,
     depthBuffer: true,
-    stencilBuffer: true,
     samples,
   });
   target.texture.name = 'BloomStage.rt1';
@@ -199,6 +205,7 @@ function createBloomPipeline(
   let pixelRatio = renderer.getPixelRatio();
 
   return {
+    target,
     render(nextScene, nextCamera) {
       // Keep the pass current if its caller changes the scene or camera.
       renderPass.scene = nextScene;

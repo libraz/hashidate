@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { BackdropStage } from '@/viewer/scene/backdrop';
 import { fbm, mulberry32 } from '@/viewer/scene/backdrop/noise';
 import { ROOM, WINDOW } from '@/viewer/scene/backdrop/parts';
@@ -166,6 +166,81 @@ const restored = (s: Mountable) => {
   const { background, ...rest } = captured(s);
   return rest;
 };
+
+describe('compiling ahead of a transition', () => {
+  const room = PATTERNS[0].id;
+
+  /** What the scene looked like at each `compileAsync`, in order. */
+  function recording(s: Mountable): { lights: boolean[]; fog: boolean[] } {
+    const seen = { lights: [] as boolean[], fog: [] as boolean[] };
+    (s.renderer as unknown as { compileAsync: () => Promise<void> }).compileAsync = async () => {
+      seen.lights.push(s.lights.visible);
+      seen.fog.push(s.scene.fog !== null);
+    };
+    return seen;
+  }
+
+  it('compiles both states and leaves a raised room as it found it', async () => {
+    const s = mountable();
+    s.backdrop.setBackdrop(room);
+    const seen = recording(s);
+    const before = captured(s);
+
+    await s.backdrop.prewarm(new THREE.PerspectiveCamera());
+
+    expect(seen.lights).toEqual([false, true]);
+    expect(captured(s)).toEqual(before);
+  });
+
+  it('compiles the room while suspended and leaves it away', async () => {
+    const s = mountable();
+    s.backdrop.setBackdrop(room);
+    s.backdrop.suspend();
+    s.scene.background = null;
+    const seen = recording(s);
+    const before = captured(s);
+
+    await s.backdrop.prewarm(new THREE.PerspectiveCamera());
+
+    expect(seen.lights).toEqual([true, false]);
+    expect(captured(s)).toEqual(before);
+  });
+
+  it('compiles against the bloom target when one is given, and puts the target back', async () => {
+    const s = mountable();
+    s.backdrop.setBackdrop(room);
+    const target = new THREE.WebGLRenderTarget(1, 1);
+    let bound: THREE.WebGLRenderTarget | null = null;
+    const seen: Array<THREE.WebGLRenderTarget | null> = [];
+    Object.assign(s.renderer, {
+      getRenderTarget: () => bound,
+      setRenderTarget: (t: THREE.WebGLRenderTarget | null) => {
+        bound = t;
+      },
+      compileAsync: async () => {},
+    });
+    const compile = vi.spyOn(
+      s.renderer as unknown as { compileAsync: () => Promise<void> },
+      'compileAsync',
+    );
+    compile.mockImplementation(async () => {
+      seen.push(bound);
+    });
+
+    await s.backdrop.prewarm(new THREE.PerspectiveCamera(), target);
+
+    expect(seen).toEqual([target, target]);
+    expect(bound).toBeNull();
+    target.dispose();
+  });
+
+  it('does nothing with no room standing', async () => {
+    const s = mountable();
+    const seen = recording(s);
+    await s.backdrop.prewarm(new THREE.PerspectiveCamera());
+    expect(seen.lights).toEqual([]);
+  });
+});
 
 describe('putting the room away for a document', () => {
   const room = PATTERNS[0].id;

@@ -67,7 +67,8 @@ function bareRuntime(loader: { loadAsync: (url: string) => Promise<unknown> }): 
     audio: { dispose: vi.fn() },
     slides: { dispose: vi.fn() },
     backdrop: { dispose: vi.fn() },
-    environment: { dispose: vi.fn() },
+    environment: { dispose: vi.fn(), texture: null },
+    toon: true,
     shotCamera: { dispose: vi.fn() },
   });
   return runtime;
@@ -168,6 +169,44 @@ describe('avatar load teardown', () => {
     lone.reject(new Error('absent'));
     await only;
     expect(seen).toEqual([true, false]);
+  });
+});
+
+describe('avatar mount failure', () => {
+  it('releases the root, reports the failure and starts the queued load', async () => {
+    const calls: string[] = [];
+    const root = new THREE.Group();
+    const runtime = bareRuntime({
+      loadAsync: async (url) => {
+        calls.push(url);
+        return { scene: url === '/broken.glb' ? root : new THREE.Group() };
+      },
+    });
+    const added: unknown[] = [];
+    const removed: unknown[] = [];
+    Object.assign(runtime as object, {
+      scene: { add: (o: unknown) => added.push(o), remove: (o: unknown) => removed.push(o) },
+    });
+    const statuses: RuntimeStatus[] = [];
+    runtime.onStatus((status) => statuses.push(status));
+
+    // Out-of-range PBR override: `setupMaterials` throws after the root is in the scene.
+    const broken: AvatarDescriptor = {
+      ...avatar('broken'),
+      materials: { preservedPbrOverrides: { Metal: { metalness: 2, roughness: 0 } } },
+    };
+    const first = runtime.load(broken);
+    void runtime.load(avatar('next'));
+    await first;
+    await Promise.resolve();
+
+    expect(added[0]).toBe(root);
+    expect(removed[0]).toBe(root);
+    const failed = statuses.find((status) => status.phase === 'failed');
+    expect(failed).toMatchObject({ phase: 'failed', avatar: { id: 'broken' } });
+    expect(JSON.stringify(failed)).toContain('Invalid preserved PBR override');
+    expect(calls).toContain('/next.glb');
+    expect((runtime as unknown as { current: unknown }).current).toBeNull();
   });
 });
 

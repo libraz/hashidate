@@ -133,6 +133,30 @@ describe('fractional material shadows', () => {
     materials.dispose();
   });
 
+  it('recompiles the shadow program only when its alpha mode or source changes', () => {
+    const source = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.5 });
+    source.name = 'Cloth';
+    const object = shadowMesh(source);
+    const root = new THREE.Group().add(object);
+    const materials = setupMaterials(root, avatar({ blendTransparent: /^Cloth$/ }));
+    materials.apply(true);
+    const depth = object.customDepthMaterial as THREE.MeshDepthMaterial;
+
+    renderShadow(root, new THREE.DirectionalLight());
+    const compiled = depth.version;
+    expect(compiled).toBeGreaterThan(0);
+
+    renderShadow(root, new THREE.DirectionalLight());
+    expect(depth.version).toBe(compiled);
+
+    const toon = object.material as THREE.Material;
+    toon.opacity = 0.25;
+    const draw = renderShadow(root, new THREE.DirectionalLight())[0];
+    expect(draw.uniformValues.shadowOpacity).toBe(0.25);
+    expect(depth.version).toBe(compiled);
+    materials.dispose();
+  });
+
   it('selects the current material for every mixed geometry group', () => {
     const map = new THREE.Texture();
     const alphaMap = new THREE.Texture();
@@ -252,6 +276,24 @@ describe('fractional material shadows', () => {
     materials.dispose();
     expect(customDepthDispose).not.toHaveBeenCalled();
     expect(customDistanceDispose).not.toHaveBeenCalled();
+  });
+
+  it('keeps the tuned cutout threshold on a mesh with no blended slot, and unhooks on dispose', () => {
+    const cutout = new THREE.MeshStandardMaterial({
+      map: new THREE.Texture(),
+      transparent: true,
+      alphaTest: 0.25,
+    });
+    const object = shadowMesh(cutout);
+    const root = new THREE.Group().add(object);
+    const materials = setupMaterials(root, avatar());
+    materials.apply(true);
+
+    for (const light of [new THREE.DirectionalLight(), new THREE.PointLight()]) {
+      expect(renderShadow(root, light)[0].alphaTest).toBe(0.25);
+    }
+    materials.dispose();
+    expect(Object.hasOwn(object, 'onBeforeShadow')).toBe(false);
   });
 
   it('does not draw a hidden fractional mesh into a shadow map', () => {

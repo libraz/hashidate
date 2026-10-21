@@ -126,6 +126,7 @@ function applyAlphaRules(
     // intact; higher values eat their semi-transparent fabric.
     m.transparent = false;
     m.alphaTest = 0.25;
+    m.alphaToCoverage = true;
     m.depthWrite = true;
   }
 }
@@ -139,6 +140,34 @@ function applyAlphaRules(
  */
 const isTexture = (v: unknown): v is THREE.Texture =>
   !!v && (v as THREE.Texture).isTexture === true;
+
+/**
+ * Close the decoded images behind textures that are being disposed.
+ *
+ * `Texture.dispose()` frees the GPU copy only; an `ImageBitmap` from the glTF
+ * loader keeps its pixels until closed. Hosts and test doubles sometimes wrap
+ * an image with `dispose` instead of `close`. Plain image elements and canvases
+ * need no call. Call after the textures are disposed, once per set.
+ */
+export function releaseTextureImages(textures: Iterable<THREE.Texture>): void {
+  const seen = new Set<object>();
+  const release = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const image of value) release(image);
+      return;
+    }
+    if (seen.has(value)) return;
+    seen.add(value);
+    const { close, dispose } = value as { close?: unknown; dispose?: unknown };
+    if (typeof close === 'function') close.call(value);
+    else if (typeof dispose === 'function') dispose.call(value);
+  };
+  for (const t of textures) {
+    release(t.source?.data);
+    release(t.image);
+  }
+}
 
 /** Reject malformed descriptor data before touching the imported object graph. */
 function validatePbrOverrides(overrides: Record<string, PbrScalarOverride> | undefined): void {
@@ -167,7 +196,7 @@ function overriddenPbr(
   src: THREE.Material,
   override: PbrScalarOverride,
   clones: Map<THREE.Material, THREE.Material>,
-  environment: THREE.Texture | null,
+  environment: () => THREE.Texture | null,
 ): THREE.Material {
   if (!(src instanceof THREE.MeshStandardMaterial)) return src;
   const cached = clones.get(src);
@@ -176,8 +205,9 @@ function overriddenPbr(
   const clone = src.clone();
   clone.metalness = override.metalness;
   clone.roughness = override.roughness;
-  if (override.reflection !== undefined && environment) {
-    clone.envMap = environment;
+  const envMap = override.reflection !== undefined ? environment() : null;
+  if (override.reflection !== undefined && envMap) {
+    clone.envMap = envMap;
     clone.envMapIntensity = override.reflection;
   }
   clone.needsUpdate = true;
@@ -188,12 +218,13 @@ function overriddenPbr(
 /**
  * Build the descriptor-defined toon presentation and return a restore handle.
  * Preserved imported slots remain original materials in toon mode.
- * `environment` is the runtime's shared reflection map; the handle never disposes it.
+ * `environment` provides the runtime's shared reflection map, and is called only
+ * when a descriptor override asks for a reflection; the handle never disposes it.
  */
 export function setupMaterials(
   root: THREE.Object3D,
   avatar?: AvatarDescriptor,
-  environment: THREE.Texture | null = null,
+  environment: () => THREE.Texture | null = () => null,
 ): MaterialSet {
   const preservedPbrOverrides = avatar?.materials?.preservedPbrOverrides;
   validatePbrOverrides(preservedPbrOverrides);
@@ -208,7 +239,11 @@ export function setupMaterials(
   const original = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
   const toon = new Map<THREE.Mesh, THREE.Material[]>();
   const preservedClones = new Map<THREE.Material, THREE.Material>();
-  let shared = environment;
+  let shared: THREE.Texture | null = null;
+  const sharedEnvironment = (): THREE.Texture | null => {
+    shared ??= environment();
+    return shared;
+  };
 
   // First collect the exact imported references and retain the existing mesh
   // flags. These source materials are fixed before any variants are cloned.
@@ -242,7 +277,12 @@ export function setupMaterials(
         const name = m.name || '';
         if (!rules.preserveImported.test(name)) return toToon(m, rules);
         if (!Object.hasOwn(rules.preservedPbrOverrides, name)) return m;
-        return overriddenPbr(m, rules.preservedPbrOverrides[name], preservedClones, environment);
+        return overriddenPbr(
+          m,
+          rules.preservedPbrOverrides[name],
+          preservedClones,
+          sharedEnvironment,
+        );
       }),
     );
   }
@@ -295,6 +335,7 @@ export function setupMaterials(
     for (const orig of original.values()) {
       for (const m of Array.isArray(orig) ? orig : [orig]) release(m);
     }
+    releaseTextureImages(seenTextures);
     toon.clear();
     original.clear();
     preservedClones.clear();

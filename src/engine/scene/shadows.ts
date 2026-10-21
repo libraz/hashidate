@@ -32,6 +32,10 @@ const hasFractionalBlend = (material: ShadowSourceMaterial | null, matches: RegE
   );
 };
 
+/** Three draws an alpha-to-coverage cutout's shadow at a fixed 0.5; its own threshold is tuned. */
+const isCutout = (material: ShadowSourceMaterial | null): boolean =>
+  material?.alphaToCoverage === true && material.alphaTest > 0;
+
 const sourceKey = (material: ShadowSourceMaterial | null): string => {
   if (!material) return 'none';
   const map = material.map?.uuid ?? 'none';
@@ -92,6 +96,10 @@ export function installTransparentShadowMaterials(
     material.customProgramCacheKey = () => `hashidate-shadow:${activeKey.value}`;
   };
 
+  // What each target was last compiled for. Only a change here needs a new
+  // program; the opacity uniform is read live.
+  const applied = new WeakMap<ShadowMaterial, { hash: boolean; key: string }>();
+
   const sync = (
     target: ShadowMaterial,
     source: ShadowSourceMaterial | null,
@@ -101,10 +109,27 @@ export function installTransparentShadowMaterials(
     // Three has already copied the current slot's masks, culling, clipping and
     // displacement. Only blend coverage is missing from its shadow material.
     const fractional = hasFractionalBlend(source, blendTransparent);
+    const key = sourceKey(source);
     target.alphaHash = fractional;
     opacity.value = fractional ? (source?.opacity ?? 1) : 1;
-    activeKey.value = sourceKey(source);
+    activeKey.value = key;
+    const last = applied.get(target);
+    if (last?.hash === fractional && last.key === key) return;
+    applied.set(target, { hash: fractional, key });
     target.needsUpdate = true;
+  };
+
+  const thresholds = new Map<THREE.Mesh, { priorHook: ShadowHook; hadOwnHook: boolean }>();
+
+  // For a mesh with no fractional blend: only the cutout's own threshold is put back.
+  const holdThreshold = (object: THREE.Mesh): void => {
+    const priorHook = object.onBeforeShadow;
+    thresholds.set(object, { priorHook, hadOwnHook: Object.hasOwn(object, 'onBeforeShadow') });
+    object.onBeforeShadow = (r, current, camera, shadowCamera, geometry, depth, group) => {
+      const source = materialAt(object, group as ShadowGroup);
+      if (source && isCutout(source)) depth.alphaTest = source.alphaTest;
+      priorHook.call(current, r, current, camera, shadowCamera, geometry, depth, group);
+    };
   };
 
   root.traverse((object) => {
@@ -115,6 +140,9 @@ export function installTransparentShadowMaterials(
         hasFractionalBlend(material as ShadowSourceMaterial, blendTransparent),
       )
     ) {
+      if (sources.some((material) => isCutout(material as ShadowSourceMaterial))) {
+        holdThreshold(object);
+      }
       return;
     }
 
@@ -163,6 +191,7 @@ export function installTransparentShadowMaterials(
       const target = depthMaterial as ShadowMaterial;
       const opacity = target instanceof THREE.MeshDistanceMaterial ? distanceOpacity : depthOpacity;
       sync(target, source, opacity, activeKey);
+      if (source && isCutout(source)) target.alphaTest = source.alphaTest;
       priorHook.call(
         currentObject,
         renderer,
@@ -189,6 +218,11 @@ export function installTransparentShadowMaterials(
         record.distance.dispose();
       }
       owned.clear();
+      for (const [mesh, record] of thresholds) {
+        if (record.hadOwnHook) mesh.onBeforeShadow = record.priorHook;
+        else delete (mesh as unknown as { onBeforeShadow?: ShadowHook }).onBeforeShadow;
+      }
+      thresholds.clear();
     },
   };
 }
