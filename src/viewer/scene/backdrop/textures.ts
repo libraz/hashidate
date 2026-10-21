@@ -122,6 +122,50 @@ export interface PbrMaps {
   roughness: THREE.Texture | null;
 }
 
+/** One decoded image per path and bin, and the clones waiting for it to arrive. */
+interface SharedImage {
+  source: THREE.Texture;
+  clones: THREE.Texture[];
+  loaded: boolean;
+}
+
+const sharedImages = new WeakMap<TextureBin, Map<string, SharedImage>>();
+
+function sharedImage(bin: TextureBin, path: string, color: boolean): SharedImage {
+  let byPath = sharedImages.get(bin);
+  if (!byPath) {
+    byPath = new Map();
+    sharedImages.set(bin, byPath);
+  }
+  const known = byPath.get(path);
+  if (known) return known;
+
+  const entry: SharedImage = {
+    source: new THREE.TextureLoader().load(path, () => {
+      entry.loaded = true;
+      // A clone has its own version, so the loader's update of the original
+      // does not reach it.
+      for (const clone of entry.clones) clone.needsUpdate = true;
+      entry.clones.length = 0;
+    }),
+    clones: [],
+    loaded: false,
+  };
+  entry.source.colorSpace = color ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  entry.source.wrapS = THREE.RepeatWrapping;
+  entry.source.wrapT = THREE.RepeatWrapping;
+  entry.source.anisotropy = 16;
+  // Never drawn itself, only cloned; binned so it goes with the room.
+  bin.push(entry.source);
+  byPath.set(path, entry);
+  return entry;
+}
+
+/**
+ * A map with its own repeat over an image shared by every map of that path in
+ * the bin. Clones share one `Source`, so the image uploads once however many
+ * materials ask for it.
+ */
 function externalMap(
   bin: TextureBin,
   path: string,
@@ -130,12 +174,11 @@ function externalMap(
   color: boolean,
 ): THREE.Texture | null {
   if (typeof document === 'undefined') return null;
-  const texture = new THREE.TextureLoader().load(path);
-  texture.colorSpace = color ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
+  const entry = sharedImage(bin, path, color);
+  const texture = entry.source.clone();
   texture.repeat.set(repeatX, repeatY);
-  texture.anisotropy = 16;
+  if (entry.loaded) texture.needsUpdate = true;
+  else entry.clones.push(texture);
   bin.push(texture);
   return texture;
 }
