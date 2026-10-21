@@ -197,6 +197,9 @@ export class AvatarRuntime {
    */
   private loading: string | null = null;
 
+  /** The avatar mounted but kept out of the picture until its programs are compiled. */
+  private warming: LoadedAvatar | null = null;
+
   /** A swap asked for while another was in flight. Started when that one lands. */
   private queued: AvatarDescriptor | null = null;
   /** Invalidates every load continuation once teardown starts. */
@@ -462,7 +465,7 @@ export class AvatarRuntime {
    */
   setBackdrop(id: string | null): void {
     this.backdrop.setBackdrop(id);
-    this.prewarm();
+    void this.prewarm();
     // A room taken down restores the background the scene was built with, which
     // is the flat colour — right for a page somebody is looking at and wrong for
     // a source over a game capture. Re-deciding here is what keeps the two
@@ -580,6 +583,7 @@ export class AvatarRuntime {
       this.backdrop.suspend();
       this.scene.background = null;
       this.renderer.setClearAlpha(0);
+      this.bloomStage.setOpaque(false);
       return;
     }
     this.backdrop.resume();
@@ -587,10 +591,12 @@ export class AvatarRuntime {
     // room is the flat colour, or nothing, and the source says which.
     if (this.backdrop.current !== null) {
       this.renderer.setClearAlpha(1);
+      this.bloomStage.setOpaque(true);
       return;
     }
     this.scene.background = this.transparent ? null : this.flat;
     this.renderer.setClearAlpha(this.transparent ? 0 : 1);
+    this.bloomStage.setOpaque(!this.transparent);
   }
 
   /**
@@ -679,7 +685,8 @@ export class AvatarRuntime {
    * character comes back mid-gesture, and the room around it stays up.
    */
   private showAvatar(): void {
-    if (this.current) this.current.root.visible = this.avatarPlacement.visible;
+    const cur = this.current;
+    if (cur) cur.root.visible = this.avatarPlacement.visible && cur !== this.warming;
   }
 
   // --- loading --------------------------------------------------------------
@@ -785,20 +792,39 @@ export class AvatarRuntime {
       this.failLoad(avatar, e);
       return;
     }
+    // Hidden until compiled against the real target, so the first frame it is
+    // drawn on does not compile every skinned and morphed program in one go.
+    const loaded = this.current;
+    this.warming = loaded;
     this.showAvatar();
     this.resize();
-    this.prewarm();
-    this.setStatus({ phase: 'ready', loaded: this.current });
+    await this.prewarm();
+    if (this.warming === loaded) this.warming = null;
+    if (this.disposed || this.current !== loaded) return;
+    this.showAvatar();
+    this.setStatus({ phase: 'ready', loaded });
     this.drainQueued();
   }
 
   /**
-   * Compile the programs a slide or room transition will need, now rather than
-   * on the frame it happens. A failed warm-up costs only that hitch.
+   * Compile the programs an avatar, a slide or a room transition will need, now
+   * rather than on the frame it happens, for both material sets so the shading
+   * toggle does not compile either. A failed warm-up costs only that hitch.
+   *
+   * `BackdropStage.prewarm` starts compiling inside the call, so the other set
+   * is only on the avatar for that long.
    */
-  private prewarm(): void {
+  private async prewarm(): Promise<void> {
     if (this.disposed) return;
-    this.backdrop.prewarm(this.camera, this.bloomStage.target).catch(() => {});
+    const target = this.bloomStage.target;
+    const compiles = [this.backdrop.prewarm(this.camera, target)];
+    const materials = this.current?.materials;
+    if (materials) {
+      materials.apply(!this.toon);
+      compiles.push(this.backdrop.prewarm(this.camera, target));
+      materials.apply(this.toon);
+    }
+    await Promise.all(compiles).catch(() => {});
   }
 
   /** Report a load that ended without an avatar, then start whatever was waiting. */
@@ -936,7 +962,7 @@ export class AvatarRuntime {
     // scene's programs are keyed on, so warm again when it appears or goes.
     if (this.bloomStage.target !== this.warmedTarget) {
       this.warmedTarget = this.bloomStage.target;
-      this.prewarm();
+      void this.prewarm();
     }
 
     // After the render and inside the same frame, which is the whole contract:

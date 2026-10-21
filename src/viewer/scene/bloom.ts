@@ -13,6 +13,8 @@ export interface BloomPipeline {
   render(scene: THREE.Scene, camera: THREE.Camera): void;
   resize(width: number, height: number): void;
   setSettings(settings: BloomSettings): void;
+  /** Whether the stage behind the scene is opaque. See {@link BloomStage.setOpaque}. */
+  setOpaque(opaque: boolean): void;
   dispose(): void;
 }
 
@@ -38,6 +40,12 @@ export interface BloomStageOptions {
  * The composer and its render targets do not exist until the first enabled,
  * nonzero-strength frame. With bloom off, `render` calls the renderer's
  * ordinary path directly, preserving its output and cost.
+ *
+ * It is also where the canvas alpha is decided. Alpha-to-coverage cutouts are
+ * opaque draws that store their fractional edge alpha in every sample they
+ * cover, and WebGL has no sample-alpha-to-one to stop them, so the alpha the
+ * scene leaves is not coverage. Over an opaque stage the colour is already
+ * the finished composite and the output writes alpha 1.
  */
 export class BloomStage {
   private settings: BloomSettings = { ...BLOOM_DEFAULTS };
@@ -45,6 +53,7 @@ export class BloomStage {
   private width: number;
   private height: number;
   private disposed = false;
+  private opaque = false;
   private readonly multisample: boolean;
 
   constructor(
@@ -86,12 +95,23 @@ export class BloomStage {
     this.pipeline?.setSettings({ ...next });
   }
 
-  /** The complete settings used by the runtime and its control surfaces. */
+  /**
+   * Whether a room or a flat colour fills the stage, so the output is opaque.
+   * False while a document or a keyed source shows through the canvas, where
+   * the scene's own premultiplied alpha is passed on.
+   */
+  setOpaque(opaque: boolean): void {
+    if (this.disposed) return;
+    this.opaque = opaque;
+    this.pipeline?.setOpaque(opaque);
+  }
+
   /** Where the scene is drawn while bloom is on, or null when it goes to the canvas. */
   get target(): THREE.WebGLRenderTarget | null {
     return this.pipeline?.target ?? null;
   }
 
+  /** The complete settings used by the runtime and its control surfaces. */
   report(): BloomSettings {
     return { ...this.settings };
   }
@@ -101,6 +121,7 @@ export class BloomStage {
     if (this.disposed) return;
     if (!this.settings.enabled || this.settings.strength === 0) {
       this.renderer.render(scene, camera);
+      if (this.opaque) fillAlpha(this.renderer);
       return;
     }
 
@@ -113,6 +134,7 @@ export class BloomStage {
         { width: this.width, height: this.height },
         this.multisample,
       );
+      this.pipeline.setOpaque(this.opaque);
     }
     this.pipeline.render(scene, camera);
   }
@@ -128,6 +150,17 @@ export class BloomStage {
     this.pipeline?.dispose();
     this.pipeline = null;
   }
+}
+
+/** Set every sample's alpha in the bound framebuffer to 1, leaving colour alone. */
+function fillAlpha(renderer: THREE.WebGLRenderer): void {
+  const gl = renderer.getContext();
+  gl.colorMask(false, false, false, true);
+  gl.clearColor(0, 0, 0, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.colorMask(true, true, true, true);
+  // Both calls went around three's state cache; make it re-issue its own.
+  renderer.state.buffers.color.reset();
 }
 
 function bounded(value: number, range: { min: number; max: number }): number {
@@ -164,7 +197,7 @@ function createBloomPipeline(
   );
   const outputPass = new ShaderPass(
     new THREE.ShaderMaterial({
-      uniforms: { tDiffuse: { value: null } },
+      uniforms: { tDiffuse: { value: null }, opaque: { value: false } },
       vertexShader: /* glsl */ `
         varying vec2 vUv;
 
@@ -175,12 +208,15 @@ function createBloomPipeline(
       `,
       fragmentShader: /* glsl */ `
         uniform sampler2D tDiffuse;
+        uniform bool opaque;
         varying vec2 vUv;
 
         void main() {
           vec4 color = texture2D(tDiffuse, vUv);
-          float alpha = clamp(color.a, 0.0, 1.0);
-          vec3 rgb = alpha > 0.0 ? color.rgb / alpha : vec3(0.0);
+          // Over an opaque stage the colour is already composited and the alpha
+          // is cutout edge residue, so it is neither divided out nor kept.
+          float alpha = opaque ? 1.0 : clamp(color.a, 0.0, 1.0);
+          vec3 rgb = opaque ? color.rgb : alpha > 0.0 ? color.rgb / alpha : vec3(0.0);
           gl_FragColor = vec4(rgb, alpha);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
@@ -226,6 +262,9 @@ function createBloomPipeline(
       bloomPass.strength = next.strength;
       bloomPass.radius = next.radius;
       bloomPass.threshold = next.threshold;
+    },
+    setOpaque(opaque) {
+      outputPass.uniforms.opaque.value = opaque;
     },
     dispose() {
       // UnrealBloomPass 0.186 leaves this one shader material out of its own

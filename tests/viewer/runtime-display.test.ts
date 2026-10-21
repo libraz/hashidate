@@ -7,6 +7,7 @@ import { AvatarRuntime } from '@/viewer/scene/runtime';
 type Internals = {
   fps: number;
   tick(): void;
+  updateBackground(): void;
   resize(): void;
   watchPixelRatio(): void;
   applyPixelRatio(): void;
@@ -100,5 +101,30 @@ describe('display pixel ratio', () => {
     runtime.applyPixelRatio();
 
     expect(setPixelRatio).toHaveBeenLastCalledWith(1);
+  });
+});
+
+describe('output alpha follows the background', () => {
+  function background(state: { documentUp: boolean; room: string | null; transparent: boolean }) {
+    const setOpaque = vi.fn();
+    const runtime = bareRuntime({
+      slides: { up: state.documentUp },
+      backdrop: { suspend: vi.fn(), resume: vi.fn(), current: state.room },
+      scene: new THREE.Scene(),
+      flat: new THREE.Color(0x0f1115),
+      transparent: state.transparent,
+      renderer: { setClearAlpha: vi.fn() },
+      bloomStage: { render: vi.fn(), setOpaque },
+    });
+    runtime.updateBackground();
+    return setOpaque.mock.calls.at(-1)?.[0];
+  }
+
+  it('is opaque behind a room or the flat colour, and not over a document or for keying', () => {
+    expect(background({ documentUp: false, room: 'study', transparent: false })).toBe(true);
+    expect(background({ documentUp: false, room: 'study', transparent: true })).toBe(true);
+    expect(background({ documentUp: false, room: null, transparent: false })).toBe(true);
+    expect(background({ documentUp: false, room: null, transparent: true })).toBe(false);
+    expect(background({ documentUp: true, room: 'study', transparent: false })).toBe(false);
   });
 });

@@ -201,8 +201,9 @@ export class BackdropStage {
   }
 
   /**
-   * Compile the programs for the state the next `suspend` or `resume` switches
-   * to, so the transition does not recompile the avatar on the frame it happens.
+   * Compile the programs for the scene as it stands and, with a room standing,
+   * for the state the next `suspend` or `resume` switches to, so neither a new
+   * avatar nor the transition compiles on the frame it is first drawn.
    *
    * Compiling starts synchronously inside `compileAsync`, so the other state is
    * only borrowed for the length of the call and put back before anything draws.
@@ -217,7 +218,6 @@ export class BackdropStage {
     camera: THREE.Camera,
     target: THREE.WebGLRenderTarget | null = null,
   ): Promise<void> {
-    if (!this.mounted) return;
     const background = this.scene.background;
     const compile = (): Promise<unknown> => {
       if (!target) return this.renderer.compileAsync(this.scene, camera);
@@ -228,6 +228,10 @@ export class BackdropStage {
       return done;
     };
     const compiles = [compile()];
+    if (!this.mounted) {
+      await Promise.all(compiles);
+      return;
+    }
     if (this.suspended) {
       this.raise();
       compiles.push(compile());

@@ -3,15 +3,30 @@ import { describe, expect, it, vi } from 'vitest';
 import { BLOOM_DEFAULTS } from '@/engine/types';
 import { type BloomPipeline, type BloomPipelineFactory, BloomStage } from '@/viewer/scene/bloom';
 
+/** The raw GL calls the direct path may make, in order. */
+type GlCall = [string, ...unknown[]];
+
 function harness(): {
   stage: BloomStage;
   renderer: THREE.WebGLRenderer;
   pipelines: BloomPipeline[];
   factory: BloomPipelineFactory;
+  gl: GlCall[];
+  resetColor: ReturnType<typeof vi.fn>;
 } {
+  const gl: GlCall[] = [];
+  const resetColor = vi.fn();
+  const context = {
+    COLOR_BUFFER_BIT: 0x4000,
+    colorMask: (...args: unknown[]) => gl.push(['colorMask', ...args]),
+    clearColor: (...args: unknown[]) => gl.push(['clearColor', ...args]),
+    clear: (...args: unknown[]) => gl.push(['clear', ...args]),
+  };
   const renderer = {
     getSize: (target: THREE.Vector2) => target.set(640, 360),
-    render: vi.fn(),
+    render: vi.fn(() => gl.push(['render'])),
+    getContext: () => context,
+    state: { buffers: { color: { reset: resetColor } } },
   } as unknown as THREE.WebGLRenderer;
   const pipelines: BloomPipeline[] = [];
   const factory: BloomPipelineFactory = vi.fn(() => {
@@ -19,12 +34,13 @@ function harness(): {
       render: vi.fn(),
       resize: vi.fn(),
       setSettings: vi.fn(),
+      setOpaque: vi.fn(),
       dispose: vi.fn(),
     };
     pipelines.push(pipeline);
     return pipeline;
   });
-  return { stage: new BloomStage(renderer, factory), renderer, pipelines, factory };
+  return { stage: new BloomStage(renderer, factory), renderer, pipelines, factory, gl, resetColor };
 }
 
 describe('BloomStage target', () => {
@@ -39,6 +55,7 @@ describe('BloomStage target', () => {
       render: vi.fn(),
       resize: vi.fn(),
       setSettings: vi.fn(),
+      setOpaque: vi.fn(),
       dispose: vi.fn(),
     }));
     expect(stage.target).toBeNull();
@@ -129,5 +146,49 @@ describe('BloomStage', () => {
     expect(report).toEqual({ enabled: true, strength: 3, radius: 0, threshold: 2 });
     report.enabled = false;
     expect(stage.report().enabled).toBe(true);
+  });
+});
+
+describe('BloomStage output alpha', () => {
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera();
+
+  it('leaves a transparent stage as the scene drew it', () => {
+    const { stage, gl } = harness();
+    stage.render(scene, camera);
+    expect(gl).toEqual([['render']]);
+  });
+
+  it('fills the alpha channel after drawing straight to an opaque canvas', () => {
+    const { stage, gl, resetColor } = harness();
+    stage.setOpaque(true);
+    stage.render(scene, camera);
+
+    expect(gl).toEqual([
+      ['render'],
+      ['colorMask', false, false, false, true],
+      ['clearColor', 0, 0, 0, 1],
+      ['clear', 0x4000],
+      ['colorMask', true, true, true, true],
+    ]);
+    // The raw calls bypass three's cache, which has to re-issue its own state.
+    expect(resetColor).toHaveBeenCalledOnce();
+
+    stage.setOpaque(false);
+    gl.length = 0;
+    stage.render(scene, camera);
+    expect(gl).toEqual([['render']]);
+  });
+
+  it('hands the decision to the composer, which writes its own alpha', () => {
+    const { stage, pipelines, gl } = harness();
+    stage.setOpaque(true);
+    stage.setBloom({ enabled: true });
+    stage.render(scene, camera);
+
+    expect(pipelines[0].setOpaque).toHaveBeenLastCalledWith(true);
+    expect(gl).toEqual([]);
+    stage.setOpaque(false);
+    expect(pipelines[0].setOpaque).toHaveBeenLastCalledWith(false);
   });
 });

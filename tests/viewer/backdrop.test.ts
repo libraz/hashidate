@@ -234,11 +234,13 @@ describe('compiling ahead of a transition', () => {
     target.dispose();
   });
 
-  it('does nothing with no room standing', async () => {
+  it('compiles the scene as it stands with no room, since an avatar may still be new', async () => {
     const s = mountable();
     const seen = recording(s);
+    const before = captured(s);
     await s.backdrop.prewarm(new THREE.PerspectiveCamera());
-    expect(seen.lights).toEqual([]);
+    expect(seen.lights).toEqual([true]);
+    expect(captured(s)).toEqual(before);
   });
 });
 
