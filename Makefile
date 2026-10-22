@@ -48,8 +48,8 @@ help:
 	@echo "  stop             free :$(VIEWER_PORT), :$(CONTROL_PORT) and the speech socket if something is left holding one"
 	@echo "-- Model"
 	@echo "  import PACK=<id> PACKAGE=<zip>  unpack a purchased model through $(PACKS)/<id> and build it; no PACK lists the packs"
-	@echo "  glb AVATAR=<id>       build $(OUT)/<id>.glb from $(AVATARS)/export/<id>.json"
-	@echo "  textures AVATAR=<id>  copy and shrink the profile's textures for the web"
+	@echo "  glb AVATAR=<id>       build $(OUT)/<id>.glb from $(AVATARS)/export/<id>.json, and copy the toon textures its descriptor names to $(OUT)/<id>/"
+	@echo "  textures AVATAR=<id>  copy and shrink the profile's textures for the web, subdirectories included"
 	@echo "-- Speech"
 	@echo "  voice            put WAV clips in $(CLIPS), run this, and the voice is ready"
 	@echo "  tts-setup        build the speech sidecar's Python environment (first time only)"
@@ -211,6 +211,7 @@ glb:
 	@test -f $(PROFILE) || { echo "no export profile: $(PROFILE)" >&2; exit 2; }
 	mkdir -p $(OUT)
 	@$(call blender-export,$(OUT)/$(AVATAR).glb,-- --profile $(PROFILE) $(OUT)/$(AVATAR).glb)
+	python3 $(TOOLS)/toon_textures.py $(PROFILE) $(AVATARS)/$(AVATAR).json $(OUT)/$(AVATAR)
 
 # -------------------------------------------------------------------- Speech
 

@@ -48,9 +48,17 @@ Every path in `export.json` that comes out of the package (`source`, `extras`, `
 
 1. Import the model by hand first, as [Building your own](../docs/en/avatars.md#building-your-own) describes, until `yarn ctl avatars` reports `nothing unresolved` and the avatar looks right on screen. The figures in the descriptor are tuned by eye; a pack is only worth publishing once they have been.
 2. Make the export profile's paths match where the importer unpacks: the zip's contents under `unpacked/<id>/`, and each `extract` step's `into` beneath it.
-3. Copy `avatars/<id>.json` to `packs/<id>/avatar.json` and `avatars/export/<id>.json` to `packs/<id>/export.json`. Fill in `author` in the descriptor; it is the credit the model's licence asks for.
-4. Write `pack.json`. Take the hash with `shasum -a 256 <package.zip>`.
-5. Check it:
+3. If the model's materials are lilToon, read the author's shading out of the package instead of tuning it. Export the GLB first, then run the reader against the `.unitypackage` and that GLB:
+
+   ```sh
+   python3 tools/blender/lil_materials.py <package.unitypackage> --folder <path substring> \
+     --glb public/models/<id>.glb [--map <glb material>=<mat name> ...] > toon.json
+   ```
+
+   Put the `toon` object it prints under `materials` in `avatars/<id>.json`, and in the same change copy that file to `packs/<id>/avatar.json`, so the pack and the descriptor it was tuned with do not drift apart. The textures `toon` names have to come out of the package: widen an `extract` step's `match`, or add one, until `make textures glb` leaves each of them in `public/models/<id>/`. Read what the reader prints on stderr; [Reading the look from a Unity package](../docs/en/avatars.md#reading-the-look-from-a-unity-package) says what each line means. The output is figures and file names only, so it is fit for a pack; the textures themselves never are.
+4. Copy `avatars/<id>.json` to `packs/<id>/avatar.json` and `avatars/export/<id>.json` to `packs/<id>/export.json`. Fill in `author` in the descriptor; it is the credit the model's licence asks for.
+5. Write `pack.json`. Take the hash with `shasum -a 256 <package.zip>`.
+6. Check it:
 
    ```sh
    yarn vitest run tests/packs

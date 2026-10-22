@@ -280,8 +280,8 @@ blender -b -P tools/blender/inspect_shapekeys.py -- <model.fbx|model.blend> [out
 変換は `avatars/export/<id>.json` のエクスポートプロファイルで記述し、2 つの make ターゲットがそれを読みます。
 
 ```sh
-make glb AVATAR=example        # FBX または blend → public/models/example.glb
-make textures AVATAR=example   # 元の PNG       → Web 用サイズの PNG
+make glb AVATAR=example        # FBX または blend → public/models/example.glb と、トゥーン用テクスチャ
+make textures AVATAR=example   # 元の PNG（サブディレクトリ込み） → Web 用サイズの PNG
 ```
 
 ターゲットなしの `make` で、使えるターゲットの一覧が出ます。`BLENDER=<path>` で、`make glb` が使う Blender を別のものにできます。どちらのターゲットも、`AVATAR` がないとき、またはプロファイルが存在しないときは、使い方を表示して止まります。
@@ -293,7 +293,7 @@ make textures AVATAR=example   # 元の PNG       → Web 用サイズの PNG
 | `source` | 書き出す FBX または `.blend` です。ベンダーが `.blend` を同梱しているなら、そちらを選んでください。マテリアルがテクスチャに接続された状態で届きます。 |
 | `extras` | メインのスケルトンに結合する追加の FBX で、衣装などです。省略できます。 |
 | `textures` | 書き出しがテクスチャを読むディレクトリです。 |
-| `textures_src` | `make textures` がコピー元にする、元の PNG のディレクトリです。省略できます。 |
+| `textures_src` | `make textures` がコピー元にする、元のテクスチャのディレクトリです。サブディレクトリも対象です。省略できます。 |
 | `resize` | `{ "match": "<glob>", "px": <n> }` のリストです。ファイル名に最初に一致した項目が長辺を決め、どれにも一致しないファイルは 1024 になります。省略できます。 |
 | `separator` | 作者のグループ区切りシェイプに一致し、グループ名を取り出す正規表現で、プレーンな文字列で書きます。 |
 | `keep_groups` | 残すシェイプのグループです。 |
@@ -301,7 +301,9 @@ make textures AVATAR=example   # 元の PNG       → Web 用サイズの PNG
 | `keep_names` | 区切りの下にない単独のシェイプのうち、残すものに一致するパターンです。省略すると、`Hide` を含む名前を残します。 |
 | `texture_by_material` | マテリアル名と、そのマテリアルが使う `textures` 内のテクスチャファイルの対応です。省略できます。 |
 
-`make textures` は `sips` で縮小するので、macOS で動きます。
+`make textures` は `sips` で縮小するので、macOS で動きます。`textures_src` を再帰的にたどり、見つけたファイルをすべて `textures` に `<stem>.png` として平らに書きます。そのため、配下のどこであってもステム（拡張子を除いた名前）が同じファイルが 2 つあると止まり、エラーに該当ファイルが列挙されます。その場合は `textures_src` をより狭いディレクトリに向けてください。
+
+`make glb` は書き出しの後に、`avatars/<id>.json` の `materials.toon` が名指すテクスチャ（マスク、法線マップ、マットキャップなど）を `textures` から `public/models/<id>/` にコピーします。レンダラが取りに行くのはこの場所です。記述子がない、またはファイルを名指すものがないときは、`toon textures: nothing to copy` と表示してそのまま進みます。名指されたファイルが `textures` にないときは、足りないものをすべて列挙して失敗します。原因はたいてい、テクスチャが `textures_src` の外にあるか、`make textures` をまだ実行していないかのどちらかです。
 
 ### シェイプのグループを残す・捨てる理由
 
@@ -319,10 +321,47 @@ make textures AVATAR=example   # 元の PNG       → Web 用サイズの PNG
 
 1. アーカイブを git の外のディレクトリに unzip します。`backup/` と `public/models/` の中身は git 管理外です。
 2. FBX と、あれば `.blend` を探し、そのパスをプロファイルの `source` と `extras` に書きます。
-3. `.unitypackage` は gzip 圧縮された tar です。テクスチャと FBX は `python3 tools/blender/extract_textures.py <package> <outdir> [パスに含まれる文字列]` で取り出します。文字列は Unity プロジェクト内のパスの絞り込みで、既定は `/Texture_1K/` です。出力先を `textures_src` と `source` に指定します。
+3. `.unitypackage` は gzip 圧縮された tar です。テクスチャと FBX は `python3 tools/blender/extract_textures.py <package> <outdir> [パスに含まれる文字列]` で取り出します。文字列は Unity プロジェクト内のパスの絞り込みで、既定は `/Texture_1K/` です。出力先を `textures_src` と `source` に指定します。マスクや法線マップはパッケージのサブディレクトリにあることが多いので、文字列がそれらを含むか確かめてください。
 4. `make textures AVATAR=<id>` を実行し、続けて `make glb AVATAR=<id>` を実行します。
+5. 作者が設定した見た目を取り込むには、次の節のとおり `lil_materials.py` を実行し、出力を記述子に入れます。その後で `make glb` をもう一度実行すると、名指されたテクスチャがコピーされます。
 
 `make check-assets` は、1 MB を超えるファイルが git に紛れ込んでいれば失敗します。パスの一覧ではなく、git が実際に追跡している中身を測ります。`.gitignore` は誰かが思いついたパスしか守れませんし、500 MB の塊が履歴に 1 度入れば取り返しがつかないためです。
+
+### Unity パッケージから見た目を読み取る
+
+lilToon のマテリアルを同梱した `.unitypackage` には、作者の陰影が数値として入っています。`lil_materials.py` はそれを上記の `materials.toon` に変換するので、目で調整し直す必要はありません。
+
+```sh
+python3 tools/blender/lil_materials.py <package.unitypackage> \
+  --folder /Materials/ --glb public/models/<id>.glb \
+  --map mt_Outer_doubleS=Outer_double > toon.json
+```
+
+Python の標準ライブラリだけで動き、標準出力に `{"toon": {...}}` を書きます。これを記述子の `materials` に貼り付けます。それ以外の報告はすべて標準エラーに出ます。
+
+| オプション | 意味 |
+|---|---|
+| `--folder` | Unity パスに含まれる文字列です。パスにこれを含む `.mat` だけを読むので、別のシェーダーのマテリアルを除くのに使います。この下に同名の `.mat` が 2 つあるとエラーになります。 |
+| `--glb` | 書き出したモデルです。GLB から読んだマテリアル名が、出力のキーになります。 |
+| `--map` | `<GLB のマテリアル名>=<.mat の名前>` で、繰り返し指定できます。名前が違うマテリアル用です。指定がなければ、GLB のマテリアルは同名の `.mat`、または `mt_` 接頭辞を外した名前の `.mat` に対応します。 |
+
+マテリアルのシェーダーは guid で判別します。輪郭線パスを持つ種類には `outline` ブロックが付きます。lilToon の種類にない guid が出ると、マテリアル名を示して止まります。別シェーダーのフォルダーを `--folder` で除く必要があるのはこのためです。テクスチャは、パッケージ内のパスのステムに `.png` を付けた名前で指します。`make textures` が付ける名前と同じです。
+
+標準エラーで `unmatched:` から始まる行は、`.mat` のない GLB のマテリアル、または GLB に対応するマテリアルのない `.mat` です。前者はこれまでどおりに描かれ、後者は取り込まれません。`warning:` から始まる行は、マテリアル名と、そのマテリアルが使っていてもレンダラが再現しない設定を示します。影の縁の色、3 段目の影、ベーステクスチャと異なる輪郭線テクスチャ、バックライト、リムシェード、2 つ目のマットキャップ、2・3 枚目のメインテクスチャ、グリッター、異方性、影色テクスチャ、影に追従するリムやマットキャップが該当します。見た目は取り込まれますが、作者のレンダーとは差が出るという警告です。
+
+## 見た目を確かめる
+
+`yarn look` は、すべてのアバターを同じショットとステージで描画します。見た目の 2 つの版を、同じ画面で比べられます。
+
+```sh
+yarn look --label before
+# 何かを変えてから
+yarn look --label after --compare before
+```
+
+`backup/look/<label>/` に、アバター・ショット・ステージごとの PNG（`<avatar>-<shot>-<stage>.png`）と、それを表に並べた `index.html` を書きます。各フレームは購入したモデルの描画なので、git 管理外の `backup/` の下に置きます。すでにあるラベルは拒否されます。`--avatars yoka,manuka` でアバターを選べます。`--compare <label>` を付けると、表の各フレームの横にその前回の結果が並びます。ファイルへのリンクで、コピーはしません。
+
+稼働中の `make dev` には繋ぎません。空いているポートに、`127.0.0.1` だけに束縛した制御サーバとビューアのサーバを自分で起動し、終わると止めます。そのため `make dev` が動いていても実行できます。フレームは目で見るためのものです。ポーズがアイドルで揺れるので、画素単位では一致しません。シェーダーのコンパイルに失敗したとき、または透明ステージのフレームが透明であるべき場所で透明でないときは、0 以外で終了します。
 
 ## ループバック限定なのはライセンスの都合
 

@@ -280,8 +280,8 @@ blender -b -P tools/blender/inspect_shapekeys.py -- <model.fbx|model.blend> [out
 The conversion is described by an export profile at `avatars/export/<id>.json`, and two make targets read it:
 
 ```sh
-make glb AVATAR=example        # FBX or blend → public/models/example.glb
-make textures AVATAR=example   # original PNGs → web-sized PNGs
+make glb AVATAR=example        # FBX or blend → public/models/example.glb, plus the toon textures
+make textures AVATAR=example   # original PNGs, subdirectories included → web-sized PNGs
 ```
 
 `make` with no target lists what is available. `BLENDER=<path>` points `make glb` at another Blender binary. Both targets stop with a usage message when `AVATAR` is missing or when the profile does not exist.
@@ -293,7 +293,7 @@ The profile is a JSON object. Paths in it are relative to the repository root, w
 | `source` | The FBX or `.blend` to export. A `.blend` is preferred when the vendor ships one, because its materials arrive already wired to their textures. |
 | `extras` | Further FBX files, such as an outfit, merged onto the main skeleton. Optional. |
 | `textures` | The directory the export reads textures from. |
-| `textures_src` | The directory of original PNGs that `make textures` copies from. Optional. |
+| `textures_src` | The directory of original textures that `make textures` copies from, subdirectories included. Optional. |
 | `resize` | A list of `{ "match": "<glob>", "px": <n> }`. The first entry whose glob fits the file name sets its longest side; other files get 1024. Optional. |
 | `separator` | A regular expression, as a plain string, matching the author's group-delimiter shape and capturing the group name. |
 | `keep_groups` | The shape groups to keep. |
@@ -301,7 +301,9 @@ The profile is a JSON object. Paths in it are relative to the repository root, w
 | `keep_names` | A pattern for loose shapes to keep that sit above no separator. Without it, a name containing `Hide` is kept. Optional. |
 | `texture_by_material` | A material name mapped to the texture file in `textures` it should use. Optional. |
 
-`make textures` resizes with `sips`, so it runs on macOS.
+`make textures` resizes with `sips`, so it runs on macOS. It walks `textures_src` recursively and writes every file flat into `textures` as `<stem>.png`, so two files with the same stem anywhere under it stop the run, and the error lists them. If that happens, point `textures_src` at a narrower directory.
+
+After the export, `make glb` copies the textures that `materials.toon` in `avatars/<id>.json` names, such as masks, normal maps and matcaps, from `textures` into `public/models/<id>/`, which is where the renderer fetches them. With no descriptor, or none that names a file, it prints `toon textures: nothing to copy` and carries on. If a named file is not in `textures`, it lists every one that is missing and fails; the usual cause is a texture outside `textures_src`, or `make textures` not run yet.
 
 ### Why shape groups are kept or dropped
 
@@ -319,10 +321,47 @@ Unpacking is not automated, because packages differ in shape. The steps are the 
 
 1. Unzip the archive into a directory outside git. Everything under `backup/` and `public/models/` is ignored.
 2. Find the FBX files and, if there is one, the `.blend`. Put their paths in the profile's `source` and `extras`.
-3. For a `.unitypackage`, which is a gzip-compressed tar, pull the textures and FBX files out with `python3 tools/blender/extract_textures.py <package> <outdir> [path substring]`. The substring filters the paths inside the Unity project and defaults to `/Texture_1K/`. Point `textures_src` and `source` at the results.
+3. For a `.unitypackage`, which is a gzip-compressed tar, pull the textures and FBX files out with `python3 tools/blender/extract_textures.py <package> <outdir> [path substring]`. The substring filters the paths inside the Unity project and defaults to `/Texture_1K/`. Point `textures_src` and `source` at the results. Masks and normal maps often sit in subdirectories of the package, so check that the substring takes them in.
 4. Run `make textures AVATAR=<id>` and then `make glb AVATAR=<id>`.
+5. To bring over the look the author set, run `lil_materials.py` as the next section describes and put its output in the descriptor. Run `make glb` again afterwards so the textures it names are copied.
 
 `make check-assets` fails if anything over 1 MB has found its way into git. It runs against what git is actually tracking rather than against a list of paths, because a `.gitignore` only covers the paths someone thought of and a single half-gigabyte blob in the history is permanent.
+
+### Reading the look from a Unity package
+
+A `.unitypackage` that ships lilToon materials carries the author's shading as numbers, and `lil_materials.py` turns them into the `materials.toon` described above, so nothing is tuned by eye:
+
+```sh
+python3 tools/blender/lil_materials.py <package.unitypackage> \
+  --folder /Materials/ --glb public/models/<id>.glb \
+  --map mt_Outer_doubleS=Outer_double > toon.json
+```
+
+It uses only the Python standard library and prints `{"toon": {...}}` on stdout, to be pasted into the descriptor's `materials`. Everything else goes to stderr.
+
+| Option | Meaning |
+|---|---|
+| `--folder` | A substring of the Unity path. Only the `.mat` files whose path contains it are read, so use it to leave out materials of another shader. Two `.mat` files of the same name under it are an error. |
+| `--glb` | The exported model. Its material names, read from the GLB, are the keys of the output. |
+| `--map` | `<glb material>=<mat name>`, repeatable, for a material whose name differs. Without it a GLB material takes the `.mat` of the same name, or the one named without a `mt_` prefix. |
+
+The shader of each material is recognised by its guid. A variant with an outline pass gets an `outline` block; a guid that is not a lilToon variant stops the run with the material's name, which is why another shader's folder has to be left out with `--folder`. Textures are named by the stem of their path in the package plus `.png`, the name `make textures` gives them.
+
+On stderr, a line starting with `unmatched:` is a GLB material with no `.mat`, or a `.mat` with no GLB material; the first is drawn as before, the second is dropped. A line starting with `warning:` names a material and a setting it uses that the renderer does not reproduce: a shadow border colour, a third shadow, an outline texture that differs from the base texture, backlight, rim shade, a second matcap, second and third main textures, glitter, anisotropy, a shadow colour texture, or a rim or matcap that follows the shade. The look still imports; the warning says it will differ from the author's render.
+
+## Checking the look
+
+`yarn look` renders every avatar through the same shots and stages, so two versions of the look can be compared on the same frame:
+
+```sh
+yarn look --label before
+# change something, then
+yarn look --label after --compare before
+```
+
+It writes `backup/look/<label>/`: one PNG per avatar, shot and stage (`<avatar>-<shot>-<stage>.png`), and an `index.html` laying them out in a table. The directory is under the ignored `backup/` because each frame is a render of a purchased model, and a label that already exists is refused. `--avatars yoka,manuka` picks the avatars, and `--compare <label>` puts that earlier run beside each frame in the table; it links to the files and does not copy them.
+
+It does not use a running `make dev`. It starts its own control and viewer servers on free ports bound to `127.0.0.1`, and stops them when it finishes, so it is safe to run while `make dev` is up. Frames are for the eye: the pose idles, so they are never equal pixel for pixel. It exits non-zero if a shader fails to compile, or if a transparent frame is not transparent where it must be.
 
 ## Licensing is why the runtime is loopback-only
 
