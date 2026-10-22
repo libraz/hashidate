@@ -1835,9 +1835,11 @@ export class Body {
        *
        * An exit carries every link, the hand included, at full weight: the way
        * home is already in the solve, hand and all — see `ArmResolver.retreat`.
+       * Only for an arm the gesture poses: one it leaves alone has no way home
+       * to take, and retreating it swung a still arm to rest under a nod.
        */
       const back =
-        this._exiting && g ? this._arm.retreat(cArm, side, this._exitU, this._rest) : null;
+        this._exiting && g && cArm ? this._arm.retreat(cArm, side, this._exitU, this._rest) : null;
       const travelling = this._arm.travelling(side);
 
       for (const slot of ARM_SLOTS) {
