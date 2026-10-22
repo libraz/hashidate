@@ -1,4 +1,5 @@
 import type { GestureDef } from '../../types';
+import { heldTime } from '../timing';
 import { V } from './base';
 import { both, one, reach, reachBoth } from './builders';
 import { FIST, MOUTH_CONTACT, MOUTH_HAND, OPEN_HAND, PEACE_HAND, PEACE_PALM } from './hands';
@@ -40,26 +41,35 @@ export const EMOTE = {
     group: 'emote',
     lead: 0.2,
     hold: 2.2,
-    build(t, v, _phase?, out?) {
-      // Rectified sine so the hands *meet* on the beat and rebound. A plain
-      // sine carries them through each other and out the far side.
+    build(t, v, phase?, out?) {
+      // Rectified wave so the hands *meet* on the beat and rebound. A plain
+      // one carries them through each other and out the far side.
+      //
+      // A cosine of the held time, so the hands arrive apart: on the raw clock
+      // the first meeting fell mid-entrance, fingers still curled from rest,
+      // and buried them 5 cm into each other on manuka and neru.
       //
       // The floor is half the gap between two palms that are touching, which is
       // a measured figure and not a guess — at zero the two wrists would occupy
       // the same point and the hands interpenetrate. Written as a lateral offset
       // from the midline, mirrored per side, so the beat is the only thing that
       // moves and the hands cannot miss each other.
-      const gap = 0.028 + Math.abs(Math.sin(t * 6.2 * v.rate)) * 0.08;
+      // Measured as where the skin of palms, thumbs and fingers meets: 0.056
+      // spans on manuka and neru alike; 0.028 left them 2.3 cm through each other.
+      const beat = Math.abs(Math.cos(heldTime(t, 0.2, phase) * 6.2 * v.rate));
+      const gap = 0.056 + beat * 0.08;
       return reachBoth(
         out,
         {
           space: 'body',
           at: 'sternum',
           offset: [gap, 0.02, 0.2],
-          // Fingers angle upward along the converging forearm. The old
+          // Fingers angle upward with no inward bearing: angled in along the
+          // converging forearm, each palm turned 12 degrees off the other and
+          // the fingertips crossed the midline by 3-4 cm. The old
           // near-forward bearing hit both wrist-deviation stops instead of
           // letting the forearm carry the beat.
-          hand: [-0.2, 0.6, 0.77],
+          hand: [0, 0.6, 0.77],
           palm: [-1, 0, 0],
         },
         OPEN_HAND,
@@ -146,19 +156,23 @@ export const EMOTE = {
     lead: 0.24,
     hold: 1.6,
     build(t, v, _phase?, out?) {
-      // Small fists shaken at chest height. Fast and short-travelled: a wide
-      // swing reads as a tantrum rather than as sulking.
-      const s = Math.sin(t * 7.8 * v.rate) * 0.05;
+      // Fists held straight down and a little behind, the chest pushed out
+      // ahead of them: the stamp of a huff rather than a shaken fist.
+      const s = Math.sin(t * 7.8 * v.rate) * 0.025;
       return both(
         out,
         {
-          upperArm: V(0.38, -0.86, 0.22),
-          lowerArm: V(0.3, -0.42 + s, 0.84),
-          hand: V(0.26, -0.3 + s, 0.9),
+          upperArm: V(0.16, -0.96, -0.22),
+          lowerArm: V(0.12, -0.97 + s, -0.2),
+          hand: V(0.1, -0.98 + s, -0.16),
           twist: -0.3,
         },
         FIST,
-        { chest: [-0.03, 0, 0], head: [-0.04, 0, 0.02 * Math.sin(t * 3.9 * v.rate)] },
+        {
+          spine: [0.06, 0, 0],
+          chest: [-0.1, 0, 0],
+          head: [0.02, 0, 0.02 * Math.sin(t * 3.9 * v.rate)],
+        },
       );
     },
   },
