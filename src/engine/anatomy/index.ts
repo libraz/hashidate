@@ -20,6 +20,8 @@ export {
   JOINTS,
   SPLAY_CAP,
   THUMB_FLEXION_TILT,
+  THUMB_OPPOSITION,
+  THUMB_OPPOSITION_CURL,
   ZONES,
 } from './joints';
 export type { ArmMeasurement, ArmStrain } from './measurement';
@@ -32,6 +34,7 @@ export {
   fingerCurl,
   rollRoom,
   strainOf,
+  thumbOpposition,
   zoneOf,
 } from './strain';
 export type { MeasuredVolume, VolumeExtent } from './volume';

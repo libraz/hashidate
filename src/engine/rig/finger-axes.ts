@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { THUMB_FLEXION_TILT } from '../anatomy/joints';
+import { THUMB_FLEXION_TILT, THUMB_OPPOSITION } from '../anatomy/joints';
 import { restPalmNormals } from '../anatomy/palm-frame';
 import { FINGER_NAMES, type Profile, type Side } from '../types';
 
@@ -7,7 +7,9 @@ import { FINGER_NAMES, type Profile, type Side } from '../types';
  * Finger hinge axes, derived from the rest pose.
  *
  * The thumb is the exception to the finger rule: it hinges about the palm normal tilted toward
- * the finger fold and splays perpendicular to that, the reverse of a finger.
+ * the finger fold and splays perpendicular to that, the reverse of a finger. The distal hinge
+ * additionally turns about the phalanx with the curl (opposition, in `hands.ts`); the axes stored
+ * here do not change, only the direction of that turn is settled here per hand.
  *
  * Split out of the rig because it runs once, at construction, and reads only
  * the profile: which way a finger bends is a property of how the hand was
@@ -23,6 +25,8 @@ export interface FingerAxes {
   splayAxes: Map<THREE.Bone, THREE.Vector3>;
   /** Palm normal per hand, in the hand bone's own space. */
   palmLocal: Partial<Record<Side, THREE.Vector3>>;
+  /** Sign of the opposition turn for each thumb's distal bone: the one that folds the tip toward the palm. */
+  oppositionSign: Map<THREE.Bone, number>;
 }
 
 /**
@@ -34,6 +38,7 @@ export interface FingerAxes {
 export function solveFingerAxes(p: Profile): FingerAxes {
   const axes = new Map<THREE.Bone, THREE.Vector3>();
   const splayAxes = new Map<THREE.Bone, THREE.Vector3>();
+  const oppositionSign = new Map<THREE.Bone, number>();
   const palmLocal: Partial<Record<Side, THREE.Vector3>> = {};
   const { fingerBones, bones, restDir } = p;
   const wp = (o: THREE.Object3D) => o.getWorldPosition(new THREE.Vector3());
@@ -90,14 +95,23 @@ export function solveFingerAxes(p: Profile): FingerAxes {
           // the fold stays on the palm side, so only the normal term flips.
           const sweep = new THREE.Vector3().crossVectors(palmNormal, dirWorld);
           const lean = towardLittle && sweep.dot(towardLittle) < 0 ? -1 : 1;
-          axes.set(
-            bone,
-            nLocal
-              .clone()
-              .multiplyScalar(lean * Math.cos(THUMB_FLEXION_TILT))
-              .addScaledVector(fold, Math.sin(THUMB_FLEXION_TILT))
-              .normalize(),
-          );
+          const hinge = nLocal
+            .clone()
+            .multiplyScalar(lean * Math.cos(THUMB_FLEXION_TILT))
+            .addScaledVector(fold, Math.sin(THUMB_FLEXION_TILT))
+            .normalize();
+          axes.set(bone, hinge);
+          if (i === 2) {
+            // A turn about the phalanx mirrors with the hand, so ask which way folds the tip
+            // further toward the palm side rather than assuming a sign.
+            const folded = (sign: number) =>
+              dir
+                .clone()
+                .applyAxisAngle(hinge, 1)
+                .applyAxisAngle(dir, sign * THUMB_OPPOSITION)
+                .dot(nLocal);
+            oppositionSign.set(bone, folded(1) <= folded(-1) ? 1 : -1);
+          }
           continue;
         }
 
@@ -130,5 +144,5 @@ export function solveFingerAxes(p: Profile): FingerAxes {
       }
     }
   }
-  return { axes, splayAxes, palmLocal };
+  return { axes, splayAxes, palmLocal, oppositionSign };
 }

@@ -46,6 +46,9 @@ import { buildRig, type RigOptions } from '../helpers/scene';
  * on any rig.
  */
 
+/** Metres the synthetic thumb stands further out of the palm, so a folded tip rests on the fingers as it does on both validation avatars. */
+const THUMB_STAND_OFF = 0.003;
+
 const NAMED_SHAPES = {
   FIST,
   OPEN_HAND,
@@ -136,15 +139,31 @@ interface Hand {
   side: Side;
   pitch: number;
   frame: { along: THREE.Vector3; across: THREE.Vector3; normal: THREE.Vector3 };
+  /** A tip bone on the thumb's distal bone, so that bone has a direction of its own. */
+  thumbTip: THREE.Bone;
   /** Thumb axes as a finger would have them, for the control. */
   fingerLike: { axes: THREE.Vector3[]; splay: THREE.Vector3 };
 }
 
 function buildHand(row: Row): Hand {
-  const built = buildRig({ naming: row.naming, armatureScale: row.armatureScale });
+  const built = buildRig({
+    naming: row.naming,
+    armatureScale: row.armatureScale,
+    fingerGeometry: { thumb: { rootOffset: [0, -THUMB_STAND_OFF, 0] } },
+  });
   const sign = row.side === 'L' ? 1 : -1;
   const wrist = need(buildProfile(built.root, built.descriptor).bones[`hand.${row.side}`], 'wrist');
   wrist.quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), sign * row.wristRoll);
+  built.root.updateMatrixWorld(true);
+  // The synthetic distal bone has no child, so its own direction would be a fallback; give it the
+  // tip bone a real avatar has, along the proximal phalanx and as long as the engine tip extends it.
+  const bare = buildProfile(built.root, built.descriptor);
+  const bareThumb = need(bare.fingerBones[`thumb.${row.side}`], 'thumb');
+  const thumbTip = new THREE.Bone();
+  const ip = wp(bareThumb[2]);
+  const reach = ip.clone().sub(wp(bareThumb[1])).multiplyScalar(FINGER_TIP_EXTENSION);
+  thumbTip.position.copy(bareThumb[2].worldToLocal(ip.add(reach)));
+  bareThumb[2].add(thumbTip);
   built.root.updateMatrixWorld(true);
   const profile = buildProfile(built.root, built.descriptor);
   const rig = new Rig(profile);
@@ -198,6 +217,7 @@ function buildHand(row: Row): Hand {
     side,
     pitch: need(profile.limb?.[`pitch.${side}`], 'pitch'),
     frame: { along, across, normal },
+    thumbTip,
     fingerLike: { axes, splay },
   };
 }
@@ -217,6 +237,8 @@ function pose(hand: Hand, shapeValue: HandShape, fingerThumb: boolean): void {
         fingerCurl(rig.joints.thumb, i, shapeValue.curl.thumb),
         i === 0 ? hand.fingerLike.splay : undefined,
         i === 0 ? (shapeValue.spread.thumb ?? 0) : 0,
+        undefined,
+        0,
         scratch,
       );
     }
@@ -240,6 +262,13 @@ function digit(hand: Hand, f: FingerName): Digit {
     tip: last.clone().addScaledVector(delta, FINGER_TIP_EXTENSION),
     dir: delta.normalize(),
   };
+}
+
+/** The thumb as the mesh shows it: the distal bone's own direction and the tip it points to. */
+function fold(hand: Hand): { dir: THREE.Vector3; tip: THREE.Vector3 } {
+  const ip = need(hand.profile.fingerBones[`thumb.${hand.side}`], 'thumb')[2];
+  const tip = wp(hand.thumbTip);
+  return { dir: tip.clone().sub(wp(ip)).normalize(), tip };
 }
 
 interface Check {
@@ -273,31 +302,36 @@ function rows(hand: Hand, name: ShapeName): Check[] {
   const atLeast = (label: string, v: number, lo: number) => check(label, v, v >= lo);
   const atMost = (label: string, v: number, hi: number) => check(label, v, v <= hi);
 
-  // A count's thumb folds across the palm under the raised fingers.
+  // The thumb folds down onto the fingers: its tip turns toward the palm and ends over the middle
+  // finger. A count has the same thumb under its raised fingers.
   const countThumb = () => {
-    atLeast('thumb dir . across', thumb.dir.dot(across), 0.7);
-    atMost('thumb dir . normal', thumb.dir.dot(normal), 0.5);
-    between(
-      'thumb tip past index root (pitch)',
-      (acrossOf(thumb.tip) - indexRoot) / pitch,
-      1.0,
-      2.0,
-    );
-  };
-  // A fist's thumb pad rests on the index and middle middle phalanges: proud of them, not sunk in.
-  const fistThumb = () => {
-    const mid = (f: FingerName) => d[f].joints[1].clone().add(d[f].joints[2]).multiplyScalar(0.5);
-    const pad = thumb.joints[2].clone().add(thumb.tip).multiplyScalar(0.5);
-    const off = pad.sub(mid('index').add(mid('middle')).multiplyScalar(0.5)).divideScalar(pitch);
-    atMost('|pad along vs index/middle middle phalanges| (pitch)', Math.abs(off.dot(along)), 0.5);
-    atMost(
-      '|pad across vs index/middle middle phalanges| (pitch)',
-      Math.abs(off.dot(across)),
-      0.75,
-    );
-    between('pad normal vs index/middle middle phalanges (pitch)', off.dot(normal), 0.3, 1.1);
+    const seen = fold(hand);
+    atMost('thumb tip dir . normal', seen.dir.dot(normal), -0.15);
+    between('true tip past index root (pitch)', (acrossOf(seen.tip) - indexRoot) / pitch, 1.2, 2.2);
     atLeast('thumb dir . across', thumb.dir.dot(across), 0.4);
     atMost('thumb dir . normal', thumb.dir.dot(normal), 0.6);
+  };
+  // A fist's tip also rests on the middle finger's middle phalanx, the pad proud of the index and
+  // middle ones. Raised fingers leave a count nothing to rest on, so only a fist is held to this.
+  const fistThumb = () => {
+    countThumb();
+    const seen = fold(hand);
+    const mid = (f: FingerName) => d[f].joints[1].clone().add(d[f].joints[2]).multiplyScalar(0.5);
+    const pad = thumb.joints[2].clone().add(seen.tip).multiplyScalar(0.5);
+    const off = pad.sub(mid('index').add(mid('middle')).multiplyScalar(0.5)).divideScalar(pitch);
+    const middle = d.middle.joints;
+    between(
+      'dN true tip vs middle middle phalanx (pitch)',
+      seen.tip
+        .clone()
+        .sub(nearest(seen.tip, middle[1], middle[2]))
+        .dot(normal) / pitch,
+      0.3,
+      0.9,
+    );
+    atMost('|pad along vs index/middle middle phalanges| (pitch)', Math.abs(off.dot(along)), 0.7);
+    between('pad across vs index/middle middle phalanges (pitch)', off.dot(across), 0.3, 1.3);
+    between('pad normal vs index/middle middle phalanges (pitch)', off.dot(normal), 0.3, 1.1);
   };
   const extended = (f: FingerName) => atLeast(`${f} along`, d[f].dir.dot(along), 0.9);
   const folded = (f: FingerName) => atMost(`${f} along`, d[f].dir.dot(along), 0.3);
@@ -382,23 +416,23 @@ describe('countHand', () => {
         expect(hand.curl[f] <= 0.02, `${n} ${f}`).toBe(open.includes(f));
         if (!open.includes(f)) expect(hand.curl[f]).toBe(FIST.curl[f]);
       }
-      // One folded thumb for every count, further across than the fist's, which rests on fingers.
-      expect(hand.curl.thumb).toBe(countHand(1).curl.thumb);
-      expect(hand.curl.thumb).toBeGreaterThan(FIST.curl.thumb);
-      expect(hand.spread.thumb).toBeUndefined();
+      // A count's thumb is the fist's, since a count is the fist with fingers raised.
+      expect(hand.curl.thumb).toBe(FIST.curl.thumb);
+      expect(hand.spread.thumb).toBe(FIST.spread.thumb);
     }
     expect(countHand(5).curl).toBe(OPEN_HAND.curl);
-    expect(countHand(5).spread).toBe(countHand(4).spread);
+    const { thumb: _thumb, ...fan } = countHand(4).spread;
+    expect(countHand(5).spread).toEqual(fan);
   });
 
   it('fans the raised fingers of every count but one', () => {
-    expect(countHand(2).spread).toEqual(PEACE_HAND.spread);
+    expect(countHand(2).spread).toEqual({ ...PEACE_HAND.spread, thumb: FIST.spread.thumb });
     // Three fans evenly about the middle finger rather than taking the V's split.
     const three = countHand(3).spread;
     expect(three.middle ?? 0).toBe(0);
     expect(three.ring).toBeCloseTo(-(three.index ?? 0), 12);
     expect(three.ring).toBeCloseTo(PEACE_HAND.spread.middle ?? 0, 12);
-    expect(countHand(1).spread).toBe(NO_SPREAD);
+    expect(countHand(1).spread).toEqual({ thumb: FIST.spread.thumb });
     // Four fans outward, widest at the little finger, so it does not read as a chop.
     const four = countHand(4).spread;
     const fan = (['index', 'middle', 'ring', 'little'] as const).map((f) => four[f] ?? 0);

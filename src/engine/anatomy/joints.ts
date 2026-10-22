@@ -237,6 +237,15 @@ export const SPLAY_CAP = 25 * D;
  */
 export const THUMB_FLEXION_TILT = 20 * D;
 
+/**
+ * Opposition: how far the thumb's distal hinge turns about the phalanx as the thumb closes, so its
+ * flexion folds the tip onto the fingers instead of sweeping on past them. Turned on the
+ * metacarpal or proximal bone instead, the whole thumb sank a finger's radius into the fist.
+ */
+export const THUMB_OPPOSITION = -80 * D;
+/** Thumb curl where the turn starts and where it is complete; a chop thumb stays below it. */
+export const THUMB_OPPOSITION_CURL: readonly [number, number] = [0.4, 0.65];
+
 /** Points tested per arm segment against the trunk. See `torsoDepth`. */
 export const TORSO_SAMPLES = 6;
 

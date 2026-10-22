@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { D, ELEVATION, JOINTS } from '@/engine/anatomy/joints';
+import {
+  D,
+  ELEVATION,
+  JOINTS,
+  THUMB_OPPOSITION,
+  THUMB_OPPOSITION_CURL,
+} from '@/engine/anatomy/joints';
 import {
   clampDof,
   type ElevationCeiling,
@@ -9,6 +15,7 @@ import {
   fingerCurl,
   rollRoom,
   strainOf,
+  thumbOpposition,
   zoneOf,
 } from '@/engine/anatomy/strain';
 import type { JointDof, JointSpec } from '@/engine/types';
@@ -356,5 +363,30 @@ describe('fingerCurl', () => {
     const boneless: JointSpec = { label: same('none'), dofs: {} };
     expect(fingerCurl(boneless, 0, 1)).toBe(0);
     expect(fingerCurl(boneless, 2, 1)).toBe(0);
+  });
+});
+
+describe('thumbOpposition', () => {
+  const [start, full] = THUMB_OPPOSITION_CURL;
+
+  it('turns toward the fold, not away from it', () => {
+    expect(THUMB_OPPOSITION).toBeLessThan(0);
+  });
+
+  it('is none at and below the start of the ramp', () => {
+    expect(thumbOpposition(start)).toBeCloseTo(0, 12);
+    expect(thumbOpposition(0)).toBeCloseTo(0, 12);
+    expect(thumbOpposition(-1)).toBeCloseTo(0, 12);
+  });
+
+  it('is the full turn at and above the end of the ramp', () => {
+    expect(thumbOpposition(full)).toBeCloseTo(THUMB_OPPOSITION, 12);
+    expect(thumbOpposition(1)).toBeCloseTo(THUMB_OPPOSITION, 12);
+    expect(thumbOpposition(2)).toBeCloseTo(THUMB_OPPOSITION, 12);
+  });
+
+  it('is linear between', () => {
+    expect(thumbOpposition((start + full) / 2)).toBeCloseTo(THUMB_OPPOSITION / 2, 12);
+    expect(thumbOpposition(start + 0.25 * (full - start))).toBeCloseTo(THUMB_OPPOSITION / 4, 12);
   });
 });

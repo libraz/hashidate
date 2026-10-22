@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
-import { fingerCurl } from '@/engine/anatomy';
+import { fingerCurl, thumbOpposition } from '@/engine/anatomy';
 import { Body } from '@/engine/motion/body';
 import { BASE_FINGERS, BASE_PALM, BASE_POSE } from '@/engine/motion/gestures/base';
 import { CUTE } from '@/engine/motion/gestures/cute';
@@ -450,26 +450,35 @@ describe('atomic arm frame transaction', () => {
         // The bone carries the accepted spread as well as the accepted curl: the
         // finger-life lag fans a knuckle a few milliradians, which is second
         // order in the composed angle but not in the rotation itself.
-        const expected = composeFingerRotation(
-          new THREE.Quaternion(),
-          rest,
-          axis,
-          fingerCurl(joints, i, driver.acceptedCurls[finger]),
-          i === 0 ? h.rig.fingerSplayAxis.get(chain[i]) : undefined,
-          i === 0 ? driver.acceptedSpread[finger] : 0,
-          new THREE.Quaternion(),
-        );
+        const turned = finger === 'thumb' && i === 2;
+        const expectedFor = (turn: number) =>
+          composeFingerRotation(
+            new THREE.Quaternion(),
+            rest,
+            axis,
+            fingerCurl(joints, i, driver.acceptedCurls[finger]),
+            i === 0 ? h.rig.fingerSplayAxis.get(chain[i]) : undefined,
+            i === 0 ? driver.acceptedSpread[finger] : 0,
+            turned ? h.profile.restDir['thumb.R.2'] : undefined,
+            turn,
+            new THREE.Quaternion(),
+          );
         // Component distance, as for the arm below: `angleTo` floors at several e-8.
         const q = chain[i].quaternion;
-        const sign = q.dot(expected) < 0 ? -1 : 1;
-        expect(
-          Math.max(
+        const distance = (expected: THREE.Quaternion) => {
+          const sign = q.dot(expected) < 0 ? -1 : 1;
+          return Math.max(
             Math.abs(q.x - sign * expected.x),
             Math.abs(q.y - sign * expected.y),
             Math.abs(q.z - sign * expected.z),
             Math.abs(q.w - sign * expected.w),
-          ),
-        ).toBeLessThan(1e-10);
+          );
+        };
+        // The turn's direction is settled per hand at construction; either is a valid pose here.
+        const turn = turned ? thumbOpposition(driver.acceptedCurls.thumb) : 0;
+        expect(Math.min(distance(expectedFor(turn)), distance(expectedFor(-turn)))).toBeLessThan(
+          1e-10,
+        );
       }
     }
     const handBone = h.profile.bones['hand.R'];

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { fingerCurl } from '../anatomy';
+import { fingerCurl, thumbOpposition } from '../anatomy';
 import {
   FINGER_NAMES,
   type FingerName,
@@ -16,7 +16,8 @@ import { solveFingerAxes } from './finger-axes';
  * Kept apart from the arm chain because nothing about them is aimed: a finger
  * is a curl about an axis this rig worked out once at load, and the arm's whole
  * apparatus of world directions, palm rolls and anatomical clamping has no
- * bearing on it.
+ * bearing on it. The thumb's distal hinge also turns about the phalanx with the
+ * curl (opposition); the stored axes do not change.
  */
 
 const _q = new THREE.Quaternion();
@@ -30,7 +31,7 @@ export const mkFingerSpread = (): Record<FingerName, number> => ({
   little: 0,
 });
 
-/** Compose the bind rotation with the same optional splay-then-curl order everywhere. */
+/** Compose the bind rotation with the same optional splay-turn-curl order everywhere. */
 export function composeFingerRotation(
   out: THREE.Quaternion,
   rest: THREE.Quaternion,
@@ -38,11 +39,16 @@ export function composeFingerRotation(
   curl: number,
   splayAxis: THREE.Vector3 | undefined,
   spread: number,
+  turnAxis: THREE.Vector3 | undefined,
+  turn: number,
   scratch: THREE.Quaternion,
 ): THREE.Quaternion {
   out.copy(rest);
   if (splayAxis && spread !== 0) {
     out.multiply(scratch.setFromAxisAngle(splayAxis, spread));
+  }
+  if (turnAxis && turn !== 0) {
+    out.multiply(scratch.setFromAxisAngle(turnAxis, turn));
   }
   return out.multiply(scratch.setFromAxisAngle(curlAxis, curl));
 }
@@ -54,6 +60,8 @@ export class Hands {
   readonly splayAxis: Map<THREE.Bone, THREE.Vector3>;
   /** Palm normal in hand-bone space. */
   readonly palmLocal: Partial<Record<Side, THREE.Vector3>>;
+  /** Direction of the opposition turn per thumb distal bone. */
+  private readonly oppositionSign: Map<THREE.Bone, number>;
 
   constructor(
     private readonly p: Profile,
@@ -64,6 +72,7 @@ export class Hands {
     this.axis = fingers.axes;
     this.splayAxis = fingers.splayAxes;
     this.palmLocal = fingers.palmLocal;
+    this.oppositionSign = fingers.oppositionSign;
   }
 
   /**
@@ -95,9 +104,23 @@ export class Hands {
         fingerCurl(joints, i, amount),
         undefined,
         0,
+        ...this.opposition(name, side, bone, i, amount),
         _q,
       );
     }
+  }
+
+  /** The turn axis and angle of a bone: only the thumb's distal hinge turns. */
+  private opposition(
+    name: FingerName,
+    side: Side,
+    bone: THREE.Bone,
+    i: number,
+    amount: number,
+  ): [THREE.Vector3 | undefined, number] {
+    if (name !== 'thumb' || i !== 2) return [undefined, 0];
+    const sign = this.oppositionSign.get(bone) ?? 1;
+    return [this.p.restDir[`thumb.${side}.2`], sign * thumbOpposition(amount)];
   }
 
   curlHand(side: Side, spec: FingerSpec, spread: FingerSpec = {}): void {
@@ -116,6 +139,7 @@ export class Hands {
           fingerCurl(joints, i, spec[f] ?? 0),
           i === 0 ? this.splayAxis.get(bone) : undefined,
           i === 0 ? (spread[f] ?? 0) : 0,
+          ...this.opposition(f, side, bone, i, spec[f] ?? 0),
           _q,
         );
       }

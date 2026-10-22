@@ -206,6 +206,8 @@ function evaluateFingerPath(
         fingerCurl(nodeJoints, jointIndex as number, amount),
         node.splayAxis,
         jointIndex === 0 ? (spread[path.finger] ?? 0) : 0,
+        undefined,
+        0,
         _rotationScratch,
       );
     } else {

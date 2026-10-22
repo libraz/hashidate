@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { fingerCurl, JOINTS } from '@/engine/anatomy';
+import { THUMB_OPPOSITION, THUMB_OPPOSITION_CURL } from '@/engine/anatomy/joints';
 import { restPalmNormals } from '@/engine/anatomy/palm-frame';
 import { buildProfile } from '@/engine/profile';
 import { Rig, solveFingerAxes } from '@/engine/rig';
@@ -442,6 +443,58 @@ describe('curlFinger', () => {
       }
     });
 
+    it('turns only the distal hinge about the phalanx once the thumb has closed, mirrored on both hands', () => {
+      const { profile, rig } = buildHands();
+      const q = (a: THREE.Vector3, r: number) => new THREE.Quaternion().setFromAxisAngle(a, r);
+
+      for (const side of SIDES) {
+        const chain = need(profile.fingerBones[`thumb.${side}`], `thumb.${side}`);
+        // The turn is signed per hand: whichever sign folds the tip further toward the palm side.
+        const palm = palmWorld(profile, rig, side);
+        const tipDot = (sign: number): number => {
+          const dir = need(profile.restDir[`thumb.${side}.2`], `thumb.${side}.2 dir`);
+          const axis = need(rig.fingerAxis.get(chain[2]), `thumb.${side}.2 axis`);
+          const local = dir
+            .clone()
+            .applyAxisAngle(axis, 1)
+            .applyAxisAngle(dir, sign * THUMB_OPPOSITION);
+          rig.reset();
+          profile.root.updateMatrixWorld(true);
+          const q = chain[2].getWorldQuaternion(new THREE.Quaternion());
+          return local.applyQuaternion(q).dot(palm);
+        };
+        const turnSign = tipDot(1) <= tipDot(-1) ? 1 : -1;
+        for (const curl of [THUMB_OPPOSITION_CURL[0], 1]) {
+          rig.reset();
+          rig.curlHand(side, { thumb: curl });
+          for (const [i, bone] of chain.entries()) {
+            const rest = need(rig.rest.get(bone), `thumb.${side}.${i} rest`);
+            const axis = need(rig.fingerAxis.get(bone), `thumb.${side}.${i} axis`);
+            const hinge = q(axis, fingerCurl(rig.joints.thumb, i, curl));
+            const expected = rest.clone();
+            if (i === 2 && curl === 1) {
+              const dir = need(profile.restDir[`thumb.${side}.2`], `thumb.${side}.2 dir`);
+              expected.multiply(q(dir, turnSign * THUMB_OPPOSITION));
+            }
+            expected.multiply(hinge);
+            const sign = bone.quaternion.dot(expected) < 0 ? -1 : 1;
+            for (const [k, v] of bone.quaternion.toArray().entries()) {
+              expect(v, `${side} bone ${i} curl ${curl} [${k}]`).toBeCloseTo(
+                sign * expected.toArray()[k],
+                9,
+              );
+            }
+          }
+        }
+        // curlFinger agrees with curlHand.
+        const viaHand = chain[2].quaternion.clone();
+        rig.reset();
+        rig.curlFinger('thumb', side, 1);
+        expect(chain[2].quaternion.angleTo(viaHand)).toBeLessThan(1e-6);
+      }
+      rig.reset();
+    });
+
     it('splays positive spread toward the palm, at the carpometacarpal bone only', () => {
       const { profile, rig } = buildHands();
 
@@ -503,14 +556,16 @@ describe('curlFinger', () => {
     const { profile, rig } = buildHands();
     const thumb = need(profile.fingerBones['thumb.L'], 'thumb.L');
     const dofs = JOINTS.thumb.dofs;
-    const want = [dofs.proximal.free[1], dofs.intermediate.free[1], dofs.distal.free[1]];
+    // At the start of the opposition ramp, where the distal hinge has not turned yet.
+    const curl = THUMB_OPPOSITION_CURL[0];
+    const want = [dofs.proximal, dofs.intermediate, dofs.distal].map((d) => d.free[1] * curl);
 
-    rig.curlFinger('thumb', 'L', 1);
+    rig.curlFinger('thumb', 'L', curl);
     const got = thumb.map((bone) => turnedBy(rig, bone));
     for (let i = 0; i < got.length; i++) {
       expect(Math.abs(got[i] - want[i]), `thumb segment ${i}`).toBeLessThan(EXACT);
     }
-    expect(want[0]).not.toBeCloseTo(JOINTS.finger.dofs.proximal.free[1], 3);
+    expect(want[0]).not.toBeCloseTo(JOINTS.finger.dofs.proximal.free[1] * curl, 3);
   });
 
   it('bounds the strained band above 1 at each joint hard stop', () => {

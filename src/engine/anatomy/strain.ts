@@ -1,5 +1,5 @@
 import type { ElevationRow, JointDof, JointSpec, StrainZone } from '../types';
-import { D, ELEVATION } from './joints';
+import { D, ELEVATION, THUMB_OPPOSITION, THUMB_OPPOSITION_CURL } from './joints';
 
 /**
  * The elevation ceiling at one plane, in radians: where the free band ends and
@@ -118,4 +118,10 @@ export function fingerCurl(joints: JointSpec, index: number, amount: number): nu
   if (!d) return 0;
   const a = amount * d.free[1];
   return Math.min(d.max[1], Math.max(d.max[0], a));
+}
+
+/** The distal thumb hinge's turn for a thumb curl: none below the ramp, `THUMB_OPPOSITION` above it, linear between. */
+export function thumbOpposition(amount: number): number {
+  const [start, full] = THUMB_OPPOSITION_CURL;
+  return THUMB_OPPOSITION * Math.min(1, Math.max(0, (amount - start) / (full - start)));
 }
