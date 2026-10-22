@@ -56,14 +56,46 @@ const smooth = (x: number): number => {
 const blend = (a: THREE.Vector3, b: THREE.Vector3, k: number): THREE.Vector3 =>
   a.clone().lerp(b, k).normalize();
 
-/** Seconds the two beats of "jan-ken" take, before the hand is thrown. */
-const JANKEN_BEATS = 0.9;
+/** Seconds of the first swing ("jan"), the wind-up ("ken") and the downswing that is the throw ("pon"). */
+const JANKEN_JAN = 0.42;
+const JANKEN_LIFT = 0.22;
 const JANKEN_THROW = 0.3;
+/** First swing's depth, in units of the DOWN attitude; wind-up's height, in units of UP. */
+const JANKEN_DIP = 0.75;
+const JANKEN_RAISE = 0.9;
+/** Where in the downswing the fingers start to leave the fist (the finger follower lags ~0.1 s). */
+const JANKEN_FORM = 0.25;
+
+interface Attitude {
+  upperArm: THREE.Vector3;
+  lowerArm: THREE.Vector3;
+  hand: THREE.Vector3;
+}
+const attitude = (u: THREE.Vector3, l: THREE.Vector3, h: THREE.Vector3): Attitude => ({
+  upperArm: u,
+  lowerArm: l,
+  hand: h,
+});
+// Pump rest, wind-up top (fist beside the chin), bottom of the first swing, and the held throw.
+const JANKEN_MID = attitude(V(0.36, -0.78, 0.3), V(0.2, 0.45, 0.87), V(0.14, 0.4, 0.9));
+const JANKEN_UP = attitude(V(0.36, -0.55, 0.65), V(0.2, 0.85, 0.45), V(0.14, 0.8, 0.5));
+const JANKEN_DOWN = attitude(V(0.36, -0.92, 0.05), V(0.2, 0, 0.98), V(0.14, -0.05, 0.98));
+// Upper arm 8 degrees further out than the old throw, so a palm straight down stays inside the free pronation band.
+const JANKEN_THROWN = attitude(V(0.46, -0.64, 0.47), V(0.2, 0.1, 0.97), V(0.15, 0.05, 0.99));
+const PUMP_PALM = V(-0.4, -0.9, 0.15);
+
+const blendAttitude = (a: Attitude, b: Attitude, k: number): Attitude =>
+  attitude(
+    blend(a.upperArm, b.upperArm, k),
+    blend(a.lowerArm, b.lowerArm, k),
+    blend(a.hand, b.hand, k),
+  );
 
 /**
- * Janken: the fist pumps down twice, then the hand goes out at chest height
- * and holds what it threw. The pumps are a raised-cosine bump, zero at both
- * ends, so they start from rest and leave the arm still once the throw lands.
+ * Janken: a small swing down and back ("jan"), a wind-up to beside the chin
+ * ("ken"), then a downswing that lands directly on the thrown pose ("pon") and
+ * holds it palm down. The fingers leave the fist a quarter into the downswing.
+ * `v.scale` sizes the two swings only; the thrown pose is the same at every draw.
  */
 const janken = (
   label: GestureDef['label'],
@@ -77,23 +109,24 @@ const janken = (
   hold: 1.0,
   build(t, v, phase?, out?) {
     const h = heldTime(t, 0.34, phase) * v.rate;
-    const beat = Math.min(1, h / JANKEN_BEATS);
-    const dip = 0.5 * (1 - Math.cos(4 * Math.PI * beat)) * v.scale;
-    const k = smooth((h - JANKEN_BEATS) / JANKEN_THROW);
-    const drop = 0.4 * dip * (1 - k);
-    const hand = mixHand(FIST, thrown, k);
-    return one(
-      out,
-      v,
-      {
-        upperArm: blend(V(0.36, -0.78, 0.3), V(0.38, -0.68, 0.42), k),
-        lowerArm: blend(V(0.2, 0.45 - drop, 0.87), V(0.2, 0.1, 0.97), k),
-        hand: blend(V(0.14, 0.4 - drop, 0.9), V(0.15, 0.05, 0.99), k),
-        palm: blend(V(-0.6, -0.75, 0.2), palm, k),
-      },
-      hand,
-      { head: [0.04 * dip * (1 - k) - 0.01 * k, 0, 0] },
-    );
+    let u: number;
+    let raw = 0;
+    if (h < JANKEN_JAN) {
+      u = -JANKEN_DIP * 0.5 * (1 - Math.cos(2 * Math.PI * (h / JANKEN_JAN))) * v.scale;
+    } else if (h < JANKEN_JAN + JANKEN_LIFT) {
+      u = JANKEN_RAISE * smooth((h - JANKEN_JAN) / JANKEN_LIFT) * v.scale;
+    } else {
+      u = JANKEN_RAISE * v.scale;
+      raw = Math.min(1, (h - JANKEN_JAN - JANKEN_LIFT) / JANKEN_THROW);
+    }
+    const s = smooth(raw);
+    const k = smooth((raw - JANKEN_FORM) / (1 - JANKEN_FORM));
+    const pump =
+      u < 0 ? blendAttitude(JANKEN_MID, JANKEN_DOWN, -u) : blendAttitude(JANKEN_MID, JANKEN_UP, u);
+    const arm = blendAttitude(pump, JANKEN_THROWN, s);
+    return one(out, v, { ...arm, palm: blend(PUMP_PALM, palm, s) }, mixHand(FIST, thrown, k), {
+      head: [0.04 * Math.max(0, -u) * (1 - s) - 0.01 * s, 0, 0],
+    });
   },
 });
 
@@ -409,7 +442,7 @@ export const POSE = {
   countFour: count(4, { en: 'Count four', ja: '数える 4' }),
   countFive: count(5, { en: 'Count five', ja: '数える 5' }),
 
-  rock: janken({ en: 'Rock', ja: 'グー' }, FIST, V(-0.5, -0.8, 0.25)),
-  scissors: janken({ en: 'Scissors', ja: 'チョキ' }, PEACE_HAND, V(-0.6, -0.7, 0.2)),
-  paper: janken({ en: 'Paper', ja: 'パー' }, OPEN_HAND, V(-0.2, -0.95, 0.15)),
+  rock: janken({ en: 'Rock', ja: 'グー' }, FIST, V(-0.15, -0.97, 0.2)),
+  scissors: janken({ en: 'Scissors', ja: 'チョキ' }, PEACE_HAND, V(-0.2, -0.95, 0.22)),
+  paper: janken({ en: 'Paper', ja: 'パー' }, OPEN_HAND, V(-0.1, -0.97, 0.2)),
 } satisfies Record<string, GestureDef>;

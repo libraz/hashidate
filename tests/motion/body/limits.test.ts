@@ -2,7 +2,7 @@ import type * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { gestureEntries } from '@/engine/motion';
 import type { Side } from '@/engine/types';
-import { canonicalDirection, DT, harness, wristOf } from './harness';
+import { canonicalDirection, DT, handOrientation, harness, wristOf } from './harness';
 
 /**
  * That the anatomical limiter cannot teleport a hand.
@@ -198,4 +198,42 @@ describe('the anatomical limiter', () => {
     },
     SLOW,
   );
+
+  describe.each(THROWN_AFTER_BEATS)('%s through the real rig', (id) => {
+    const frames = 150;
+    const run = () => {
+      const h = harness(0, NOMINAL);
+      h.rig.limitsEnabled = true;
+      h.rig.reset();
+      h.body.update(DT);
+      h.body.play(id, 'R');
+      const wrist: number[] = [];
+      for (let i = 0; i < frames; i++) {
+        h.rig.reset();
+        h.body.update(DT);
+        wrist.push(wristOf(h.profile, 'R').y);
+      }
+      return { h, wrist };
+    };
+
+    it('swings twice, the second from higher and further down than the first', () => {
+      const { wrist } = run();
+      const peak = wrist.indexOf(Math.max(...wrist));
+      // The first dip is the lowest point before the wind-up's top.
+      const dip = Math.min(...wrist.slice(0, peak));
+      const dipAt = wrist.indexOf(dip);
+      const start = wrist[0];
+      expect(dipAt).toBeLessThan(peak);
+      expect(peak).toBeLessThan(frames - 1);
+      const hold = wrist[frames - 1];
+      expect(wrist[peak] - hold).toBeGreaterThan((start - dip) * 0.8);
+    });
+
+    it('holds the throw with the palm down and the forearm natural', () => {
+      const { h } = run();
+      expect(handOrientation(h, 'R').palm.y).toBeLessThanOrEqual(-0.85);
+      const rotation = h.rig.measure('R')?.find((r) => r.id === 'rotation');
+      expect(rotation?.zone).toBe('natural');
+    });
+  });
 });
