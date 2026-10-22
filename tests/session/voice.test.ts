@@ -349,7 +349,7 @@ describe('a turn with a voice', () => {
     const { session, director, step } = build({
       voice: (now) => new FakeVoice(now, { seconds: 3 }),
     });
-    session.say({ text: 'あいうえお[happy]かきくけこ' });
+    session.say({ text: 'あいうえお[calm]かきくけこ' });
     await settle();
     step(1);
 
@@ -358,7 +358,7 @@ describe('a turn with a voice', () => {
     step(Math.ceil(1.2 / DT));
     expect(director.performance).toBeNull();
     step(Math.ceil(0.5 / DT));
-    expect(director.performance).toBe('happy');
+    expect(director.performance).toBe('calm');
   });
 
   it('scales mouth travel by how loud the take is right now', async () => {

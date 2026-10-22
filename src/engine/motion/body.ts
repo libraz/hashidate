@@ -144,6 +144,9 @@ const ORDER_R: readonly Side[] = ['R', 'L'];
  */
 const LEAD_PER_RAD = 0.32;
 
+/** Longest a distance can stretch a lead to; see `entranceLead`. */
+const LEAD_CAP = 0.95;
+
 /**
  * Shortest entrance any playback gets: `nod`'s, the briefest the built-in table
  * uses, so no built-in moves. A loaded motion may state 0, and spine offsets
@@ -860,16 +863,8 @@ export class Body {
       // from the slide, the one it used on the line before.
       side: side === undefined ? (this._random() < 0.5 ? -1 : 1) : sideMirror(side),
     };
-    // The distance-derived extension is capped: past about a second an
-    // entrance stops reading as deliberate and starts reading as slow,
-    // however far the arm has to go. The authored lead remains a floor — doze
-    // deliberately takes 1.5 seconds so its entrance reads as falling asleep.
     const pose: Pose = {};
-    const lead = Math.max(
-      def.lead,
-      LEAD_FLOOR,
-      Math.min(0.95, this.travel(def, v, pose) * LEAD_PER_RAD),
-    );
+    const lead = this.entranceLead(def, v, pose);
     this._transaction.retime(lead);
     for (const f of this._spineFading) f.spineStart = f.spineWeight;
     for (const f of this._fading) for (const slot of ARM_SLOTS) f.armStart[slot] = f.armW[slot];
@@ -903,8 +898,69 @@ export class Body {
     this._exiting = false;
   }
 
-  /** Largest angle any arm link or spine slot has to cover to reach the gesture's opening pose. */
-  private travel(def: GestureDef, v: GestureVariation, out: Pose): number {
+  /**
+   * The entrance a play of `def` with variation `v` gets from the current state.
+   * `extra` is a spine still on screen that `handoff` has not yet moved into the fade.
+   */
+  private entranceLead(
+    def: GestureDef,
+    v: GestureVariation,
+    out: Pose,
+    extra?: Pose,
+    extraWeight = 0,
+  ): number {
+    // The distance-derived extension is capped: past about a second an
+    // entrance stops reading as deliberate and starts reading as slow,
+    // however far the arm has to go. The authored lead remains a floor — doze
+    // deliberately takes 1.5 seconds so its entrance reads as falling asleep.
+    return Math.max(
+      def.lead,
+      LEAD_FLOOR,
+      Math.min(LEAD_CAP, this.travel(def, v, out, extra, extraWeight) * LEAD_PER_RAD),
+    );
+  }
+
+  /**
+   * The longest entrance `id` can take from any state: its authored lead or the
+   * travel cap. 0 for an id with no definition.
+   */
+  leadBound(id: string): number {
+    const def = gestureDef(id);
+    return def ? Math.max(def.lead, LEAD_CAP) : 0;
+  }
+
+  /**
+   * The entrance `play(id)` would take if called now, for either hand, without
+   * playing it: rate 1 and scale at the top of its draw, the longer side.
+   * Draws nothing and leaves every live slot as it was. 0 for an unknown id.
+   */
+  leadFor(id: string): number {
+    const def = gestureDef(id);
+    if (!def) return 0;
+    this.syncExternalArmRevision();
+    // What `handoff` would push into the spine fade at `blend`.
+    const g = this.gesture;
+    const current =
+      g && this.blend > 0 ? g.def.build(g.time * g.speed, g.v, g.phase, g.pose) : undefined;
+    let lead = 0;
+    for (const side of SIDES) {
+      const v: GestureVariation = { rate: 1, scale: 1.1, side: sideMirror(side) };
+      lead = Math.max(lead, this.entranceLead(def, v, {}, current, this.blend));
+    }
+    return lead;
+  }
+
+  /**
+   * Largest angle any arm link or spine slot has to cover to reach the gesture's
+   * opening pose. `extra` is added to the outgoing spine at `extraWeight`.
+   */
+  private travel(
+    def: GestureDef,
+    v: GestureVariation,
+    out: Pose,
+    extra?: Pose,
+    extraWeight = 0,
+  ): number {
     const pose = def.build(0, v, PROBE_PHASE, out);
     let worst = 0;
     // The spine on screen is the outgoing slots' offsets at their weights.
@@ -917,6 +973,8 @@ export class Body {
           .spine?.[slot];
         if (from) d.addScaledVector(this._spineFrom.fromArray(from), -f.spineWeight);
       }
+      const held = extra?.spine?.[slot];
+      if (held) d.addScaledVector(this._spineFrom.fromArray(held), -extraWeight);
       worst = Math.max(worst, d.length());
     }
     for (const side of SIDES) {

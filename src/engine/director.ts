@@ -472,6 +472,23 @@ export class Director {
     this.body.play(id, side);
   }
 
+  /** The movement a gesture or performance cue would play, or null when it plays none. */
+  private cueGesture(kind: 'gesture' | 'perform', id: string): string | null {
+    return kind === 'gesture' ? id : (performanceDef(id)?.gesture ?? null);
+  }
+
+  /** The entrance a cue's movement would take if played now; see `Body.leadFor`. 0 for none. */
+  leadFor(kind: 'gesture' | 'perform', id: string): number {
+    const gesture = this.cueGesture(kind, id);
+    return gesture ? this.body.leadFor(gesture) : 0;
+  }
+
+  /** The longest entrance a cue's movement can take; see `Body.leadBound`. 0 for none. */
+  leadBound(kind: 'gesture' | 'perform', id: string): number {
+    const gesture = this.cueGesture(kind, id);
+    return gesture ? this.body.leadBound(gesture) : 0;
+  }
+
   /**
    * A run of hops. Distinct from a gesture — it moves the whole skeleton rather
    * than posing it, and runs alongside whatever the arms are doing.

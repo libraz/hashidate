@@ -502,7 +502,7 @@ export class TurnQueue {
       // Cues ride the mouth's own clock rather than a clock of the session's,
       // so they stay attached to the line: text estimate or real audio, the cue
       // lands at the same point in the sentence.
-      this.fireCues(d.mouth.time);
+      this.fireCues(d.mouth.time, dt);
       // A turn ends when the mouth is done with it. Driving this off the
       // duration `speak()` returned would drift: the mouth is the thing that
       // actually knows, and with a take it is the audio.
@@ -613,7 +613,7 @@ export class TurnQueue {
     // later, so a turn that opens on a cue opens on it. A turn with no text
     // gets every cue here: it is over on the next frame and has no clock to
     // spread them along.
-    this.fireCues(0);
+    this.fireCues(0, 0);
     this.events.emit('turn.start', { turn: turn.id, seconds });
   }
 
@@ -623,13 +623,18 @@ export class TurnQueue {
    * `<=` and not `<`, so a cue written at the very start of a line fires at
    * time zero rather than one frame into it.
    *
+   * A cue that plays a movement fires early by the entrance it would take, so
+   * the entrance completes on the word rather than starting there — at or
+   * before it, rounded a frame early (`dt`), never after. Only the head of the
+   * list is looked at, so nothing overtakes a cue written before it.
+   *
    * A cue whose effect outlives the line — a performance's mood, a shot, a
    * page, a layout — is reported as well as applied, so the server can hand it
    * to a renderer that attaches later. BGM is reported and not applied: the server
    * owns that transport.
    */
-  private fireCues(t: number): void {
-    while (this._cues.length > 0 && this._cues[0].t <= t) {
+  private fireCues(now: number, dt: number): void {
+    while (this._cues.length > 0 && this.due(this._cues[0], now, dt)) {
       const scheduled = this._cues.shift() as { cue: Cue; t: number; ordinal: number };
       const action = cueAction(scheduled.cue);
       if (action === null) continue;
@@ -666,6 +671,16 @@ export class TurnQueue {
           break;
       }
     }
+  }
+
+  /** Whether the cue at the head of the list fires on a frame at `now` lasting `dt`. */
+  private due({ cue, t }: { cue: Cue; t: number }, now: number, dt: number): boolean {
+    if (now >= t) return true;
+    const action = cueAction(cue);
+    if (action?.kind !== 'gesture' && action?.kind !== 'perform') return false;
+    // Outside the window no state can make the entrance long enough; skip the probe.
+    if (now < t - this.d.leadBound(action.kind, action.id)) return false;
+    return now + dt + this.d.leadFor(action.kind, action.id) >= t;
   }
 
   /** One fired cue, under an id every renderer playing this line agrees on. */

@@ -8,7 +8,7 @@ A cue changes one part of the broadcast at a position inside one spoken line. Th
 
 ![A performance written into a line](../images/cues.svg)
 
-A bracketed cue starts its action where it is written. There is no other way to place one mid-sentence: a second turn would put a gap and a breath in the middle of a clause, and a separate command cannot know when the first half has been said, because only the renderer knows how long that takes.
+A bracketed cue starts its action where it is written, with one exception: a cue that plays a movement starts early by the time the movement takes to get into its pose, so the movement lands on the word it is written before rather than starting there. There is no other way to place one mid-sentence: a second turn would put a gap and a breath in the middle of a clause, and a separate command cannot know when the first half has been said, because only the renderer knows how long that takes.
 
 ## Cue forms
 
@@ -92,6 +92,8 @@ The guarantee is made twice. A line whose markup does not parse fails the schema
 ## Cue position
 
 A cue's position is a fraction of the utterance rather than a time. It rides the mouth's own clock, so it stays where it was written when the line turns out longer than the estimate: a supplied `reading` is a different length, and TTS audio is a different length again. Both rows in the figure above put `[explain]` at the same 35 % of the utterance and therefore at a different second.
+
+Because a movement starts early, one written within about a second of the line start starts with the line. A cue never overtakes one written before it, so a movement written after a shot waits for the shot and can land late; when the movement's timing matters more, write the shot after the gesture. Of two movements that start on the same frame, only the later one stays.
 
 A camera, slide or performance cue also updates the standing state, so a renderer that attaches later is handed the shot, page and mood the line left behind.
 

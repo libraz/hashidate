@@ -47,10 +47,10 @@ describe('cues in a line', () => {
 
   it('plays a cue partway through the line rather than at either end of it', () => {
     const harness = build();
-    harness.session.say({ text: 'あいうえお[happy]かきくけこ' });
+    harness.session.say({ text: 'あいうえお[calm]かきくけこ' });
     const at = firesAt(harness);
 
-    expect(harness.director.performance).toBe('happy');
+    expect(harness.director.performance).toBe('calm');
     // Halfway: after the first five morae and before the line is over.
     const half = textToVisemes('あいうえお').duration;
     expect(at).toBeGreaterThanOrEqual(half);
@@ -67,13 +67,13 @@ describe('cues in a line', () => {
   it('plays several in the order they were written', () => {
     const { session, director, runUntil } = build();
     const seen: string[] = [];
-    session.say({ text: 'あい[calm]うえお[happy]かきく[gloomy]けこ' });
+    session.say({ text: 'あい[calm]うえお[wonder]かきく[gloomy]けこ' });
     runUntil(() => {
       const showing = director.performance;
       if (showing && seen.at(-1) !== showing) seen.push(showing);
       return seen.length === 3;
     });
-    expect(seen).toEqual(['calm', 'happy', 'gloomy']);
+    expect(seen).toEqual(['calm', 'wonder', 'gloomy']);
   });
 
   it('rescales to the line that is actually spoken, because the position is a fraction', () => {
@@ -83,7 +83,7 @@ describe('cues in a line', () => {
     // it was written, and where it will still be when TTS audio is the clock.
     const harness = build();
     const reading = 'あいうえおかきくけこさしすせそ';
-    harness.session.say({ text: 'あいうえお[happy]かきくけこ', reading });
+    harness.session.say({ text: 'あいうえお[calm]かきくけこ', reading });
     const at = firesAt(harness);
 
     const half = textToVisemes(reading).duration / 2;
@@ -125,7 +125,7 @@ describe('cues in a line', () => {
 
   it('drops what has not fired when the line is cut off', () => {
     const { session, director, step } = build();
-    session.say({ text: 'あいうえお[happy]かきくけこ' });
+    session.say({ text: 'あいうえお[calm]かきくけこ' });
     step(2);
     expect(director.performance).toBeNull();
     session.interrupt();
