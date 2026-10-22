@@ -136,19 +136,60 @@ export const PEACE_HAND = shape(
   { index: THREE.MathUtils.degToRad(-6), middle: THREE.MathUtils.degToRad(6) },
 );
 export const PEACE_PALM = V(0, 0.05, 1);
-export const FIST = shape({
-  thumb: 0.85,
-  index: 0.92,
-  middle: 0.94,
-  ring: 0.95,
-  little: 0.96,
-});
+/**
+ * The thumb's pad lies on the index and middle middle phalanges, its tip at the middle PIP, on both
+ * validation avatars. At 0.85 with no abduction it lay a pitch further toward the little finger and
+ * below them, sunk to half a finger's thickness.
+ */
+export const FIST = shape(
+  { thumb: 0.6, index: 0.92, middle: 0.94, ring: 0.95, little: 0.96 },
+  { thumb: THREE.MathUtils.degToRad(10) },
+);
+/**
+ * A count's thumb folds across the palm, since the raised fingers leave nothing to rest on. With
+ * the fist's thumb it stood off the palm at the index root on both validation avatars.
+ */
+const COUNT_THUMB = 0.85;
+const COUNT_ORDER: readonly FingerName[] = ['index', 'middle', 'ring', 'little'];
+const COUNT_THREE_SPREAD: FingerSpec = {
+  index: THREE.MathUtils.degToRad(-6),
+  ring: THREE.MathUtils.degToRad(6),
+};
+/**
+ * Four and five fanned wider toward the little finger, 22 degrees across,
+ * inside the fan a relaxed hand reaches. Held together they read as a chop.
+ */
+const COUNT_FAN: FingerSpec = {
+  index: THREE.MathUtils.degToRad(-8),
+  middle: THREE.MathUtils.degToRad(-2),
+  ring: THREE.MathUtils.degToRad(5),
+  little: THREE.MathUtils.degToRad(14),
+};
+/**
+ * Counting on one hand, the Japanese way: index first, then middle, ring and
+ * little, the thumb folded across the palm until the fifth.
+ *
+ * The folded fingers take `FIST`'s curls so a count reads as a fist with fingers
+ * raised out of it; the thumb is `COUNT_THUMB`. Two keeps the V's fan; three
+ * fans its outer fingers by the same angle about the middle, because the V's fan
+ * left the index apart and the middle and ring pressed together.
+ */
+export const countHand = (n: 1 | 2 | 3 | 4 | 5): HandShape => {
+  if (n === 5) return shape(OPEN_HAND.curl, COUNT_FAN);
+  const curl: Record<FingerName, number> = { ...FIST.curl, thumb: COUNT_THUMB };
+  for (const finger of COUNT_ORDER.slice(0, n)) curl[finger] = PEACE_HAND.curl.index;
+  if (n === 2) return shape(curl, PEACE_HAND.spread);
+  if (n === 3) return shape(curl, COUNT_THREE_SPREAD);
+  if (n === 4) return shape(curl, COUNT_FAN);
+  return shape(curl);
+};
+
 /**
  * A promise keeps the fist closed except for the little finger. Derive it from
  * the eye-tuned fist: `pointHand('little')` left its thumb at 0.35, which read
  * as a second extended finger on the raised hand rather than as a closed fist.
  */
-export const PINKY_PROMISE_HAND = shape({ ...FIST.curl, little: 0.02 });
+export const PINKY_PROMISE_HAND = shape({ ...FIST.curl, little: 0.02 }, FIST.spread);
 export const PAW = shape({
   thumb: 0.68,
   index: 0.76,

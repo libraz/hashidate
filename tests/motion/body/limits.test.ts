@@ -24,6 +24,41 @@ import { canonicalDirection, DT, harness, wristOf } from './harness';
 /** Far enough above the movement's own peak that only a jump can reach it. */
 const TELEPORT = 8;
 
+/** Held poses that pump twice before the hand goes out to where it holds. */
+const THROWN_AFTER_BEATS = ['rock', 'scissors', 'paper'];
+
+/** Their beats scale with the gesture's rate, so a comparison holds the variation still. */
+const NOMINAL = { random: () => 0.5 };
+
+/**
+ * Seconds until the right wrist is within 5% of its travel from where it ends,
+ * with the entrance the played gesture took, or null when the pose barely
+ * moves it.
+ */
+function settleTime(
+  id: string,
+  side: Side,
+  limits: boolean,
+  options = {},
+): { settled: number; lead: number } | null {
+  const h = harness(0, options);
+  h.rig.limitsEnabled = limits;
+  h.rig.reset();
+  h.body.update(DT);
+  h.body.play(id, side);
+  const lead = h.body.gesture?.lead ?? 0;
+  const track: THREE.Vector3[] = [];
+  for (let i = 0; i < 150; i++) {
+    h.rig.reset();
+    h.body.update(DT);
+    track.push(wristOf(h.profile, 'R'));
+  }
+  const end = track[track.length - 1];
+  const far = Math.max(...track.map((p) => p.distanceTo(end)));
+  if (far < 0.02) return null;
+  return { settled: track.findIndex((p) => p.distanceTo(end) < far * 0.05) * DT, lead };
+}
+
 /**
  * The poses that sit against a stop, which is where the seams are. Every one of
  * them was over the bound before the slew existed, `listen` at twenty-six.
@@ -131,38 +166,36 @@ describe('the anatomical limiter', () => {
     },
   );
 
-  it('still lets every held pose arrive inside its own entrance', () => {
-    // The other half of the bargain, and the one a cap set too low would break:
-    // slowing the limiter must not slow the movement. Every sustained pose has
-    // to be where it is going by the time its entrance is over, which is the
-    // property `entrance.test.ts` states for one pose and this one states for
-    // all of them — a link the cap was riding would arrive after its lead
-    // instead of during it.
-    const late: string[] = [];
-    for (const side of ['L', 'R'] as const) {
-      for (const [id, def] of gestureEntries()) {
-        if (!def.sustain) continue;
-        const h = harness();
-        h.rig.reset();
-        h.body.update(DT);
-        h.body.play(id, side);
-        const lead = h.body.gesture?.lead ?? 0;
-        const track = [];
-        for (let i = 0; i < 150; i++) {
-          h.rig.reset();
-          h.body.update(DT);
-          track.push(wristOf(h.profile, 'R'));
-        }
-        const end = track[track.length - 1];
-        const far = Math.max(...track.map((p) => p.distanceTo(end)));
-        // A pose this hand does not move for has nothing to arrive at.
-        if (far < 0.02) continue;
-        const settled = track.findIndex((p) => p.distanceTo(end) < far * 0.05);
-        if (!(settled > 0 && settled * DT < lead)) {
-          late.push(`${id} ${side}: ${(settled * DT).toFixed(2)}s`);
+  it(
+    'still lets every held pose arrive inside its own entrance',
+    () => {
+      // The other half of the bargain, and the one a cap set too low would break:
+      // slowing the limiter must not slow the movement. Every sustained pose has
+      // to be where it is going by the time its entrance is over, which is the
+      // property `entrance.test.ts` states for one pose and this one states for
+      // all of them — a link the cap was riding would arrive after its lead
+      // instead of during it.
+      const late: string[] = [];
+      for (const side of ['L', 'R'] as const) {
+        for (const [id, def] of gestureEntries()) {
+          if (!def.sustain) continue;
+          const thrown = THROWN_AFTER_BEATS.includes(id);
+          const run = settleTime(id, side, true, thrown ? NOMINAL : {});
+          // A pose this hand does not move for has nothing to arrive at.
+          if (run === null) continue;
+          const { settled, lead } = run;
+          // These author their arrival after their entrance, so the deadline is
+          // when the same pose arrives with the limiter off.
+          const deadline = thrown
+            ? (settleTime(id, side, false, NOMINAL)?.settled ?? 0) + DT
+            : lead;
+          if (!(settled > 0 && settled < deadline)) {
+            late.push(`${id} ${side}: ${settled.toFixed(2)}s`);
+          }
         }
       }
-    }
-    expect(late).toEqual([]);
-  });
+      expect(late).toEqual([]);
+    },
+    SLOW,
+  );
 });

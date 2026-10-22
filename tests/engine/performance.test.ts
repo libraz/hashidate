@@ -38,7 +38,7 @@ const each = <T>(rows: T[]) => it.each(rows);
 
 describe('the performance table', () => {
   it('files every entry under its own id and a group that exists', () => {
-    expect(PERFORMANCE_IDS.length).toBe(72);
+    expect(PERFORMANCE_IDS.length).toBe(80);
     expect(new Set(PERFORMANCE_IDS).size).toBe(PERFORMANCE_IDS.length);
     for (const id of PERFORMANCE_IDS) {
       expect(Object.keys(PERFORMANCE_GROUPS)).toContain(PERFORMANCE_TABLE[id].group);
@@ -180,11 +180,11 @@ describe('PERFORMANCES_BY_GROUP', () => {
 });
 
 describe('the entries the brief named', () => {
-  it('makes being pleased three small hops rather than one big one', () => {
+  it('makes being pleased two small hops rather than one big one', () => {
     const happy = PERFORMANCE_TABLE.happy;
     expect(happy.emotion.joy).toBeGreaterThan(0.8);
     expect(happy.hop).toBe('bounce');
-    expect(HOPS.bounce.count).toBe(3);
+    expect(HOPS.bounce.count).toBe(2);
     expect(HOPS.bounce.height).toBeLessThan(HOPS.hop.height);
   });
 

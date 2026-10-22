@@ -259,10 +259,10 @@ export interface HopDef extends HopSpec {
  */
 export const HOPS = {
   hop: { label: { en: 'Hop', ja: 'ぴょん' }, height: 0.07, count: 1 },
-  // Three, small and quick, with no standing up in between: this is the shape
+  // Two, small and quick, with no standing up in between: this is the shape
   // of being pleased about something, and it lives or dies on the cadence.
   // Landing straight into the next crouch puts it near 3.5 Hz on its own.
-  bounce: { label: { en: 'Bounce', ja: 'ぴょんぴょん' }, height: 0.045, count: 3 },
+  bounce: { label: { en: 'Bounce', ja: 'ぴょんぴょん' }, height: 0.045, count: 2 },
   leap: { label: { en: 'Big leap', ja: 'おおきく跳ぶ' }, height: 0.16, count: 1 },
   // Four quarter-turns make one revolution. 0.12 m is the tallest hop that keeps
   // the forehead in a bust shot, and its 0.31 s flight holds the yaw step near

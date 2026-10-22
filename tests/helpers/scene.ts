@@ -235,11 +235,13 @@ const FINGERS = ['Thumb', 'Index', 'Middle', 'Ring', 'Little'];
  * index side, out of the palm. The mean of the two validation avatars' rest
  * thumbs, so the thumb reaches where a real one does: a thumb lying in the
  * palm plane never meets the face, and one drawn to the fingers' length is
- * the only point every face reach has to clear.
+ * the only point every face reach has to clear. The knuckle stands 0.04 further
+ * out than the mean so the wrapped thumb lies across the fingers rather than
+ * pointing out of the palm, as it does on both avatars.
  */
 const THUMB_JOINTS: readonly Vec3Tuple[] = [
   [0.28, 0.21, 0.16],
-  [0.58, 0.41, 0.27],
+  [0.58, 0.41, 0.31],
   [0.83, 0.52, 0.36],
 ];
 

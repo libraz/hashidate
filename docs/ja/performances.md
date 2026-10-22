@@ -21,6 +21,8 @@
 
 この 6 グループのモーションは「撮影ポーズ」も含めて自動で終了します。表情の気分は、別の感情やプリセットで置き換えるまで続きます。各 ID は、表情付きのプリセットと、動きだけを再生するジェスチャの両方に使えます。
 
+ポーズには、片手で数える `countOne` から `countFive` と、じゃんけんの `rock`、`scissors`、`paper` も含まれます。感情には、その場で回る `twirl` があります。
+
 ```sh
 yarn ctl perform blowKiss
 yarn ctl perform doubleWave

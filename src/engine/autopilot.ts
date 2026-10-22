@@ -43,7 +43,8 @@ export const IDLE_AFTER = 1.6;
  * settled, half-lidded face held that long reads as drowsy rather than as
  * composed — the standing rows have to leave the character awake. Its weight
  * went to `blank` and `wonder`, so the amount of standing is unchanged and only
- * what is being felt while standing moved. `sleepy` stays: a yawn that arrives
+ * what is being felt while standing moved. `bashful` fidgets with its hands, so
+ * it is punctuation rather than standing, and its standing weight went to `blank`. `sleepy` stays: a yawn that arrives
  * and passes is a punctuation mark, which is the row it sits in.
  *
  * This is also the idle movement pool. It names built-in performances only;
@@ -54,11 +55,11 @@ export const IDLE_AFTER = 1.6;
 export const AUTO_ACTS: readonly PerformanceId[] = [
   'blank', 'blank', 'blank', 'blank', 'blank', 'blank',
   'wonder', 'wonder', 'wonder',
-  'bashful', 'gloomy',
+  'blank', 'gloomy',
   'agree', 'agree', 'curious', 'curious', 'ponder', 'dunno', 'interested',
   'giggle', 'peace', 'applause',
   'shy', 'catPaw', 'sparkle', 'secret', 'sleepy', 'refresh', 'bouncy', 'plead',
-  'polite', 'bored', 'guarded', 'nice', 'love', 'listening',
+  'polite', 'bored', 'guarded', 'nice', 'love', 'listening', 'bashful',
 ];
 
 /**

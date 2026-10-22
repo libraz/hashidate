@@ -1,7 +1,7 @@
 import type { GestureDef } from '../../types';
 import { V } from './base';
 import { both, reach, reachBoth } from './builders';
-import { MOUTH_CONTACT, MOUTH_HAND, OPEN_HAND, PAW, SHUSH_HAND, shape } from './hands';
+import { MOUTH_CONTACT, MOUTH_HAND, OPEN_HAND, PAW, POINT_HAND, SHUSH_HAND, shape } from './hands';
 
 /**
  * Mannerism — the small unprompted things a character does.
@@ -10,6 +10,9 @@ import { MOUTH_CONTACT, MOUTH_HAND, OPEN_HAND, PAW, SHUSH_HAND, shape } from './
  * rather than as directions: a direction fixes the elbow and leaves where the
  * hand lands to the avatar's arm length.
  */
+
+/** Distance of the last index joint from the midline when the tips touch, in body spans. */
+const FINGER_TOUCH_REACH = 0.026;
 
 export const CUTE = {
   cheekPoke: {
@@ -170,6 +173,36 @@ export const CUTE = {
         },
         MOUTH_HAND,
         { head: [-0.1 * k, 0, 0], chest: [-0.04 * k, 0, 0] },
+      );
+    },
+  },
+
+  fingerTouch: {
+    label: { en: 'Fingertips together', ja: 'ゆびつんつん' },
+    group: 'cute',
+    lead: 0.45,
+    hold: 2.8,
+    build(t, v, _phase?, out?) {
+      // The two index fingertips meet at the midline in front of the chest and
+      // tap: they part a little and come back, so the offset never goes below
+      // contact. Squared so the gap opens and closes smoothly from zero.
+      const s = Math.sin(t * 2.4 * v.rate);
+      const tap = s * s * 0.015 * v.scale;
+      return reachBoth(
+        out,
+        {
+          space: 'body',
+          at: 'sternum',
+          // The last index joint lands here, short of the tip by the tip
+          // extension, so each joint sits that far from the midline.
+          offset: [FINGER_TOUCH_REACH + tap, 0.06, 0.26],
+          contact: { kind: 'finger', finger: 'index', segment: 1, fraction: 1 },
+          hand: [-0.86, 0.3, 0.41],
+          palm: [0.1, -0.85, -0.5],
+          pole: [0.32, -0.88, -0.1],
+        },
+        POINT_HAND,
+        { head: [0.07, 0.06 * v.side, 0.05 * v.side], chest: [0.02, 0, 0] },
       );
     },
   },

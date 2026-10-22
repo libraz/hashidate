@@ -108,7 +108,12 @@ export const PERFORMANCES = {
     group: 'mood',
     emotion: { surprise: 0.9 },
   },
-  bashful: { label: { en: 'Bashful', ja: 'もじもじ' }, group: 'mood', emotion: { shy: 0.8 } },
+  bashful: {
+    label: { en: 'Bashful', ja: 'もじもじ' },
+    group: 'mood',
+    emotion: { shy: 0.8 },
+    gesture: 'fingerTouch',
+  },
 
   /**
    * Falling asleep.
@@ -206,7 +211,7 @@ export const PERFORMANCES = {
    * Pleased about something, and the reason the hop table exists.
    *
    * The arms alone are a cheer, which is a reaction to something; the hops are
-   * what make it the character's own delight. Three small ones rather than one
+   * what make it the character's own delight. Two small ones rather than one
    * big one — a single tall jump reads as a leap and takes the head out of a
    * bust framing, and the cadence of a short repeated bounce is the whole tell.
    */
@@ -367,6 +372,54 @@ export const PERFORMANCES = {
     group: 'pose',
     emotion: { thinking: 0.5, neutral: 0.4 },
     gesture: 'listen',
+  },
+  countOne: {
+    label: { en: 'Count one', ja: '数える 1' },
+    group: 'pose',
+    emotion: { neutral: 0.7, joy: 0.2 },
+    gesture: 'countOne',
+  },
+  countTwo: {
+    label: { en: 'Count two', ja: '数える 2' },
+    group: 'pose',
+    emotion: { neutral: 0.7, joy: 0.2 },
+    gesture: 'countTwo',
+  },
+  countThree: {
+    label: { en: 'Count three', ja: '数える 3' },
+    group: 'pose',
+    emotion: { neutral: 0.7, joy: 0.2 },
+    gesture: 'countThree',
+  },
+  countFour: {
+    label: { en: 'Count four', ja: '数える 4' },
+    group: 'pose',
+    emotion: { neutral: 0.7, joy: 0.2 },
+    gesture: 'countFour',
+  },
+  countFive: {
+    label: { en: 'Count five', ja: '数える 5' },
+    group: 'pose',
+    emotion: { neutral: 0.7, joy: 0.2 },
+    gesture: 'countFive',
+  },
+  rock: {
+    label: { en: 'Rock', ja: 'グー' },
+    group: 'pose',
+    emotion: { joy: 0.4 },
+    gesture: 'rock',
+  },
+  scissors: {
+    label: { en: 'Scissors', ja: 'チョキ' },
+    group: 'pose',
+    emotion: { joy: 0.4 },
+    gesture: 'scissors',
+  },
+  paper: {
+    label: { en: 'Paper', ja: 'パー' },
+    group: 'pose',
+    emotion: { joy: 0.4 },
+    gesture: 'paper',
   },
 
   // --- affection ----------------------------------------------------------

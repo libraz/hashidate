@@ -21,6 +21,8 @@ The general groups are Mood, Reaction, Greeting, Explaining, Feeling, Mannerism,
 
 These motions finish on their own, including Photo pose. Their mood persists until another emotion or performance replaces it. Each id names both a performance with a face and a gesture that plays only the movement.
 
+Pose also holds counting on one hand (`countOne` to `countFive`) and the three janken throws (`rock`, `scissors`, `paper`), and Feeling includes `twirl`, a spin on the spot.
+
 ```sh
 yarn ctl perform blowKiss
 yarn ctl perform doubleWave

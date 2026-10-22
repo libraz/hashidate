@@ -82,10 +82,10 @@ const FINGER_IDS = IDS.filter(
 );
 
 describe('gesture table', () => {
-  it('holds exactly 64 gestures, each under its own id', () => {
+  it('holds exactly 73 gestures, each under its own id', () => {
     // Pinned so a dropped or duplicated entry is a failure rather than a
     // silently shorter menu.
-    expect(IDS.length).toBe(64);
+    expect(IDS.length).toBe(73);
     expect(new Set(IDS).size).toBe(IDS.length);
   });
 
@@ -252,8 +252,8 @@ describe('comeHere beckon cycle', () => {
 describe('poses the table builds', () => {
   it('splits the table between authored directions, reaches and spine-only', () => {
     // Every gesture is one of the three, and nothing is both.
-    expect(ARM_IDS.length).toBe(37);
-    expect(REACH_IDS.length).toBe(22);
+    expect(ARM_IDS.length).toBe(45);
+    expect(REACH_IDS.length).toBe(23);
     expect(ARM_IDS.filter((id) => REACH_IDS.includes(id))).toEqual([]);
     expect(ARM_IDS.length + REACH_IDS.length + 5).toBe(IDS.length);
     expect(FINGER_IDS.length).toBe(ARM_IDS.length + REACH_IDS.length);
@@ -414,13 +414,14 @@ describe('which hand acts', () => {
     'cheekPoints',
     'faceFrame',
     'modelTilt',
+    'fingerTouch',
   ];
   const SPINE_ONLY: GestureId[] = ['nod', 'tilt', 'lean', 'shoulderShimmy', 'shoulderBounce'];
   const MIRRORED = IDS.filter((id) => ![...TWO_HANDED, ...SPINE_ONLY].includes(id));
 
   it('accounts for every gesture in exactly one of the three kinds', () => {
     expect(TWO_HANDED.length + SPINE_ONLY.length + MIRRORED.length).toBe(IDS.length);
-    expect(MIRRORED.length).toBe(20);
+    expect(MIRRORED.length).toBe(28);
   });
 
   each(TWO_HANDED)('%s poses both arms whichever side is asked for', (id) => {
@@ -596,7 +597,7 @@ describe('pinky promise articulation', () => {
     expect(fingers.index).toBeCloseTo(0.92, 12);
     expect(fingers.middle).toBeCloseTo(0.94, 12);
     expect(fingers.ring).toBeCloseTo(0.95, 12);
-    expect(pose.fingerSpread).toBeUndefined();
+    expect(pose.fingerSpread).toEqual({ R: FIST.spread });
     // Both directions are normalised by V, leaving the measured component just
     // under the rounded 0.7 target; the old thumb-side roll is negative.
     expect(new THREE.Vector3().crossVectors(arm.hand, arm.palm).z).toBeGreaterThan(0.69);

@@ -1,10 +1,16 @@
-import type { GestureDef } from '../../types';
+import type * as THREE from 'three';
+import type { GestureDef, HandShape } from '../../types';
+import { heldTime } from '../timing';
 import { V } from './base';
 import { both, clasp, one, reach } from './builders';
 import {
   CLASP_HAND,
+  countHand,
+  FIST,
   GUN_HAND,
   HEART_HAND,
+  mixHand,
+  OPEN_HAND,
   PEACE_HAND,
   PEACE_PALM,
   PINKY_PROMISE_HAND,
@@ -19,6 +25,77 @@ import {
  * Every entry here is `sustain`, which is what makes it usable for a whole
  * segment of a stream instead of running out on its own.
  */
+
+/** Count shown beside the shoulder: palm to the camera, fingers up, inside a bust frame. */
+const count = (n: 1 | 2 | 3 | 4 | 5, label: GestureDef['label']): GestureDef => ({
+  label,
+  group: 'pose',
+  sustain: true,
+  lead: 0.32,
+  hold: 1.0,
+  build(_t, v, _phase?, out?) {
+    return one(
+      out,
+      v,
+      {
+        upperArm: V(0.44, -0.52, 0.34),
+        lowerArm: V(0.18, 0.9, 0.36),
+        hand: V(0.12, 0.96, 0.2),
+        palm: PEACE_PALM,
+      },
+      countHand(n),
+      { head: [-0.02, 0, 0] },
+    );
+  },
+});
+
+const smooth = (x: number): number => {
+  const k = Math.min(1, Math.max(0, x));
+  return k * k * (3 - 2 * k);
+};
+const blend = (a: THREE.Vector3, b: THREE.Vector3, k: number): THREE.Vector3 =>
+  a.clone().lerp(b, k).normalize();
+
+/** Seconds the two beats of "jan-ken" take, before the hand is thrown. */
+const JANKEN_BEATS = 0.9;
+const JANKEN_THROW = 0.3;
+
+/**
+ * Janken: the fist pumps down twice, then the hand goes out at chest height
+ * and holds what it threw. The pumps are a raised-cosine bump, zero at both
+ * ends, so they start from rest and leave the arm still once the throw lands.
+ */
+const janken = (
+  label: GestureDef['label'],
+  thrown: HandShape,
+  palm: THREE.Vector3,
+): GestureDef => ({
+  label,
+  group: 'pose',
+  sustain: true,
+  lead: 0.34,
+  hold: 1.0,
+  build(t, v, phase?, out?) {
+    const h = heldTime(t, 0.34, phase) * v.rate;
+    const beat = Math.min(1, h / JANKEN_BEATS);
+    const dip = 0.5 * (1 - Math.cos(4 * Math.PI * beat)) * v.scale;
+    const k = smooth((h - JANKEN_BEATS) / JANKEN_THROW);
+    const drop = 0.4 * dip * (1 - k);
+    const hand = mixHand(FIST, thrown, k);
+    return one(
+      out,
+      v,
+      {
+        upperArm: blend(V(0.36, -0.78, 0.3), V(0.38, -0.68, 0.42), k),
+        lowerArm: blend(V(0.2, 0.45 - drop, 0.87), V(0.2, 0.1, 0.97), k),
+        hand: blend(V(0.14, 0.4 - drop, 0.9), V(0.15, 0.05, 0.99), k),
+        palm: blend(V(-0.6, -0.75, 0.2), palm, k),
+      },
+      hand,
+      { head: [0.04 * dip * (1 - k) - 0.01 * k, 0, 0] },
+    );
+  },
+});
 
 export const POSE = {
   // Held until released rather than for a fixed beat. `sustain` is what makes
@@ -325,4 +402,14 @@ export const POSE = {
       );
     },
   },
+
+  countOne: count(1, { en: 'Count one', ja: '数える 1' }),
+  countTwo: count(2, { en: 'Count two', ja: '数える 2' }),
+  countThree: count(3, { en: 'Count three', ja: '数える 3' }),
+  countFour: count(4, { en: 'Count four', ja: '数える 4' }),
+  countFive: count(5, { en: 'Count five', ja: '数える 5' }),
+
+  rock: janken({ en: 'Rock', ja: 'グー' }, FIST, V(-0.5, -0.8, 0.25)),
+  scissors: janken({ en: 'Scissors', ja: 'チョキ' }, PEACE_HAND, V(-0.6, -0.7, 0.2)),
+  paper: janken({ en: 'Paper', ja: 'パー' }, OPEN_HAND, V(-0.2, -0.95, 0.15)),
 } satisfies Record<string, GestureDef>;

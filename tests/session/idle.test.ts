@@ -120,7 +120,7 @@ describe('the autopilot picking performances', () => {
 
   it('lets go of a held pose when the autopilot is switched off', () => {
     const { session, director, step } = build({ idle: true });
-    const random = vi.spyOn(Math, 'random').mockReturnValue(31 / 35 + 0.001);
+    const random = vi.spyOn(Math, 'random').mockReturnValue(31 / 36 + 0.001);
     try {
       step(Math.ceil((IDLE_AFTER + 1) / DT));
       let elapsed = 0;
@@ -162,7 +162,7 @@ describe('idle ownership', () => {
 
   it('drops idle face and mood when a turn starts without either field', () => {
     const { session, director, step } = build({ idle: true });
-    const random = vi.spyOn(Math, 'random').mockReturnValue(32 / 35 + 0.001);
+    const random = vi.spyOn(Math, 'random').mockReturnValue(32 / 36 + 0.001);
     try {
       step(Math.ceil((IDLE_AFTER + 1) / DT));
       let elapsed = 0;
@@ -258,7 +258,7 @@ describe('idle ownership', () => {
     const { session, director, step, now } = build({ idle: true });
     const bouncy = PERFORMANCE_TABLE.bouncy;
     const priorHop = bouncy.hop;
-    const random = vi.spyOn(Math, 'random').mockReturnValue(27 / 35 + 0.001);
+    const random = vi.spyOn(Math, 'random').mockReturnValue(27 / 36 + 0.001);
     bouncy.hop = 'bounce';
     try {
       step(Math.ceil((IDLE_AFTER + 1) / DT));
@@ -367,7 +367,7 @@ describe('idle handing the face back', () => {
   ])('eases the emotion on screen across %s instead of stepping it', (_, act) => {
     const h = build({ idle: true });
     // 'guarded' — a mood well away from the neutral baseline underneath.
-    const random = vi.spyOn(Math, 'random').mockReturnValue(31 / 35 + 0.001);
+    const random = vi.spyOn(Math, 'random').mockReturnValue(31 / 36 + 0.001);
     try {
       h.step(Math.ceil((IDLE_AFTER + 1) / DT));
       let elapsed = 0;
@@ -424,8 +424,8 @@ describe('the autopilot choosing in context', () => {
 
   it('starts from a standing row and then draws from the whole pool', () => {
     const { director, step } = build({ idle: true });
-    // 31/35 lands on a gesture row of the whole pool, so a gesture on the first draw is a settle failure.
-    const random = vi.spyOn(Math, 'random').mockReturnValue(31 / 35 + 0.001);
+    // 31/36 lands on a gesture row of the whole pool, so a gesture on the first draw is a settle failure.
+    const random = vi.spyOn(Math, 'random').mockReturnValue(31 / 36 + 0.001);
     try {
       step(Math.ceil((IDLE_AFTER + 1) / DT));
       let elapsed = 0;
@@ -433,9 +433,9 @@ describe('the autopilot choosing in context', () => {
         step(1);
         elapsed += DT;
       }
-      expect(director.performance).toBe('bashful');
+      expect(director.performance).toBe('blank');
       expect(director.body.gesture).toBeNull();
-      while (director.performance === 'bashful' && elapsed < 25) {
+      while (director.performance === 'blank' && elapsed < 25) {
         step(1);
         elapsed += DT;
       }
