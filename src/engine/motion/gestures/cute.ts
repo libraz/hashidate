@@ -1,7 +1,7 @@
 import type { GestureDef } from '../../types';
 import { V } from './base';
 import { both, reach, reachBoth } from './builders';
-import { OPEN_HAND, PAW, SOFT_HAND } from './hands';
+import { MOUTH_CONTACT, MOUTH_HAND, MOUTH_SPREAD, OPEN_HAND, PAW, SHUSH_HAND } from './hands';
 
 /**
  * Mannerism — the small unprompted things a character does.
@@ -125,22 +125,22 @@ export const CUTE = {
     hold: 2.6,
     build(t, v, _phase?, out?) {
       const b = Math.sin(t * 1.5 * v.rate) * 0.03;
-      // Beside the mouth, not over it — the hand shields, it does not cover.
+      // A finger to the lips: the index pad on the mouth, the rest folded away.
       return reach(
         out,
         v,
         {
           at: 'mouth',
-          // The screening hand sits beside the mouth, not on it, and the
-          // fingers stand up rather than tipping forward — a hand cupped to say
-          // something quietly, seen from the side.
-          offset: [0.62, 0.55 + b, 0.85],
-          hand: [0.2, 0.97, 0.09],
-          palm: [-0.86, 0.08, -0.5],
+          // The finger stands up with the palm turned in, which keeps the
+          // folded fingers off the chin.
+          offset: [0, b, 0],
+          contact: { kind: 'finger', finger: 'index', segment: 1, fraction: 0.5, surface: 'pad' },
+          hand: [-0.25, 0.95, -0.1],
+          palm: [-0.5, 0, -0.87],
           pole: [0.34, -0.86, -0.22],
           twist: 0.7,
         },
-        SOFT_HAND,
+        SHUSH_HAND,
         { head: [0.02, 0.14 * v.side, 0.04 * v.side], chest: [0.02, 0.06 * v.side, 0] },
       );
     },
@@ -159,18 +159,18 @@ export const CUTE = {
         v,
         {
           at: 'mouth',
-          // Lower and further out than a hand actually covering a yawn would
-          // be. Pressed to the mouth the arm reaches its fold stop and the pose
-          // reads as a fist against the face; held just under the chin it reads
-          // as the sleepy, half-hearted version, which is the funnier one.
-          offset: [0.05, -0.35 + b, 1.3],
-          hand: [-0.27, 0.96, 0.09],
-          palm: [-0.8, 0.1, -0.59],
+          // The hand `cover` holds, a little lower: with the head tipped back
+          // the fingers otherwise rose over the nose.
+          offset: [0, -0.1 + b, 0.1],
+          contact: MOUTH_CONTACT,
+          hand: [-1, 0, 0],
+          palm: [0, 0.1, -1],
           pole: [0.36, -0.88, -0.3],
           twist: 0.4,
         },
-        SOFT_HAND,
+        MOUTH_HAND,
         { head: [-0.1 * k, 0, 0], chest: [-0.04 * k, 0, 0] },
+        MOUTH_SPREAD,
       );
     },
   },

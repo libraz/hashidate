@@ -1,4 +1,4 @@
-import type { GestureDef } from '../../types';
+import type { GestureDef, HandContact } from '../../types';
 import { heldTime } from '../timing';
 import { V } from './base';
 import type { ArmPose } from './builders';
@@ -12,6 +12,15 @@ const ease = (t: number, duration: number): number => {
   return x * x * (3 - 2 * x);
 };
 
+/** The fingertip pad a kiss is pressed to the lips with. */
+const KISS_CONTACT: HandContact = {
+  kind: 'finger',
+  finger: 'index',
+  segment: 1,
+  fraction: 1,
+  surface: 'pad',
+};
+
 export const AFFECTION = {
   blowKiss: {
     label: { en: 'Blow a kiss', ja: '投げキッス' },
@@ -19,7 +28,7 @@ export const AFFECTION = {
     lead: 0.48,
     hold: 1.8,
     build(t, v, phase?, out?) {
-      // The hand starts soft beside the mouth and opens as the kiss leaves.
+      // The fingertips start on the lips and the hand opens as the kiss leaves.
       // It stays below eye level, with a pole because this is a face reach.
       const held = heldTime(t, 0.48, phase);
       const depart = ease(held - 0.2, 0.68);
@@ -30,9 +39,10 @@ export const AFFECTION = {
         v,
         {
           at: 'mouth',
-          offset: [0.68 + 0.3 * depart, -0.06 - 0.65 * depart, 0.9 + 2.2 * depart],
-          hand: [-0.3 + 0.3 * depart, 0.91 - 0.56 * depart, -0.26 + 1.2 * depart],
-          palm: [-0.82 * (1 - depart), 0.3 + 0.64 * depart, -0.48 + 0.14 * depart],
+          offset: [0.98 * depart, -0.71 * depart, 0.2 + 2.9 * depart],
+          contact: KISS_CONTACT,
+          hand: [-0.25 + 0.25 * depart, 0.95 - 0.6 * depart, -0.1 + 1.04 * depart],
+          palm: [-0.5 * (1 - depart), 0.94 * depart, -0.87 + 0.53 * depart],
           pole: [0.35, -0.86, -0.28],
           twist: 0.38 * (1 - depart),
         },

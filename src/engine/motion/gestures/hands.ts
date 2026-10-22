@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { FingerName, FingerSpec } from '../../types';
+import type { FingerName, FingerSpec, HandContact } from '../../types';
 import { V } from './base';
 
 /**
@@ -24,6 +24,32 @@ export const SOFT_HAND: Record<FingerName, number> = {
   middle: 0.26,
   ring: 0.3,
   little: 0.34,
+};
+/**
+ * The open hand with the thumb laid straight, for a hand held flat across the mouth.
+ *
+ * Any curl turns the fingertips, and the thumb's tip, in toward the face, and
+ * the face clearance then holds the whole hand off the lips by however far
+ * they reach in.
+ */
+export const MOUTH_HAND: Record<FingerName, number> = { ...OPEN_HAND, thumb: 0 };
+/**
+ * The thumb of `MOUTH_HAND` swung in along the index, out from under the palm.
+ *
+ * Left where the bind pose holds it, the thumb stood proud of the palm on the
+ * face side, and the face clearance held the hand off the lips by its depth.
+ */
+export const MOUTH_SPREAD: FingerSpec = { thumb: THREE.MathUtils.degToRad(46) };
+/**
+ * Where a hand held across the mouth touches it: the index's first phalanx,
+ * so the fingers run on across the lips and the palm stays beside them.
+ */
+export const MOUTH_CONTACT: HandContact = {
+  kind: 'finger',
+  finger: 'index',
+  segment: 0,
+  fraction: 0.5,
+  surface: 'pad',
 };
 /** A hand `t` of the way from one shape to another, for a hand that changes shape as it moves. */
 export const mixHand = (
@@ -70,6 +96,8 @@ export const pointHand = (finger: FingerName = 'index'): Record<FingerName, numb
 
 /** The index-pointing hand, which is what most callers mean by pointing. */
 export const POINT_HAND: Record<FingerName, number> = pointHand('index');
+/** The index-pointing hand with the thumb laid straight, for a finger held to the lips. See `MOUTH_HAND`. */
+export const SHUSH_HAND: Record<FingerName, number> = { ...POINT_HAND, thumb: 0 };
 export const PEACE_HAND: Record<FingerName, number> = {
   thumb: 1.0,
   index: 0.02,

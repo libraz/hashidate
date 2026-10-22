@@ -1,7 +1,16 @@
 import type { GestureDef } from '../../types';
 import { V } from './base';
 import { both, one, reach, reachBoth } from './builders';
-import { FIST, OPEN_HAND, PEACE_HAND, PEACE_PALM, PEACE_SPREAD, SOFT_HAND } from './hands';
+import {
+  FIST,
+  MOUTH_CONTACT,
+  MOUTH_HAND,
+  MOUTH_SPREAD,
+  OPEN_HAND,
+  PEACE_HAND,
+  PEACE_PALM,
+  PEACE_SPREAD,
+} from './hands';
 
 /**
  * Feeling — the reactions that are a whole movement rather than a face.
@@ -104,20 +113,18 @@ export const EMOTE = {
         v,
         {
           at: 'mouth',
-          // Held a little below the mouth and well clear of it, fingers angled
-          // back toward the cheek rather than out at the viewer. That is the
-          // shape the gesture is named for — a hand raised to screen a smile,
-          // not a palm clamped over a mouth — and it is also the version the
-          // wrist can hold: at the mouth itself the arm is folded to its stop
-          // and every degree of hand angle has to come out of the wrist.
-          offset: [0.1, -0.05 + b, 0.75],
-          hand: [-0.3, 0.92, -0.27],
-          palm: [-0.83, 0.25, -0.5],
+          // Fingers across the lips, palm beside them: placed by the palm, the
+          // heel met chin and nose and the face clearance slid the hand off the mouth.
+          offset: [0, b, 0.1],
+          contact: MOUTH_CONTACT,
+          hand: [-1, 0, 0],
+          palm: [0, 0.1, -1],
           pole: [0.4, -0.86, -0.3],
           twist: 0.5,
         },
-        SOFT_HAND,
+        MOUTH_HAND,
         { head: [0.06, 0.1 * v.side, 0.05 * v.side], chest: [0.02, 0.04 * v.side, 0] },
+        MOUTH_SPREAD,
       );
     },
   },
