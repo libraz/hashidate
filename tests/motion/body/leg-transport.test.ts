@@ -279,6 +279,6 @@ it('returns to the resting knee bend at the end of a normally played hop at 30 f
       break;
     }
   }
-  expect(errors).toHaveLength(3);
+  expect(errors).toHaveLength(Object.keys(HOPS).length);
   expect(Math.max(...errors)).toBeLessThan(1e-7);
 });

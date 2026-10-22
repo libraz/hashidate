@@ -10,7 +10,7 @@ Every command goes to `POST /api/command`, one at a time or several under `batch
 | `expression` | One of the avatar's own drawn faces. `null` hands the face back to the emotion. |
 | `overlay` | A drawn effect, at a weight. It layers over whatever face is showing, so several can be up at once. |
 | `gesture` | One movement from the gesture table. No id stops it. `side` names the hand. |
-| `hop` | A run of hops. Its own command rather than a gesture because it translates the whole skeleton, and runs alongside whatever the arms are doing. |
+| `hop` | A run of hops. Its own command rather than a gesture because it translates the whole skeleton, and runs alongside whatever the arms are doing. A run may turn the body in the air and always lands facing where it started. |
 | `point` | Aim a fingertip at a bearing — degrees on the wire, and any of the five fingers. Held until released. |
 | `look` | How much the gaze tracks the camera, 0 to 1. |
 | `idle` | The autopilot, on or off. |

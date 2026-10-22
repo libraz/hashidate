@@ -206,6 +206,12 @@ export interface ActiveGesture {
  */
 const MAX_FADING = 4;
 
+/** Whether `n` hops of `turn` radians each make a whole number of revolutions. */
+function closes(n: number, turn: number): boolean {
+  const revolutions = (n * turn) / (2 * Math.PI);
+  return Math.abs(revolutions - Math.round(revolutions)) < 1e-9;
+}
+
 const mkSlotWeights = (): Record<ArmSlot, number> => ({
   shoulder: 0,
   upperArm: 0,
@@ -413,6 +419,9 @@ export class Body {
   private _hopQueued: HopSpec | null;
   private _rise: number;
   private _load: number;
+  /** Radians the skeleton is yawed this frame, and the chest's lead over the pelvis. */
+  private _yaw = 0;
+  private _lead = 0;
   /** Whether the current gesture's exit has begun, and how far through it is. */
   private _exiting = false;
   private _exitU = 0;
@@ -1233,14 +1242,14 @@ export class Body {
    * Start a run of hops. The arc it runs is `planJump`'s, and a run of more
    * than one is continuous — see there for why it needs no gap between them.
    */
-  hop({ height = this.jumpHeight, count = 1 }: Partial<HopSpec> = {}): void {
+  hop({ height = this.jumpHeight, count = 1, turn = 0 }: Partial<HopSpec> = {}): void {
     // Restarting a run in flight would drop the hips to rest in one frame; the
     // new one waits for the landing, which ends standing and at rest.
     if (this._jump) {
-      this._hopQueued = { height, count };
+      this._hopQueued = { height, count, turn };
       return;
     }
-    this._jump = planJump(height, this.gravity, count);
+    this._jump = planJump(height, this.gravity, count, turn);
     this._jumpT = 0;
   }
 
@@ -1252,7 +1261,10 @@ export class Body {
     const cycle = jump.push + jump.flight + jump.brake;
     const elapsed = Math.max(0, this._jumpT - CROUCH_T);
     const current = Math.min(jump.count, Math.floor(elapsed / cycle) + 1);
-    jump.count = current;
+    // A turning run keeps the hops it needs to face front again.
+    let end = current;
+    while (end < jump.count && !closes(end, jump.turn)) end++;
+    jump.count = end;
   }
 
   /** Whether a hop is in flight. Read by the panel. */
@@ -1267,6 +1279,8 @@ export class Body {
   private jumpStep(dt: number): void {
     this._rise = 0;
     this._load = 0;
+    this._yaw = 0;
+    this._lead = 0;
     const j = this._jump;
     if (!j) return;
 
@@ -1277,13 +1291,15 @@ export class Body {
       const next = this._hopQueued;
       if (next) {
         this._hopQueued = null;
-        this._jump = planJump(next.height, this.gravity, next.count);
+        this._jump = planJump(next.height, this.gravity, next.count, next.turn);
         this._jumpT = 0;
       }
       return;
     }
     this._rise = s.rise;
     this._load = s.load;
+    this._yaw = s.yaw;
+    this._lead = s.lead;
   }
 
   /** Current gaze offset in radians, x = yaw, y = pitch. */
@@ -1554,6 +1570,7 @@ export class Body {
     pin.jumpHeight = this.jumpHeight;
     pin.rise = this._rise;
     pin.load = this._load;
+    pin.lead = this._lead;
     const terms = this._posture.apply(rig, p, dt, pin);
     this._spine.compose(dt, this._spineFading, g?.spine, this.blend);
     return terms;
@@ -1578,6 +1595,7 @@ export class Body {
       this._gazeFrame,
       dt,
       cut,
+      this._yaw + this._lead,
     );
   }
 
@@ -1727,7 +1745,7 @@ export class Body {
 
     rig.commitSpine();
     // Before the live frame and reach origins are read; springs still see the pose last.
-    rig.plantLegs(this._rise);
+    rig.plantLegs(this._rise, this._yaw);
     // Spine offsets change the body frame. Resolve it once here, after commit,
     // so every direction sent to Rig in this frame uses the same live basis.
     const frameReady = rig.anat.update();
@@ -1864,8 +1882,8 @@ export class Body {
       }
     }
 
-    if (armTransaction) this._transaction.commit(dt, this._rise);
-    else rig.finishLegacyBodyFrame(this._rise);
+    if (armTransaction) this._transaction.commit(dt, this._rise, this._yaw);
+    else rig.finishLegacyBodyFrame(this._rise, this._yaw);
     aimEyes(rig, p, this._gazeFrame);
     rig.commitEyes();
   }

@@ -114,7 +114,8 @@ describe('standing legs in the body pipeline', () => {
       h.frame(dt);
       h.body.play('catPaw', 'L');
       h.body.hop(spec);
-      const arc = planJump(spec.height, h.body.gravity, spec.count);
+      const arc = planJump(spec.height, h.body.gravity, spec.count, 'turn' in spec ? spec.turn : 0);
+      const pivot = h.anchors[0].clone().add(h.anchors[1]).multiplyScalar(0.5);
       const restBend = kneeBend(h.profile, 'L');
       let elapsed = 0;
       let lifted = 0;
@@ -132,7 +133,13 @@ describe('standing legs in the body pipeline', () => {
         previousWrist = wrist;
         const rise = Math.max(0, sample.rise);
         for (const [j, side] of SIDES.entries()) {
-          const expected = h.anchors[j].clone().add(new THREE.Vector3(0, rise, 0));
+          // A turning hop carries each foot round the stance centre.
+          const expected = h.anchors[j]
+            .clone()
+            .sub(pivot)
+            .applyAxisAngle(new THREE.Vector3(0, 1, 0), sample.yaw)
+            .add(pivot)
+            .add(new THREE.Vector3(0, rise, 0));
           expect(position(h.profile, `foot.${side}`).distanceTo(expected)).toBeLessThan(1e-7);
         }
         if (sample.rise > 0) {

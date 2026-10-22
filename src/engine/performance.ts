@@ -217,6 +217,15 @@ export const PERFORMANCES = {
     gesture: 'cheer',
     hop: 'bounce',
   },
+  // A full revolution that leaves the camera is an event, not idle punctuation,
+  // so it is kept out of the autopilot's pool.
+  twirl: {
+    label: { en: 'Twirl', ja: 'くるりん' },
+    group: 'emote',
+    emotion: { joy: 0.9 },
+    gesture: 'sparkle',
+    hop: 'spin',
+  },
   applause: {
     label: { en: 'Applause', ja: 'はくしゅ' },
     group: 'emote',

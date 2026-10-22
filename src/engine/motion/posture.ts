@@ -42,6 +42,8 @@ export interface PostureInput {
   rise: number;
   /** 0..1, how far into the dip the body is. */
   load: number;
+  /** Chest ahead of the pelvis in a turning hop, radians; absent is 0. */
+  lead?: number;
 }
 
 /** The breath terms the arm compose step also needs. */
@@ -157,11 +159,14 @@ export class IdlePosture {
     // moved by a crane. The fold stays small: it also serves rigs without a
     // standing leg chain, where a deep fold looks like a bow. Standing legs
     // take the pelvis drop through knee flexion after the spine is committed.
-    if (s.rise !== 0) {
+    const lead = s.lead ?? 0;
+    if (s.rise !== 0 || lead !== 0) {
       const load = s.load;
       const stretch = Math.max(0, s.rise) / Math.max(0.005, s.jumpHeight);
-      rig.addOffset('spine', 0.085 * load - 0.045 * stretch, 0, 0);
-      rig.addOffset('chest', 0.07 * load - 0.035 * stretch, 0, 0);
+      // The turn is earned on the floor and spent in the air: the trunk winds
+      // ahead of the pelvis, never the hips slot, which the legs' yaw owns.
+      rig.addOffset('spine', 0.085 * load - 0.045 * stretch, lead / 2, 0);
+      rig.addOffset('chest', 0.07 * load - 0.035 * stretch, lead / 2, 0);
       rig.addOffset('neck', 0.03 * load - 0.02 * stretch, 0, 0);
     }
 

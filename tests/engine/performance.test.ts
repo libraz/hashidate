@@ -38,7 +38,7 @@ const each = <T>(rows: T[]) => it.each(rows);
 
 describe('the performance table', () => {
   it('files every entry under its own id and a group that exists', () => {
-    expect(PERFORMANCE_IDS.length).toBe(71);
+    expect(PERFORMANCE_IDS.length).toBe(72);
     expect(new Set(PERFORMANCE_IDS).size).toBe(PERFORMANCE_IDS.length);
     for (const id of PERFORMANCE_IDS) {
       expect(Object.keys(PERFORMANCE_GROUPS)).toContain(PERFORMANCE_TABLE[id].group);
@@ -115,6 +115,7 @@ describe('the performance table', () => {
     // is there for the tuning panel — but the bounce is the one the whole hop
     // run exists for, and something has to ask for it.
     expect(used.has('bounce')).toBe(true);
+    expect(used.has('spin')).toBe(true);
   });
 });
 

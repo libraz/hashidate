@@ -4,6 +4,7 @@ import type { Profile } from '../types';
 import { DirFollower, OMEGA_PER_RATE } from './follow';
 import { type Gaze, HEAD_OMEGA } from './gaze';
 import { saturate } from './idle';
+import { minJerk } from './timing';
 
 /**
  * Where the character is looking.
@@ -28,6 +29,14 @@ import { saturate } from './idle';
  */
 export const LOOK_FOLLOW = HEAD_OMEGA / OMEGA_PER_RATE;
 
+/**
+ * Seconds the head takes to cross the front when the body has turned too far
+ * for it to hold the camera, so the flip is a motion rather than a cut.
+ */
+export const WHIP_T = 0.1;
+
+const wrapToPi = (a: number): number => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
+
 const _tmp = new THREE.Vector3();
 const _dir = new THREE.Vector3();
 const _rootQ = new THREE.Quaternion();
@@ -50,6 +59,11 @@ export interface GazeFrame {
   bearing: DirFollower;
   /** False until a target is seen, and again after one goes away. */
   seeded: boolean;
+  /** The head's bridge across the front while the body is turned away; null when none runs. */
+  whip: { from: number; t: number } | null;
+  /** Last bearing against the body, as measured and as applied after any whip. */
+  rel: number;
+  relApplied: number;
 }
 
 export function makeGazeFrame(): GazeFrame {
@@ -60,6 +74,9 @@ export function makeGazeFrame(): GazeFrame {
     eyePitch: 0,
     bearing: new DirFollower(new THREE.Vector3(0, 0, 1)),
     seeded: false,
+    whip: null,
+    rel: 0,
+    relApplied: 0,
   };
 }
 
@@ -76,11 +93,15 @@ export function prepareGaze(
   frame: GazeFrame,
   dt: number,
   cut: boolean,
+  bodyYaw = 0,
 ): void {
   frame.active = false;
   const head = p.bones.head;
-  if (!(headWorldTarget && head)) frame.seeded = false;
-  else {
+  if (!(headWorldTarget && head)) {
+    frame.seeded = false;
+    frame.whip = null;
+  } else {
+    const wasSeeded = frame.seeded;
     head.updateWorldMatrix(true, false);
     const hp = head.getWorldPosition(_tmp);
     const dir = _dir.copy(headWorldTarget).sub(hp).normalize();
@@ -91,7 +112,27 @@ export function prepareGaze(
     frame.seeded = true;
     // Partial aim only: a full aim would cancel the idle motion above.
     const k = lookAt;
-    const camYaw = Math.atan2(dir.x, dir.z) * k;
+    // Against the chest, not the root: the head keeps the camera while the body
+    // turns away, up to the limits below.
+    const bearing = Math.atan2(dir.x, dir.z);
+    const rel = bodyYaw === 0 ? bearing : wrapToPi(bearing - bodyYaw);
+    if (cut || !wasSeeded) frame.whip = null;
+    // The dancer's whip. The head stays on the camera as long as the neck allows
+    // and crosses the front in a few frames when it no longer can; without the
+    // bridge the branch flip at directly-behind is a half-turn of the head in one
+    // frame.
+    else if (bodyYaw !== 0 && !frame.whip && Math.abs(rel - frame.rel) > Math.PI) {
+      frame.whip = { from: frame.relApplied, t: 0 };
+    }
+    let relApplied = rel;
+    if (frame.whip) {
+      frame.whip.t += dt;
+      relApplied = frame.whip.from + (rel - frame.whip.from) * minJerk(frame.whip.t / WHIP_T);
+      if (frame.whip.t >= WHIP_T) frame.whip = null;
+    }
+    frame.rel = rel;
+    frame.relApplied = relApplied;
+    const camYaw = relApplied * k;
     const camPitch = Math.asin(THREE.MathUtils.clamp(dir.y, -1, 1)) * k;
     const amt = gazeAmount;
 
@@ -99,7 +140,7 @@ export function prepareGaze(
     // settled copy, which lags and slightly overshoots.
     const eyeYaw = camYaw + (gaze.offset.x + gaze.micro.x) * amt;
     const eyePitch = camPitch + (gaze.offset.y + gaze.micro.y) * amt;
-    const bodyYaw = camYaw + gaze.settled.x * amt;
+    const aimYaw = camYaw + gaze.settled.x * amt;
     const bodyPitch = camPitch + gaze.settled.y * amt;
 
     // Every channel is bounded by the profile's limits. Unbounded tracking of
@@ -110,13 +151,13 @@ export function prepareGaze(
     rig.addOffset(
       'neck',
       C(-bodyPitch * 0.16, -L.neckPitch, L.neckPitch),
-      C(bodyYaw * 0.16, -L.neckYaw, L.neckYaw),
+      C(aimYaw * 0.16, -L.neckYaw, L.neckYaw),
       0,
     );
     rig.addOffset(
       'head',
       C(-bodyPitch * 0.28, -L.headPitch, L.headPitch),
-      C(bodyYaw * 0.28, -L.headYaw, L.headYaw),
+      C(aimYaw * 0.28, -L.headYaw, L.headYaw),
       0,
     );
     frame.gazeHead.identity();
@@ -124,7 +165,7 @@ export function prepareGaze(
       frame.gazeHead.setFromEuler(
         _gazeEuler.set(
           C(-bodyPitch * 0.16, -L.neckPitch, L.neckPitch),
-          C(bodyYaw * 0.16, -L.neckYaw, L.neckYaw),
+          C(aimYaw * 0.16, -L.neckYaw, L.neckYaw),
           0,
           'XYZ',
         ),
@@ -134,7 +175,7 @@ export function prepareGaze(
       _gazeQ.setFromEuler(
         _gazeEuler.set(
           C(-bodyPitch * 0.28, -L.headPitch, L.headPitch),
-          C(bodyYaw * 0.28, -L.headYaw, L.headYaw),
+          C(aimYaw * 0.28, -L.headYaw, L.headYaw),
           0,
           'XYZ',
         ),

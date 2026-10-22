@@ -23,6 +23,8 @@ interface LegState {
   anchorRoot: THREE.Vector3;
   /** Rest knee direction projected off the hip-to-ankle line. */
   kneePole: THREE.Vector3;
+  /** `kneePole` carried through this frame's turn. */
+  kneePoleNow: THREE.Vector3;
   /** Scratch for the solved frame. */
   targetMetric: THREE.Vector3;
   hipMetric: THREE.Vector3;
@@ -99,6 +101,12 @@ export class GroundedLegs {
   private readonly forwardMetric = new THREE.Matrix4();
   private readonly forwardLinear = new THREE.Matrix3();
   private readonly forwardScratch = new THREE.Vector3();
+
+  private readonly turnMatrix = new THREE.Matrix4();
+  private readonly turnToPole = new THREE.Matrix4();
+  private readonly turnScratch = new THREE.Matrix4();
+  private readonly turnPivot = new THREE.Vector3();
+  private readonly turnLinear = new THREE.Matrix3();
 
   private readonly worldUp = new THREE.Vector3(0, 1, 0);
   private readonly metricUp = new THREE.Vector3();
@@ -276,6 +284,7 @@ export class GroundedLegs {
         lowerRestDir,
         anchorRoot: foot.getWorldPosition(new THREE.Vector3()).applyMatrix4(rootInverse),
         kneePole: restPole.lengthSq() > GroundedLegs.EPS ? restPole : new THREE.Vector3(),
+        kneePoleNow: new THREE.Vector3(),
         targetMetric: new THREE.Vector3(),
         hipMetric: new THREE.Vector3(),
         hipAfter: new THREE.Vector3(),
@@ -339,12 +348,26 @@ export class GroundedLegs {
   }
 
   /**
+   * The point on the floor a turning body pivots about: the midpoint of the two
+   * rest ankle anchors, in world space.
+   */
+  stancePivot(out: THREE.Vector3): THREE.Vector3 {
+    this.root.updateWorldMatrix(true, false);
+    out.copy(this.legs.L.anchorRoot).add(this.legs.R.anchorRoot).multiplyScalar(0.5);
+    return out.applyMatrix4(this.root.matrixWorld);
+  }
+
+  /**
    * Keep the rest ankle anchors fixed on the floor, or lift them by `rise`
    * while a hop is airborne. A failed common reach leaves every bone as the
    * caller posed it for this frame; slipping one foot to make the other reach
    * would be much more visible than retaining the authored pose.
+   *
+   * A non-zero `turn` (radians about world up) rotates the anchors, the knee
+   * poles and the foot orientations about the stance centre first, so the solve
+   * that follows is the rest configuration turned and nothing else.
    */
-  apply(rise: number): boolean {
+  apply(rise: number, turn = 0): boolean {
     // Unconditional and first: `Rig.applyBodyContext` relies on this pass, plus
     // each write below refreshing its own subtree, to leave the scene fresh.
     this.root.updateMatrixWorld(true);
@@ -359,11 +382,34 @@ export class GroundedLegs {
     this.rootMetricFrame.decompose(this.decomposePosition, this.rootMetricQ, this.decomposeScale);
     if (!validQuaternion(this.rootMetricQ)) return false;
 
+    const yaw = Number.isFinite(turn) ? turn : 0;
+    if (yaw !== 0) {
+      this.stancePivot(this.turnPivot);
+      this.turnMatrix
+        .makeTranslation(this.turnPivot.x, this.turnPivot.y, this.turnPivot.z)
+        .multiply(this.turnScratch.makeRotationY(yaw))
+        .multiply(
+          this.turnScratch.makeTranslation(-this.turnPivot.x, -this.turnPivot.y, -this.turnPivot.z),
+        );
+      // Metric -> world -> turned -> metric, for the rest knee directions.
+      this.turnToPole
+        .copy(this.metricInverse)
+        .multiply(this.turnMatrix)
+        .multiply(this.metric.matrixWorld);
+      this.turnLinear.setFromMatrix4(this.turnToPole);
+    }
+    for (const side of SIDES) {
+      const state = this.legs[side];
+      state.kneePoleNow.copy(state.kneePole);
+      if (yaw !== 0) state.kneePoleNow.applyMatrix3(this.turnLinear).normalize();
+    }
+
     // Root-relative anchors follow the root's current placement. The lift is
     // stated in world metres, then converted to metric coordinates below.
     for (const side of SIDES) {
       const state = this.legs[side];
       this.rootAnchorWorld.copy(state.anchorRoot).applyMatrix4(this.root.matrixWorld);
+      if (yaw !== 0) this.rootAnchorWorld.applyMatrix4(this.turnMatrix);
       this.rootAnchorWorld.y += lift;
       state.targetMetric.copy(this.rootAnchorWorld).applyMatrix4(this.metricInverse);
       state.upper.getWorldPosition(state.hipMetric).applyMatrix4(this.metricInverse);
@@ -387,7 +433,15 @@ export class GroundedLegs {
     // frame's non-uniform scale and a tilted foot.
     for (const side of SIDES) {
       const state = this.legs[side];
-      this.footTargetMetric.copy(this.rootMetricFrame).multiply(state.footRestRootMatrix);
+      if (yaw !== 0) {
+        this.footTargetMetric
+          .copy(this.metricInverse)
+          .multiply(this.turnMatrix)
+          .multiply(this.root.matrixWorld);
+      } else {
+        this.footTargetMetric.copy(this.rootMetricFrame);
+      }
+      this.footTargetMetric.multiply(state.footRestRootMatrix);
       this.footTargetMetric.decompose(
         this.decomposePosition,
         state.footTargetQ,
@@ -484,7 +538,7 @@ export class GroundedLegs {
     if (heightSquared < -tolerance) return false;
     const height = Math.sqrt(Math.max(0, heightSquared));
 
-    state.pole.copy(state.kneePole);
+    state.pole.copy(state.kneePoleNow);
     state.pole.addScaledVector(state.reachAxis, -state.pole.dot(state.reachAxis));
     if (state.pole.lengthSq() <= GroundedLegs.EPS) {
       this.anatomicalForwardDirection(this.anatomicalForward);
@@ -498,7 +552,7 @@ export class GroundedLegs {
     if (state.pole.lengthSq() <= GroundedLegs.EPS) return false;
     // Keep the selected branch stable even when the fallback projection moves
     // through a near-parallel configuration.
-    if (state.pole.dot(state.kneePole) < 0) state.pole.negate();
+    if (state.pole.dot(state.kneePoleNow) < 0) state.pole.negate();
     state.pole.normalize();
 
     state.kneeMetric

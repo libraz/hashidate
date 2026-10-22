@@ -93,6 +93,8 @@ export interface RigBodyPoseSnapshot {
   readonly hipsPosition: THREE.Vector3;
   /** Signed authored jump translation; the foot solver clamps its anchor lift. */
   rise: number;
+  /** Radians about world up the skeleton is turned; the slots hold the pre-turn pelvis. */
+  turn: number;
 }
 
 export interface ArmFrameSideCommit {
@@ -299,9 +301,16 @@ export class Rig {
   private _externalArmRevision = 0;
   private _standingBootstrapClaimed = false;
   private _acceptedRise = 0;
+  private _acceptedTurn = 0;
   private _lastPlantSuccess = true;
   private readonly _prePlantHips = new THREE.Vector3();
   private readonly _postPlantHips = new THREE.Vector3();
+  private readonly _preTurnHipsQ = new THREE.Quaternion();
+  private readonly _postTurnHipsQ = new THREE.Quaternion();
+  private readonly _turnMatrix = new THREE.Matrix4();
+  private readonly _turnScratch = new THREE.Matrix4();
+  private readonly _turnPivot = new THREE.Vector3();
+  private readonly _turnScale = new THREE.Vector3();
   private readonly _transportUp = new THREE.Vector3();
   private readonly _transportInverse = new THREE.Matrix3();
   private readonly _nativeArmEnvironment: Partial<
@@ -424,11 +433,13 @@ export class Rig {
     if (initialHips) {
       this._prePlantHips.copy(initialHips.position);
       this._postPlantHips.copy(initialHips.position);
+      this._preTurnHipsQ.copy(initialHips.quaternion);
+      this._postTurnHipsQ.copy(initialHips.quaternion);
     }
     this._acceptedBodyPose = this.makeBodyPoseSnapshot();
     this._proposedBodyPose = this.makeBodyPoseSnapshot();
-    this.captureBodyPose(this._acceptedBodyPose, 0);
-    this.captureBodyPose(this._proposedBodyPose, 0);
+    this.captureBodyPose(this._acceptedBodyPose, 0, 0);
+    this.captureBodyPose(this._proposedBodyPose, 0, 0);
     for (const side of ['L', 'R'] as Side[]) {
       const palmLocal = this.palmLocal[side];
       const humeralFront = this._humeralFront[side];
@@ -615,7 +626,13 @@ export class Rig {
 
       const left = plans.L;
       const right = plans.R;
-      if (!(left && right && this.commitArmFrame({ L: left, R: right }, this._acceptedRise)))
+      if (
+        !(
+          left &&
+          right &&
+          this.commitArmFrame({ L: left, R: right }, this._acceptedRise, this._acceptedTurn)
+        )
+      )
         return false;
 
       for (const side of ['L', 'R'] as Side[]) {
@@ -623,7 +640,7 @@ export class Rig {
         if (!driver) return false;
         driver.requestRollHistory = driver.acceptedConfiguration.forearmRoll;
       }
-      this.captureBodyPose(this._proposedBodyPose, this._acceptedRise);
+      this.captureBodyPose(this._proposedBodyPose, this._acceptedRise, this._acceptedTurn);
       committed = true;
       return true;
     } finally {
@@ -786,10 +803,10 @@ export class Rig {
   }
 
   /** Re-seed only after a complete legacy frame has been rendered. */
-  finishLegacyBodyFrame(rise: number): void {
+  finishLegacyBodyFrame(rise: number, turn = 0): void {
     if (!(this._limitsEnabled && this.bothArmFramesSupported())) {
       this.invalidateArmContinuation();
-    } else if (!this._armContinuationReady && this.reseedConstrainedArms(rise)) {
+    } else if (!this._armContinuationReady && this.reseedConstrainedArms(rise, turn)) {
       this._armContinuationReady = true;
       this._externalArmRevision++;
     }
@@ -851,8 +868,8 @@ export class Rig {
   }
 
   /** Capture the once-followed body context that candidate arms will use. */
-  captureProposedBodyContext(rise: number): void {
-    this.captureBodyPose(this._proposedBodyPose, rise);
+  captureProposedBodyContext(rise: number, turn = 0): void {
+    this.captureBodyPose(this._proposedBodyPose, rise, turn);
   }
 
   /** Rebuild articulation and common airborne transport with separate progress. */
@@ -878,7 +895,12 @@ export class Rig {
       hips.position.lerpVectors(a.hipsPosition, b.hipsPosition, blend);
       hips.position.addScaledVector(this.transportUp(), rise);
     }
-    this.plantLegs(rise);
+    const turn = THREE.MathUtils.lerp(
+      a.turn,
+      b.turn,
+      THREE.MathUtils.clamp(transportProgress, 0, 1),
+    );
+    this.plantLegs(rise, turn);
     // Grounded legs refresh the whole scene before they read it and every bone
     // they write after that, so only a body without them still needs a pass.
     if (!this.legs) this.p.root.updateMatrixWorld(true);
@@ -901,7 +923,7 @@ export class Rig {
   }
 
   /** Apply and accept both sides only after the common-alpha frame is complete. */
-  commitArmFrame(plans: Record<Side, ArmFrameSideCommit>, rise: number): boolean {
+  commitArmFrame(plans: Record<Side, ArmFrameSideCommit>, rise: number, turn = 0): boolean {
     for (const side of ['L', 'R'] as Side[]) if (!this.canWriteArm(side)) return false;
     // Each side writes only its own chain and reads its parents fresh, so one
     // pass after both covers what either side's fingers left stale.
@@ -923,8 +945,9 @@ export class Rig {
       this._acceptedHandPose[side] = this.captureHandPose(side, false);
       this.captureAcceptedArmState(side, driver.acceptedForward, plan.curls, plan.spread);
     }
-    this.captureBodyPose(this._acceptedBodyPose, rise);
+    this.captureBodyPose(this._acceptedBodyPose, rise, turn);
     this._acceptedRise = rise;
+    this._acceptedTurn = turn;
     this.armTwists?.accept('L');
     this.armTwists?.accept('R');
     return true;
@@ -933,15 +956,18 @@ export class Rig {
   /**
    * Accept only the common signed jump translation after an articulated frame
    * could not be certified. Native torso/head/face self-clearances are invariant
-   * under this rigid upper-body translation. Legs still solve contact; custom
-   * environments and carriers outside the hips subtree have no such guarantee.
+   * under this rigid upper-body translation and yaw. Legs still solve contact;
+   * custom environments and carriers outside the hips subtree have no such
+   * guarantee.
    */
-  commitArmTransport(lift: number): boolean {
+  commitArmTransport(lift: number, turn = 0): boolean {
     if (
       !(
         Number.isFinite(lift) &&
+        Number.isFinite(turn) &&
         lift === this._proposedBodyPose.rise &&
-        lift !== this._acceptedRise &&
+        turn === this._proposedBodyPose.turn &&
+        (lift !== this._acceptedRise || turn !== this._acceptedTurn) &&
         this._limitsEnabled &&
         this._armContinuationReady &&
         this.bothArmFramesSupported()
@@ -967,7 +993,10 @@ export class Rig {
     if (!this.transportTopologySupported()) return false;
     for (const snapshot of [this._acceptedBodyPose, this._proposedBodyPose]) {
       const position = snapshot.hipsPosition;
-      if (![position.x, position.y, position.z, snapshot.rise].every(Number.isFinite)) return false;
+      if (
+        ![position.x, position.y, position.z, snapshot.rise, snapshot.turn].every(Number.isFinite)
+      )
+        return false;
       for (const slot of BODY_SNAPSHOT_SLOTS) {
         if (!this.p.bones[slot]) continue;
         const q = snapshot.slots[slot];
@@ -1003,8 +1032,9 @@ export class Rig {
         driver.acceptedSpread,
       );
     }
-    this.captureBodyPose(this._acceptedBodyPose, lift);
+    this.captureBodyPose(this._acceptedBodyPose, lift, turn);
     this._acceptedRise = lift;
+    this._acceptedTurn = turn;
     return true;
   }
 
@@ -1079,10 +1109,10 @@ export class Rig {
     for (const slot of BODY_SNAPSHOT_SLOTS) {
       if (this.p.bones[slot]) slots[slot] = new THREE.Quaternion();
     }
-    return { slots, hipsPosition: new THREE.Vector3(), rise: 0 };
+    return { slots, hipsPosition: new THREE.Vector3(), rise: 0, turn: 0 };
   }
 
-  private captureBodyPose(out: RigBodyPoseSnapshot, rise: number): void {
+  private captureBodyPose(out: RigBodyPoseSnapshot, rise: number, turn: number): void {
     for (const slot of BODY_SNAPSHOT_SLOTS) {
       const bone = this.p.bones[slot];
       const target = out.slots[slot];
@@ -1090,7 +1120,13 @@ export class Rig {
     }
     const hips = this.p.bones.hips;
     out.rise = rise;
+    out.turn = turn;
     if (hips) {
+      // Same for the yaw: the snapshot keeps the pelvis as posed, so replaying
+      // the turn does not turn an already-turned pelvis again.
+      if (out.slots.hips && hips.quaternion.equals(this._postTurnHipsQ)) {
+        out.slots.hips.copy(this._preTurnHipsQ);
+      }
       // Contact may have corrected the pelvis. Preserve its authored input so
       // retries do not feed a previous leg correction back into the next one.
       out.hipsPosition.copy(
@@ -1274,12 +1310,45 @@ export class Rig {
     this.spine.commitEyes(this.p, (bone) => this.restOf(bone));
   }
 
-  /** Keep standing feet planted, or carry their contact points through a hop. */
-  plantLegs(rise: number): void {
+  /**
+   * Keep standing feet planted, or carry their contact points through a hop.
+   * `turn` (radians about world up) yaws the whole skeleton about the stance
+   * centre and carries the legs through the same turn.
+   */
+  plantLegs(rise: number, turn = 0): void {
     const hips = this.p.bones.hips;
-    if (hips) this._prePlantHips.copy(hips.position);
-    this._lastPlantSuccess = this.legs ? this.legs.apply(rise) : true;
-    if (hips) this._postPlantHips.copy(hips.position);
+    if (hips) {
+      this._prePlantHips.copy(hips.position);
+      this._preTurnHipsQ.copy(hips.quaternion);
+    }
+    const yaw = Number.isFinite(turn) ? turn : 0;
+    if (hips && yaw !== 0) this.turnHips(hips, yaw);
+    this._lastPlantSuccess = this.legs ? this.legs.apply(rise, yaw) : true;
+    if (hips) {
+      this._postPlantHips.copy(hips.position);
+      this._postTurnHipsQ.copy(hips.quaternion);
+    }
+  }
+
+  // Pivot on the stance centre, not the hips: the pelvis sits a few centimetres
+  // ahead of the feet, and a yaw about its own vertical sweeps each foot on that
+  // radius and lands it off its mark.
+  private turnHips(hips: THREE.Bone, turn: number): void {
+    const parent = hips.parent;
+    if (!parent) return;
+    parent.updateWorldMatrix(true, false);
+    hips.updateMatrix();
+    const world = this._turnMatrix.multiplyMatrices(parent.matrixWorld, hips.matrix);
+    const pivot = this._turnPivot;
+    if (this.legs) this.legs.stancePivot(pivot);
+    else pivot.setFromMatrixPosition(world);
+    // T(p) R_y(turn) T(-p) hipsWorld, carried back through the parent's inverse.
+    world.premultiply(this._turnScratch.makeTranslation(-pivot.x, -pivot.y, -pivot.z));
+    world.premultiply(this._turnScratch.makeRotationY(turn));
+    world.premultiply(this._turnScratch.makeTranslation(pivot.x, pivot.y, pivot.z));
+    world.premultiply(this._turnScratch.copy(parent.matrixWorld).invert());
+    world.decompose(hips.position, hips.quaternion, this._turnScale);
+    hips.updateMatrix();
   }
 
   /**
@@ -1454,7 +1523,7 @@ export class Rig {
     this.fingers.noteFingers(side);
     this._acceptedHandPose[side] = this.captureHandPose(side, false);
     this.captureAcceptedArmState(side, driver.acceptedForward, curls, spread);
-    this.captureBodyPose(this._acceptedBodyPose, this._acceptedRise);
+    this.captureBodyPose(this._acceptedBodyPose, this._acceptedRise, this._acceptedTurn);
     if (bumpRevision) this._externalArmRevision++;
     this.armTwists?.accept(side);
   }
@@ -1540,11 +1609,11 @@ export class Rig {
     if (!this.captureAcceptedArmState(side, null, this._posedCurls[side], this._posedSpread[side]))
       return;
     this._acceptedHandPose[side] = this.captureHandPose(side, false);
-    this.captureBodyPose(this._acceptedBodyPose, this._acceptedRise);
+    this.captureBodyPose(this._acceptedBodyPose, this._acceptedRise, this._acceptedTurn);
     this._externalArmRevision++;
   }
 
-  private reseedConstrainedArms(rise = this._acceptedRise): boolean {
+  private reseedConstrainedArms(rise = this._acceptedRise, turn = this._acceptedTurn): boolean {
     const snapshots: Partial<Record<Side, ArmDriverAcceptedSnapshot>> = {};
     const pending: Array<{
       side: Side;
@@ -1603,6 +1672,7 @@ export class Rig {
     }
 
     this._acceptedRise = rise;
+    this._acceptedTurn = turn;
     for (const plan of pending) {
       this.commitStaticArm(plan.side, plan.output, plan.context, plan.curls, plan.spread, false);
       plan.driver.requestRollHistory = plan.driver.acceptedConfiguration.forearmRoll;

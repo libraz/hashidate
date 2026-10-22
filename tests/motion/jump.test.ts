@@ -4,6 +4,7 @@ import {
   HOP_IDS,
   HOPS,
   type JumpArc,
+  LEAD_MAX,
   MAX_CROUCH,
   planJump,
   RECOVER_T,
@@ -332,5 +333,133 @@ describe('the hop vocabulary', () => {
     // Three of them still take less than a second and a half all told, or it
     // reads as three separate jumps rather than as one bounce.
     expect(total(bounce)).toBeLessThan(1.5);
+  });
+});
+
+/** The turning-hop rows: coverwise over height, count, turn and gravity. */
+const TURN_ROWS: Array<[number, number, number, number]> = [
+  [0.3, 2, 0, 9.81],
+  [0.045, 2, -Math.PI / 2, 1.62],
+  [0.045, 1, 0, 1.62],
+  [0.3, 4, -Math.PI / 2, 9.81],
+  [0.12, 4, Math.PI, 1.62],
+  [0.045, 2, Math.PI, 9.81],
+  [0.12, 1, Math.PI / 2, 9.81],
+  [0.3, 1, Math.PI, 1.62],
+  [0.045, 4, Math.PI / 2, 1.62],
+  [0.3, 2, Math.PI / 2, 1.62],
+  [0.12, 2, -Math.PI / 2, 9.81],
+  [0.3, 1, -Math.PI / 2, 9.81],
+  [0.12, 4, 0, 9.81],
+];
+
+const yawAt = (arc: JumpArc, t: number): number => sampleJump(arc, t).yaw;
+const leadAt = (arc: JumpArc, t: number): number => sampleJump(arc, t).lead;
+
+/** One-sided rate of any sampled quantity, both samples on the same side of `t`. */
+const rateNear = (f: (t: number) => number, t: number, side: -1 | 1): number => {
+  const h = 1e-6;
+  return (side * (f(t + side * 2 * h) - f(t + side * h))) / h;
+};
+
+/** Start of hop `k`'s push, take-off, touchdown and the lead's peak, in run time. */
+const hopTimes = (arc: JumpArc, k: number) => {
+  const push = CROUCH_T + k * cycle(arc);
+  const off = push + arc.push;
+  return { push, off, down: off + arc.flight, peak: off + arc.flight / 4 };
+};
+
+describe.each(TURN_ROWS)(
+  'a turning run: height %f, count %i, turn %f, gravity %f',
+  (height, count, turn, gravity) => {
+    const arc = planJump(height, gravity, count, turn);
+    const sign = Math.sign(turn);
+    const lead = sign * Math.min(LEAD_MAX, Math.abs(turn) / 2);
+
+    it('keeps yaw and its rate continuous at every boundary and seam', () => {
+      const h = 1e-8;
+      for (let k = 0; k < count; k++) {
+        const { push, off, down, peak } = hopTimes(arc, k);
+        for (const t of [push, off, down, peak, push + cycle(arc)]) {
+          expect(Math.abs(yawAt(arc, t + h) - yawAt(arc, t - h))).toBeLessThan(1e-6);
+          expect(Math.abs(leadAt(arc, t + h) - leadAt(arc, t - h))).toBeLessThan(1e-6);
+          expect(
+            Math.abs(rateNear((x) => yawAt(arc, x), t, 1) - rateNear((x) => yawAt(arc, x), t, -1)),
+          ).toBeLessThan(1e-2);
+          expect(
+            Math.abs(
+              rateNear((x) => leadAt(arc, x), t, 1) - rateNear((x) => leadAt(arc, x), t, -1),
+            ),
+          ).toBeLessThan(1e-2);
+        }
+      }
+    });
+
+    it('turns only in flight, monotonically in the sign of the turn, and ends at the full turn', () => {
+      let previous = 0;
+      for (let t = 0; t < total(arc); t += 0.001) {
+        const y = yawAt(arc, t);
+        expect(sign * (y - previous)).toBeGreaterThanOrEqual(-1e-12);
+        previous = y;
+      }
+      for (let k = 0; k < count; k++) {
+        const { push, off, down } = hopTimes(arc, k);
+        expect(yawAt(arc, push)).toBeCloseTo(k * turn, 12);
+        expect(yawAt(arc, off)).toBeCloseTo(k * turn, 12);
+        expect(yawAt(arc, down)).toBeCloseTo((k + 1) * turn, 12);
+      }
+      expect(yawAt(arc, total(arc) - 1e-4)).toBeCloseTo(count * turn, 12);
+      expect(yawAt(arc, total(arc) + 1e-9)).toBe(0);
+    });
+
+    it('has no lead at any touchdown and the full lead a quarter of the way into flight', () => {
+      for (let k = 0; k < count; k++) {
+        const { off, down, peak } = hopTimes(arc, k);
+        expect(leadAt(arc, down)).toBeCloseTo(0, 12);
+        expect(leadAt(arc, peak)).toBeCloseTo(lead, 12);
+        expect(Math.abs(leadAt(arc, off))).toBeLessThanOrEqual(Math.abs(lead));
+      }
+      expect(Math.abs(leadAt(arc, 0))).toBe(0);
+      expect(Math.abs(leadAt(arc, total(arc) + 1e-9))).toBe(0);
+    });
+
+    it('never turns the chest backwards while the lead decays', () => {
+      if (turn === 0) return;
+      for (let k = 0; k < count; k++) {
+        const { peak, down } = hopTimes(arc, k);
+        for (let i = 1; i < 100; i++) {
+          const t = peak + ((down - peak) * i) / 100;
+          const chest = (x: number) => yawAt(arc, x) + leadAt(arc, x);
+          expect(sign * rateNear(chest, t, 1)).toBeGreaterThan(0);
+        }
+      }
+    });
+  },
+);
+
+describe('the closing invariant', () => {
+  it('has yaw and lead of exactly zero for every untouched entry', () => {
+    for (const id of ['hop', 'bounce', 'leap'] as const) {
+      const arc = planJump(HOPS[id].height, G, HOPS[id].count);
+      expect(arc.turn).toBe(0);
+      const end = total(arc) + 0.2;
+      for (let i = 0; i <= 5000; i++) {
+        const s = sampleJump(arc, (end * i) / 5000);
+        expect(Object.is(s.yaw, 0)).toBe(true);
+        expect(Object.is(s.lead, 0)).toBe(true);
+      }
+    }
+  });
+
+  it('closes every table entry to a whole number of revolutions', () => {
+    for (const id of HOP_IDS) {
+      const def: { count: number; turn?: number } = HOPS[id];
+      const turns = (def.count * (def.turn ?? 0)) / (2 * Math.PI);
+      expect(Math.abs(turns - Math.round(turns))).toBeLessThan(1e-9);
+    }
+  });
+
+  it('spins four quarter-turns at 0.12 m', () => {
+    expect(HOPS.spin).toMatchObject({ height: 0.12, count: 4, turn: Math.PI / 2 });
   });
 });
