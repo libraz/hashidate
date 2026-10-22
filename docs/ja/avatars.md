@@ -101,7 +101,7 @@ yarn ctl vocab
 | `emotionShapes` | ARKit のシェイプを持たないモデル向けに、そのアバター自身のシェイプ名で書いた感情の合成です。 |
 | `mouthShapePattern` | 発話中に口のレイヤーが受け持つシェイプのパターンです。 |
 | `overlays` | 顔の上に重ねる描き起こしエフェクトのグループです。`group`、`exclude`、`label` は `presets` と同じです。 |
-| `materials` | マテリアル名に対する `doubleSided`、`faceDecal`、`blendTransparent`、`preserveImported` の[パターン](#パターン)と、名前を指定した保持マテリアルの `metalness`、`roughness`、任意の `reflection` を設定する `preservedPbrOverrides` です。`metalness` と `roughness` は 0 から 1 の範囲、`reflection` は負にできません。範囲外のファイルは、その値のパスを示して拒否されます。 |
+| `materials` | マテリアル名に対する `doubleSided`、`faceDecal`、`blendTransparent`、`preserveImported` の[パターン](#パターン)と、名前を指定した保持マテリアルの `metalness`、`roughness`、任意の `reflection` を設定する `preservedPbrOverrides` です。`metalness` と `roughness` は 0 から 1 の範囲、`reflection` は負にできません。範囲外のファイルは、その値のパスを示して拒否されます。 `toon` は、作者が lilToon で設定した見た目をマテリアルに与えます。[トゥーンマテリアル](#トゥーンマテリアル)を参照してください。 |
 | `wardrobe` | 各スロットの `slots`（`items` は `id`、`label`、`meshes`、`hide`）と、スロットにアイテムまたは `null` を割り当てる `presets`、スロットの上に出す `note` です。 |
 | `sway` | 揺れもの（二次モーション）です。数値と根を持つ `groups` と、グループが名前で参照する `colliders` の集合を書きます。[揺れの調整](#揺れの調整)を参照してください。 |
 | `drive` | `tail` で、どの揺れグループをシミュレートだけでなくポーズで動かすかを、`swing`、`lift`、`rest` とともに指定します。 |
@@ -152,6 +152,38 @@ VRoid のシェイプ（ビセームの `Fcl_MTH_A` から `Fcl_MTH_O`、まば�
 ```
 
 `stripPrefix` は名前の先頭にあるときだけ、1 回取り除きます。続いて `underscoresToSpaces` が、すべての `_` を空白に置き換えます。どちらも省略でき、ほかのキーは受け付けません。結果は作者が絵につけた名前そのままなので、どちらの言語でも同じ表記になります。
+
+### トゥーンマテリアル
+
+`materials.toon` は、GLB のマテリアル名(表記そのまま)に、作者が lilToon で設定した見た目を対応づけます。エントリのあるマテリアルはその見た目で、ないマテリアルはこれまでどおり描かれます。`toon` が空でも何も変わりません。
+
+```json
+"toon": {
+  "Skin": {
+    "shadow": { "color": [0.99, 0.92, 0.9], "border": 0.39, "blur": 0.26, "strength": 1, "normalStrength": 1 },
+    "outline": { "width": 0.07, "color": [0.3, 0.2, 0.2, 1], "fixWidth": 0.5 }
+  }
+}
+```
+
+必須なのは `shadow` だけです。ブロックの中では、`?` を付けた任意のキーを除いてすべて必須です。省略したブロックの機能は無効になります。
+
+| ブロック | キー | 意味 |
+|---|---|---|
+| `shadow` | `color`、`border`、`blur`、`strength`、`normalStrength`、`mask`? | 影です。`color` は面が光から外れる側でアルベドにかける色、`border` と `blur` は境目の位置とぼかし、`strength` は影の強さ(0 で無効)、`normalStrength` は影がメッシュの法線ではなくノーマルマップにどこまで従うかです。`mask` は赤チャンネルで `strength` に掛かるテクスチャです。 |
+| `shadow2` | `color`(RGBA)、`border`、`blur` | 影の内側に入る、さらに暗い 2 段目です。アルファが現れる割合になります。 |
+| `asUnlit` | 数値、0 から 1 | 影を明るい側の色へ戻す割合です。省略すると 0 です。 |
+| `normalMap` | `file`、`scale` | ノーマルマップとその強さです。`scale` が負なら反転します。 |
+| `rim` | `color`(RGBA)、`border`、`blur`、`fresnelPower`、`mask`? | 縁の光です。`fresnelPower` は縁の項の指数で、大きいほど細くなります。`mask` は赤チャンネルで強さに掛かるテクスチャです。 |
+| `matcap` | `file`、`color`(RGBA)、`blend`、`mode`、`mask`? | 面に映すマテリアルキャプチャ画像です。`mode` は `normal`、`add`、`screen`、`multiply` のいずれかです。 |
+| `emission` | `color`、`map`? | マテリアル自身が出す光で、明るい側の色に加算されます。各チャンネルは 1 を超えられます。 |
+| `outline` | `width`、`color`(RGBA)、`fixWidth`、`mask`? | シルエットの背後に描く輪郭線です。`width` は lilToon の単位(1 が 1 cm)、0 から 1 の `fixWidth` はカメラが 1 m より近づいたときに線を細くする度合い、`mask` は赤チャンネルで太さに掛かるテクスチャです。 |
+
+色は lilToon で設定したままの sRGB で、各チャンネルは 0 から 1 です(`emission.color` だけは 1 を超えられます)。`border`、`blur`、`strength`、`normalStrength`、`blend`、`fixWidth`、`asUnlit` も 0 から 1 の範囲で、`width` と `fresnelPower` は負にできません。有限でない数値はすべて拒否され、どの階層でも未知のキーは拒否されます。
+
+`file` は `shade.png` のような名前だけで、空にしたり `/`、`\`、`..`、`?`、`#` を含めたりできません。レンダラーは、モデルの GLB と同じ `/models/<id>/` から取得します。ファイルは `public/models/` の他の中身と同じく git に入れません。
+
+`toon` の名前は `preserveImported` にも一致してはいけません。前者はマテリアルの見た目を置き換え、後者は取り込んだ見た目を残すので、そのファイルは名前を示して拒否されます。
 
 ### url
 

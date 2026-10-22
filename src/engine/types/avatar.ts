@@ -99,6 +99,87 @@ export interface PbrScalarOverride {
   reflection?: number;
 }
 
+/** Colour as authored in lilToon: sRGB, each channel 0 to 1. */
+export type RgbTuple = [number, number, number];
+/** {@link RgbTuple} with an alpha channel, 0 to 1. */
+export type RgbaTuple = [number, number, number, number];
+
+/** How the matcap joins the lit colour. */
+export type ToonMatcapMode = 'normal' | 'add' | 'screen' | 'multiply';
+
+/** The lit/shaded split: where it falls, how soft it is, and what colour the shade is. */
+export interface ToonShadow {
+  color: RgbTuple;
+  border: number;
+  blur: number;
+  strength: number;
+  /** How far the shade follows the normal map rather than the mesh normal, 0 to 1. */
+  normalStrength: number;
+  /** Basename; its red channel scales `strength`. */
+  mask?: string;
+}
+
+/** A second, darker band inside the shade. The alpha is how much of it shows. */
+export interface ToonShadow2 {
+  color: RgbaTuple;
+  border: number;
+  blur: number;
+}
+
+export interface ToonNormalMap {
+  file: string;
+  scale: number;
+}
+
+export interface ToonRim {
+  color: RgbaTuple;
+  border: number;
+  blur: number;
+  /** Exponent on the edge term; 0 or more. */
+  fresnelPower: number;
+  mask?: string;
+}
+
+export interface ToonMatcap {
+  file: string;
+  color: RgbaTuple;
+  blend: number;
+  mode: ToonMatcapMode;
+  mask?: string;
+}
+
+export interface ToonEmission {
+  /** sRGB; unlike the other colours, a channel may exceed 1. */
+  color: RgbTuple;
+  map?: string;
+}
+
+export interface ToonOutline {
+  /** In lilToon's width unit, where 1 is a centimetre; 0 or more. */
+  width: number;
+  color: RgbaTuple;
+  /** How much the line thins as the camera comes within a metre of it, 0 to 1. */
+  fixWidth: number;
+  mask?: string;
+}
+
+/**
+ * The lilToon look of one material, imported from the author's `.mat`. Only
+ * `shadow` is required; a block left out switches its feature off. Colours are
+ * sRGB as authored, and every file is a basename under `/models/<id>/`.
+ */
+export interface ToonSpec {
+  shadow: ToonShadow;
+  shadow2?: ToonShadow2;
+  /** How far the shade is lifted back toward the lit colour, 0 to 1. Absent is 0. */
+  asUnlit?: number;
+  normalMap?: ToonNormalMap;
+  rim?: ToonRim;
+  matcap?: ToonMatcap;
+  emission?: ToonEmission;
+  outline?: ToonOutline;
+}
+
 export interface MaterialRules {
   /** Genuinely flat pieces — hair cards, coats — that need both faces drawn. */
   doubleSided?: RegExp;
@@ -110,6 +191,11 @@ export interface MaterialRules {
   preserveImported?: RegExp;
   /** Exact imported material names whose preserved PBR scalars should be replaced. */
   preservedPbrOverrides?: Record<string, PbrScalarOverride>;
+  /**
+   * Authored toon look by exact GLB material name. A name here may not also
+   * match `preserveImported`.
+   */
+  toon?: Record<string, ToonSpec>;
 }
 
 export interface WardrobeItem {

@@ -101,7 +101,7 @@ Every object in a file is strict: an unknown key is an error naming its path, an
 | `emotionShapes` | Emotion composition in the avatar's own shape names, for a model without ARKit shapes. |
 | `mouthShapePattern` | A pattern for the shapes the mouth layer owns while speaking. |
 | `overlays` | A drawn-shape group of effects over the face, with the same `group`, `exclude` and `label` as `presets`. |
-| `materials` | `doubleSided`, `faceDecal`, `blendTransparent` and `preserveImported` as [patterns](#patterns) over material names, and `preservedPbrOverrides`, which sets `metalness`, `roughness` and optionally `reflection` for a named preserved material. `metalness` and `roughness` must lie in 0 to 1 and `reflection` may not be negative; a file outside those ranges is rejected with the path of the value. |
+| `materials` | `doubleSided`, `faceDecal`, `blendTransparent` and `preserveImported` as [patterns](#patterns) over material names, and `preservedPbrOverrides`, which sets `metalness`, `roughness` and optionally `reflection` for a named preserved material. `metalness` and `roughness` must lie in 0 to 1 and `reflection` may not be negative; a file outside those ranges is rejected with the path of the value. `toon` gives named materials the look their author set in lilToon; see [Toon materials](#toon-materials). |
 | `wardrobe` | `slots`, each with `items` (`id`, `label`, `meshes`, `hide`), plus `presets` that set a slot to an item or to `null`, and a `note` shown above the slots. |
 | `sway` | Secondary motion: `groups` with their figures and roots, and `colliders` sets that groups refer to by name. See [Sway tuning](#sway-tuning). |
 | `drive` | `tail`: which sway group is posed rather than only simulated, with `swing`, `lift` and `rest`. |
@@ -152,6 +152,38 @@ A label rule tidies a shape name for display:
 ```
 
 `stripPrefix` is removed once, and only from the start of the name. `underscoresToSpaces` then turns every `_` into a space. Both are optional, and no other key is accepted. The result is the author's own name for a drawing, so it reads the same in either language.
+
+### Toon materials
+
+`materials.toon` maps a GLB material name, spelled exactly, to the look its author set in lilToon. A material with an entry is drawn with it; one without is drawn as before. An empty `toon` changes nothing.
+
+```json
+"toon": {
+  "Skin": {
+    "shadow": { "color": [0.99, 0.92, 0.9], "border": 0.39, "blur": 0.26, "strength": 1, "normalStrength": 1 },
+    "outline": { "width": 0.07, "color": [0.3, 0.2, 0.2, 1], "fixWidth": 0.5 }
+  }
+}
+```
+
+Only `shadow` is required, and inside a block every key is required except those marked optional with `?`. A block left out switches that feature off.
+
+| Block | Keys | Meaning |
+|---|---|---|
+| `shadow` | `color`, `border`, `blur`, `strength`, `normalStrength`, `mask`? | The shade. `color` tints the albedo where the surface turns from the light, `border` and `blur` place and soften the edge, `strength` scales the shade (0 turns it off), and `normalStrength` sets how far the shade follows the normal map instead of the mesh normal. `mask` is a texture whose red channel scales `strength`. |
+| `shadow2` | `color` (RGBA), `border`, `blur` | A second, darker band inside the shade. The alpha is how much of it shows. |
+| `asUnlit` | number, 0 to 1 | How far the shade is lifted back toward the lit colour. Omitted is 0. |
+| `normalMap` | `file`, `scale` | A normal map and its strength. A negative `scale` flips it. |
+| `rim` | `color` (RGBA), `border`, `blur`, `fresnelPower`, `mask`? | A light edge. `fresnelPower` is the exponent on the edge term, so higher is thinner. `mask` is a texture whose red channel scales it. |
+| `matcap` | `file`, `color` (RGBA), `blend`, `mode`, `mask`? | A material-capture image lit onto the surface. `mode` is `normal`, `add`, `screen` or `multiply`. |
+| `emission` | `color`, `map`? | Light the material gives off, added to the lit colour. Channels may exceed 1. |
+| `outline` | `width`, `color` (RGBA), `fixWidth`, `mask`? | A contour drawn behind the silhouette. `width` is in lilToon's unit, where 1 is a centimetre, `fixWidth` from 0 to 1 is how much the line thins as the camera comes within a metre of it, and `mask` is a texture whose red channel scales the width. |
+
+Colours are sRGB as authored in lilToon, each channel 0 to 1 (`emission.color` may go above 1). `border`, `blur`, `strength`, `normalStrength`, `blend`, `fixWidth` and `asUnlit` also lie in 0 to 1; `width` and `fresnelPower` may not be negative. Any non-finite number is rejected, and so is an unknown key at any level.
+
+A `file` is a bare filename such as `shade.png`: it may not be empty or contain `/`, `\`, `..`, `?` or `#`. The renderer fetches it from `/models/<id>/`, beside the model's GLB, and the files stay out of git with the rest of `public/models/`.
+
+A name in `toon` may not also match `preserveImported`: the first replaces the material's look and the second keeps the imported one, so the file is rejected with the name.
 
 ### url
 

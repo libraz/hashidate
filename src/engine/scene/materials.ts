@@ -69,7 +69,7 @@ const SLEEVE_ALPHA_TOLERANCE = 1e-6;
 export const AVATAR_ANISOTROPY = 8;
 
 /** The descriptor's rules with the fallbacks filled in. */
-type ResolvedRules = Omit<Required<MaterialRules>, 'preservedPbrOverrides'> & {
+type ResolvedRules = Omit<Required<MaterialRules>, 'preservedPbrOverrides' | 'toon'> & {
   preservedPbrOverrides: Record<string, PbrScalarOverride>;
 };
 

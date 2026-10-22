@@ -15,6 +15,8 @@ import type {
   PbrScalarOverride,
   PresetCompositionSpec,
   PresetSpec,
+  RgbaTuple,
+  RgbTuple,
   ShapeOverrides,
   ShapeWeights,
   SkinPointAnchorInfluenceSpec,
@@ -23,6 +25,14 @@ import type {
   SwayGroupSpec,
   SwaySpec,
   TailDrive,
+  ToonEmission,
+  ToonMatcap,
+  ToonNormalMap,
+  ToonOutline,
+  ToonRim,
+  ToonShadow,
+  ToonShadow2,
+  ToonSpec,
   Vec3Tuple,
   WardrobeItem,
   WardrobePreset,
@@ -251,13 +261,105 @@ const pbrScalarSchema = z.strictObject({
 
 type _PbrScalarMatchesEngine = Expect<Equals<z.output<typeof pbrScalarSchema>, PbrScalarOverride>>;
 
-const materialsSchema = z.strictObject({
-  doubleSided: patternSchema.optional(),
-  faceDecal: patternSchema.optional(),
-  blendTransparent: patternSchema.optional(),
-  preserveImported: patternSchema.optional(),
-  preservedPbrOverrides: z.record(z.string(), pbrScalarSchema).optional(),
+const rgb = z.tuple([unit, unit, unit]);
+const rgba = z.tuple([unit, unit, unit, unit]);
+const nonNegative = finite.min(0);
+
+type _RgbMatchesEngine = Expect<Equals<z.output<typeof rgb>, RgbTuple>>;
+type _RgbaMatchesEngine = Expect<Equals<z.output<typeof rgba>, RgbaTuple>>;
+
+/** A texture named by basename: the file sits beside the model and the name cannot point elsewhere. */
+const fileSchema = z
+  .string()
+  .refine(
+    (value) => value.length > 0 && !/[/\\?#]/.test(value) && !value.includes('..'),
+    'a file must be a plain filename such as shade.png',
+  );
+
+const toonShadowSchema = z.strictObject({
+  color: rgb,
+  border: unit,
+  blur: unit,
+  strength: unit,
+  normalStrength: unit,
+  mask: fileSchema.optional(),
 });
+
+const toonShadow2Schema = z.strictObject({ color: rgba, border: unit, blur: unit });
+
+const toonNormalMapSchema = z.strictObject({ file: fileSchema, scale: finite });
+
+const toonRimSchema = z.strictObject({
+  color: rgba,
+  border: unit,
+  blur: unit,
+  fresnelPower: nonNegative,
+  mask: fileSchema.optional(),
+});
+
+const toonMatcapSchema = z.strictObject({
+  file: fileSchema,
+  color: rgba,
+  blend: unit,
+  mode: z.enum(['normal', 'add', 'screen', 'multiply']),
+  mask: fileSchema.optional(),
+});
+
+const toonEmissionSchema = z.strictObject({
+  color: z.tuple([nonNegative, nonNegative, nonNegative]),
+  map: fileSchema.optional(),
+});
+
+const toonOutlineSchema = z.strictObject({
+  width: nonNegative,
+  color: rgba,
+  fixWidth: unit,
+  mask: fileSchema.optional(),
+});
+
+const toonSpecSchema = z.strictObject({
+  shadow: toonShadowSchema,
+  shadow2: toonShadow2Schema.optional(),
+  asUnlit: unit.optional(),
+  normalMap: toonNormalMapSchema.optional(),
+  rim: toonRimSchema.optional(),
+  matcap: toonMatcapSchema.optional(),
+  emission: toonEmissionSchema.optional(),
+  outline: toonOutlineSchema.optional(),
+});
+
+type _ToonShadowMatchesEngine = Expect<Equals<z.output<typeof toonShadowSchema>, ToonShadow>>;
+type _ToonShadow2MatchesEngine = Expect<Equals<z.output<typeof toonShadow2Schema>, ToonShadow2>>;
+type _ToonNormalMapMatchesEngine = Expect<
+  Equals<z.output<typeof toonNormalMapSchema>, ToonNormalMap>
+>;
+type _ToonRimMatchesEngine = Expect<Equals<z.output<typeof toonRimSchema>, ToonRim>>;
+type _ToonMatcapMatchesEngine = Expect<Equals<z.output<typeof toonMatcapSchema>, ToonMatcap>>;
+type _ToonEmissionMatchesEngine = Expect<Equals<z.output<typeof toonEmissionSchema>, ToonEmission>>;
+type _ToonOutlineMatchesEngine = Expect<Equals<z.output<typeof toonOutlineSchema>, ToonOutline>>;
+type _ToonSpecMatchesEngine = Expect<Equals<z.output<typeof toonSpecSchema>, ToonSpec>>;
+
+const materialsSchema = z
+  .strictObject({
+    doubleSided: patternSchema.optional(),
+    faceDecal: patternSchema.optional(),
+    blendTransparent: patternSchema.optional(),
+    preserveImported: patternSchema.optional(),
+    preservedPbrOverrides: z.record(z.string(), pbrScalarSchema).optional(),
+    toon: z.record(z.string(), toonSpecSchema).optional(),
+  })
+  .superRefine((rules, ctx) => {
+    const { preserveImported, toon } = rules;
+    if (!(preserveImported && toon)) return;
+    for (const name of Object.keys(toon)) {
+      if (!preserveImported.test(name)) continue;
+      ctx.addIssue({
+        code: 'custom',
+        message: `"${name}" has a toon spec and also matches preserveImported`,
+        path: ['toon', name],
+      });
+    }
+  });
 
 type _MaterialKeysMatchEngine = Expect<
   Equals<keyof z.output<typeof materialsSchema>, keyof MaterialRules>

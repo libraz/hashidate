@@ -277,3 +277,201 @@ describe('avatar bone names and PBR ranges', () => {
     expect(reject({ ...minimal, fingers: { 'index.X': ['I'] } })).toContain('index.X');
   });
 });
+
+describe('toon materials', () => {
+  const shadow = { color: [0.9, 0.8, 0.7], border: 0.5, blur: 0.1, strength: 1, normalStrength: 1 };
+  const full = {
+    shadow: { ...shadow, mask: 'shadow_mask.png' },
+    shadow2: { color: [0.5, 0.5, 0.6, 0.4], border: 0.3, blur: 0.2 },
+    asUnlit: 0.2,
+    normalMap: { file: 'normal.png', scale: 1 },
+    rim: { color: [1, 1, 1, 0.5], border: 0.6, blur: 0.2, fresnelPower: 3, mask: 'rim.png' },
+    matcap: {
+      file: 'matcap.png',
+      color: [1, 1, 1, 1],
+      blend: 0.5,
+      mode: 'add',
+      mask: 'matcap_mask.png',
+    },
+    emission: { color: [2, 1, 0], map: 'glow.png' },
+    outline: { width: 0.07, color: [0.1, 0.1, 0.1, 1], fixWidth: 0.5, mask: 'width.png' },
+  };
+  const withToon = (toon: unknown, extra: object = {}) => ({
+    ...minimal,
+    materials: { toon, ...extra },
+  });
+  const withSpec = (spec: unknown) => withToon({ Skin: spec });
+  const withShadow = (patch: object) => withSpec({ shadow: { ...shadow, ...patch } });
+  const withOutline = (patch: object) =>
+    withSpec({ shadow, outline: { ...full.outline, ...patch } });
+
+  it('round-trips a full spec unchanged', () => {
+    expect(accept(withSpec(full)).materials?.toon).toEqual({ Skin: full });
+  });
+
+  it('accepts the smallest spec, and an empty toon record', () => {
+    expect(accept(withSpec({ shadow })).materials?.toon?.Skin?.asUnlit).toBeUndefined();
+    expect(accept(withToon({})).materials?.toon).toEqual({});
+  });
+
+  it('accepts a file without the toon key', () => {
+    expect(accept({ ...minimal, materials: {} }).materials?.toon).toBeUndefined();
+  });
+
+  it('accepts 0 and -0', () => {
+    expect(() => accept(withShadow({ border: 0, blur: -0 }))).not.toThrow();
+    expect(() => accept(withOutline({ width: -0 }))).not.toThrow();
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'rejects %s as a value',
+    (value) => {
+      expect(reject(withShadow({ border: value }))).toContain('materials.toon.Skin.shadow.border');
+      expect(reject(withSpec({ shadow, normalMap: { file: 'n.png', scale: value } }))).toContain(
+        'normalMap.scale',
+      );
+    },
+  );
+
+  it('rejects null for toon, a block and a value', () => {
+    expect(reject(withToon(null))).toContain('materials.toon');
+    expect(reject(withSpec({ shadow, rim: null }))).toContain('materials.toon.Skin.rim');
+    expect(reject(withShadow({ blur: null }))).toContain('shadow.blur');
+    expect(reject(withSpec(null))).toContain('materials.toon.Skin');
+  });
+
+  it('accepts any optional block being absent', () => {
+    for (const key of Object.keys(full).filter((k) => k !== 'shadow')) {
+      const { [key as keyof typeof full]: _, ...rest } = full;
+      expect(() => accept(withSpec(rest))).not.toThrow();
+    }
+  });
+
+  it('rejects a missing shadow block and a missing required key', () => {
+    const { shadow: _, ...noShadow } = full;
+    expect(reject(withSpec(noShadow))).toContain('materials.toon.Skin.shadow');
+    for (const key of Object.keys(shadow)) {
+      const { [key as keyof typeof shadow]: __, ...rest } = shadow;
+      expect(reject(withSpec({ shadow: rest }))).toContain(`shadow.${key}`);
+    }
+    expect(reject(withSpec({ shadow, rim: { ...full.rim, fresnelPower: undefined } }))).toContain(
+      'rim.fresnelPower',
+    );
+    expect(reject(withSpec({ shadow, matcap: { ...full.matcap, mode: undefined } }))).toContain(
+      'matcap.mode',
+    );
+  });
+
+  it.each([[[0.5, 0.5]], [[0.5, 0.5, 0.5, 0.5]], [[]]])(
+    'rejects an RGB colour %j of the wrong length',
+    (color) => {
+      expect(reject(withShadow({ color }))).toContain('shadow.color');
+    },
+  );
+
+  it.each([[[0.5, 0.5, 0.5]], [[0.5, 0.5, 0.5, 0.5, 0.5]], [[]]])(
+    'rejects an RGBA colour %j of the wrong length',
+    (color) => {
+      expect(reject(withSpec({ shadow, shadow2: { color, border: 0, blur: 0 } }))).toContain(
+        'shadow2.color',
+      );
+    },
+  );
+
+  it('rejects a null or missing element in a colour', () => {
+    expect(reject(withShadow({ color: [0.5, null, 0.5] }))).toContain('shadow.color');
+    expect(reject(withShadow({ color: [0.5, undefined, 0.5] }))).toContain('shadow.color');
+  });
+
+  it('keeps the unit range closed at 0 and 1', () => {
+    expect(() => accept(withShadow({ border: 0 }))).not.toThrow();
+    expect(() => accept(withShadow({ border: 1 }))).not.toThrow();
+    expect(() => accept(withShadow({ color: [0, 1, 1] }))).not.toThrow();
+    expect(reject(withShadow({ border: -0.0001 }))).toContain('shadow.border');
+    expect(reject(withShadow({ border: 1.0001 }))).toContain('shadow.border');
+    expect(reject(withShadow({ color: [1.0001, 0, 0] }))).toContain('shadow.color');
+  });
+
+  it('allows an emission colour above 1 but not below 0', () => {
+    expect(() => accept(withSpec({ shadow, emission: { color: [5, 0, 0] } }))).not.toThrow();
+    expect(reject(withSpec({ shadow, emission: { color: [-0.1, 0, 0] } }))).toContain(
+      'emission.color',
+    );
+  });
+
+  it('takes 0 and rejects a negative for width and fresnelPower', () => {
+    expect(() => accept(withOutline({ width: 0 }))).not.toThrow();
+    expect(reject(withOutline({ width: -0.01 }))).toContain('outline.width');
+    expect(() => accept(withSpec({ shadow, rim: { ...full.rim, fresnelPower: 0 } }))).not.toThrow();
+    expect(reject(withSpec({ shadow, rim: { ...full.rim, fresnelPower: -1 } }))).toContain(
+      'rim.fresnelPower',
+    );
+  });
+
+  it('accepts 2^31 and 2^32 for width, fresnelPower and scale', () => {
+    for (const big of [2 ** 31, 2 ** 32]) {
+      expect(() => accept(withOutline({ width: big }))).not.toThrow();
+      expect(() =>
+        accept(withSpec({ shadow, rim: { ...full.rim, fresnelPower: big } })),
+      ).not.toThrow();
+      expect(() =>
+        accept(withSpec({ shadow, normalMap: { file: 'n.png', scale: big } })),
+      ).not.toThrow();
+    }
+  });
+
+  it('accepts a negative normal scale', () => {
+    expect(() =>
+      accept(withSpec({ shadow, normalMap: { file: 'n.png', scale: -1 } })),
+    ).not.toThrow();
+  });
+
+  it.each([true, '0.5'])('rejects %j where a number is expected', (value) => {
+    expect(reject(withShadow({ border: value }))).toContain('shadow.border');
+    expect(reject(withShadow({ color: [value, 0, 0] }))).toContain('shadow.color');
+    expect(reject(withOutline({ width: value }))).toContain('outline.width');
+  });
+
+  it('rejects an unknown matcap mode', () => {
+    expect(reject(withSpec({ shadow, matcap: { ...full.matcap, mode: 'overlay' } }))).toContain(
+      'matcap.mode',
+    );
+    for (const mode of ['normal', 'add', 'screen', 'multiply']) {
+      expect(() => accept(withSpec({ shadow, matcap: { ...full.matcap, mode } }))).not.toThrow();
+    }
+  });
+
+  it('rejects an unknown key on a spec and on a block', () => {
+    expect(reject(withSpec({ shadow, glitter: {} }))).toContain('"glitter"');
+    expect(reject(withShadow({ borderColor: [0, 0, 0] }))).toContain('"borderColor"');
+    expect(reject(withSpec({ shadow, outline: { ...full.outline, extra: 1 } }))).toContain(
+      '"extra"',
+    );
+  });
+
+  it.each(['', 'a/b.png', '..', 'x?.png', 'x#.png', 'a\\b.png'])('rejects the file %j', (file) => {
+    expect(reject(withSpec({ shadow, normalMap: { file, scale: 1 } }))).toContain('normalMap.file');
+    expect(reject(withShadow({ mask: file }))).toContain('shadow.mask');
+    expect(reject(withSpec({ shadow, emission: { color: [0, 0, 0], map: file } }))).toContain(
+      'emission.map',
+    );
+  });
+
+  it('accepts a non-ASCII or surrogate file and material name', () => {
+    const name = '肌_\u{1F600}';
+    const file = '影_\u{1F600}.png';
+    const avatar = accept(withToon({ [name]: { shadow: { ...shadow, mask: file } } }));
+    expect(avatar.materials?.toon?.[name]?.shadow.mask).toBe(file);
+  });
+
+  it('rejects a name that is also preserved, and accepts one that is not', () => {
+    const rejected = reject(
+      withToon({ Metal: { shadow } }, { preserveImported: { pattern: '^Metal' } }),
+    );
+    expect(rejected).toContain('materials.toon.Metal');
+    expect(rejected).toContain('preserveImported');
+    expect(() =>
+      accept(withToon({ Skin: { shadow } }, { preserveImported: { pattern: '^Metal' } })),
+    ).not.toThrow();
+  });
+});
