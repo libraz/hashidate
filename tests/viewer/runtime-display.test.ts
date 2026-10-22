@@ -29,7 +29,7 @@ function bareRuntime(fields: Record<string, unknown>): Internals {
     shotCamera: { update: vi.fn(), camera: new THREE.PerspectiveCamera() },
     slides: { up: false },
     backdrop: { update: vi.fn() },
-    bloomStage: { render: vi.fn() },
+    postStage: { render: vi.fn() },
     ...fields,
   });
   return runtime;
@@ -114,7 +114,7 @@ describe('output alpha follows the background', () => {
       flat: new THREE.Color(0x0f1115),
       transparent: state.transparent,
       renderer: { setClearAlpha: vi.fn() },
-      bloomStage: { render: vi.fn(), setOpaque },
+      postStage: { render: vi.fn(), setOpaque, setFinish: vi.fn() },
     });
     runtime.updateBackground();
     return setOpaque.mock.calls.at(-1)?.[0];
@@ -126,5 +126,101 @@ describe('output alpha follows the background', () => {
     expect(background({ documentUp: false, room: null, transparent: false })).toBe(true);
     expect(background({ documentUp: false, room: null, transparent: true })).toBe(false);
     expect(background({ documentUp: true, room: 'study', transparent: false })).toBe(false);
+  });
+});
+
+describe('the finish follows the room', () => {
+  const finish = {
+    blur: { radius: 6, ramp: 2 },
+    grade: { gain: [1, 1, 1], saturation: 1, contrast: 1 },
+    vignette: 0.2,
+  };
+
+  function finished(state: { documentUp: boolean; room: string | null; transparent: boolean }) {
+    const setFinish = vi.fn();
+    const suspend = vi.fn();
+    const runtime = bareRuntime({
+      slides: { up: state.documentUp },
+      backdrop: {
+        suspend,
+        resume: vi.fn(),
+        current: state.room,
+        finish: state.room === null ? null : finish,
+      },
+      scene: new THREE.Scene(),
+      flat: new THREE.Color(0x0f1115),
+      transparent: state.transparent,
+      renderer: { setClearAlpha: vi.fn() },
+      postStage: { render: vi.fn(), setOpaque: vi.fn(), setFinish },
+    });
+    runtime.updateBackground();
+    expect(setFinish).toHaveBeenCalledOnce();
+    return { finish: setFinish.mock.calls[0]?.[0], suspended: suspend.mock.calls.length > 0 };
+  }
+
+  it("passes a shown room's finish on", () => {
+    expect(finished({ documentUp: false, room: 'study', transparent: false }).finish).toBe(finish);
+    expect(finished({ documentUp: false, room: 'study', transparent: true }).finish).toBe(finish);
+  });
+
+  it('clears it with no room, flat or keyed', () => {
+    expect(finished({ documentUp: false, room: null, transparent: false }).finish).toBeNull();
+    expect(finished({ documentUp: false, room: null, transparent: true }).finish).toBeNull();
+  });
+
+  it('clears it while a document suspends the room', () => {
+    const result = finished({ documentUp: true, room: 'study', transparent: false });
+    expect(result.suspended).toBe(true);
+    expect(result.finish).toBeNull();
+  });
+});
+
+describe('the focus follows the avatar', () => {
+  it('hands the stage the measured sphere in world space before each render', () => {
+    const order: string[] = [];
+    const seen: { centre: THREE.Vector3; radius: number }[] = [];
+    const setFocus = vi.fn((centre: THREE.Vector3, radius: number) => {
+      order.push('focus');
+      seen.push({ centre: centre.clone(), radius });
+    });
+    const root = new THREE.Group();
+    root.position.set(0.5, 0, -1);
+    root.updateMatrixWorld();
+    const runtime = bareRuntime({
+      timer: { update: vi.fn(), getDelta: () => 1 / 60 },
+      camWorld: new THREE.Vector3(),
+      shotCamera: {
+        update: vi.fn(),
+        camera: new THREE.PerspectiveCamera(),
+        takeCut: () => false,
+      },
+      current: {
+        root,
+        session: { update: vi.fn() },
+        director: { update: vi.fn() },
+      },
+      focusSphere: { centre: new THREE.Vector3(0, 1.2, 0), radius: 0.9 },
+      focusWorld: new THREE.Vector3(),
+      postStage: { render: () => order.push('render'), setFocus, target: null },
+      warmedTarget: null,
+    });
+
+    runtime.tick();
+
+    expect(order).toEqual(['focus', 'render']);
+    expect(seen[0].centre.toArray()).toEqual([0.5, 1.2, -1]);
+    expect(seen[0].radius).toBe(0.9);
+  });
+
+  it('gives no focus with no avatar', () => {
+    const setFocus = vi.fn();
+    const runtime = bareRuntime({
+      timer: { update: vi.fn(), getDelta: () => 1 / 60 },
+      focusSphere: null,
+      postStage: { render: vi.fn(), setFocus, target: null },
+      warmedTarget: null,
+    });
+    runtime.tick();
+    expect(setFocus).not.toHaveBeenCalled();
   });
 });

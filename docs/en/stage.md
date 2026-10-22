@@ -23,6 +23,8 @@ yarn ctl backdrop dusk
 yarn ctl backdrop        # bare stage
 ```
 
+A room also finishes the picture. What lies behind the character is blurred by depth, starting just past the far side of the character, so the furniture recedes while hair and hands stay sharp; then the frame is graded and its corners darkened, with values each room declares. Only a room does this. The flat colour, a transparent source and a document behind the character are drawn without it, because what happens to those is the compositor's business, and with bloom off they skip postprocessing entirely.
+
 ## Over a game
 
 With no set, the character stands against a flat colour. That is a fallback rather than a design — a renderer opened in a browser window has to put something behind the character — and over a game capture it becomes a problem, because it is an opaque rectangle covering the thing the stream is about.

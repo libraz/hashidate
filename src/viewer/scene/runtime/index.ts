@@ -23,7 +23,6 @@ import { rendererId } from '../../renderer-id';
 import { stageMode } from '../../stage-mode';
 import { BrowserVoice } from '../../voice';
 import { BackdropStage } from '../backdrop';
-import { BloomStage } from '../bloom';
 import { StudioEnvironment } from '../environment';
 import { buildFramings } from '../framing';
 import {
@@ -35,6 +34,7 @@ import {
   resolvePlacement,
   type StageSize,
 } from '../placement';
+import { PostStage } from '../post';
 import { SlideStage } from '../slides';
 import { FOV, ShotCamera } from './camera';
 import { buildHud, HUD_INTERVAL, type Hud } from './hud';
@@ -82,10 +82,17 @@ export class AvatarRuntime {
   private readonly slides: SlideStage;
   /** Where the camera stands, and how a drag on it is published. */
   private readonly shotCamera: ShotCamera;
-  /** The optional postprocess stage, allocated only after bloom is enabled. */
-  private readonly bloomStage: BloomStage;
-  /** The bloom target the last prewarm was built for, null for the canvas. */
+  /** The optional postprocess stage, allocated only while bloom or a room's finish is on. */
+  private readonly postStage: PostStage;
+  /** The composer target the last prewarm was built for, null for the canvas. */
   private warmedTarget: THREE.WebGLRenderTarget | null = null;
+  /**
+   * The avatar's bounding sphere, which the room's background blur keeps sharp.
+   * Measured once after mount, with the centre held in the root's local space
+   * so it follows the root wherever the frame moves it.
+   */
+  private focusSphere: { centre: THREE.Vector3; radius: number } | null = null;
+  private readonly focusWorld = new THREE.Vector3();
   /**
    * The flat background, held rather than built where it is set.
    *
@@ -118,7 +125,7 @@ export class AvatarRuntime {
   private readonly resizeObserver: ResizeObserver;
   /**
    * Whether another page frames this one, which only the panel's preview does.
-   * A monitor a few hundred pixels tall, so it renders at 1x without bloom MSAA.
+   * A monitor a few hundred pixels tall, so it renders at 1x without composer MSAA.
    */
   private readonly embedded: boolean;
   /** Matches the current device pixel ratio only, so it fires on a display change. */
@@ -231,7 +238,7 @@ export class AvatarRuntime {
       { pointer: stageMode().console || this.embedded, embedded: this.embedded },
       () => this.resize(),
     );
-    this.bloomStage = new BloomStage(this.renderer, undefined, { multisample: !this.embedded });
+    this.postStage = new PostStage(this.renderer, undefined, { multisample: !this.embedded });
 
     // Toon materials blow out easily; these levels are tuned for MeshToonMaterial.
     //
@@ -321,13 +328,13 @@ export class AvatarRuntime {
 
   /** The full bloom configuration the renderer is applying. */
   get bloomSettings(): BloomSettings {
-    return this.bloomStage.report();
+    return this.postStage.report();
   }
 
   /** Merge bloom settings from the panel, control channel, or a session. */
   setBloom(patch: BloomPatch): void {
     if (this.disposed) return;
-    this.bloomStage.setBloom(patch);
+    this.postStage.setBloom(patch);
     const settings = this.bloomSettings;
     for (const fn of this.bloomListeners) fn(settings);
   }
@@ -583,7 +590,8 @@ export class AvatarRuntime {
       this.backdrop.suspend();
       this.scene.background = null;
       this.renderer.setClearAlpha(0);
-      this.bloomStage.setOpaque(false);
+      this.postStage.setOpaque(false);
+      this.postStage.setFinish(null);
       return;
     }
     this.backdrop.resume();
@@ -591,12 +599,14 @@ export class AvatarRuntime {
     // room is the flat colour, or nothing, and the source says which.
     if (this.backdrop.current !== null) {
       this.renderer.setClearAlpha(1);
-      this.bloomStage.setOpaque(true);
+      this.postStage.setOpaque(true);
+      this.postStage.setFinish(this.backdrop.finish);
       return;
     }
     this.scene.background = this.transparent ? null : this.flat;
     this.renderer.setClearAlpha(this.transparent ? 0 : 1);
-    this.bloomStage.setOpaque(!this.transparent);
+    this.postStage.setOpaque(!this.transparent);
+    this.postStage.setFinish(null);
   }
 
   /**
@@ -633,7 +643,7 @@ export class AvatarRuntime {
     // `setSize` writes the element's width and height itself, so only where it
     // sits is set above.
     this.renderer.setSize(rect.width, rect.height);
-    this.bloomStage.resize(rect.width, rect.height);
+    this.postStage.resize(rect.width, rect.height);
     this.shotCamera.setLens(rect.width / rect.height, this.avatarPlacement.shift);
   }
 
@@ -777,6 +787,7 @@ export class AvatarRuntime {
       });
 
       this.current = { avatar, root, profile, director, session, wardrobe, materials, problems };
+      this.focusSphere = measureFocus(root);
     } catch (e) {
       // Nothing is published yet: take the half-built avatar back out so the
       // queue can move on instead of waiting on a load that already ended.
@@ -810,7 +821,7 @@ export class AvatarRuntime {
    */
   private async prewarm(): Promise<void> {
     if (this.disposed) return;
-    const target = this.bloomStage.target;
+    const target = this.postStage.target;
     const compiles = [this.backdrop.prewarm(this.camera, target)];
     const materials = this.current?.materials;
     if (materials) {
@@ -870,6 +881,7 @@ export class AvatarRuntime {
     this.scene.remove(cur.root);
     disposeAvatar(cur);
     this.current = null;
+    this.focusSphere = null;
   }
 
   dispose(): void {
@@ -901,7 +913,7 @@ export class AvatarRuntime {
     this.backdrop.dispose();
     this.environment.dispose();
     this.shotCamera.dispose();
-    this.bloomStage.dispose();
+    this.postStage.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
     this.statusListeners.clear();
@@ -955,11 +967,17 @@ export class AvatarRuntime {
       }
     }
 
-    this.bloomStage.render(this.scene, this.camera);
-    // The composer exists from the first bloom frame, and its target is what the
-    // scene's programs are keyed on, so warm again when it appears or goes.
-    if (this.bloomStage.target !== this.warmedTarget) {
-      this.warmedTarget = this.bloomStage.target;
+    const focus = this.focusSphere;
+    if (cur && focus) {
+      this.focusWorld.copy(focus.centre).applyMatrix4(cur.root.matrixWorld);
+      this.postStage.setFocus(this.focusWorld, focus.radius);
+    }
+    this.postStage.render(this.scene, this.camera);
+    // The composer exists from the first frame bloom or a finish is on, and its
+    // target is what the scene's programs are keyed on, so warm again when it
+    // appears or goes.
+    if (this.postStage.target !== this.warmedTarget) {
+      this.warmedTarget = this.postStage.target;
       void this.prewarm();
     }
 
@@ -972,4 +990,16 @@ export class AvatarRuntime {
       for (const fn of this.frameListeners) fn(frame);
     }
   }
+}
+
+/**
+ * The avatar's bounding sphere with its centre in the root's own space, or null
+ * for a root with nothing in it to measure.
+ */
+function measureFocus(root: THREE.Object3D): { centre: THREE.Vector3; radius: number } | null {
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root);
+  if (box.isEmpty()) return null;
+  const sphere = box.getBoundingSphere(new THREE.Sphere());
+  return { centre: root.worldToLocal(sphere.center), radius: sphere.radius };
 }

@@ -3,7 +3,7 @@ import type { LabelledId } from '@/engine/types';
 import type { Localized } from '@/i18n/locale';
 import { rebindEnvironment, type StudioEnvironment } from '../environment';
 import { SceneryAssets } from './assets';
-import type { BuiltBackdrop, Grade, Pattern } from './patterns';
+import type { BuiltBackdrop, Finish, Grade, Pattern } from './patterns';
 import { PATTERNS } from './patterns';
 import type { TextureBin } from './textures';
 
@@ -148,6 +148,11 @@ export class BackdropStage {
     return this.mounted?.pattern.id ?? null;
   }
 
+  /** The shown room's finish for the postprocess, or null while none is shown. */
+  get finish(): Finish | null {
+    return this.mounted && !this.suspended ? this.mounted.built.finish : null;
+  }
+
   /**
    * The `Scenery` the engine is handed.
    *
@@ -222,8 +227,9 @@ export class BackdropStage {
    * `lower` leaves it alone while suspended.
    *
    * `target` is where the scene is really drawn when it is not the canvas
-   * (bloom): three keys programs on the target's colour space and drops tone
-   * mapping for it, so compiling against the canvas would warm the wrong ones.
+   * (the postprocess composer): three keys programs on the target's colour
+   * space and drops tone mapping for it, so compiling against the canvas
+   * would warm the wrong ones.
    */
   async prewarm(
     camera: THREE.Camera,

@@ -376,3 +376,36 @@ describe('putting the room away for a document', () => {
     expect(captured(s)).toEqual(bare);
   });
 });
+
+describe('the finish a room hands the postprocess', () => {
+  it('is declared by every room, in range', () => {
+    for (const pattern of PATTERNS) {
+      const s = mountable();
+      s.backdrop.setBackdrop(pattern.id);
+      const finish = s.backdrop.finish;
+      expect(finish, pattern.id).not.toBeNull();
+      if (!finish) continue;
+      expect(finish.blur.radius, pattern.id).toBeGreaterThan(0);
+      expect(finish.blur.ramp, pattern.id).toBeGreaterThan(0);
+      expect(finish.grade.gain, pattern.id).toHaveLength(3);
+      expect(finish.vignette, pattern.id).toBeGreaterThanOrEqual(0);
+      expect(finish.vignette, pattern.id).toBeLessThan(1);
+    }
+  });
+
+  it('is null with no room, while the room is away, and after it is cleared', () => {
+    const s = mountable();
+    expect(s.backdrop.finish).toBeNull();
+    s.backdrop.setBackdrop(PATTERNS[0].id);
+    const finish = s.backdrop.finish;
+    expect(finish).not.toBeNull();
+
+    s.backdrop.suspend();
+    expect(s.backdrop.finish).toBeNull();
+    s.backdrop.resume();
+    expect(s.backdrop.finish).toBe(finish);
+
+    s.backdrop.clear();
+    expect(s.backdrop.finish).toBeNull();
+  });
+});

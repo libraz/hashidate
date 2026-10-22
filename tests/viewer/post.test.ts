@@ -1,22 +1,55 @@
 import * as THREE from 'three';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { describe, expect, it, vi } from 'vitest';
 import { BLOOM_DEFAULTS } from '@/engine/types';
+import type { Finish } from '@/viewer/scene/backdrop/patterns';
 import {
-  type BloomPipeline,
-  type BloomPipelineFactory,
-  BloomStage,
   drawWithCompensatedBackground,
+  FocusBlurPass,
   neutralInverse,
-} from '@/viewer/scene/bloom';
+  type PostPipeline,
+  type PostPipelineFactory,
+  PostStage,
+} from '@/viewer/scene/post';
+
+/** What each composer was handed, captured at construction. */
+const composers = vi.hoisted(
+  () =>
+    [] as Array<{
+      target: THREE.WebGLRenderTarget;
+      depthAtConstruction: unknown;
+      passes: unknown[];
+    }>,
+);
+
+// The real pipeline is built against a stand-in composer: it needs no GL
+// context, and it records the order the target and its passes were set up in.
+vi.mock('three/addons/postprocessing/EffectComposer.js', () => ({
+  EffectComposer: class {
+    readonly passes: unknown[] = [];
+    constructor(_renderer: unknown, target: THREE.WebGLRenderTarget) {
+      composers.push({ target, depthAtConstruction: target.depthTexture, passes: this.passes });
+    }
+    addPass(pass: unknown): void {
+      this.passes.push(pass);
+    }
+    setSize(): void {}
+    setPixelRatio(): void {}
+    render(): void {}
+    dispose(): void {}
+  },
+}));
 
 /** The raw GL calls the direct path may make, in order. */
 type GlCall = [string, ...unknown[]];
 
 function harness(): {
-  stage: BloomStage;
+  stage: PostStage;
   renderer: THREE.WebGLRenderer;
-  pipelines: BloomPipeline[];
-  factory: BloomPipelineFactory;
+  pipelines: PostPipeline[];
+  factory: PostPipelineFactory;
   gl: GlCall[];
   resetColor: ReturnType<typeof vi.fn>;
 } {
@@ -34,34 +67,38 @@ function harness(): {
     getContext: () => context,
     state: { buffers: { color: { reset: resetColor } } },
   } as unknown as THREE.WebGLRenderer;
-  const pipelines: BloomPipeline[] = [];
-  const factory: BloomPipelineFactory = vi.fn(() => {
-    const pipeline: BloomPipeline = {
+  const pipelines: PostPipeline[] = [];
+  const factory: PostPipelineFactory = vi.fn(() => {
+    const pipeline: PostPipeline = {
       render: vi.fn(),
       resize: vi.fn(),
       setSettings: vi.fn(),
       setOpaque: vi.fn(),
+      setFinish: vi.fn(),
+      setFocus: vi.fn(),
       dispose: vi.fn(),
     };
     pipelines.push(pipeline);
     return pipeline;
   });
-  return { stage: new BloomStage(renderer, factory), renderer, pipelines, factory, gl, resetColor };
+  return { stage: new PostStage(renderer, factory), renderer, pipelines, factory, gl, resetColor };
 }
 
-describe('BloomStage target', () => {
-  it('is the pipeline target while bloom runs and null otherwise', () => {
+describe('PostStage target', () => {
+  it('is the pipeline target while the composer runs and null otherwise', () => {
     const target = new THREE.WebGLRenderTarget(1, 1);
     const renderer = {
       getSize: (v: THREE.Vector2) => v.set(64, 64),
       render: vi.fn(),
     } as unknown as THREE.WebGLRenderer;
-    const stage = new BloomStage(renderer, () => ({
+    const stage = new PostStage(renderer, () => ({
       target,
       render: vi.fn(),
       resize: vi.fn(),
       setSettings: vi.fn(),
       setOpaque: vi.fn(),
+      setFinish: vi.fn(),
+      setFocus: vi.fn(),
       dispose: vi.fn(),
     }));
     expect(stage.target).toBeNull();
@@ -74,7 +111,7 @@ describe('BloomStage target', () => {
   });
 });
 
-describe('BloomStage', () => {
+describe('PostStage', () => {
   it('keeps the default and zero-strength paths on direct rendering', () => {
     const { stage, renderer, factory } = harness();
     const scene = new THREE.Scene();
@@ -155,7 +192,7 @@ describe('BloomStage', () => {
   });
 });
 
-describe('BloomStage output alpha', () => {
+describe('PostStage output alpha', () => {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera();
 
@@ -196,6 +233,167 @@ describe('BloomStage output alpha', () => {
     expect(gl).toEqual([]);
     stage.setOpaque(false);
     expect(pipelines[0].setOpaque).toHaveBeenLastCalledWith(false);
+  });
+});
+
+const FINISH: Finish = {
+  blur: { radius: 6, ramp: 2 },
+  grade: { gain: [1.04, 1, 0.95], saturation: 1.05, contrast: 1.04 },
+  vignette: 0.22,
+};
+
+describe('PostStage finish', () => {
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera();
+
+  it('stays on direct rendering with no finish and bloom off', () => {
+    const { stage, renderer, factory } = harness();
+    stage.setFinish(null);
+    stage.render(scene, camera);
+    expect(renderer.render).toHaveBeenCalledOnce();
+    expect(factory).not.toHaveBeenCalled();
+    expect(stage.target).toBeNull();
+  });
+
+  it('builds the composer for a finish alone and releases it when the finish goes', () => {
+    const { stage, renderer, pipelines, factory } = harness();
+    stage.setFinish(FINISH);
+    stage.render(scene, camera);
+
+    expect(factory).toHaveBeenCalledOnce();
+    expect(renderer.render).not.toHaveBeenCalled();
+    expect(pipelines[0].setFinish).toHaveBeenLastCalledWith(FINISH);
+
+    stage.setFinish(null);
+    expect(pipelines[0].dispose).toHaveBeenCalledOnce();
+    stage.render(scene, camera);
+    expect(renderer.render).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the composer for bloom when the finish goes', () => {
+    const { stage, pipelines } = harness();
+    stage.setBloom({ enabled: true });
+    stage.setFinish(FINISH);
+    stage.render(scene, camera);
+    stage.setFinish(null);
+
+    expect(pipelines[0].dispose).not.toHaveBeenCalled();
+    expect(pipelines[0].setFinish).toHaveBeenLastCalledWith(null);
+    // And turning bloom off with a finish up keeps it too.
+    stage.setFinish(FINISH);
+    stage.setBloom({ enabled: false });
+    expect(pipelines[0].dispose).not.toHaveBeenCalled();
+  });
+
+  it('hands a focus to one frame, copied, and none to the frame after', () => {
+    const { stage, pipelines } = harness();
+    stage.setFinish(FINISH);
+    const centre = new THREE.Vector3(0, 1.2, 0.1);
+    stage.setFocus(centre, 0.8);
+    centre.set(9, 9, 9);
+    stage.render(scene, camera);
+
+    expect(pipelines[0].setFocus).toHaveBeenLastCalledWith({
+      centre: new THREE.Vector3(0, 1.2, 0.1),
+      radius: 0.8,
+    });
+    stage.render(scene, camera);
+    expect(pipelines[0].setFocus).toHaveBeenLastCalledWith(null);
+  });
+});
+
+describe('the post pipeline', () => {
+  /** Enough of a renderer to build the real pipeline against the stand-in composer. */
+  function real(): PostStage {
+    composers.length = 0;
+    const renderer = {
+      getSize: (v: THREE.Vector2) => v.set(640, 360),
+      getPixelRatio: () => 1,
+      capabilities: { maxSamples: 4 },
+      toneMapping: THREE.NoToneMapping,
+      render: vi.fn(),
+    } as unknown as THREE.WebGLRenderer;
+    return new PostStage(renderer);
+  }
+
+  /** The passes of the one composer built, by kind. */
+  function passes() {
+    const [render, focus, bloom, output] = composers[0].passes;
+    expect(render).toBeInstanceOf(RenderPass);
+    expect(focus).toBeInstanceOf(FocusBlurPass);
+    expect(bloom).toBeInstanceOf(UnrealBloomPass);
+    expect(output).toBeInstanceOf(ShaderPass);
+    return {
+      focus: focus as FocusBlurPass,
+      bloom: bloom as UnrealBloomPass,
+      output: (output as ShaderPass).uniforms,
+    };
+  }
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(28, 16 / 9, 0.1, 50);
+
+  it('attaches the depth texture before the composer clones the target', () => {
+    const stage = real();
+    stage.setFinish(FINISH);
+    stage.render(scene, camera);
+
+    expect(composers).toHaveLength(1);
+    const { target, depthAtConstruction } = composers[0];
+    expect(depthAtConstruction).toBeInstanceOf(THREE.DepthTexture);
+    expect(depthAtConstruction).toBe(target.depthTexture);
+    expect((depthAtConstruction as THREE.DepthTexture).type).toBe(THREE.UnsignedIntType);
+    expect(stage.target).toBe(target);
+    stage.dispose();
+  });
+
+  it('runs the blur and the grade for a finish, with the bloom pass off', () => {
+    const stage = real();
+    stage.setFinish(FINISH);
+    stage.setFocus(new THREE.Vector3(0, 1.3, 0), 0.6);
+    stage.render(scene, camera);
+
+    const { focus, bloom, output } = passes();
+    expect(focus.enabled).toBe(true);
+    expect(bloom.enabled).toBe(false);
+    expect(output.finished.value).toBe(true);
+    expect(output.gain.value.toArray()).toEqual(FINISH.grade.gain);
+    expect(output.saturation.value).toBe(FINISH.grade.saturation);
+    expect(output.contrast.value).toBe(FINISH.grade.contrast);
+    expect(output.vignette.value).toBe(FINISH.vignette);
+    stage.dispose();
+  });
+
+  it('does not blur a frame with no avatar to keep sharp', () => {
+    const stage = real();
+    stage.setFinish(FINISH);
+    stage.setFocus(new THREE.Vector3(0, 1.3, 0), 0.6);
+    stage.render(scene, camera);
+    stage.render(scene, camera);
+    expect(passes().focus.enabled).toBe(false);
+    stage.dispose();
+  });
+
+  it('leaves the blur and the grade out for bloom alone', () => {
+    const stage = real();
+    stage.setBloom({ enabled: true });
+    stage.setFocus(new THREE.Vector3(0, 1.3, 0), 0.6);
+    stage.render(scene, camera);
+
+    const { focus, bloom, output } = passes();
+    expect(focus.enabled).toBe(false);
+    expect(bloom.enabled).toBe(true);
+    expect(output.finished.value).toBe(false);
+    stage.dispose();
+  });
+
+  it('writes alpha 1 for a finish over an opaque stage', () => {
+    const stage = real();
+    stage.setOpaque(true);
+    stage.setFinish(FINISH);
+    stage.render(scene, camera);
+    expect(passes().output.opaque.value).toBe(true);
+    stage.dispose();
   });
 });
 

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { Vec3Tuple } from '@/engine/types';
 import type { Localized } from '@/i18n/locale';
 import { bedroomDetails } from './decor';
 import { linenMaterial } from './finishes';
@@ -50,8 +51,22 @@ export interface Grade {
   exposure: number;
 }
 
+/**
+ * What the postprocess does to a frame with this room in it: blur what lies
+ * behind the avatar, then grade and vignette the display-referred picture.
+ */
+export interface Finish {
+  /** `radius` in pixels of a 1080-line frame; `ramp` in metres past the avatar's far side. */
+  blur: { radius: number; ramp: number };
+  /** Per-channel gain, then saturation and contrast about mid-grey, all on sRGB values. */
+  grade: { gain: Vec3Tuple; saturation: number; contrast: number };
+  /** How far the corners darken, 0 for none. */
+  vignette: number;
+}
+
 export interface BuiltBackdrop extends Grade {
   root: THREE.Group;
+  finish: Finish;
   /** Ambient contribution for the room's PBR materials. Toon is unaffected. */
   environmentIntensity: number;
   fog: THREE.Fog | null;
@@ -132,7 +147,7 @@ const pane: Pick<OutlookOptions, 'pane'> = {
   pane: { width: WINDOW.width, height: WINDOW.headY - WINDOW.sillY },
 };
 
-interface Finish {
+interface Surfaces {
   wallHex: number;
   ceilingHex: number;
   trimHex: number;
@@ -145,7 +160,7 @@ interface Finish {
 /** Shell, window and sill, with the finishes a pattern chose. */
 function room(
   bin: TextureBin,
-  finish: Finish,
+  surfaces: Surfaces,
   view: THREE.Material,
   environment: THREE.Texture | null = null,
 ): THREE.Group {
@@ -190,7 +205,7 @@ function room(
         // The downloaded board scan has joints, grain, and a non-uniform
         // finish, so light catches it like wood rather than printed stripes.
         floorboards.color,
-        finish.floorHex,
+        surfaces.floorHex,
         0.48,
         {
           normalMap: floorboards.normal,
@@ -391,7 +406,7 @@ const dusk: Pattern = {
     // is a pale toon figure with almost no value range of its own, so the only
     // way it separates from the plaster behind it is for the plaster to sit
     // clearly below it. Matching the two is what makes a composite look pasted.
-    const finish: Finish = {
+    const surfaces: Surfaces = {
       wallHex: 0xc9b8a4,
       ceilingHex: 0xd8cec2,
       trimHex: 0xe8e0d4,
@@ -408,7 +423,7 @@ const dusk: Pattern = {
       defocus: 1.6,
       rain: 0,
     });
-    root.add(room(bin, finish, windowView.material, environment), furnishRoom(bin));
+    root.add(room(bin, surfaces, windowView.material, environment), furnishRoom(bin));
 
     // The key, and it does not come through the window that can be seen.
     //
@@ -456,6 +471,12 @@ const dusk: Pattern = {
       toneMapping: THREE.NeutralToneMapping,
       exposure: 1.0,
       environmentIntensity: 0.28,
+      // Starting values, to be tuned against a render.
+      finish: {
+        blur: { radius: 6, ramp: 2.0 },
+        grade: { gain: [1.04, 1.0, 0.95], saturation: 1.05, contrast: 1.04 },
+        vignette: 0.22,
+      },
       fog: null,
     };
   },
@@ -472,7 +493,7 @@ const night: Pattern = {
   },
   build(bin, environment = null) {
     const root = new THREE.Group();
-    const finish: Finish = {
+    const surfaces: Surfaces = {
       wallHex: 0xbcb6ad,
       ceilingHex: 0xa9a49c,
       trimHex: 0xd6d1c8,
@@ -489,7 +510,7 @@ const night: Pattern = {
       defocus: 1.9,
       rain: 0,
     });
-    root.add(room(bin, finish, windowView.material, environment), furnishRoom(bin));
+    root.add(room(bin, surfaces, windowView.material, environment), furnishRoom(bin));
 
     // The key, at the monitor and pointing back at the avatar. A spot rather
     // than a point light: the cone is what keeps the light off the ceiling, and
@@ -536,6 +557,12 @@ const night: Pattern = {
       toneMapping: THREE.NeutralToneMapping,
       exposure: 1.02,
       environmentIntensity: 0.1,
+      // Starting values, to be tuned against a render.
+      finish: {
+        blur: { radius: 6, ramp: 2.0 },
+        grade: { gain: [0.96, 0.99, 1.05], saturation: 0.92, contrast: 1.06 },
+        vignette: 0.3,
+      },
       // Near enough that the far wall lifts slightly and far enough that the
       // avatar never touches it. Aerial perspective in a five-metre room is not
       // physical; it is standing in for the bounce a real dark room has and a
@@ -556,7 +583,7 @@ const morning: Pattern = {
   },
   build(bin, environment = null) {
     const root = new THREE.Group();
-    const finish: Finish = {
+    const surfaces: Surfaces = {
       // Not white. A wall painted the same value as the light falling on it has
       // nowhere left to go, and the avatar — which is pale to begin with —
       // dissolves into it. Warm grey lit brightly reads as white; white lit
@@ -577,7 +604,7 @@ const morning: Pattern = {
       defocus: 1.6,
       rain: 0,
     });
-    root.add(room(bin, finish, windowView.material, environment), furnishRoom(bin));
+    root.add(room(bin, surfaces, windowView.material, environment), furnishRoom(bin));
 
     // Soft, but still a direction.
     //
@@ -622,6 +649,12 @@ const morning: Pattern = {
       // clips there is no difference between "bright morning" and "broken".
       exposure: 0.84,
       environmentIntensity: 0.5,
+      // Starting values, to be tuned against a render.
+      finish: {
+        blur: { radius: 5, ramp: 2.5 },
+        grade: { gain: [1.0, 1.0, 1.0], saturation: 1.03, contrast: 1.0 },
+        vignette: 0.15,
+      },
       fog: null,
     };
   },
@@ -638,7 +671,7 @@ const rainy: Pattern = {
   },
   build(bin, environment = null) {
     const root = new THREE.Group();
-    const finish: Finish = {
+    const surfaces: Surfaces = {
       wallHex: 0xd6d5d0,
       ceilingHex: 0xcfcec9,
       trimHex: 0xe6e5e0,
@@ -655,7 +688,7 @@ const rainy: Pattern = {
       defocus: 0.9,
       rain: 1,
     });
-    root.add(room(bin, finish, windowView.material, environment), furnishRoom(bin));
+    root.add(room(bin, surfaces, windowView.material, environment), furnishRoom(bin));
 
     // Cool, soft, and from the left like the others — rain has no sun, but it
     // still has a window, and light that arrives from nowhere in particular is
@@ -687,6 +720,12 @@ const rainy: Pattern = {
       toneMapping: THREE.NeutralToneMapping,
       exposure: 0.94,
       environmentIntensity: 0.34,
+      // Starting values, to be tuned against a render.
+      finish: {
+        blur: { radius: 7, ramp: 1.8 },
+        grade: { gain: [0.98, 1.0, 1.02], saturation: 0.85, contrast: 0.97 },
+        vignette: 0.25,
+      },
       fog: new THREE.Fog(0x8e97a0, 4.0, 16),
       update: windowView.update,
     };

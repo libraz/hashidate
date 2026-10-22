@@ -52,7 +52,7 @@ function bareRuntime(loader: { loadAsync: (url: string) => Promise<unknown> }): 
     hudListeners: new Set(),
     bloomListeners: new Set(),
     frameListeners: new Set(),
-    bloomStage: { dispose: vi.fn() },
+    postStage: { dispose: vi.fn() },
     scene: { add: vi.fn(), remove: vi.fn() },
     renderer: {
       setAnimationLoop: vi.fn(),

@@ -58,7 +58,7 @@ function runtime(root: THREE.Group, compiles: Array<{ toon: boolean; visible: bo
     host: { clientWidth: 0, clientHeight: 0 },
     shotCamera: { rebuild: vi.fn(), camera: new THREE.PerspectiveCamera() },
     environment: { texture: null },
-    bloomStage: { target: null },
+    postStage: { target: null },
     backdrop: {
       prewarm: () => {
         compiles.push({ toon: applied.at(-1) ?? true, visible: root.visible });

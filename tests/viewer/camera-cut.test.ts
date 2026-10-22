@@ -64,7 +64,7 @@ describe('camera cut', () => {
       shotCamera: shot,
       slides: { up: false },
       backdrop: { update: vi.fn() },
-      bloomStage: { render: vi.fn() },
+      postStage: { render: vi.fn() },
       timer: { update: vi.fn(), getDelta: () => 1 / 60 },
       current: {
         session: { update: () => shot.setShot({ frame: 'full', yaw: 40 }) },
