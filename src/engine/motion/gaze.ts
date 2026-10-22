@@ -65,6 +65,29 @@ const AVERT_DOWN = 0.508;
 const AVERT_SIDE = 0.21;
 const AVERT_VERT = 0.11;
 
+// Talking dwell on the camera: exponential, mean 3.13 s, clamped to [0.5, 9] s. Eyes
+// Alive measured 93.9 frames at 30 fps; the clamp leaves a mean of 2.99 s. Hypothesis,
+// needs a render check.
+const DWELL_BACK_MEAN = 3.13;
+const DWELL_BACK_MIN = 0.5;
+const DWELL_BACK_MAX = 9;
+// Talking dwell away from the camera: mean 0.93 s, clamped to [0.25, 3] s. Eyes Alive
+// measured 27.8 frames at 30 fps; the clamp leaves a mean of 0.924 s. Needs a render check.
+const DWELL_AWAY_MEAN = 0.93;
+const DWELL_AWAY_MIN = 0.25;
+const DWELL_AWAY_MAX = 3;
+
+/**
+ * How long a fixation lasts while speaking, in seconds: a clamped exponential
+ * draw from `r` in [0, 1). `1 - r` keeps the log finite at 0.
+ */
+export function speechDwell(back: boolean, r: number): number {
+  const d = -(back ? DWELL_BACK_MEAN : DWELL_AWAY_MEAN) * Math.log(1 - r);
+  return back
+    ? THREE.MathUtils.clamp(d, DWELL_BACK_MIN, DWELL_BACK_MAX)
+    : THREE.MathUtils.clamp(d, DWELL_AWAY_MIN, DWELL_AWAY_MAX);
+}
+
 export interface GazeOptions {
   /** Injectable only so a test can step the wander deterministically. */
   random?: () => number;
@@ -120,6 +143,7 @@ export class Gaze {
   private _pinned = false;
   private _avert: Avert = 'none';
   private _hold = 0;
+  private _lastBack = true;
 
   constructor({ random = Math.random }: GazeOptions = {}) {
     this._random = random;
@@ -186,7 +210,9 @@ export class Gaze {
     if (this._avert !== 'hold' && this._avert !== 'settle') {
       this._timer -= dt;
       if (this._timer <= 0) {
-        const back = this._random() < 0.45;
+        // Speaking alternates camera and away; the eyes start on the camera.
+        const back = speaking ? !this._lastBack : this._random() < 0.45;
+        this._lastBack = back;
         let nx = back ? 0 : (this._random() - 0.5) * 0.42;
         let ny = back ? 0 : (this._random() - 0.5) * 0.22;
         if (pinned) {
@@ -195,7 +221,7 @@ export class Gaze {
         }
         this._avert = 'none';
         this._saccadeTo(nx, ny);
-        this._timer = 0.9 + this._random() * 2.8;
+        this._timer = speaking ? speechDwell(back, this._random()) : 0.9 + this._random() * 2.8;
       }
     }
 

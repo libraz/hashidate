@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { AVERT_MIN, END_RETURN, Gaze, HOLD_MEAN, type SpeechGaze } from '@/engine/motion/gaze';
+import {
+  AVERT_MIN,
+  END_RETURN,
+  Gaze,
+  HOLD_MEAN,
+  type SpeechGaze,
+  speechDwell,
+} from '@/engine/motion/gaze';
 import { smoothstep } from '@/engine/motion/idle';
 
 /** 32-bit linear congruential generator, so every run is reproducible. */
@@ -30,7 +37,8 @@ class Rng {
 /**
  * The wander as it was before speech reached it, copied verbatim with the
  * generator injected. The speech-aware gaze has to match it wherever no
- * speech-driven state is in flight.
+ * speech-driven state is in flight. While `speaking`, fixations alternate
+ * between camera and away and last `speechDwell`.
  */
 class ReferenceGaze {
   ox = 0;
@@ -47,17 +55,19 @@ class ReferenceGaze {
   private sacT = 1;
   private sacDur = 0.05;
   private timer = 1.2;
+  private lastBack = true;
   private readonly random: () => number;
 
   constructor(random: () => number) {
     this.random = random;
   }
 
-  update(dt: number): void {
+  update(dt: number, speaking = false): void {
     this.saccade = 0;
     this.timer -= dt;
     if (this.timer <= 0) {
-      const back = this.random() < 0.45;
+      const back = speaking ? !this.lastBack : this.random() < 0.45;
+      this.lastBack = back;
       const nx = back ? 0 : (this.random() - 0.5) * 0.42;
       const ny = back ? 0 : (this.random() - 0.5) * 0.22;
       const amp = Math.hypot(nx - this.ox, ny - this.oy);
@@ -68,7 +78,7 @@ class ReferenceGaze {
       this.fy = this.oy;
       this.sacT = 0;
       this.sacDur = 0.026 + amp * 0.24;
-      this.timer = 0.9 + this.random() * 2.8;
+      this.timer = speaking ? speechDwell(back, this.random()) : 0.9 + this.random() * 2.8;
     }
 
     if (this.sacT < 1) {
@@ -148,8 +158,8 @@ function subject(seed: number, dt: number, base: () => number = lcg(seed)) {
 function reference(seed: number, dt: number) {
   const rng = new Rng(lcg(seed));
   const gaze = new ReferenceGaze(rng.next);
-  return (): Frame => {
-    gaze.update(dt);
+  return (speaking = false): Frame => {
+    gaze.update(dt, speaking);
     return {
       ox: gaze.ox,
       oy: gaze.oy,
@@ -206,8 +216,9 @@ describe('gaze without speech-driven state matches the plain wander', () => {
           const actual: Frame[] = [];
           const expected: Frame[] = [];
           for (let i = 0; i < n; i++) {
-            actual.push(step(script(i)));
-            expected.push(ref());
+            const speech = script(i);
+            actual.push(step(speech));
+            expected.push(ref(speech?.speaking ?? false));
           }
           expect(actual).toEqual(expected);
         }
@@ -261,7 +272,7 @@ describe('gaze at the edges of a run', () => {
       const onsetFrames = Math.floor(0.15 / dt) + 1;
       for (let k = 0; k < onsetFrames; k++) {
         const f = step(speaking(6 - k * dt, false, false));
-        expect(f).toEqual(ref());
+        expect(f).toEqual(ref(true));
         const aversion =
           (f.ox === 0 && Math.abs(f.oy) === 0.11) || (Math.abs(f.ox) === 0.21 && f.oy === 0);
         expect(aversion).toBe(false);
@@ -297,7 +308,7 @@ describe('gaze at the edges of a run', () => {
         const duration = END_RETURN + AVERT_MIN - 0.11;
         const n = Math.round(duration / dt);
         for (let k = 0; k < n; k++) {
-          expect(step(speaking(duration - k * dt, true, false))).toEqual(ref());
+          expect(step(speaking(duration - k * dt, true, false))).toEqual(ref(true));
         }
       }
     }
