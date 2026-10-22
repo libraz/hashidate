@@ -386,38 +386,67 @@ describe('arm route recovery', () => {
     ]);
   }
 
-  it('reaches an admissible raw q at rest when no plan step leaves the goal', () => {
+  it.each(['blocked', 'stationary'] as const)(
+    'reaches an admissible raw q at rest when a %s plan leaves the goal',
+    (status) => {
+      const s = scene();
+      const from = pinned(s);
+      const rest = Float64Array.from([0.436, 0.336, -0.841, 0.177, 0.512, 0.049, -0.001]);
+      expect(validates(s, from)).toBe(true);
+      expect(validates(s, rest)).toBe(true);
+      // On a real mesh the solver's step can fail from a clear start on the
+      // stops, or stop at a local minimum there: q stays where it started.
+      const plan = s.driver.planFrom.bind(s.driver);
+      vi.spyOn(s.driver, 'planFrom').mockImplementation((start, ...rest) => {
+        const out = plan(start, ...rest);
+        out.status = status;
+        out.q.set(start);
+        return out;
+      });
+      const route = new ArmRoute(TAIL);
+      route.reset(from);
+      const dt = 1 / 60;
+      let reached = -1;
+      for (let k = 0; k < 60 && reached < 0; k++) {
+        requestAt(s, rest);
+        s.driver.accept(route.qAcc, s.context, NO_FINGERS, NO_FINGERS);
+        route.track(s.driver, s.context, rest, NO_FINGERS, NO_FINGERS, dt);
+        route.accept(route.command(s.driver, new Float64Array(7)), dt);
+        let gap = 0;
+        for (let i = 0; i < 7; i++) gap = Math.max(gap, Math.abs(route.goalQ[i] - rest[i]));
+        if (gap < 1e-9) reached = k;
+      }
+      // One box step per frame at the slew limit covers the widest DOF.
+      let widest = 0;
+      for (let i = 0; i < 7; i++) widest = Math.max(widest, Math.abs(rest[i] - from[i]));
+      expect(reached).toBeGreaterThanOrEqual(0);
+      expect(reached).toBeLessThanOrEqual(Math.ceil(widest / (LIMIT_SLEW * dt)));
+    },
+  );
+
+  it('a stationary plan keeps the goal without recovery', () => {
     const s = scene();
-    const from = pinned(s);
-    const rest = Float64Array.from([0.436, 0.336, -0.841, 0.177, 0.512, 0.049, -0.001]);
-    expect(validates(s, from)).toBe(true);
-    expect(validates(s, rest)).toBe(true);
-    // On a real mesh the solver's step can fail from a clear start on the
-    // stops: the plan reports blocked and leaves q where it started.
+    const from = sideways();
+    const raw = overRolled(s.driver, from, 0.2);
+    requestAt(s, raw);
     const plan = s.driver.planFrom.bind(s.driver);
-    vi.spyOn(s.driver, 'planFrom').mockImplementation((start, ...rest) => {
-      const out = plan(start, ...rest);
-      out.status = 'blocked';
-      out.q.set(start);
+    let planned: Float64Array | null = null;
+    vi.spyOn(s.driver, 'planFrom').mockImplementation((...args) => {
+      const out = plan(...args);
+      out.status = 'stationary';
+      planned = Float64Array.from(out.q);
       return out;
     });
+    const restore = vi.spyOn(s.driver, 'restoreEndpointFrom');
+    const validate = vi.spyOn(s.driver, 'validateLockedPose');
     const route = new ArmRoute(TAIL);
     route.reset(from);
-    const dt = 1 / 60;
-    let reached = -1;
-    for (let k = 0; k < 60 && reached < 0; k++) {
-      requestAt(s, rest);
-      s.driver.accept(route.qAcc, s.context, NO_FINGERS, NO_FINGERS);
-      route.track(s.driver, s.context, rest, NO_FINGERS, NO_FINGERS, dt);
-      route.accept(route.command(s.driver, new Float64Array(7)), dt);
-      let gap = 0;
-      for (let i = 0; i < 7; i++) gap = Math.max(gap, Math.abs(route.goalQ[i] - rest[i]));
-      if (gap < 1e-9) reached = k;
-    }
-    // One box step per frame at the slew limit covers the widest DOF.
-    let widest = 0;
-    for (let i = 0; i < 7; i++) widest = Math.max(widest, Math.abs(rest[i] - from[i]));
-    expect(reached).toBeGreaterThanOrEqual(0);
-    expect(reached).toBeLessThanOrEqual(Math.ceil(widest / (LIMIT_SLEW * dt)));
+
+    route.track(s.driver, s.context, raw, NO_FINGERS, NO_FINGERS, 1 / 60);
+
+    expect(planned).not.toBeNull();
+    expect(restore).not.toHaveBeenCalled();
+    expect(validate).not.toHaveBeenCalled();
+    expect(Array.from(route.goalQ)).toEqual(Array.from(planned ?? []));
   });
 });

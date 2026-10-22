@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HAND_CONTACT, JOINTS } from '@/engine/anatomy';
 import { TORSO_SAMPLES } from '@/engine/anatomy/joints';
 import { elevationCeiling } from '@/engine/anatomy/strain';
@@ -13,6 +13,7 @@ import {
   forwardArm,
   makeArmForwardResult,
 } from '@/engine/rig/arm-configuration';
+import { ArmDriver } from '@/engine/rig/arm-driver';
 import {
   type ArmPathBounds,
   type ArmPathEnvironment,
@@ -22,6 +23,7 @@ import {
 } from '@/engine/rig/arm-path';
 import { captureHandGeometry, type HandGeometryCalibration } from '@/engine/rig/hand-geometry';
 import { buildRig } from '../helpers/scene';
+import { DT, harness } from '../motion/body/harness';
 
 const identity = new THREE.Quaternion();
 const up = new THREE.Vector3(0, 1, 0);
@@ -692,13 +694,29 @@ describe('constrained arm path kernel', () => {
     );
 
     expect(['progress', 'settled']).toContain(out.status);
-    expect(out.q[1]).toBeGreaterThan(0);
     expect(out.q[0]).not.toBe(start[0]);
     expect(out.positionError).toBeLessThan(initialError);
     for (let dof = 0; dof < 7; dof++) {
       expect(out.q[dof]).toBeGreaterThanOrEqual(limit.lower[dof]);
       expect(out.q[dof]).toBeLessThanOrEqual(limit.upper[dof]);
     }
+
+    // The first plan may end with the lift exactly on its stop; continuing from
+    // its result must leave the pole with the error still falling.
+    let error = out.positionError;
+    for (let call = 0; call < 3 && !(out.q[1] > 1e-3); call++) {
+      const from = Float64Array.from(out.q);
+      const box = poleReturnBounds(from);
+      h.solver.plan(h.request, from, context, box, freeEnvironment(), out);
+      expect(['progress', 'settled']).toContain(out.status);
+      expect(out.positionError).toBeLessThanOrEqual(error);
+      error = out.positionError;
+      for (let dof = 0; dof < 7; dof++) {
+        expect(out.q[dof]).toBeGreaterThanOrEqual(box.lower[dof]);
+        expect(out.q[dof]).toBeLessThanOrEqual(box.upper[dof]);
+      }
+    }
+    expect(out.q[1]).toBeGreaterThan(1e-3);
   });
 
   it('uses the exact physical-elevation finite-difference scale for pole probes', () => {
@@ -761,7 +779,7 @@ describe('constrained arm path kernel', () => {
 
       const out = h.solver.plan(h.request, start, h.context, limit, freeEnvironment(), output);
 
-      expect(out.status).toBe('blocked');
+      expect(out.status).toBe('stationary');
       expect(out.positionError).toBeCloseTo(initialError, 12);
       expect(Array.from(out.q)).toEqual(Array.from(start));
     }
@@ -1010,6 +1028,8 @@ describe('constrained arm path kernel', () => {
     const request = requestAt(h.calibration, h.context, goal, h.handLength);
     const limit = boundedAround(start, 14 / 60);
     limit.upper[3] = start[3] + 0.04;
+    limit.lower[5] = start[5] - 0.02;
+    limit.upper[5] = start[5] + 0.02;
     const reference = h.solver.plan(request, start, h.context, limit, freeEnvironment(), h.output);
     const n = reference.forward.wrist.clone().sub(h.context.shoulder).normalize();
     const center = h.context.shoulder
@@ -1377,7 +1397,7 @@ describe('constrained arm path kernel', () => {
     },
   );
 
-  it('reports an unreachable request as finite blocked progress, never settled', () => {
+  it('reports an unreachable request as finite stationary progress, never settled', () => {
     const h = fixture();
     const start = new Float64Array([0, 0.3, 0, 0.4, 0, 0, 0]);
     const request: ArmPathRequest = {
@@ -1397,7 +1417,7 @@ describe('constrained arm path kernel', () => {
       next = new Float64Array(out.q);
     }
 
-    expect(out.status).toBe('blocked');
+    expect(out.status).toBe('stationary');
     expect(out.positionError).toBeGreaterThan(1);
     expect(Number.isFinite(out.positionError)).toBe(true);
     expect(out.q.every(Number.isFinite)).toBe(true);
@@ -1599,18 +1619,26 @@ describe('constrained arm path kernel', () => {
       origin + travel * 0.08,
       origin + travel * 0.46,
     );
-    let violatedQueries = 0;
+    let activeQueries = 0;
     const obstructed: ArmPathEnvironment = {
       rowCount: 1,
       sample: (points, rows) => {
         obstacle.sample(points, rows);
-        if (rows[0].valid && rows[0].distance < 0) violatedQueries++;
+        if (rows[0].valid) activeQueries++;
       },
     };
     const obstructedOutput = makeArmPathPlanOutput(h.calibration, h.handGeometry, 1);
     h.solver.plan(request, start, h.context, bounds(), obstructed, obstructedOutput);
     expect(obstructedOutput.status).toBe('progress');
-    expect(violatedQueries).toBeGreaterThan(0);
+    // The obstacle must have shaped the plan: its row was live and the answer differs from a free one.
+    expect(activeQueries).toBeGreaterThan(0);
+    const free = makeArmPathPlanOutput(h.calibration, h.handGeometry, 0);
+    fixture().solver.plan(request, start, h.context, bounds(), freeEnvironment(), free);
+    let deviation = 0;
+    for (let dof = 0; dof < 7; dof++) {
+      deviation = Math.max(deviation, Math.abs(obstructedOutput.q[dof] - free.q[dof]));
+    }
+    expect(deviation).toBeGreaterThanOrEqual(1e-3);
 
     for (const [call, rowCount] of [2, 2, 3, 0, 1, 2].entries()) {
       const traces: number[][][] = [];
@@ -1661,9 +1689,10 @@ describe('constrained arm path kernel', () => {
         h.environment,
         h.output,
       );
-      expect(collision.status).toBe('blocked');
-      expect(collision.maxViolation).toBeGreaterThan(1e-3);
-      expect(collision.clearances[0].distance).toBeLessThan(-1e-3);
+      // The start is pushed clear before planning.
+      expect(collision.status).not.toBe('blocked');
+      expect(collision.maxViolation).toBeLessThanOrEqual(64 * Number.EPSILON * 1);
+      expect(collision.clearances[0].distance).toBeGreaterThanOrEqual(-1e-12);
       const requestBefore = snapshotRequest(h.request);
       const startBefore = Array.from(h.start);
       const boundsBefore = [
@@ -1699,6 +1728,27 @@ describe('constrained arm path kernel', () => {
       );
     },
   );
+
+  it('a start pushed into the face is cleared and then planned', () => {
+    const h = fixture();
+    const pointIndex = TORSO_SAMPLES * 2 + 1;
+    const start = new Float64Array([0.05, 0.54, 0.08, 0.62, 0.02, 0.04, 0]);
+    const goal = new Float64Array([0.52, 0.84, 0.26, 0.94, 0.2, 0.16, -0.06]);
+    const request = requestAt(h.calibration, h.context, goal, h.handLength);
+    const startPoint = firstHandProxy(h, start);
+    const goalPoint = firstHandProxy(h, goal);
+    // The surface faces the goal and has moved 1 mm past the start's proxy.
+    const axis = startPoint.clone().sub(goalPoint).normalize();
+    const environment = planeEnvironment(pointIndex, axis, startPoint.dot(axis) - 1e-3);
+    const output = makeArmPathPlanOutput(h.calibration, h.handGeometry, environment.rowCount);
+
+    const out = h.solver.plan(request, start, h.context, bounds(), environment, output);
+
+    expect(out.status).not.toBe('blocked');
+    expect(out.maxViolation).toBeLessThanOrEqual(64 * Number.EPSILON * 1);
+    expect(out.clearances[0].distance).toBeGreaterThanOrEqual(-1e-12);
+    expect(out.iterations).toBeGreaterThanOrEqual(1);
+  });
 
   it('fails restoration under a locked infeasible box and resets the output to blocked', () => {
     const h = curledFingerCollisionFixture();
@@ -2034,5 +2084,109 @@ describe('constrained arm path kernel', () => {
       const q = Float64Array.from(start, (value, index) => value + (out.q[index] - value) * t);
       expect(firstHandProxy(h, q).distanceTo(center) - radius).toBeGreaterThanOrEqual(-1e-9);
     }
+  });
+});
+
+describe('arm path at a corner of the joint box', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('settles to the box optimum', () => {
+    const body = harness(0, { random: () => 0.5 });
+    const driver = body.rig.armDriver('R');
+    if (!driver) throw new Error('synthetic rig has no right arm driver');
+    let start: Float64Array | null = null;
+    let context: ArmForwardContext | null = null;
+    let request: ArmPathRequest | null = null;
+    const planFrom = ArmDriver.prototype.planFrom;
+    vi.spyOn(ArmDriver.prototype, 'planFrom').mockImplementation(function (
+      this: ArmDriver,
+      ...args
+    ) {
+      if (this === driver) {
+        start = Float64Array.from(args[0]);
+        context = args[1];
+        const r = driver.request;
+        request = {
+          wrist: r.wrist.clone(),
+          hand: r.hand.clone(),
+          palm: r.palm?.clone() ?? null,
+          elbow: r.elbow.clone(),
+          curls: { ...r.curls },
+          spread: { ...r.spread },
+        };
+      }
+      return planFrom.apply(this, args);
+    });
+    body.rig.reset();
+    body.body.update(DT);
+    body.body.play('cover', 'R');
+    for (let i = 0; i < 140; i++) {
+      body.rig.reset();
+      body.body.update(DT);
+    }
+    vi.restoreAllMocks();
+    if (!(start && context && request)) throw new Error('no plan captured');
+    const ctx: ArmForwardContext = context;
+    const req: ArmPathRequest = request;
+
+    let q: Float64Array = start;
+    let status = '';
+    for (let call = 0; call < 30 && status !== 'stationary'; call++) {
+      const out = driver.solver.plan(
+        req,
+        q,
+        ctx,
+        driver.fillBounds(q, 0, false),
+        driver.environment,
+        driver.output,
+      );
+      status = out.status;
+      q = Float64Array.from(out.q);
+    }
+    expect(status).toBe('stationary');
+
+    const handLength = (driver.solver as unknown as { handLength: number }).handLength;
+    const span = ctx.upperLength + ctx.lowerLength + handLength;
+    const hand = req.hand.clone().normalize();
+    const palm = req.palm?.clone().addScaledVector(hand, -req.palm.dot(hand)).normalize();
+    const targets = [
+      req.wrist,
+      req.wrist.clone().addScaledVector(hand, handLength),
+      ...(palm ? [req.wrist.clone().addScaledVector(palm, handLength)] : []),
+    ];
+    const primary = (at: Float64Array): number => {
+      const fk = forwardArm(configFrom(at), driver.calibration, ctx, makeArmForwardResult());
+      const values = [
+        fk.wrist,
+        fk.wrist.clone().addScaledVector(fk.h, handLength),
+        fk.wrist.clone().addScaledVector(fk.palm, handLength),
+      ];
+      let sum = 0;
+      for (let i = 0; i < targets.length; i++)
+        sum += (targets[i].distanceTo(values[i]) / span) ** 2;
+      return sum;
+    };
+    const atEnd = primary(q);
+    const box = driver.fillBounds(q, 0, false);
+    const lower = Float64Array.from(box.lower);
+    const upper = Float64Array.from(box.upper);
+    let probed = 0;
+    const better: string[] = [];
+    for (let dof = 0; dof < 7; dof++) {
+      for (const sign of [-1, 1]) {
+        const moved = Float64Array.from(q);
+        moved[dof] += sign * 1e-3;
+        if (moved[dof] < lower[dof] || moved[dof] > upper[dof]) continue;
+        if (!driver.validateLockedPose(moved, ctx, req.curls, req.spread)) continue;
+        probed++;
+        const drop = atEnd - primary(moved);
+        if (drop > Number.EPSILON ** (2 / 3) * Math.max(1, atEnd))
+          better.push(`${dof}${sign}:${drop}`);
+      }
+    }
+    expect(probed).toBeGreaterThan(0);
+    expect(better).toEqual([]);
   });
 });

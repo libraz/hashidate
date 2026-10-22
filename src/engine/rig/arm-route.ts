@@ -277,6 +277,12 @@ export class ArmRoute {
     this._solved = !useRaw;
     if (useRaw) {
       this.goalQ.set(raw);
+    } else if (planned.status === 'stationary') {
+      // A chain stopped at a minimum of the box short of the request can be a
+      // local one; an admissible raw is still reached one box step at a time.
+      const stepped = inBox && this.stepTowardRaw(driver, context, raw, curls, spread, dt);
+      if (inBox) batches += driver.bridgeOutput.environmentBatches;
+      this.goalQ.set(stepped ? this.step : planned.q);
     } else if (planned.status !== 'blocked') {
       this.goalQ.set(planned.q);
     } else {

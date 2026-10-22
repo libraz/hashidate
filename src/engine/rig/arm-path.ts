@@ -9,6 +9,7 @@ import type {
   ArmForwardResult,
 } from './arm-configuration';
 import { configurationOfDirections, forwardArm, makeArmForwardResult } from './arm-configuration';
+import { CONSTRAINT_EPSILON, makeQpScratch, type QpResult, solveDualActiveSet } from './arm-qp';
 import {
   type HandGeometryCalibration,
   type HandGeometryPoint,
@@ -21,7 +22,6 @@ const LANDMARKS = 3;
 const DIRECTION_COMPONENTS = 3;
 const MAX_ITERATIONS = 6;
 const MAX_LINE_SEARCHES = 6;
-const MAX_QP_SWEEPS = 12;
 const MAX_SWEEP_DEPTH = 8;
 const MAX_ENVIRONMENT_BATCHES = 96;
 /**
@@ -34,7 +34,11 @@ const LEXICAL_EPSILON = Number.EPSILON ** (2 / 3);
 const FULL_TURN = 2 * Math.PI;
 const SETTLED_POSITION_FRACTION = 1e-6;
 const SETTLED_ORIENTATION = 1e-5;
-const CONSTRAINT_EPSILON = 2e-10;
+/**
+ * Accepted moves that remove at most this fraction of the starting primary
+ * error, on physical stops only, mean the plan has stopped at a box minimum.
+ */
+const STATIONARY_FRACTION = 1e-3;
 const FRAME_TOLERANCE = 1e-4;
 
 export type ArmPathPointKind = 'upper' | 'forearm' | 'hand' | 'finger';
@@ -84,7 +88,11 @@ export interface ArmPathBounds {
   readonly upper: Float64Array;
 }
 
-export type ArmPathStatus = 'progress' | 'settled' | 'blocked';
+/**
+ * `stationary`: the exact QP step stopped improving the request at a residual,
+ * a local minimum of the box rather than a failure to move.
+ */
+export type ArmPathStatus = 'progress' | 'settled' | 'stationary' | 'blocked';
 
 /** Reusable answer buffer. `q` is exactly the raw configuration sent to FK. */
 export interface ArmPathPlanOutput {
@@ -119,6 +127,9 @@ interface PathState {
 interface ResolvedBounds {
   readonly lower: Float64Array;
   readonly upper: Float64Array;
+  /** 1 where the supplied bound is narrower than the joint's physical one. */
+  readonly lowerTemporal: Uint8Array;
+  readonly upperTemporal: Uint8Array;
 }
 
 /** Encode one configuration in the solver's stable seven-value order. */
@@ -357,6 +368,8 @@ function createBounds(
     if (!finiteNumber(physicalUpper) && i !== 0) return false;
     out.lower[i] = Math.max(supplied.lower[i], physicalLower);
     out.upper[i] = Math.min(supplied.upper[i], physicalUpper);
+    out.lowerTemporal[i] = supplied.lower[i] > physicalLower ? 1 : 0;
+    out.upperTemporal[i] = supplied.upper[i] < physicalUpper ? 1 : 0;
     if (out.lower[i] > out.upper[i]) return false;
   }
   return true;
@@ -407,6 +420,8 @@ export class ArmStepSolver {
   private readonly resolvedBounds: ResolvedBounds = {
     lower: new Float64Array(DOFS),
     upper: new Float64Array(DOFS),
+    lowerTemporal: new Uint8Array(DOFS),
+    upperTemporal: new Uint8Array(DOFS),
   };
   private readonly handSample: ReturnType<typeof makeHandGeometrySample>;
   private readonly localFingerPoints: THREE.Vector3[];
@@ -445,8 +460,12 @@ export class ArmStepSolver {
   private qpA = new Float64Array(0);
   private qpB = new Float64Array(0);
   private qpZ = new Float64Array(0);
-  private qpDenominator = new Float64Array(0);
   private qpLambda = new Float64Array(0);
+  private readonly qpScratch = makeQpScratch();
+  /** Why the last `makeConstrainedStep` returned; `'rejected'` is a false outside the kernel. */
+  private lastQpResult: QpResult | 'rejected' = 'rejected';
+  /** The last successful constrained step leaned on a temporal box row. */
+  private lastStepTemporal = false;
   private readonly rowMap = new Map<string, number>();
   private readonly registeredKeys: string[] = [];
   private registeredPointIndices = new Int32Array(0);
@@ -598,8 +617,15 @@ export class ArmStepSolver {
     }
     this.measureState(this.current);
     if (this.current.maxViolation > this.roundoffTolerance) {
-      this.copyToOutput(this.current, out, 'blocked');
-      return out;
+      // A moving environment can push into a clear goal. Push it clear first;
+      // like restoreEndpoint, the chord from the start to the cleared pose is
+      // not swept, and the push neither counts as progress nor as iterations.
+      this.copyState(this.current, this.originalStart);
+      this.pushClear(context, resolved, environment);
+      if (this.current.maxViolation > this.roundoffTolerance) {
+        this.copyToOutput(this.originalStart, out, 'blocked');
+        return out;
+      }
     }
     this.copyState(this.current, this.originalStart);
     this.copyState(this.current, this.certifiedCheckpoint);
@@ -610,9 +636,17 @@ export class ArmStepSolver {
     }
 
     let dampingScale = 1;
+    // Signals for the status: an accepted gauge move, a temporal row under an
+    // accepted step, and whether the last iteration's exact QP step was spent.
+    let gaugeAccepted = false;
+    let temporalAccepted = false;
+    let lastQpOptimal = false;
+    let lastStepSpent = false;
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       out.iterations = iteration + 1;
       this.newForcedRows = false;
+      lastQpOptimal = false;
+      lastStepSpent = false;
       if (!this.linearize(this.current, context, resolved)) {
         if (
           !this.certifyCurrent(context, resolved, environment) &&
@@ -626,6 +660,10 @@ export class ArmStepSolver {
         break;
       }
       let acceptedThisIteration = false;
+      let lineEvaluated = false;
+      let lineOnlyBetter = true;
+      let stepTemporal = false;
+      let predictedDescent = Number.POSITIVE_INFINITY;
       let qpAttempts = 0;
       let lineCandidates = 0;
       let damping = this.initialDamping() * dampingScale;
@@ -639,12 +677,13 @@ export class ArmStepSolver {
         this.trialQ.set(this.current.q);
         this.trialQ[0] = polePlane;
         this.candidate.q.set(this.trialQ);
-        if (
-          this.evaluatePlanCandidate(context, resolved, environment, line) &&
-          this.betterPoleGauge(this.candidate, this.current, this.poleRay)
-        ) {
+        lineEvaluated = true;
+        if (!this.evaluatePlanCandidate(context, resolved, environment, line)) {
+          lineOnlyBetter = false;
+        } else if (this.betterPoleGauge(this.candidate, this.current, this.poleRay)) {
           this.acceptPlanCandidate(environment);
           acceptedThisIteration = true;
+          gaugeAccepted = true;
           dampingScale = 1;
         }
       }
@@ -663,13 +702,22 @@ export class ArmStepSolver {
             damping *= 10;
             continue;
           }
-          if (
-            !this.makeConstrainedStep(this.current, resolved, this.solved, this.current.clearances)
-          ) {
+          const stepped = this.makeConstrainedStep(
+            this.current,
+            resolved,
+            this.solved,
+            this.current.clearances,
+          );
+          lastQpOptimal = this.lastQpResult === 'optimal';
+          if (!stepped) {
+            // Feasibility does not depend on damping, so a larger one cannot help.
+            if (this.lastQpResult === 'infeasible') break;
             damping *= 10;
             continue;
           }
           this.primaryDelta.set(this.qpDelta);
+          stepTemporal = this.lastStepTemporal;
+          predictedDescent = this.predictedDescent(this.primaryDelta);
           primaryAvailable = true;
         }
         if (primaryAvailable) {
@@ -677,6 +725,8 @@ export class ArmStepSolver {
           if (this.requestHasElbow && qpAttempts < MAX_LINE_SEARCHES) {
             qpAttempts++;
             secondary = this.makeSecondaryStep(this.current, resolved);
+            // The elbow step rides on the primary one; its temporal rows bind the move too.
+            if (secondary && this.lastStepTemporal) stepTemporal = true;
           }
           if (!secondary) this.qpDelta.set(this.primaryDelta);
           // A successful but tiny primary step can still permit useful elbow motion.
@@ -685,18 +735,36 @@ export class ArmStepSolver {
             while (lineCandidates < MAX_LINE_SEARCHES) {
               const line = lineCandidates++;
               const alpha = 2 ** -line;
-              if (!this.writeHierarchyCandidate(this.current, context, resolved, alpha, secondary))
+              lineEvaluated = true;
+              if (
+                !(
+                  this.writeHierarchyCandidate(this.current, context, resolved, alpha, secondary) &&
+                  this.evaluatePlanCandidate(context, resolved, environment, line)
+                )
+              ) {
+                lineOnlyBetter = false;
                 continue;
-              if (!this.evaluatePlanCandidate(context, resolved, environment, line)) continue;
+              }
               if (!this.better(this.candidate, this.current)) continue;
               this.acceptPlanCandidate(environment);
               acceptedThisIteration = true;
+              if (stepTemporal) temporalAccepted = true;
               dampingScale = 1;
               break;
             }
           }
         }
       }
+
+      // An exact step that is zero, or whose every line candidate lost only on
+      // the objective with a model descent below the tolerance, is spent.
+      lastStepSpent =
+        lastQpOptimal &&
+        !acceptedThisIteration &&
+        (this.stepNorm(this.primaryDelta) < 1e-10 ||
+          (lineEvaluated &&
+            lineOnlyBetter &&
+            predictedDescent <= this.lexicalTolerance(this.current.primaryError)));
 
       const stopping =
         this.isSettled(this.current) ||
@@ -718,11 +786,17 @@ export class ArmStepSolver {
       if (!acceptedThisIteration) dampingScale *= 10;
     }
 
-    const status: ArmPathStatus = this.isPrimarySettled(this.current)
-      ? 'settled'
-      : this.hasCertifiedProgress
-        ? 'progress'
-        : 'blocked';
+    const accepted = this.hasCertifiedProgress;
+    const negligible =
+      this.originalStart.primaryError - this.current.primaryError <=
+      STATIONARY_FRACTION * this.originalStart.primaryError;
+    let status: ArmPathStatus;
+    if (this.isPrimarySettled(this.current)) status = 'settled';
+    else if (gaugeAccepted) status = 'progress';
+    else if (lastQpOptimal && !accepted && lastStepSpent) status = 'stationary';
+    else if (lastQpOptimal && accepted && negligible && !temporalAccepted) status = 'stationary';
+    else if (accepted) status = 'progress';
+    else status = 'blocked';
     this.copyToOutput(this.current, out, status);
     return out;
   }
@@ -894,10 +968,37 @@ export class ArmStepSolver {
       this.copyToOutput(this.current, out, this.isSettled(this.current) ? 'settled' : 'progress');
       return true;
     }
+    const iterations = this.pushClear(context, resolved, environment);
+    if (this.current.maxViolation <= this.roundoffTolerance) {
+      this.copyToOutput(this.current, out, this.isSettled(this.current) ? 'settled' : 'progress');
+      out.iterations = iterations;
+      return true;
+    }
 
+    this.copySafeStart(out, start);
+    out.status = 'blocked';
+    out.positionError = Number.POSITIVE_INFINITY;
+    out.orientationError = Number.POSITIVE_INFINITY;
+    out.secondaryError = Number.POSITIVE_INFINITY;
+    out.maxViolation = Number.POSITIVE_INFINITY;
+    out.iterations = iterations;
+    out.environmentBatches = this.environmentBatches;
+    return false;
+  }
+
+  /**
+   * Penetration-only GN on `current` until it is clear. Returns the iterations
+   * used; the caller reads success off `current.maxViolation`.
+   */
+  private pushClear(
+    context: ArmForwardContext,
+    bounds: ResolvedBounds,
+    environment: ArmPathEnvironment,
+  ): number {
+    let used = 0;
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
-      out.iterations = iteration + 1;
-      if (!this.linearizePenetration(this.current, context, resolved)) break;
+      used = iteration + 1;
+      if (!this.linearizePenetration(this.current, context, bounds)) break;
       let qpAttempts = 0;
       let lineCandidates = 0;
       let damping = this.initialDamping();
@@ -916,12 +1017,13 @@ export class ArmStepSolver {
         if (
           !this.makeConstrainedStep(
             this.current,
-            resolved,
+            bounds,
             this.solved,
             this.current.clearances,
             false,
           )
         ) {
+          if (this.lastQpResult === 'infeasible') break;
           damping *= 10;
           continue;
         }
@@ -930,9 +1032,9 @@ export class ArmStepSolver {
         while (lineCandidates < MAX_LINE_SEARCHES) {
           const line = lineCandidates++;
           const alpha = 2 ** -line;
-          if (!this.writeBoundedTrial(this.current.q, this.qpDelta, alpha, resolved)) continue;
+          if (!this.writeBoundedTrial(this.current.q, this.qpDelta, alpha, bounds)) continue;
           this.candidate.q.set(this.trialQ);
-          if (!this.evaluateGeometry(this.candidate, context, resolved)) {
+          if (!this.evaluateGeometry(this.candidate, context, bounds)) {
             continue;
           }
           if (!this.sampleClearances(this.candidate, environment)) break;
@@ -941,15 +1043,7 @@ export class ArmStepSolver {
 
           this.copyState(this.candidate, this.current);
           accepted = true;
-          if (this.current.maxViolation <= this.roundoffTolerance) {
-            this.copyToOutput(
-              this.current,
-              out,
-              this.isSettled(this.current) ? 'settled' : 'progress',
-            );
-            out.iterations = iteration + 1;
-            return true;
-          }
+          if (this.current.maxViolation <= this.roundoffTolerance) return used;
           break;
         }
         // A successful QP owns the remaining endpoint line sequence for this iteration.
@@ -957,15 +1051,7 @@ export class ArmStepSolver {
       }
       if (!accepted) break;
     }
-
-    this.copySafeStart(out, start);
-    out.status = 'blocked';
-    out.positionError = Number.POSITIVE_INFINITY;
-    out.orientationError = Number.POSITIVE_INFINITY;
-    out.secondaryError = Number.POSITIVE_INFINITY;
-    out.maxViolation = Number.POSITIVE_INFINITY;
-    out.environmentBatches = this.environmentBatches;
-    return false;
+    return used;
   }
 
   private resetOutput(out: ArmPathPlanOutput): void {
@@ -1069,7 +1155,6 @@ export class ArmStepSolver {
     this.qpA = new Float64Array(this.qpCapacity * DOFS);
     this.qpB = new Float64Array(this.qpCapacity);
     this.qpZ = new Float64Array(this.qpCapacity * DOFS);
-    this.qpDenominator = new Float64Array(this.qpCapacity);
     this.qpLambda = new Float64Array(this.qpCapacity);
   }
 
@@ -1578,7 +1663,7 @@ export class ArmStepSolver {
     includeClearanceConstraints = true,
     nullspace = false,
   ): boolean {
-    this.qpDelta.set(unconstrained);
+    this.lastQpResult = 'rejected';
     let constraintCount = 0;
     for (let dof = 0; dof < DOFS; dof++) {
       const lowerOffset = constraintCount++ * DOFS;
@@ -1625,7 +1710,6 @@ export class ArmStepSolver {
         constraintCount++;
       }
     }
-    this.qpLambda.fill(0, 0, constraintCount);
     for (let constraint = 0; constraint < constraintCount; constraint++) {
       const aOffset = constraint * DOFS;
       if (nullspace) {
@@ -1637,35 +1721,23 @@ export class ArmStepSolver {
         this.projectToPrimaryNullspace(this.qpZ, aOffset);
       } else if (!this.solveLinear(this.hessian, this.qpA, this.qpZ, aOffset, aOffset))
         return false;
-      this.qpDenominator[constraint] = dotRow(this.qpA, constraint, this.qpZ, aOffset);
-      if (!(this.qpDenominator[constraint] > 1e-16)) {
-        if (this.qpB[constraint] > CONSTRAINT_EPSILON) return false;
-        this.qpDenominator[constraint] = 1;
-      }
+      const denominator = dotRow(this.qpA, constraint, this.qpZ, aOffset);
+      if (!(denominator > 1e-16) && this.qpB[constraint] > CONSTRAINT_EPSILON) return false;
     }
-    let converged = false;
-    for (let sweep = 0; sweep < MAX_QP_SWEEPS; sweep++) {
-      let maxViolation = 0;
-      for (let constraint = 0; constraint < constraintCount; constraint++) {
-        const aOffset = constraint * DOFS;
-        let value = 0;
-        for (let dof = 0; dof < DOFS; dof++) value += this.qpA[aOffset + dof] * this.qpDelta[dof];
-        const correction = this.qpB[constraint] - value;
-        const lambda = Math.max(
-          0,
-          this.qpLambda[constraint] + correction / this.qpDenominator[constraint],
-        );
-        const change = lambda - this.qpLambda[constraint];
-        this.qpLambda[constraint] = lambda;
-        for (let dof = 0; dof < DOFS; dof++) this.qpDelta[dof] += this.qpZ[aOffset + dof] * change;
-        maxViolation = Math.max(maxViolation, this.qpB[constraint] - value);
-      }
-      if (maxViolation <= CONSTRAINT_EPSILON) {
-        converged = true;
-        break;
-      }
+    const result = solveDualActiveSet(
+      this.qpA,
+      this.qpB,
+      this.qpZ,
+      constraintCount,
+      unconstrained,
+      this.qpDelta,
+      this.qpLambda,
+      this.qpScratch,
+    );
+    if (result !== 'optimal') {
+      this.lastQpResult = result;
+      return false;
     }
-    if (!converged) return false;
     if (nullspace) this.projectToPrimaryNullspace(this.qpDelta);
     for (let constraint = 0; constraint < constraintCount; constraint++) {
       if (dotRow(this.qpA, constraint, this.qpDelta) < this.qpB[constraint] - CONSTRAINT_EPSILON)
@@ -1683,7 +1755,15 @@ export class ArmStepSolver {
       if (dotRow(this.qpA, constraint, this.qpDelta) < this.qpB[constraint] - CONSTRAINT_EPSILON)
         return false;
     }
-    return this.qpDelta.every(Number.isFinite);
+    if (!this.qpDelta.every(Number.isFinite)) return false;
+    this.lastStepTemporal = false;
+    for (let dof = 0; dof < DOFS && !this.lastStepTemporal; dof++) {
+      this.lastStepTemporal =
+        (bounds.lowerTemporal[dof] === 1 && this.qpLambda[2 * dof] > 0) ||
+        (bounds.upperTemporal[dof] === 1 && this.qpLambda[2 * dof + 1] > 0);
+    }
+    this.lastQpResult = 'optimal';
+    return true;
   }
 
   private predictedPointDisplacement(pointIndex: number, delta: Float64Array): number {
@@ -2090,6 +2170,8 @@ export class ArmStepSolver {
     if (candidate.maxViolation > current.maxViolation + this.roundoffTolerance) return false;
     if (candidate.primaryError < current.primaryError - tolerance) return true;
     if (candidate.primaryError > current.primaryError + tolerance) return false;
+    // Below the tolerance but above settled is a band no step could leave.
+    if (this.isPrimarySettled(candidate) && !this.isPrimarySettled(current)) return true;
     if (candidate.secondaryError < current.secondaryError - tolerance) return true;
     if (candidate.secondaryError > current.secondaryError + tolerance) return false;
     return (
@@ -2130,6 +2212,17 @@ export class ArmStepSolver {
       state.positionError <= SETTLED_POSITION_FRACTION * this.span &&
       state.orientationError <= SETTLED_ORIENTATION
     );
+  }
+
+  /** Descent the damped GN model predicts for `step`: gᵀδ − ½δᵀHδ. */
+  private predictedDescent(step: Float64Array): number {
+    let result = 0;
+    for (let i = 0; i < DOFS; i++) {
+      let curvature = 0;
+      for (let j = 0; j < DOFS; j++) curvature += this.hessian[i * DOFS + j] * step[j];
+      result += step[i] * (this.rightHand[i] - 0.5 * curvature);
+    }
+    return result;
   }
 
   private stepNorm(step: Float64Array): number {

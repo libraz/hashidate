@@ -1425,9 +1425,10 @@ export class Rig {
       return null;
     }
     let output = driver.planFrom(driver.acceptedQ, context, 0, false);
-    if (output.status !== 'blocked') return output;
+    if (output.status === 'progress' || output.status === 'settled') return output;
     // A static pose has no temporal path promise; if the optimization cannot
-    // move, test the exact inverse request as a complete endpoint.
+    // move, or stops short at a box minimum, test the exact inverse request as
+    // a complete endpoint.
     if (!driver.restoreEndpointFrom(driver.targetQ, context, 0, false)) return null;
     output = driver.output;
     return output;
