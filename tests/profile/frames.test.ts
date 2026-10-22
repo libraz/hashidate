@@ -260,6 +260,13 @@ describe('anchor tables', () => {
     expect(FACE_ANCHORS.mouth[2]).toBeGreaterThan(0);
     expect(FACE_ANCHORS.chin[1]).toBeLessThan(FACE_ANCHORS.mouth[1]);
     expect(FACE_ANCHORS.crown[1]).toBeGreaterThan(0);
+    // The forehead is above the eyes and below the crown, in front of the eyes,
+    // and inside the temple on the reaching hand's side.
+    expect(FACE_ANCHORS.forehead[1]).toBeGreaterThan(0);
+    expect(FACE_ANCHORS.forehead[1]).toBeLessThan(FACE_ANCHORS.crown[1]);
+    expect(FACE_ANCHORS.forehead[2]).toBeGreaterThan(0);
+    expect(FACE_ANCHORS.forehead[0]).toBeGreaterThan(0);
+    expect(FACE_ANCHORS.forehead[0]).toBeLessThan(FACE_ANCHORS.temple[0]);
     // The ear is behind the eyes and further out to the side than the temple.
     expect(FACE_ANCHORS.ear[2]).toBeLessThan(0);
     expect(FACE_ANCHORS.ear[0]).toBeGreaterThan(FACE_ANCHORS.temple[0]);

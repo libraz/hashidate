@@ -212,6 +212,8 @@ export const torso = (out: Pose | undefined, spine: SpineOffsets): Pose =>
  * either — what binds is the reach and the roll, not the elbow's bearing — so a
  * gesture wanting one of those shapes has to be re-aimed at somewhere the hand
  * can actually get to, the way `cheekPoke` comes up under the near cheekbone.
+ * A fingertip is the one exception: `think` puts only the index pad on the
+ * forehead, and the wrist under it stays at cheek height.
  */
 export const reach = (
   out: Pose | undefined,

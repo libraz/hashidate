@@ -1,7 +1,16 @@
-import type { GestureDef } from '../../types';
+import type { GestureDef, HandContact } from '../../types';
 import { V } from './base';
 import { both, reach, torso } from './builders';
-import { OPEN_HAND, shape } from './hands';
+import { OPEN_HAND, POINT_HAND } from './hands';
+
+/** The index fingertip's pad, which is what rests on the forehead. */
+const FOREHEAD_CONTACT: HandContact = {
+  kind: 'finger',
+  finger: 'index',
+  segment: 1,
+  fraction: 1,
+  surface: 'pad',
+};
 
 /**
  * Reaction — what the character does while listening.
@@ -64,27 +73,25 @@ export const REACTION = {
     lead: 0.5,
     hold: 3.0,
     build(t, v, _phase?, out?) {
-      const b = Math.sin(t * 1.4 * v.rate) * 0.05;
-      // Knuckle to the chin, the way a hand rests there while thinking. The
-      // wrist stays in front while the fingertips and index return toward the
-      // chin and cheek; the rounded entrance keeps that relationship visible.
+      const b = Math.sin(t * 1.4 * v.rate) * 0.04;
+      // The index fingertip rested on the forehead above the near brow, the rest
+      // folded and the head tipped down into it; the chin is `chin`'s.
       return reach(
         out,
         v,
         {
-          at: 'chin',
-          // The old positive-forward hand bearing buried the wrist behind the
-          // face, making torso clearance consume the elbow, forearm and
-          // shoulder ranges. This rounded bearing keeps the hand in front.
-          offset: [0.1, 0.66 + b, 0.62],
-          hand: [-0.48, 0.65, -0.6],
-          // The palm target distributes the roll through the arm; a separate
-          // twist only spent more of the wrist and shoulder ranges.
-          palm: [0.51, -0.79, 0.21],
-          pole: [0.57, -0.93, 0.32],
+          at: 'forehead',
+          offset: [0, b, 0],
+          contact: FOREHEAD_CONTACT,
+          // Coming up from beside the face rather than across it keeps the
+          // folded fingers off the eye; the palm faces in and back so what
+          // roll is left lands in the forearm, not the wrist.
+          hand: [-0.55, 0.8, -0.2],
+          palm: [-0.7, 0, -0.7],
+          pole: [0.34, -0.86, -0.22],
         },
-        shape({ thumb: 0.4, index: 0.15, middle: 0.7, ring: 0.85, little: 0.9 }),
-        { head: [0.05, 0.13 * v.side, 0.07 * v.side], chest: [0, 0.05 * v.side, 0] },
+        POINT_HAND,
+        { head: [0.12, 0.1 * v.side, 0.06 * v.side], chest: [0.03, 0.05 * v.side, 0] },
       );
     },
   },

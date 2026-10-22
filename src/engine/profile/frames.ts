@@ -29,6 +29,9 @@ export const FACE_ANCHORS: Record<string, Vec3Tuple> = {
   cheek: [0.8, -0.7, 0.45],
   chin: [0.0, -1.85, 0.35],
   temple: [1.05, -0.05, 0.05],
+  // Above the outer half of the brow, on one validation avatar's skin; the other's
+  // eyes sit deeper, and the face clearance lifts a finger out onto it there.
+  forehead: [0.6, 1.0, 0.7],
   ear: [1.25, -0.35, -0.55],
   crown: [0.0, 1.35, -0.2],
 };

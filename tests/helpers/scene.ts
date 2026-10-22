@@ -54,6 +54,13 @@ export interface RigOptions {
   armTwistHelpers?: 'twist' | 'rotate';
   /** Include eye bones. Without them the profile cannot build a face frame. */
   eyes?: boolean;
+  /**
+   * How far behind the front of the face the eyes sit, in IPD. Left out, they
+   * sit behind the head bone, over two IPD back from the skin, and a fixed face
+   * anchor lands deep inside the head; a real avatar's lie under half an IPD to
+   * one and a half back from its forehead.
+   */
+  eyeDepth?: number;
   /** Shape groups to write, as `[groupLabel, shapeNames]`. */
   groups?: Array<[string, string[]]>;
   /** Extra shapes with no group above them — the body's fitting shapes. */
@@ -330,7 +337,11 @@ export function buildRig(opts: RigOptions = {}): SyntheticRig {
   if (eyes) {
     for (const side of ['L', 'R'] as const) {
       const sign = side === 'L' ? -1 : 1;
-      add(naming.eye(side), head, sign * S.eyeOut, S.eyeUp, S.eyeFwd);
+      const z =
+        opts.eyeDepth === undefined
+          ? S.eyeFwd
+          : -(S.eyeFwd + (0.55 - opts.eyeDepth) * 2 * S.eyeOut);
+      add(naming.eye(side), head, sign * S.eyeOut, S.eyeUp, z);
     }
   }
 
