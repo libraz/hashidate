@@ -34,6 +34,7 @@ const FEATURES = [
   'LIL_OUTLINE',
   'LIL_OUTLINE_MASK',
   'LIL_RIMSHADE',
+  'LIL_RIMSHADE_MASK',
 ] as const;
 
 const BLEND_MODES: readonly ToonBlendMode[] = ['normal', 'add', 'screen', 'multiply'];
@@ -99,12 +100,16 @@ uniform float lilMatcapEnableLighting;
 uniform float lilMatcapMainStrength;
 uniform float lilMatcapNormalStrength;
 uniform float lilMatcapBackfaceMask;
+uniform float lilMatcapLod;
 uniform vec4 lilOutlineColor;
 #ifdef LIL_SHADOW_MASK
 uniform sampler2D lilShadowMask;
 #endif
 #ifdef LIL_RIM_COLORTEX
 uniform sampler2D lilRimColorTex;
+#endif
+#ifdef LIL_RIMSHADE_MASK
+uniform sampler2D lilRimShadeMask;
 #endif
 #ifdef LIL_MATCAP
 uniform sampler2D lilMatcap;
@@ -183,6 +188,9 @@ vec3 lilLight = clamp( ( lilCol + max( lilAmbUp, lilAmbDown ) ) * RECIPROCAL_PI,
     vec3 lilNs = normalize( mix( nonPerturbedNormal, normal, lilRimShadeNormalStrength ) );
     float lilRs = pow( saturate( 1.0 - abs( dot( lilNs, geometryViewDir ) ) ), lilRimShadeFresnel );
     lilRs = lilTooning( lilRs, lilRimShadeBorder, lilRimShadeBlur ) * lilRimShadeColor.a;
+    #ifdef LIL_RIMSHADE_MASK
+      lilRs *= texture2D( lilRimShadeMask, vUv ).r;
+    #endif
     lilOut = mix( lilOut, lilOut * lilRimShadeColor.rgb, lilRs );
   #endif
 
@@ -192,7 +200,8 @@ vec3 lilLight = clamp( ( lilCol + max( lilAmbUp, lilAmbDown ) ) * RECIPROCAL_PI,
     vec3 lilMx = normalize( vec3( geometryViewDir.z, 0.0, - geometryViewDir.x ) );
     vec3 lilMy = cross( geometryViewDir, lilMx );
     vec2 lilMatcapUv = vec2( dot( lilMx, lilNm ), dot( lilMy, lilNm ) ) * 0.495 + 0.5;
-    vec4 lilM = lilMatcapColor * texture2D( lilMatcap, lilMatcapUv );
+    // An explicit mip level blurs the image, as lilToon's _MatCapLod does.
+    vec4 lilM = lilMatcapColor * textureLod( lilMatcap, lilMatcapUv, lilMatcapLod );
     lilM.rgb = mix( lilM.rgb, lilM.rgb * lilLight, lilMatcapEnableLighting );
     lilM.a = mix( lilM.a, lilM.a * lilT1, lilMatcapShadowMask );
     lilM.a = faceDirection < lilMatcapBackfaceMask - 1.0 ? 0.0 : lilM.a;
@@ -295,6 +304,7 @@ const linearRgba = ([r, g, b, a]: RgbaTuple): THREE.Vector4 => {
 export class LilToonMaterial extends THREE.MeshToonMaterial {
   lilShadowMask: THREE.Texture | null = null;
   lilRimColorTex: THREE.Texture | null = null;
+  lilRimShadeMask: THREE.Texture | null = null;
   lilMatcap: THREE.Texture | null = null;
   lilMatcapMask: THREE.Texture | null = null;
   lilOutlineMask: THREE.Texture | null = null;
@@ -326,6 +336,7 @@ export class LilToonMaterial extends THREE.MeshToonMaterial {
     } else {
       this.lilShadowMask = shadow.mask ? textures(shadow.mask, 'data') : null;
       this.lilRimColorTex = rim?.colorTex ? textures(rim.colorTex, 'color') : null;
+      this.lilRimShadeMask = rimShade?.mask ? textures(rimShade.mask, 'data') : null;
       this.lilMatcap = matcap ? textures(matcap.file, 'color') : null;
       this.lilMatcapMask = matcap?.mask ? textures(matcap.mask, 'data') : null;
       if (normalMap) {
@@ -352,6 +363,7 @@ export class LilToonMaterial extends THREE.MeshToonMaterial {
       LIL_OUTLINE: outline,
       LIL_OUTLINE_MASK: this.lilOutlineMask !== null,
       LIL_RIMSHADE: !outline && !!rimShade,
+      LIL_RIMSHADE_MASK: this.lilRimShadeMask !== null,
     };
     const defines: Record<string, unknown> = { ...this.defines, USE_UV: '' };
     for (const name of FEATURES) if (on[name]) defines[name] = '';
@@ -399,11 +411,13 @@ export class LilToonMaterial extends THREE.MeshToonMaterial {
       lilMatcapMainStrength: { value: matcap?.mainStrength ?? 0 },
       lilMatcapNormalStrength: { value: matcap?.normalStrength ?? 1 },
       lilMatcapBackfaceMask: { value: matcap?.backfaceMask ?? 0 },
+      lilMatcapLod: { value: matcap?.lod ?? 0 },
       lilOutlineColor: { value: line ? linearRgba(line.color) : new THREE.Vector4(1, 1, 1, 1) },
       lilOutlineWidth: { value: line?.width ?? 0 },
       lilOutlineFixWidth: { value: line?.fixWidth ?? 0 },
       lilShadowMask: { value: this.lilShadowMask },
       lilRimColorTex: { value: this.lilRimColorTex },
+      lilRimShadeMask: { value: this.lilRimShadeMask },
       lilMatcap: { value: this.lilMatcap },
       lilMatcapMask: { value: this.lilMatcapMask },
       lilOutlineMask: { value: this.lilOutlineMask },

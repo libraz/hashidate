@@ -320,6 +320,7 @@ const toonRimShadeSchema = z.strictObject({
   blur: unit,
   fresnelPower: nonNegative,
   normalStrength: unit,
+  mask: fileSchema.optional(),
 });
 
 const toonMatcapSchema = z.strictObject({
@@ -333,6 +334,7 @@ const toonMatcapSchema = z.strictObject({
   mainStrength: unit,
   normalStrength: unit,
   backfaceMask: unit,
+  lod: nonNegative,
 });
 
 const toonEmissionSchema = z.strictObject({

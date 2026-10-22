@@ -176,6 +176,8 @@ export interface ToonRimShade {
   fresnelPower: number;
   /** How far the edge follows the normal map rather than the mesh normal, 0 to 1. */
   normalStrength: number;
+  /** Basename; its red channel scales how much of the rim shade shows. */
+  mask?: string;
 }
 
 /** Unmarked numbers are 0 to 1. */
@@ -197,6 +199,8 @@ export interface ToonMatcap {
   normalStrength: number;
   /** 1 hides the matcap on back faces, 0 keeps it. */
   backfaceMask: number;
+  /** Mip level the image is read at, so higher is blurrier; 0 or more. */
+  lod: number;
 }
 
 export interface ToonEmission {

@@ -310,6 +310,7 @@ describe('toon materials', () => {
       blur: 1,
       fresnelPower: 1,
       normalStrength: 1,
+      mask: 'rim_shade_mask.png',
     },
     matcap: {
       file: 'matcap.png',
@@ -322,6 +323,7 @@ describe('toon materials', () => {
       mainStrength: 0.28,
       normalStrength: 0.325,
       backfaceMask: 0,
+      lod: 0,
     },
     emission: { color: [2, 1, 0], map: 'glow.png' },
     outline: { width: 0.07, color: [0.1, 0.1, 0.1, 1], fixWidth: 0.5, mask: 'width.png' },
@@ -417,6 +419,15 @@ describe('toon materials', () => {
         );
       }
     }
+  });
+
+  it('takes a matcap lod of 0 or more and rejects a negative one', () => {
+    for (const lod of [0, 6.6, 2 ** 32]) {
+      expect(() => accept(withSpec({ shadow, matcap: { ...full.matcap, lod } }))).not.toThrow();
+    }
+    expect(reject(withSpec({ shadow, matcap: { ...full.matcap, lod: -0.0001 } }))).toContain(
+      'matcap.lod',
+    );
   });
 
   it('allows a matcap colour channel above 1 but not its alpha', () => {
@@ -529,6 +540,9 @@ describe('toon materials', () => {
     );
     expect(reject(withSpec({ shadow, rim: { ...full.rim, colorTex: file } }))).toContain(
       'rim.colorTex',
+    );
+    expect(reject(withSpec({ shadow, rimShade: { ...full.rimShade, mask: file } }))).toContain(
+      'rimShade.mask',
     );
   });
 

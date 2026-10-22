@@ -19,6 +19,7 @@ const matcapRest = {
   mainStrength: 0,
   normalStrength: 1,
   backfaceMask: 0,
+  lod: 0,
 };
 
 const avatar = (toon?: Record<string, ToonSpec>): AvatarDescriptor => ({
@@ -91,6 +92,15 @@ describe('loadToonTextures', () => {
             mainStrength: 0,
             normalStrength: 1,
             backfaceMask: 0,
+            lod: 0,
+          },
+          rimShade: {
+            color: [0.5, 0.5, 0.5, 1],
+            border: 0.5,
+            blur: 1,
+            fresnelPower: 1,
+            normalStrength: 1,
+            mask: 'rimshade.png',
           },
           emission: { color: [1, 1, 1], map: 'glow.png' },
           outline: { width: 0.08, color: [0, 0, 0, 1], fixWidth: 0.5, mask: 'line.png' },
@@ -107,6 +117,7 @@ describe('loadToonTextures', () => {
         '/models/yoka/line.png',
         '/models/yoka/normal.png',
         '/models/yoka/rim.png',
+        '/models/yoka/rimshade.png',
         '/models/yoka/shade.png',
       ].sort(),
     );
@@ -133,6 +144,9 @@ describe('loadToonTextures', () => {
       expect(texture.version).toBeGreaterThan(0);
     }
     expect(loaded.textures('cap.png', 'color')).toBe(color);
+    // A matcap's lod picks a mip level, so its image keeps a mip chain.
+    expect(color.generateMipmaps).toBe(true);
+    expect(color.minFilter).toBe(THREE.LinearMipmapLinearFilter);
   });
 
   it('makes one texture per decoding when a file is asked for both ways', async () => {

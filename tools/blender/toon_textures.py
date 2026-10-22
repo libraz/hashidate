@@ -15,7 +15,8 @@ import sys
 
 # The keys that hold a file name, per block of a ToonSpec.
 FILE_KEYS = {"shadow": ("mask",), "normalMap": ("file",), "rim": ("colorTex",),
-             "matcap": ("file", "mask"), "emission": ("map",), "outline": ("mask",)}
+             "rimShade": ("mask",), "matcap": ("file", "mask"), "emission": ("map",),
+             "outline": ("mask",)}
 
 
 def read_json(path, what):

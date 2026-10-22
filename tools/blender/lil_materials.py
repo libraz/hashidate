@@ -289,13 +289,13 @@ def convert(mat):
             "indirBlur": num(mat.f("_RimIndirBlur", 0.1)),
         }, mat, "_RimColorTex", "colorTex")
     if mat.on("_UseRimShade"):
-        spec["rimShade"] = {
+        spec["rimShade"] = with_mask({
             "color": rgba(mat.color("_RimShadeColor", (0.5, 0.5, 0.5, 1))),
             "border": num(mat.f("_RimShadeBorder", 0.5)),
             "blur": num(mat.f("_RimShadeBlur", 1)),
             "fresnelPower": num(mat.f("_RimShadeFresnelPower", 1)),
             "normalStrength": num(mat.f("_RimShadeNormalStrength", 1)),
-        }
+        }, mat, "_RimShadeMask")
     matcap = mat.texture("_MatCapTex")
     if mat.on("_UseMatCap") and matcap:
         spec["matcap"] = with_mask({
@@ -308,6 +308,7 @@ def convert(mat):
             "mainStrength": num(mat.f("_MatCapMainStrength", 0)),
             "normalStrength": num(mat.f("_MatCapNormalStrength", 1)),
             "backfaceMask": num(mat.f("_MatCapBackfaceMask", 0)),
+            "lod": num(mat.f("_MatCapLod", 0)),
         }, mat, "_MatCapBlendMask")
     if mat.on("_UseEmission"):
         emission = {"color": rgb(mat.color("_EmissionColor", (1, 1, 1, 1)))}
@@ -340,7 +341,6 @@ def unsupported(mat):
     if mat.transparent and mat.on("_UseRim"):
         float_if("_RimApplyTransparency", 1, lambda v: v == 1)
     float_if("_MatCapCustomNormal", 0, lambda v: v == 1)
-    float_if("_MatCapLod", 0, lambda v: v != 0)
     for key in ("_UseBacklight", "_UseMatCap2nd", "_UseMain2ndTex",
                 "_UseMain3rdTex", "_UseGlitter", "_UseAnisotropy"):
         float_if(key, 0, lambda v: v == 1)
@@ -349,7 +349,7 @@ def unsupported(mat):
         found.append(("_Shadow3rdColor", rgba(third)))
     float_if("_ShadowMainStrength", 0, lambda v: v != 0)
     float_if("_ShadowEnvStrength", 0, lambda v: v != 0)
-    for key in ("_ShadowColorTex", "_Shadow2ndColorTex", "_RimShadeMask"):
+    for key in ("_ShadowColorTex", "_Shadow2ndColorTex"):
         if key in mat.textures:
             found.append((key, "set"))
     return found

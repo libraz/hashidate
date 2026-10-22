@@ -29,6 +29,7 @@ function filesOf(spec: ToonSpec): Array<[string, Kind]> {
   if (spec.shadow.mask) files.push([spec.shadow.mask, 'data']);
   if (spec.normalMap) files.push([spec.normalMap.file, 'data']);
   if (spec.rim?.colorTex) files.push([spec.rim.colorTex, 'color']);
+  if (spec.rimShade?.mask) files.push([spec.rimShade.mask, 'data']);
   if (spec.matcap) files.push([spec.matcap.file, 'color']);
   if (spec.matcap?.mask) files.push([spec.matcap.mask, 'data']);
   if (spec.emission?.map) files.push([spec.emission.map, 'color']);

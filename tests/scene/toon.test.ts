@@ -20,6 +20,7 @@ const FEATURES = [
   'LIL_OUTLINE',
   'LIL_OUTLINE_MASK',
   'LIL_RIMSHADE',
+  'LIL_RIMSHADE_MASK',
 ] as const;
 
 const shadowOnly = (): ToonSpec => ({
@@ -58,6 +59,7 @@ const matcapOf = (patch: Partial<ToonMatcap> = {}): ToonMatcap => ({
   mainStrength: 0,
   normalStrength: 1,
   backfaceMask: 0,
+  lod: 0,
   ...patch,
 });
 
@@ -280,6 +282,7 @@ describe('LilToonMaterial values', () => {
         mainStrength: 0.28,
         normalStrength: 0.325,
         backfaceMask: 1,
+        lod: 6.6,
       }),
     };
     const { uniforms } = compile(new LilToonMaterial({}, spec, recordingSource().source));
@@ -322,6 +325,7 @@ describe('LilToonMaterial values', () => {
     expect(uniforms.lilMatcapMainStrength.value).toBe(0.28);
     expect(uniforms.lilMatcapNormalStrength.value).toBe(0.325);
     expect(uniforms.lilMatcapBackfaceMask.value).toBe(1);
+    expect(uniforms.lilMatcapLod.value).toBe(6.6);
   });
 
   it('reads the rim colour texture as colour', () => {
@@ -330,6 +334,12 @@ describe('LilToonMaterial values', () => {
     const material = new LilToonMaterial({}, spec, source);
     expect(asks).toEqual([['r.png', 'color']]);
     expect(material.lilRimColorTex?.name).toBe('color:r.png');
+  });
+
+  it('reads the matcap at the spec’s mip level', () => {
+    const spec: ToonSpec = { ...shadowOnly(), matcap: matcapOf() };
+    const { fragmentShader } = compile(new LilToonMaterial({}, spec, recordingSource().source));
+    expect(fragmentShader).toContain('textureLod( lilMatcap, lilMatcapUv, lilMatcapLod )');
   });
 
   it('floors the rim range divisors so a range of -1 cannot divide by zero', () => {
@@ -369,7 +379,7 @@ describe('LilToonMaterial values', () => {
       ...shadowOnly(),
       shadow: { ...shadowOnly().shadow, mask: 's.png' },
       rim: rimOf({ colorTex: 'r.png' }),
-      rimShade,
+      rimShade: { ...rimShade, mask: 'rs.png' },
       matcap: matcapOf({ mask: 'mm.png' }),
       outline: { width: 0.08, color: [0.6, 0.5, 0.7, 1], fixWidth: 0.5, mask: 'o.png' },
     };
@@ -377,7 +387,7 @@ describe('LilToonMaterial values', () => {
     const body = new LilToonMaterial({}, spec, source);
     const hull = new LilToonMaterial({}, spec, source, true);
     for (const [material, names] of [
-      [body, ['lilShadowMask', 'lilRimColorTex', 'lilMatcap', 'lilMatcapMask']],
+      [body, ['lilShadowMask', 'lilRimColorTex', 'lilRimShadeMask', 'lilMatcap', 'lilMatcapMask']],
       [hull, ['lilOutlineMask']],
     ] as const) {
       const { uniforms } = compile(material);
@@ -577,23 +587,31 @@ describe('LilToonMaterial variants (pairwise)', () => {
 
 describe('LilToonMaterial rim shade switch', () => {
   it.each([
-    ['on', true],
-    ['off', false],
-  ])('rim shade %s sets its define and its bit of the program key', (_label, on) => {
+    ['on', 'on'],
+    ['off', 'off'],
+    ['on with a mask', 'mask'],
+  ])('rim shade %s sets its defines and its bits of the program key', (_label, state) => {
     const spec: ToonSpec = {
       ...shadowOnly(),
       rim: rimOf(),
-      ...(on ? { rimShade } : {}),
+      ...(state === 'off' ? {} : { rimShade }),
+      ...(state === 'mask' ? { rimShade: { ...rimShade, mask: 'rs.png' } } : {}),
       outline: { width: 0.08, color: [0.6, 0.56, 0.73, 1], fixWidth: 0.5 },
     };
-    const body = new LilToonMaterial({}, spec, recordingSource().source);
-    const expected = ['LIL_RIM', ...(on ? ['LIL_RIMSHADE'] : [])];
+    const { source, asks } = recordingSource();
+    const body = new LilToonMaterial({}, spec, source);
+    const expected = [
+      'LIL_RIM',
+      ...(state === 'off' ? [] : ['LIL_RIMSHADE']),
+      ...(state === 'mask' ? ['LIL_RIMSHADE_MASK'] : []),
+    ];
+    expect(asks).toEqual(state === 'mask' ? [['rs.png', 'data']] : []);
     expect(definesOf(body)).toEqual(expected);
     expect(body.customProgramCacheKey()).toBe(
       `lil:${FEATURES.map((f) => (expected.includes(f) ? '1' : '0')).join('')}`,
     );
     // The hull paints no rim shade whatever the body does.
-    const hull = new LilToonMaterial({}, spec, recordingSource().source, true);
+    const hull = new LilToonMaterial({}, spec, source, true);
     expect(definesOf(hull)).toEqual(['LIL_OUTLINE']);
   });
 });
