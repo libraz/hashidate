@@ -82,10 +82,10 @@ const FINGER_IDS = IDS.filter(
 );
 
 describe('gesture table', () => {
-  it('holds exactly 73 gestures, each under its own id', () => {
+  it('holds exactly 74 gestures, each under its own id', () => {
     // Pinned so a dropped or duplicated entry is a failure rather than a
     // silently shorter menu.
-    expect(IDS.length).toBe(73);
+    expect(IDS.length).toBe(74);
     expect(new Set(IDS).size).toBe(IDS.length);
   });
 
@@ -253,7 +253,7 @@ describe('poses the table builds', () => {
   it('splits the table between authored directions, reaches and spine-only', () => {
     // Every gesture is one of the three, and nothing is both.
     expect(ARM_IDS.length).toBe(45);
-    expect(REACH_IDS.length).toBe(23);
+    expect(REACH_IDS.length).toBe(24);
     expect(ARM_IDS.filter((id) => REACH_IDS.includes(id))).toEqual([]);
     expect(ARM_IDS.length + REACH_IDS.length + 5).toBe(IDS.length);
     expect(FINGER_IDS.length).toBe(ARM_IDS.length + REACH_IDS.length);
@@ -415,6 +415,7 @@ describe('which hand acts', () => {
     'faceFrame',
     'modelTilt',
     'fingerTouch',
+    'faceCover',
   ];
   const SPINE_ONLY: GestureId[] = ['nod', 'tilt', 'lean', 'shoulderShimmy', 'shoulderBounce'];
   const MIRRORED = IDS.filter((id) => ![...TWO_HANDED, ...SPINE_ONLY].includes(id));

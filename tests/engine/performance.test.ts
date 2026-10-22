@@ -38,7 +38,7 @@ const each = <T>(rows: T[]) => it.each(rows);
 
 describe('the performance table', () => {
   it('files every entry under its own id and a group that exists', () => {
-    expect(PERFORMANCE_IDS.length).toBe(80);
+    expect(PERFORMANCE_IDS.length).toBe(81);
     expect(new Set(PERFORMANCE_IDS).size).toBe(PERFORMANCE_IDS.length);
     for (const id of PERFORMANCE_IDS) {
       expect(Object.keys(PERFORMANCE_GROUPS)).toContain(PERFORMANCE_TABLE[id].group);

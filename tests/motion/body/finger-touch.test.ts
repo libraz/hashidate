@@ -2,14 +2,13 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { FINGER_WIDTH } from '@/engine/anatomy';
 import { gestureDef } from '@/engine/motion';
-import { BODY_ANCHORS } from '@/engine/profile';
 import { FINGER_TIP_EXTENSION } from '@/engine/rig/hand-geometry';
 import type { GestureDef, Side } from '@/engine/types';
 import { DT, type Harness, harness, wristOf } from './harness';
 
 /**
  * The fingertips-together gesture: the two index tips meet at the midline in
- * front of the chest and tap, parting a little and always returning to contact.
+ * front of the chin and tap, parting a little and always returning to contact.
  */
 
 const FRAMES = 360;
@@ -129,20 +128,27 @@ describe('fingerTouch', () => {
     expect(Math.max(...gaps)).toBeLessThanOrEqual(MAX_PART);
   });
 
-  it('keeps the tips on the midline, in front of the sternum and below the chin', () => {
-    const span = h.profile.body?.span ?? 0;
+  it('keeps the tips on the midline, above the jaw and in front of the face', () => {
+    // No ceiling: the synthetic face is compressed to three centimetres from jaw to eyes.
     const head = h.profile.bones.head;
-    if (!head) throw new Error('synthetic rig has no head');
+    const eye = h.profile.bones['eye.L'];
+    if (!(head && eye)) throw new Error('synthetic rig has no head or eye');
     h.rig.anat.update();
-    const chin = head.getWorldPosition(new THREE.Vector3()).sub(h.rig.anat.axisO);
-    const chinUp = chin.dot(h.rig.anat.up);
-    const sternum = BODY_ANCHORS.sternum;
+    const local = (b: THREE.Object3D) => {
+      const p = b.getWorldPosition(new THREE.Vector3()).sub(h.rig.anat.axisO);
+      return new THREE.Vector3(
+        p.dot(h.rig.anat.right),
+        p.dot(h.rig.anat.up),
+        p.dot(h.rig.anat.fwd),
+      );
+    };
+    const jaw = local(head);
+    const eyes = local(eye);
     for (const f of hold) {
       expect(f.off).toBeLessThanOrEqual(MAX_PART / 2 + touching);
       expect(f.mid.x).toBeCloseTo(0, 2);
-      expect(f.mid.z).toBeGreaterThan(sternum[2] * span);
-      expect(f.mid.y).toBeGreaterThan(sternum[1] * span);
-      expect(f.mid.y).toBeLessThan(chinUp);
+      expect(f.mid.y).toBeGreaterThan(jaw.y);
+      expect(f.mid.z).toBeGreaterThan(eyes.z);
     }
   });
 

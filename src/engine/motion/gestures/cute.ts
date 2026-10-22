@@ -43,6 +43,30 @@ export const CUTE = {
     },
   },
 
+  faceCover: {
+    label: { en: 'Hide the face', ja: '顔を隠す' },
+    group: 'cute',
+    lead: 0.45,
+    hold: 2.6,
+    build(t, v, _phase?, out?) {
+      const s = Math.sin(t * 1.8 * v.rate) * v.scale;
+      // Both palms over the face, where `peekaboo` hides before it opens. The
+      // anchor is on the face, so the hands ride the head as it sways.
+      return reachBoth(
+        out,
+        {
+          at: 'cheek',
+          offset: [-0.25, 0.1, 1.4],
+          hand: [0, 0.94, 0.34],
+          palm: [0, 0.08, 1],
+          pole: [0.42, -0.87, -0.28],
+        },
+        OPEN_HAND,
+        { head: [0.1, 0.07 * s, 0.04 * s], chest: [0.04, 0, 0] },
+      );
+    },
+  },
+
   catPaw: {
     label: { en: 'Cat paws', ja: '猫の手' },
     group: 'cute',
@@ -183,7 +207,7 @@ export const CUTE = {
     lead: 0.45,
     hold: 2.8,
     build(t, v, _phase?, out?) {
-      // The two index fingertips meet at the midline in front of the chest and
+      // The two index fingertips meet at the midline in front of the chin and
       // tap: they part a little and come back, so the offset never goes below
       // contact. Squared so the gap opens and closes smoothly from zero.
       const s = Math.sin(t * 2.4 * v.rate);
@@ -195,7 +219,7 @@ export const CUTE = {
           at: 'sternum',
           // The last index joint lands here, short of the tip by the tip
           // extension, so each joint sits that far from the midline.
-          offset: [FINGER_TOUCH_REACH + tap, 0.06, 0.26],
+          offset: [FINGER_TOUCH_REACH + tap, 0.28, 0.36],
           contact: { kind: 'finger', finger: 'index', segment: 1, fraction: 1 },
           hand: [-0.86, 0.3, 0.41],
           palm: [0.1, -0.85, -0.5],

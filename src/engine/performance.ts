@@ -267,6 +267,12 @@ export const PERFORMANCES = {
     label: { en: 'Shy', ja: 'てれる' },
     group: 'cute',
     emotion: { shy: 0.9 },
+    gesture: 'faceCover',
+  },
+  poke: {
+    label: { en: 'Cheek poke', ja: 'ほっぺつん' },
+    group: 'cute',
+    emotion: { joy: 0.55, shy: 0.3 },
     gesture: 'cheekPoke',
   },
   catPaw: {
