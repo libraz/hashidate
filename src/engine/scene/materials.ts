@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { AvatarDescriptor, MaterialRules, PbrScalarOverride, ToonSpec } from '../types';
+import { buildOutlineChild } from './outline';
 import { installTransparentShadowMaterials } from './shadows';
 import { LilToonMaterial, missingTextureSource, type TextureSource } from './toon';
 
@@ -94,6 +95,11 @@ type SourceMaterial = THREE.Material & {
 export interface MaterialSet {
   /** Apply the descriptor-defined toon presentation, or restore imported originals. */
   apply(useToon: boolean): void;
+  /**
+   * Hang an outline child under every mesh with a spec'd outline. Call once
+   * everything that measures the meshes has; a second call does nothing.
+   */
+  installOutlines(): void;
   /** Every material name the avatar brought, for the readout. */
   names: string[];
   /** Move the clones that borrowed the shared reflection map onto its rebuilt successor. */
@@ -341,11 +347,56 @@ export function setupMaterials(
 
   const shadows = installTransparentShadowMaterials(root, rules.blendTransparent);
 
+  /** Outline children by parent, and the materials only they hold; null until installed. */
+  let outlines: Map<THREE.Mesh, THREE.Mesh> | null = null;
+  const outlineMaterials: LilToonMaterial[] = [];
+  /** What `apply` last set, so outlines installed later match it. */
+  let toonOn = false;
+
   const apply = (useToon: boolean): void => {
+    toonOn = useToon;
     for (const [mesh, mats] of toon) {
       const orig = original.get(mesh);
       if (!orig) continue;
       mesh.material = useToon ? (Array.isArray(orig) ? mats : mats[0]) : orig;
+    }
+    // The hull belongs to the authored look, so the imported set draws without it.
+    if (outlines) for (const child of outlines.values()) child.visible = useToon;
+  };
+
+  const installOutlines = (): void => {
+    if (outlines) return;
+    outlines = new Map();
+    for (const [mesh, mats] of toon) {
+      const hulls = mats.map((m) => {
+        const name = m.name || '';
+        const spec = Object.hasOwn(rules.toon, name) ? rules.toon[name] : undefined;
+        if (!(m instanceof LilToonMaterial && spec?.outline)) return null;
+        // A decal lies on the face and a blended sleeve is seen through; a
+        // hull behind either would draw as a dark fringe.
+        if (rules.faceDecal.test(name) || rules.blendTransparent.test(name)) return null;
+        const hull = new LilToonMaterial(
+          {
+            map: m.map,
+            alphaMap: m.alphaMap,
+            alphaTest: m.alphaTest,
+            alphaToCoverage: m.alphaToCoverage,
+            transparent: m.transparent,
+            depthWrite: m.depthWrite,
+            side: THREE.BackSide,
+          },
+          spec,
+          textures,
+          true,
+        );
+        outlineMaterials.push(hull);
+        return hull;
+      });
+      const child = buildOutlineChild(mesh, hulls);
+      if (!child) continue;
+      child.visible = toonOn;
+      mesh.add(child);
+      outlines.set(mesh, child);
     }
   };
 
@@ -369,7 +420,6 @@ export function setupMaterials(
    * reports.
    */
   const dispose = (): void => {
-    shadows.dispose();
     const seen = new Set<THREE.Material>();
     const seenTextures = new Set<THREE.Texture>();
     const release = (m: THREE.Material | null | undefined): void => {
@@ -383,6 +433,13 @@ export function setupMaterials(
       }
       m.dispose();
     };
+    // Outlines first, detached so no later walk of the root finds them. The
+    // geometry and skeleton they borrow stay for whoever owns the parent.
+    for (const child of outlines?.values() ?? []) child.removeFromParent();
+    outlines?.clear();
+    for (const m of outlineMaterials) release(m);
+    outlineMaterials.length = 0;
+    shadows.dispose();
     for (const mats of toon.values()) for (const m of mats) release(m);
     for (const orig of original.values()) {
       for (const m of Array.isArray(orig) ? orig : [orig]) release(m);
@@ -402,5 +459,5 @@ export function setupMaterials(
     shared = to;
   };
 
-  return { apply, names, rebindEnvironment, dispose };
+  return { apply, installOutlines, names, rebindEnvironment, dispose };
 }

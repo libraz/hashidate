@@ -68,6 +68,12 @@ export interface RigOptions {
    * happens to produce the ratio a test needs.
    */
   deltas?: Record<string, number>;
+  /**
+   * Split a built mesh into material slots, as `{ meshName: materialNames }`.
+   * The triangles are shared out in order, one geometry group per name, as an
+   * exporter leaves a mesh that carries several materials.
+   */
+  materialGroups?: Record<string, string[]>;
 }
 
 /**
@@ -421,6 +427,11 @@ export function buildRig(opts: RigOptions = {}): SyntheticRig {
   for (const g of opts.garments ?? []) {
     meshes.set(g, makeMesh(g, skeleton, chest, [], root, scale, deltas));
   }
+  for (const [name, materials] of Object.entries(opts.materialGroups ?? {})) {
+    const mesh = meshes.get(name);
+    if (!mesh) throw new Error(`the rig has no mesh ${name}`);
+    splitMaterials(mesh, materials);
+  }
 
   const descriptor: AvatarDescriptor = {
     id: 'synthetic',
@@ -600,6 +611,21 @@ function makeMesh(
   root.add(mesh);
   root.updateMatrixWorld(true);
   return mesh;
+}
+
+/** Give `mesh` one named material per entry, each over an even share of its triangles. */
+function splitMaterials(mesh: THREE.SkinnedMesh, names: string[]): void {
+  const index = mesh.geometry.getIndex();
+  if (!index || names.length === 0) throw new Error(`cannot split ${mesh.name} into materials`);
+  const triangles = index.count / 3;
+  mesh.geometry.clearGroups();
+  for (let k = 0; k < names.length; k++) {
+    const start = Math.floor((k * triangles) / names.length) * 3;
+    const end = Math.floor(((k + 1) * triangles) / names.length) * 3;
+    mesh.geometry.addGroup(start, end - start, k);
+  }
+  (mesh.material as THREE.Material).dispose();
+  mesh.material = names.map((name) => new THREE.MeshBasicMaterial({ name }));
 }
 
 /**

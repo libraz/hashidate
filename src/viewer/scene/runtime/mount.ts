@@ -116,6 +116,9 @@ export function mountAvatar(
 
   const director = new Director(profile, avatar);
   const wardrobe = new Wardrobe(root, profile, avatar.wardrobe);
+  // After everything that walks the meshes, so a hull is never measured as body
+  // or routed as a garment of its own.
+  materials.installOutlines();
   if (wardrobe.missing.length) say('console.problem.wardrobe', wardrobe.missing, ' / ');
   if (director.spring.missing.length) {
     say('console.problem.sway', director.spring.missing, ' / ');
