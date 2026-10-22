@@ -19,6 +19,7 @@ import type {
 import { FINGER_NAMES } from '../types';
 import { type HandControls, ReachAnchors } from './anchors';
 import { ArmTransaction } from './arm-transaction';
+import { Attitude } from './attitude';
 import { claspMeasure, claspSpread } from './clasp';
 import { gestureDef, SPINE_SLOTS } from './custom';
 import { FingerLife, type HandSensePose } from './finger-life';
@@ -255,6 +256,12 @@ const mkOutgoing = (g: ActiveGesture): Outgoing => ({
   pose: null,
   arm: { L: null, R: null },
 });
+
+/** A mood's body attitude as it was asked for. */
+export interface HeldAttitude {
+  offsets: SpineOffsets;
+  side: Side;
+}
 
 /** Whether a pose writes the head or the neck. */
 const touchesHead = (s: SpineOffsets | undefined): boolean => !!s && ('head' in s || 'neck' in s);
@@ -504,6 +511,9 @@ export class Body {
   private readonly anchors: ReachAnchors;
   /** Breathing, weight, drift — what a standing body does. See `posture.ts`. */
   private readonly _posture = new IdlePosture();
+  /** A mood's held spine offsets. See `attitude.ts`. */
+  private readonly _attitude = new Attitude();
+  private _attitudeHeld: HeldAttitude | null = null;
   /** The posture's per-frame input and the arms' idle terms, refilled rather than rebuilt. */
   private readonly _postureIn: PostureInput;
   /** The gaze's per-frame view of the line, refilled rather than rebuilt. */
@@ -517,6 +527,37 @@ export class Body {
   /** What one arm of a pose actually asks for. See `resolve.ts`. */
   private readonly _arm: ArmResolver;
   private _lastExternalArmRevision = 0;
+
+  /**
+   * How far the lids are shut by gestures this frame: each playing gesture's
+   * `lids` at the weight it has on screen. The spine's weight carries a fading
+   * one, because lids belong to the head and not to an arm.
+   */
+  get lids(): number {
+    let sum = this.gesture ? (this.gesture.def.lids ?? 0) * this.blend : 0;
+    for (const f of this._spineFading) sum += (f.g.def.lids ?? 0) * f.spineWeight;
+    return Math.min(1, sum);
+  }
+
+  /** The mood's body attitude being held, with the side it is mirrored for, or null. */
+  get attitude(): HeldAttitude | null {
+    return this._attitudeHeld;
+  }
+
+  /**
+   * Hold spine offsets until replaced; null lets them go. `side` pins the
+   * mirror as a gesture's does, and is drawn at random like it when absent.
+   */
+  setAttitude(offsets: SpineOffsets | null, side?: Side): void {
+    if (!offsets) {
+      this._attitudeHeld = null;
+      this._attitude.set(null, 1);
+      return;
+    }
+    const s: Side = side ?? (this._random() < 0.5 ? 'L' : 'R');
+    this._attitudeHeld = { offsets, side: s };
+    this._attitude.set(offsets, sideMirror(s) as 1 | -1);
+  }
 
   /** Joint strain from the last fingertip solve, per arm. */
   get pointStrain(): Record<Side, number> {
@@ -1572,6 +1613,7 @@ export class Body {
     pin.load = this._load;
     pin.lead = this._lead;
     const terms = this._posture.apply(rig, p, dt, pin);
+    this._attitude.apply(rig, dt);
     this._spine.compose(dt, this._spineFading, g?.spine, this.blend);
     return terms;
   }

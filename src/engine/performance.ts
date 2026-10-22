@@ -4,8 +4,9 @@
  * The layers below this one are deliberately separate: the emotion vector is
  * continuous and persists, a gesture is a discrete thing that runs and ends, a
  * hop translates the whole skeleton, an overlay is a drawn effect that layers
- * over whatever face is showing. Each is the right shape for what it does, and
- * none of them is the shape a *caller* thinks in.
+ * over whatever face is showing, an attitude is spine offsets a mood holds. Each
+ * is the right shape for what it does, and none of them is the shape a *caller*
+ * thinks in.
  *
  * Nobody asks for "joy 0.9 with the cheer gesture and three hops of 45mm". They
  * ask for 「うれしい」 (happy). This table is that vocabulary, and it is the
@@ -36,7 +37,7 @@
 
 import type { Localized } from '../i18n/locale';
 import { GESTURES, type GestureId, type HopId } from './motion';
-import type { EmotionVector, GestureDef, PerformanceGroup } from './types';
+import type { EmotionVector, GestureDef, PerformanceGroup, SpineOffsets } from './types';
 
 export const PERFORMANCE_GROUPS: Record<PerformanceGroup, Localized> = {
   mood: { en: 'Mood', ja: '気分' },
@@ -68,13 +69,13 @@ export interface PerformanceDef {
   hop?: HopId;
   /** Drawn effects to raise while it runs. Ids the avatar lacks are skipped. */
   overlay?: string[];
-  /**
-   * How far the lids sit shut while it runs, 0..1. Held, so it needs releasing,
-   * which is part of why a performance is a state rather than an event.
-   */
-  droop?: number;
   /** How much the gaze tracks the camera while it runs. Restored on release. */
   look?: number;
+  /**
+   * Spine offsets the body holds while it runs, radians per slot as in a
+   * gesture's `spine`, mirrored by side. Under every gesture and put back on release.
+   */
+  attitude?: SpineOffsets;
 }
 
 /**
@@ -88,20 +89,30 @@ export interface PerformanceDef {
  */
 export const PERFORMANCES = {
   // --- mood ---------------------------------------------------------------
-  // Face only, and the reason the autopilot does not gesture constantly. A
-  // character who changes what they are feeling and then simply stands there is
-  // most of what watching one actually looks like.
+  // No gesture, and the reason the autopilot does not gesture constantly: these
+  // are the standing rows. A character who changes what they are feeling and
+  // then simply stands there is most of what watching one actually looks like.
+  // A mood may hold a body attitude, which is not a gesture.
   calm: { label: { en: 'Calm', ja: 'おだやか' }, group: 'mood', emotion: { relaxed: 0.85 } },
   blank: { label: { en: 'Neutral', ja: 'ふつう' }, group: 'mood', emotion: { neutral: 1 } },
   wonder: {
     label: { en: 'Puzzled', ja: 'ふしぎ' },
     group: 'mood',
     emotion: { thinking: 0.6, surprise: 0.25 },
+    // A held tilt with the chin a touch up and no yaw, so the face stays on the
+    // lens. A roll of 0.10 vanished under the fringe at bust framing; 0.14 reads.
+    // `tilt` is the same idea as a movement: it yaws into the tilt and returns.
+    attitude: { head: [-0.04, 0, 0.14], neck: [0, 0, 0.06], chest: [0, 0, 0.02] },
   },
   gloomy: {
     label: { en: 'Downcast', ja: 'しょんぼり' },
     group: 'mood',
     emotion: { sadness: 0.75 },
+    // Head down, neck forward, chest sunk; the clavicles ride the chest so the
+    // shoulders come forward with it. Less than `doze` on every slot: awake.
+    attitude: { head: [0.2, 0, 0], neck: [0.1, 0, 0], chest: [0.07, 0, 0], spine: [0.03, 0, 0] },
+    // Eyes go down with the head; tracking the lens would roll them up under the brow.
+    look: 0,
   },
   startled: {
     label: { en: 'Startled', ja: 'びっくり' },
@@ -120,7 +131,7 @@ export const PERFORMANCES = {
    *
    * The three parts are all load-bearing and none of them does it alone. The
    * pose puts the head down and keeps it drifting; the mood picks up whatever
-   * soft face the avatar has; the droop closes the eyes, and it is the eyes that
+   * soft face the avatar has; the pose's lids close the eyes, and it is the eyes that
    * decide whether a viewer reads it as asleep or as sulking at the floor.
    * `look: 0` is the fourth: with the gaze still tracking the camera the head
    * keeps being pulled back up to it, and the pose visibly fights the tracking.
@@ -130,7 +141,6 @@ export const PERFORMANCES = {
     group: 'mood',
     emotion: { relaxed: 0.9 },
     gesture: 'doze',
-    droop: 0.95,
     look: 0,
   },
 
@@ -258,7 +268,7 @@ export const PERFORMANCES = {
   sulk: {
     label: { en: 'Cross', ja: 'ぷんすか' },
     group: 'emote',
-    emotion: { anger: 0.85 },
+    emotion: { anger: 1 },
     gesture: 'pout',
   },
 
@@ -300,13 +310,12 @@ export const PERFORMANCES = {
     gesture: 'whisper',
   },
   // Not `doze`. This is the yawn a character gets away with mid-stream — the
-  // lids come down a little and go back up, and the mood is still awake.
+  // yawn's lids come down a little and go back up, and the mood is still awake.
   sleepy: {
     label: { en: 'Sleepy', ja: 'ねむい' },
     group: 'cute',
     emotion: { relaxed: 0.8 },
     gesture: 'yawn',
-    droop: 0.3,
   },
   refresh: {
     label: { en: 'Stretching', ja: 'のび' },
@@ -649,13 +658,13 @@ const GESTURE_TABLE: Record<string, GestureDef> = GESTURES;
  *
  * Derived rather than declared, so it cannot drift from the gesture table: a
  * performance is held exactly when it has something outstanding to put back —
- * a sustained pose, a raised overlay, a lid droop, or a gaze it overrode.
+ * a sustained pose, a raised overlay, a gaze it overrode, or a held attitude.
  */
 export const holdsUntilReleased = (def: PerformanceDef): boolean =>
   (!!def.gesture && !!GESTURE_TABLE[def.gesture]?.sustain) ||
   !!def.overlay?.length ||
-  def.droop !== undefined ||
-  def.look !== undefined;
+  def.look !== undefined ||
+  def.attitude !== undefined;
 
 /** One group, with the ids that belong to it. */
 export interface PerformanceGroupEntry {

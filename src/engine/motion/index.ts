@@ -10,7 +10,7 @@
  * The one entry point for everything below the director.
  */
 
-export type { ActiveGesture, BodyContext, PointCommand } from './body';
+export type { ActiveGesture, BodyContext, HeldAttitude, PointCommand } from './body';
 export { Body } from './body';
 export type { MotionArm, MotionDef, MotionFrame, MotionLoad, MotionRejection } from './custom';
 export {

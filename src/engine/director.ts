@@ -26,7 +26,15 @@ import {
   softMouthScale,
   textToVisemes,
 } from './face';
-import { Body, HeadBeats, HOPS, type HopDef, type PointCommand, planHeadBeats } from './motion';
+import {
+  Body,
+  HeadBeats,
+  type HeldAttitude,
+  HOPS,
+  type HopDef,
+  type PointCommand,
+  planHeadBeats,
+} from './motion';
 import { holdsUntilReleased, type PerformanceDef, performanceDef } from './performance';
 import { Rig } from './rig';
 import { Spring, Tail } from './secondary';
@@ -176,7 +184,9 @@ export class Director {
   /** The idle performance in flight, kept separate from caller-owned state. */
   private _autoAct: string | null = null;
   private _autoLookBefore: number | null = null;
-  private _autoDroopBefore: number | null = null;
+  /** What the body held before the idle act took the attitude; `_autoAttitudeTaken` says it did. */
+  private _autoAttitudeBefore: HeldAttitude | null = null;
+  private _autoAttitudeTaken = false;
 
   /** Effects raised by idle, kept apart from caller-owned overlays. */
   private readonly _autoOverlay = new Map<string, number>();
@@ -411,9 +421,9 @@ export class Director {
    * whoever is watching, and clearing part of it leaves a face on screen.
    */
   resetExpression(): void {
-    // Including whatever a performance is holding — closed lids and a dropped
-    // gaze are part of "the expression" to whoever is watching, and a reset
-    // that leaves the eyes shut is not one.
+    // Including whatever a performance is holding — a dropped gaze and a held
+    // attitude are part of "the expression" to whoever is watching. Lids go
+    // with the gesture's own exit.
     this.releaseAct();
     this.releaseAutoAct();
     this._manualPreset = null;
@@ -538,11 +548,11 @@ export class Director {
       this.setOverlay(overlay, 1);
       this._actOverlays.push(overlay);
     }
-    if (def.droop !== undefined) this.#blink.droop = def.droop;
     if (def.look !== undefined) {
       this._lookBefore = this.body.lookAt;
       this.body.lookAt = def.look;
     }
+    if (def.attitude) this.body.setAttitude(def.attitude, side);
     if (def.gesture) this.body.play(def.gesture, side);
     if (def.hop) this.hop(def.hop);
   }
@@ -567,11 +577,11 @@ export class Director {
     for (const overlay of this._actOverlays) this.setOverlay(overlay, 0);
     this._actOverlays = [];
     if (!def) return;
-    if (def.droop !== undefined) this.#blink.droop = 0;
     if (this._lookBefore !== null) {
       this.body.lookAt = this._lookBefore;
       this._lookBefore = null;
     }
+    if (def.attitude) this.body.setAttitude(null);
     if (holdsUntilReleased(def) && def.gesture && this.body.gesture?.id === def.gesture) {
       this.body.stopGesture();
     }
@@ -590,13 +600,15 @@ export class Director {
     this._autoAct = null;
     this._autoOverlay.clear();
     if (!id) return;
-    if (this._autoDroopBefore !== null) {
-      this.#blink.droop = this._autoDroopBefore;
-      this._autoDroopBefore = null;
-    }
     if (this._autoLookBefore !== null) {
       this.body.lookAt = this._autoLookBefore;
       this._autoLookBefore = null;
+    }
+    if (this._autoAttitudeTaken) {
+      const before = this._autoAttitudeBefore;
+      this.body.setAttitude(before?.offsets ?? null, before?.side);
+      this._autoAttitudeBefore = null;
+      this._autoAttitudeTaken = false;
     }
     if (!def) return;
     if (def.gesture && this.body.gesture?.id === def.gesture) {
@@ -792,13 +804,14 @@ export class Director {
       if (!this.overlayIds.has(overlay)) continue;
       this._autoOverlay.set(overlay, 1);
     }
-    if (def.droop !== undefined) {
-      this._autoDroopBefore = this.#blink.droop;
-      this.#blink.droop = def.droop;
-    }
     if (def.look !== undefined) {
       this._autoLookBefore = this.body.lookAt;
       this.body.lookAt = def.look;
+    }
+    if (def.attitude) {
+      this._autoAttitudeBefore = this.body.attitude;
+      this._autoAttitudeTaken = true;
+      this.body.setAttitude(def.attitude, side);
     }
     if (def.gesture) this.body.play(def.gesture, side);
     else if (this.body.gesture?.def.sustain && !this.body.gesture.released) this.body.stopGesture();
@@ -1072,6 +1085,7 @@ export class Director {
     const blinkCtx = this._blinkCtx;
     blinkCtx.speaking = this.mouth.speaking;
     blinkCtx.suppressed = holdsEyesOpen(emotion);
+    this.#blink.droop = this.body.lids;
     this.#blink.update(dt, blinkCtx);
     const blink = this.#blink.weight;
     const preserveBlink = preset?.blink === 'preserve' && pw > 0.02;

@@ -72,6 +72,8 @@ export const REACTION = {
     group: 'reaction',
     lead: 0.5,
     hold: 3.0,
+    // 0.8 reads as a squint rather than closed eyes.
+    lids: 0.95,
     build(t, v, _phase?, out?) {
       const b = Math.sin(t * 1.4 * v.rate) * 0.04;
       // The index fingertip rested on the forehead above the near brow, the rest
@@ -106,9 +108,9 @@ export const REACTION = {
         out,
         {
           shoulder: V(0.92, 0.06, 0.06),
-          upperArm: V(0.52, -0.72, 0.38),
-          lowerArm: V(0.52, -0.28, 0.78),
-          hand: V(0.5, -0.16, 0.84),
+          upperArm: V(0.4, -0.84, 0.36),
+          lowerArm: V(0.62, 0.35, 0.7),
+          hand: V(0.6, 0.45, 0.66),
           twist: -0.8,
         },
         OPEN_HAND,

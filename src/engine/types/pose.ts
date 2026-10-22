@@ -122,6 +122,8 @@ export const SPINE_LIMITS: Readonly<Record<SpineSlot, { knee: number; max: numbe
   // Each knee sits above the worst built-in stack on that slot — gesture table at
   // full variation, posture at every tuning maximum with two overlapping nods,
   // default gaze limits: hips 0.06, spine 0.23, chest 0.28, neck 0.60, head 0.94.
+  // A held mood attitude adds its own term on top (head 0.2 for the largest), so
+  // a contrived stack enters the knee and saturates; no attitude reaches it alone.
   hips: { knee: 0.25, max: 0.45 },
   spine: { knee: 0.3, max: 0.5 },
   chest: { knee: 0.35, max: 0.55 },
@@ -211,6 +213,11 @@ export interface GestureDef {
   hold: number;
   /** A pose that holds until released rather than running out on its own. */
   sustain?: boolean;
+  /**
+   * How far the lids sit shut at full weight, 0..1. Carried by the gesture's
+   * envelope: they close as it arrives and open as it leaves, with nothing to release.
+   */
+  lids?: number;
   /**
    * Build one pose. `t` remains the continuous playback clock; `phase` lets a
    * submovement wait for the slot's distance-derived entrance and its own beat.

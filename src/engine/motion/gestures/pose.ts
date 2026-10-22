@@ -376,6 +376,8 @@ export const POSE = {
     // should be visible as an entrance rather than as an arrival.
     lead: 1.5,
     hold: 1.0,
+    // Shut with the pose: the eyes decide whether this reads as asleep or as sulking at the floor.
+    lids: 0.95,
     build(t, v, _phase?, out?) {
       // Nodding off, which is not a deeper `bow` — the two poses differ in what
       // they do after they arrive. A bow is held square and comes back up; this

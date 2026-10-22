@@ -178,6 +178,7 @@ export const CUTE = {
     group: 'cute',
     lead: 0.5,
     hold: 1.8,
+    lids: 0.3,
     build(t, v, _phase?, out?) {
       const k = Math.min(1, t / 0.7);
       const b = Math.sin(t * 1.3 * v.rate) * 0.03;

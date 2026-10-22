@@ -40,9 +40,39 @@ describe('performances', () => {
     expect(director.blink).toBeGreaterThan(0.9);
     expect(director.body.lookAt).toBe(0);
     session.perform(null);
-    step(120);
+    step(180);
     expect(director.blink).toBeLessThan(0.9);
     expect(director.body.lookAt).toBe(0.8);
+  });
+
+  it('holds a body attitude and the downcast gaze, and puts both back on release', () => {
+    const { session, director, step } = build();
+    session.lookAt(0.8);
+    session.perform('gloomy');
+    step(2);
+    expect(director.body.attitude?.offsets).toEqual(performanceDef('gloomy')?.attitude);
+    expect(director.body.lookAt).toBe(0);
+    session.perform(null);
+    step(2);
+    expect(director.body.attitude).toBeNull();
+    expect(director.body.lookAt).toBe(0.8);
+    expect(director.target.sadness).toBeGreaterThan(0.5);
+  });
+
+  it('counts a caller-held mood as a held baseline', () => {
+    const { session, director, step } = build({ idle: true });
+    session.perform('gloomy');
+    step(2);
+    expect(director.baselinePerformanceHeld).toBe(true);
+  });
+
+  it('closes the eyes for thinking and opens them again with no release', () => {
+    const { session, director, step, runUntil } = build();
+    session.perform('ponder');
+    step(90);
+    expect(director.blink).toBeGreaterThan(0.8);
+    runUntil(() => director.blink < 0.1, 8);
+    expect(session.state().performance).toBe('ponder');
   });
 
   it('releases the last one when the next one starts', () => {
@@ -89,6 +119,18 @@ describe('a turn that names a performance', () => {
     expect(director.body.gesture?.id).toBe('chin');
     runUntil(() => !session.busy);
     expect(session.state().performance).toBeNull();
+  });
+
+  it('keeps the attitude under a gesture and releases it at line end, the mood staying', () => {
+    const { session, director, step, runUntil } = build();
+    session.say({ id: 'a', text: 'あいうえおかきくけこ', perform: 'gloomy', gesture: 'wave' });
+    step(2);
+    expect(director.body.gesture?.id).toBe('wave');
+    expect(director.body.attitude).not.toBeNull();
+    runUntil(() => !session.busy);
+    expect(session.state().performance).toBeNull();
+    expect(director.body.attitude).toBeNull();
+    expect(director.target.sadness).toBeGreaterThan(0.5);
   });
 
   it('keeps it up when the turn asks to hold', () => {

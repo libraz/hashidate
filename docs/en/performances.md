@@ -8,7 +8,7 @@ The layers underneath are kept separate because they behave differently: an emot
 
 ## Groups
 
-The general groups are Mood, Reaction, Greeting, Explaining, Feeling, Mannerism, and Pose. Pose holds its gestures until released. The following groups offer short motions for affectionate reactions, playful exchanges, and camera moments:
+The general groups are Mood, Reaction, Greeting, Explaining, Feeling, Mannerism, and Pose. Pose holds its gestures until released. A mood may hold a body attitude, such as a lowered head or a tilt, and holds like a Pose until released. The following groups offer short motions for affectionate reactions, playful exchanges, and camera moments:
 
 | Group | Performance ids |
 | --- | --- |
@@ -37,7 +37,7 @@ Every engine gesture has at least one matching performance, so callers can reque
 
 ## A performance is a state
 
-Starting one ends the last: the pose comes down, a raised effect is lowered, a droop on the eyelids is released.
+Starting one ends the last: the pose comes down, a raised effect is lowered, the gaze returns to where it was, and a held attitude is let go. Eyelids belong to the movement: a gesture that closes them opens them again as it ends.
 
 Its mood is the exception and persists, for the same reason a turn's emotion does — a mood does not end with the sentence that carried it.
 

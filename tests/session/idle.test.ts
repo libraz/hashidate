@@ -422,6 +422,20 @@ describe('the autopilot choosing in context', () => {
     }
   });
 
+  it("holds a standing row's attitude for the act and puts it back when the next act starts", () => {
+    const { director, step } = build({ idle: true });
+    step(Math.ceil((IDLE_AFTER + 1) / DT));
+    expect(director.auto).toBe(true);
+    const idle = director as unknown as { autoPerform(id: string): void };
+    idle.autoPerform('gloomy');
+    step(2);
+    expect(director.body.attitude?.offsets).toEqual(performanceDef('gloomy')?.attitude);
+    expect(director.body.gesture).toBeNull();
+    idle.autoPerform('blank');
+    step(2);
+    expect(director.body.attitude).toBeNull();
+  });
+
   it('starts from a standing row and then draws from the whole pool', () => {
     const { director, step } = build({ idle: true });
     // 31/36 lands on a gesture row of the whole pool, so a gesture on the first draw is a settle failure.

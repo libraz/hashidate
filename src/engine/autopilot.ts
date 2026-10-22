@@ -34,7 +34,8 @@ export const IDLE_AFTER = 1.6;
  *
  * Mostly quiet, on purpose. An idle stream is a character standing there being
  * in some mood, punctuated by something; the `mood` rows are that standing, and
- * they outnumber everything else three to one. Poses are in the pool and sulking
+ * they outnumber everything else three to one. A standing row is a mood with no
+ * gesture; it may hold a body attitude, which the next pick puts back. Poses are in the pool and sulking
  * and startlement are not — a held pose is fine because the next pick releases
  * it, whereas a character who is periodically furious at nothing is not.
  *

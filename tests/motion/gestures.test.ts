@@ -114,6 +114,15 @@ describe('gesture table', () => {
     expect(Number.isFinite(g.hold)).toBe(true);
   });
 
+  it('carries lids on exactly doze, yawn and think, each within (0, 1]', () => {
+    const withLids = IDS.filter((id) => TABLE[id].lids !== undefined);
+    expect(withLids.sort()).toEqual(['doze', 'think', 'yawn']);
+    for (const id of withLids) {
+      expect(TABLE[id].lids).toBeGreaterThan(0);
+      expect(TABLE[id].lids).toBeLessThanOrEqual(1);
+    }
+  });
+
   it('holds every gesture until released only in the pose group', () => {
     for (const id of IDS) {
       expect(TABLE[id].sustain === true).toBe(TABLE[id].group === 'pose');

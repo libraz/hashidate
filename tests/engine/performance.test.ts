@@ -9,7 +9,7 @@ import {
   PERFORMANCES_BY_GROUP,
   performanceDef,
 } from '@/engine/performance';
-import type { EmotionName, GestureDef } from '@/engine/types';
+import { type EmotionName, type GestureDef, SPINE_LIMITS, type SpineSlot } from '@/engine/types';
 
 /**
  * Table invariants for the performance vocabulary.
@@ -77,10 +77,6 @@ describe('the performance table', () => {
     const def = PERFORMANCE_TABLE[id];
     if (def.gesture) expect(GESTURE_IDS).toContain(def.gesture);
     if (def.hop) expect(Object.keys(HOPS)).toContain(def.hop);
-    if (def.droop !== undefined) {
-      expect(def.droop).toBeGreaterThan(0);
-      expect(def.droop).toBeLessThanOrEqual(1);
-    }
     if (def.look !== undefined) {
       expect(def.look).toBeGreaterThanOrEqual(0);
       expect(def.look).toBeLessThanOrEqual(1);
@@ -126,8 +122,8 @@ describe('holdsUntilReleased', () => {
       const outstanding =
         (!!def.gesture && !!GESTURE_TABLE[def.gesture].sustain) ||
         !!def.overlay?.length ||
-        def.droop !== undefined ||
-        def.look !== undefined;
+        def.look !== undefined ||
+        def.attitude !== undefined;
       expect(holdsUntilReleased(def)).toBe(outstanding);
     }
   });
@@ -140,12 +136,43 @@ describe('holdsUntilReleased', () => {
     expect(holdsUntilReleased(PERFORMANCE_TABLE.agree)).toBe(false);
   });
 
-  it('holds a face-only entry that closes the eyes', () => {
-    // Nothing about `doze` is a pose in the gesture-table sense on the face
-    // side, and it still cannot be left to expire: lids do not reopen on a
-    // timer.
-    expect(PERFORMANCE_TABLE.doze.droop).toBeGreaterThan(0.5);
+  it('holds a sustained pose that closes the eyes, the lids living on its gesture', () => {
+    expect(GESTURE_TABLE.doze.lids).toBeGreaterThan(0.5);
     expect(holdsUntilReleased(PERFORMANCE_TABLE.doze)).toBe(true);
+  });
+
+  it('holds a mood that carries a body attitude, with no gesture', () => {
+    for (const id of ['gloomy', 'wonder'] as const) {
+      const def = PERFORMANCE_TABLE[id];
+      expect(def.attitude).toBeDefined();
+      expect(def.gesture).toBeUndefined();
+      expect(holdsUntilReleased(def)).toBe(true);
+    }
+  });
+
+  it('does not hold finite performances whose lids come with the movement', () => {
+    expect(holdsUntilReleased(PERFORMANCE_TABLE.sleepy)).toBe(false);
+    expect(holdsUntilReleased(PERFORMANCE_TABLE.ponder)).toBe(false);
+  });
+});
+
+describe('attitudes', () => {
+  const held = PERFORMANCE_IDS.filter((id) => PERFORMANCE_TABLE[id].attitude);
+
+  it('exist', () => {
+    expect(held.length).toBeGreaterThan(0);
+  });
+
+  each(held)('%s names only spine slots, in finite radians under half the knee', (id) => {
+    const attitude = PERFORMANCE_TABLE[id].attitude ?? {};
+    for (const [slot, tuple] of Object.entries(attitude)) {
+      expect(Object.keys(SPINE_LIMITS)).toContain(slot);
+      expect(tuple).toHaveLength(3);
+      for (const c of tuple as number[]) {
+        expect(Number.isFinite(c)).toBe(true);
+        expect(Math.abs(c)).toBeLessThan(SPINE_LIMITS[slot as SpineSlot].knee / 2);
+      }
+    }
   });
 });
 
@@ -193,7 +220,7 @@ describe('the entries the brief named', () => {
     expect(doze.gesture).toBe('doze');
     expect(GESTURE_TABLE.doze.sustain).toBe(true);
     expect(doze.emotion.relaxed).toBeGreaterThan(0.5);
-    expect(doze.droop).toBeGreaterThan(0.5);
+    expect(GESTURE_TABLE.doze.lids).toBeGreaterThan(0.5);
     // The gaze has to let go too, or the head keeps being pulled back up to
     // the camera and the pose visibly fights the tracking.
     expect(doze.look).toBe(0);
@@ -202,7 +229,19 @@ describe('the entries the brief named', () => {
   it('keeps a mid-stream yawn awake, and distinct from falling asleep', () => {
     const sleepy = PERFORMANCE_TABLE.sleepy;
     expect(sleepy.gesture).toBe('yawn');
-    expect(sleepy.droop).toBeLessThan(0.5);
+    expect(GESTURE_TABLE.yawn.lids).toBeLessThan(0.5);
+    expect(holdsUntilReleased(sleepy)).toBe(false);
     expect(sleepy.look).toBeUndefined();
+  });
+
+  it('closes the eyes for thinking through its gesture', () => {
+    expect(PERFORMANCE_TABLE.ponder.gesture).toBe('think');
+    expect(GESTURE_TABLE.think.lids).toBeGreaterThan(0.9);
+    expect(holdsUntilReleased(PERFORMANCE_TABLE.ponder)).toBe(false);
+  });
+
+  it('lets the downcast eyes go with the head, and leaves the puzzled gaze alone', () => {
+    expect(PERFORMANCE_TABLE.gloomy.look).toBe(0);
+    expect(PERFORMANCE_TABLE.wonder.look).toBeUndefined();
   });
 });
