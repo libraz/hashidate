@@ -70,7 +70,10 @@ const TENO_RATE = 2.4;
 const SPLAY_PER_METRE = 3.5;
 /** Most the sideways lag may splay a finger, radians. About eight degrees. */
 const SPLAY_MAX = 0.14;
-/** The fingers' own spring: about 3.5 Hz, a little under critical so a stop leaves a small follow-through. */
+/**
+ * The fingers' own spring, a little under critical so a stop leaves a small follow-through.
+ * The implicit step's pole realises ω ≈ 19.2 rad/s (3.06 Hz) and ζ ≈ 0.707, not the nominal pair.
+ */
 const LAG_OMEGA = 22;
 const LAG_ZETA = 0.6;
 const LAG_REFERENCE_DT = 1 / 50;
