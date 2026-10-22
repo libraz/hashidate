@@ -1,4 +1,4 @@
-import type { GestureDef, HandContact } from '../../types';
+import type { GestureDef, HandContact, Vec3Tuple } from '../../types';
 import { heldTime } from '../timing';
 import { V } from './base';
 import type { ArmPose } from './builders';
@@ -20,6 +20,15 @@ const KISS_CONTACT: HandContact = {
   fraction: 1,
   surface: 'pad',
 };
+
+// The two-handed heart, fingers up and inward with the palms half facing: palm-forward fingers
+// across the chest put the wrist past both stops and the limiter swung the elbows over the chest.
+// Offered further than HEART_OFFER, the arm locked straight.
+const HEART_WIDTH = 0.18;
+const HEART_DEPTH = 0.3;
+const HEART_OFFER = 0.12;
+const HEART_FINGERS: Vec3Tuple = [-0.5, 0.85, 0.15];
+const HEART_PALM: Vec3Tuple = [-0.8, 0, 1];
 
 export const AFFECTION = {
   blowKiss: {
@@ -64,9 +73,9 @@ export const AFFECTION = {
         {
           space: 'body',
           at: 'sternum',
-          offset: [0.13, -0.04 + pulse, 0.36],
-          hand: [-1, -0.3, 0],
-          palm: [0, 0, 1],
+          offset: [HEART_WIDTH, -0.04 + pulse, HEART_DEPTH],
+          hand: HEART_FINGERS,
+          palm: HEART_PALM,
         },
         FULL_HEART_HAND,
         { chest: [0.01, 0.02 * pulse, 0], head: [-0.02, 0, 0] },
@@ -89,9 +98,14 @@ export const AFFECTION = {
         {
           space: 'body',
           at: 'sternum',
-          offset: [0.13, -0.04 + 0.03 * offer + pulse, 0.36 + 0.33 * offer],
-          hand: [-1, -0.3, 0],
-          palm: [0, 0, 1],
+          offset: [HEART_WIDTH, -0.04 + 0.03 * offer + pulse, HEART_DEPTH + HEART_OFFER * offer],
+          // Tipped toward the viewer as it goes; held upright that far, the wrist sat on its deviation stop.
+          hand: [
+            HEART_FINGERS[0] + 0.05 * offer,
+            HEART_FINGERS[1] - 0.1 * offer,
+            HEART_FINGERS[2] + 0.3 * offer,
+          ],
+          palm: HEART_PALM,
         },
         FULL_HEART_HAND,
         { chest: [0.015, 0.025 * offer, 0], head: [-0.025, 0, 0] },

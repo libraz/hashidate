@@ -222,8 +222,8 @@ export const HEART_HAND = shape(
  * `HEART_HAND` is intentionally the compact finger-heart shape used by the
  * one-handed pose. A pair of those closes into a clasp when the palms meet.
  * Curved index fingers form the upper arcs and extended thumbs the lower
- * point; the other fingers fold out of the opening. The hands aim inward
- * across the chest: an upright hand puts the thumbs above the heart.
+ * point; the other fingers fold out of the opening. The hands lean inward
+ * from upright, so the index tips meet above and the thumbs point down.
  */
 export const FULL_HEART_HAND = shape({
   thumb: 0.08,
