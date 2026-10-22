@@ -230,6 +230,13 @@ export const INTERLACE_GAP = 1.5;
 /** Total fan of a hand's four fingers when interlaced, about the MCP abduction a relaxed hand reaches. */
 export const SPLAY_CAP = 25 * D;
 
+/**
+ * Tilt of the thumb's flexion axis from the palm normal toward the finger fold. About the bare
+ * normal the wrapped thumb sank into the curled fingers on both validation rigs; tilted 20 degrees
+ * it rests on their middle phalanges.
+ */
+export const THUMB_FLEXION_TILT = 20 * D;
+
 /** Points tested per arm segment against the trunk. See `torsoDepth`. */
 export const TORSO_SAMPLES = 6;
 

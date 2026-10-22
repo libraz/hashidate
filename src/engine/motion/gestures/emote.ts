@@ -1,16 +1,7 @@
 import type { GestureDef } from '../../types';
 import { V } from './base';
 import { both, one, reach, reachBoth } from './builders';
-import {
-  FIST,
-  MOUTH_CONTACT,
-  MOUTH_HAND,
-  MOUTH_SPREAD,
-  OPEN_HAND,
-  PEACE_HAND,
-  PEACE_PALM,
-  PEACE_SPREAD,
-} from './hands';
+import { FIST, MOUTH_CONTACT, MOUTH_HAND, OPEN_HAND, PEACE_HAND, PEACE_PALM } from './hands';
 
 /**
  * Feeling — the reactions that are a whole movement rather than a face.
@@ -40,7 +31,6 @@ export const EMOTE = {
         },
         PEACE_HAND,
         { head: [0.01, 0.03, 0.035] },
-        PEACE_SPREAD,
       );
     },
   },
@@ -124,7 +114,6 @@ export const EMOTE = {
         },
         MOUTH_HAND,
         { head: [0.06, 0.1 * v.side, 0.05 * v.side], chest: [0.02, 0.04 * v.side, 0] },
-        MOUTH_SPREAD,
       );
     },
   },

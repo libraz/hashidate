@@ -2,7 +2,7 @@ import type { GestureDef, ReachSpec } from '../../types';
 import { heldTime } from '../timing';
 import { V } from './base';
 import { both, one, reachBoth, reachPair, torso } from './builders';
-import { OPEN_HAND, PAW, PEACE_HAND, PEACE_PALM, PEACE_SPREAD, POINT_HAND } from './hands';
+import { OPEN_HAND, PAW, PEACE_HAND, PEACE_PALM, POINT_HAND } from './hands';
 
 /** Playful — teasing, hiding, and waving tiny paws. */
 
@@ -63,7 +63,6 @@ export const PLAYFUL = {
         },
         PEACE_HAND,
         { head: [-0.03, 0, 0] },
-        PEACE_SPREAD,
       );
     },
   },

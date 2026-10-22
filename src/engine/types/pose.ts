@@ -12,6 +12,12 @@ import type { FingerName, Side, SpineSlot, Vec3Tuple } from './primitives';
 /** Per-finger curl, 0 straight to 1 the joint's natural full flexion. */
 export type FingerSpec = Partial<Record<FingerName, number>>;
 
+/** A hand as the gesture table names one: curl per finger, and the splay in radians the shape needs. */
+export interface HandShape {
+  readonly curl: Readonly<Record<FingerName, number>>;
+  readonly spread: Readonly<FingerSpec>;
+}
+
 /**
  * Directions for one arm, in character space. Omitted links keep their rest pose.
  *

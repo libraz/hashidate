@@ -335,8 +335,8 @@ const mkFingerState = (): Record<FingerName, ScalarFollower> => ({
 
 /** One finger of a clasp hand, opened `k` of the way toward flat; the follower's thumb starts flat. */
 const claspCurl = (follower: boolean, f: FingerName, pv: number, k: number): number => {
-  const from = follower && f === 'thumb' ? OPEN_HAND.thumb : pv;
-  return from + (OPEN_HAND[f] - from) * k;
+  const from = follower && f === 'thumb' ? OPEN_HAND.curl.thumb : pv;
+  return from + (OPEN_HAND.curl[f] - from) * k;
 };
 
 const mkFingerSpreadState = (): Record<FingerName, ScalarFollower> => ({
@@ -810,7 +810,7 @@ export class Body {
     // Nothing in it moves, so every frame returns the same pose.
     const pose: Pose = {
       point: { [side]: at },
-      fingers: { [side]: hand },
+      fingers: { [side]: hand.curl },
       spine: {
         chest: [lean * 0.6, turn * 0.6, 0],
         spine: [lean * 0.4, turn * 0.4, 0],

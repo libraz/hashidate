@@ -231,6 +231,40 @@ export interface SyntheticChainOptions {
 const FINGERS = ['Thumb', 'Index', 'Middle', 'Ring', 'Little'];
 
 /**
+ * The default thumb's joints in hand lengths: along the hand, toward the
+ * index side, out of the palm. The mean of the two validation avatars' rest
+ * thumbs, so the thumb reaches where a real one does: a thumb lying in the
+ * palm plane never meets the face, and one drawn to the fingers' length is
+ * the only point every face reach has to clear.
+ */
+const THUMB_JOINTS: readonly Vec3Tuple[] = [
+  [0.28, 0.21, 0.16],
+  [0.58, 0.41, 0.27],
+  [0.83, 0.52, 0.36],
+];
+
+/**
+ * `THUMB_JOINTS` as the override the finger loop adds to its own placement,
+ * less the along-hand step and fan `spread` that loop already puts in.
+ */
+function thumbRest(spread: number): Required<FingerGeometryOverride> & { rootOffset: Vec3Tuple } {
+  const L = SEGMENTS.handToProximal;
+  // Palm side is -y and the index side is -z on both hands of this rig.
+  const joints = THUMB_JOINTS.map(
+    ([along, radial, out]): Vec3Tuple => [L * along, -L * out, -L * radial],
+  );
+  const minus = (a: Vec3Tuple, b: Vec3Tuple): Vec3Tuple => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  return {
+    rootOffset: minus(joints[0], [SEGMENTS.handToProximal, 0, spread]),
+    segmentOffsets: [
+      [0, 0, 0],
+      minus(minus(joints[1], joints[0]), [SEGMENTS.phalanx, 0, 0]),
+      minus(minus(joints[2], joints[1]), [SEGMENTS.phalanx, 0, 0]),
+    ],
+  };
+}
+
+/**
  * Build a synthetic avatar.
  *
  * World positions are what the profile and the rig actually measure, so the
@@ -326,7 +360,18 @@ export function buildRig(opts: RigOptions = {}): SyntheticRig {
     for (const [fi, f] of FINGERS.entries()) {
       // Fanned across the palm so the curl axes are not degenerate.
       const spread = (fi - 2) * 0.012;
-      const geometry = opts.fingerGeometry?.[f.toLowerCase() as FingerName];
+      const given = opts.fingerGeometry?.[f.toLowerCase() as FingerName];
+      const base = f === 'Thumb' ? thumbRest(spread) : undefined;
+      const sum = (a?: Vec3Tuple, b?: Vec3Tuple): Vec3Tuple | undefined =>
+        a && b ? [a[0] + b[0], a[1] + b[1], a[2] + b[2]] : (a ?? b);
+      const geometry: FingerGeometryOverride | undefined = base
+        ? {
+            rootOffset: sum(base.rootOffset, given?.rootOffset),
+            segmentOffsets: base.segmentOffsets.map(
+              (o, i) => sum(o, given?.segmentOffsets?.[i]) ?? o,
+            ),
+          }
+        : given;
       let parent: THREE.Object3D = hand;
       for (let i = 0; i < 3; i++) {
         const segmentOffset = geometry?.segmentOffsets?.[i];

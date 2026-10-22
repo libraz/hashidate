@@ -204,7 +204,7 @@ describe('phase-aware submovements', () => {
 
 describe('comeHere beckon cycle', () => {
   const OPEN_INVITATION = { thumb: 0.18, index: 0.14, middle: 0.16, ring: 0.2, little: 0.26 };
-  const CLOSED_BECKON = { ...FIST, thumb: 0.18 };
+  const CLOSED_BECKON = { ...FIST.curl, thumb: 0.18 };
   const fingersAt = (t: number, side: Side, variation: GestureVariation) =>
     TABLE.comeHere.build(t, variation).fingers?.[side];
 
@@ -548,22 +548,22 @@ describe('the rest pose the table is authored against', () => {
   it('keeps the pointing hand actually pointed', () => {
     // The fingertip solver aims by the index finger, so it has to be the
     // straight one or the coordinate names a fingertip inside the palm.
-    expect(POINT_HAND.index).toBeLessThan(0.1);
+    expect(POINT_HAND.curl.index).toBeLessThan(0.1);
     for (const name of ['middle', 'ring', 'little'] as const) {
-      expect(POINT_HAND[name]).toBeGreaterThan(0.9);
+      expect(POINT_HAND.curl[name]).toBeGreaterThan(0.9);
     }
   });
 });
 
 describe('peace hand articulation', () => {
-  it('adds the measured thumb, fan and palm to peace', () => {
+  it('adds the fan and palm to peace, with the thumb curled and not splayed', () => {
     const pose = TABLE.peace.build(0, RIGHT);
     const arm = pose.arms?.R;
     const spread = pose.fingerSpread?.R;
     if (!(arm?.palm && spread)) throw new Error('peace omitted palm or spread');
 
     expect(pose.fingers?.R?.thumb).toBe(1);
-    expect(spread.thumb).toBeCloseTo(THREE.MathUtils.degToRad(28), 12);
+    expect(spread.thumb).toBeUndefined();
     expect(spread.index).toBeCloseTo(THREE.MathUtils.degToRad(-6), 12);
     expect(spread.middle).toBeCloseTo(THREE.MathUtils.degToRad(6), 12);
     expect(arm.palm.distanceTo(new THREE.Vector3(0, 0.05, 1).normalize())).toBeLessThan(1e-12);
@@ -576,7 +576,7 @@ describe('peace hand articulation', () => {
       const spread = pose.fingerSpread?.[side];
       if (!(arm?.palm && spread)) throw new Error(`bothPeace omitted ${side} hand data`);
       expect(pose.fingers?.[side]?.thumb).toBe(1);
-      expect(spread.thumb).toBeCloseTo(THREE.MathUtils.degToRad(28), 12);
+      expect(spread.thumb).toBeUndefined();
       expect(spread.index).toBeCloseTo(THREE.MathUtils.degToRad(-6), 12);
       expect(spread.middle).toBeCloseTo(THREE.MathUtils.degToRad(6), 12);
       expect(arm.palm.distanceTo(new THREE.Vector3(0, 0.05, 1).normalize())).toBeLessThan(1e-12);
@@ -592,7 +592,7 @@ describe('pinky promise articulation', () => {
     if (!(arm?.hand && arm.palm && fingers)) throw new Error('promise omitted hand data');
 
     expect(fingers.little).toBeLessThan(0.1);
-    expect(fingers.thumb).toBeCloseTo(0.7, 12);
+    expect(fingers.thumb).toBeCloseTo(FIST.curl.thumb, 12);
     expect(fingers.index).toBeCloseTo(0.92, 12);
     expect(fingers.middle).toBeCloseTo(0.94, 12);
     expect(fingers.ring).toBeCloseTo(0.95, 12);
@@ -609,7 +609,7 @@ describe('pointHand', () => {
     // was asked for, so picking the little finger left the arm solving for a
     // fingertip curled into the palm while the index stayed out in front. Every
     // choice looked the same and none of them was the one requested.
-    const hand = pointHand(finger);
+    const hand = pointHand(finger).curl;
     expect(Object.keys(hand).sort()).toEqual([...FINGERS].sort());
     expect(hand[finger]).toBeLessThan(0.1);
     for (const other of FINGERS) {

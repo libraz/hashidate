@@ -98,7 +98,7 @@ const LAG_WEIGHT: Record<FingerName, number> = {
   little: 1.1,
 };
 
-/** The thumb's splay carries it across the palm, a different motion; it takes none. */
+/** The thumb's splay is palmar abduction, not a fan; it takes none. */
 const SPLAY_WEIGHT: Record<FingerName, number> = {
   thumb: 0,
   index: 0.8,

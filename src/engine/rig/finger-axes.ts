@@ -1,9 +1,13 @@
 import * as THREE from 'three';
+import { THUMB_FLEXION_TILT } from '../anatomy/joints';
 import { restPalmNormals } from '../anatomy/palm-frame';
 import { FINGER_NAMES, type Profile, type Side } from '../types';
 
 /**
  * Finger hinge axes, derived from the rest pose.
+ *
+ * The thumb is the exception to the finger rule: it hinges about the palm normal tilted toward
+ * the finger fold and splays perpendicular to that, the reverse of a finger.
  *
  * Split out of the rig because it runs once, at construction, and reads only
  * the profile: which way a finger bends is a property of how the hand was
@@ -73,6 +77,29 @@ export function solveFingerAxes(p: Profile): FingerAxes {
         const boneQ = bone.getWorldQuaternion(new THREE.Quaternion());
         const nLocal = palmNormal.clone().applyQuaternion(boneQ.clone().invert()).normalize();
         const dir = restDir[`${f}.${side}.${i}`] ?? new THREE.Vector3(0, 1, 0);
+
+        if (f === 'thumb') {
+          const dirWorld = dir.clone().applyQuaternion(boneQ).normalize();
+          const fold = new THREE.Vector3().crossVectors(dir, nLocal);
+          if (fold.lengthSq() > 1e-10) fold.normalize();
+          else fold.set(1, 0, 0);
+          // Turning about the fold lifts the tip toward the palm, which is what
+          // palmar abduction is.
+          if (i === 0) splayAxes.set(bone, fold.clone());
+          // Flexion sweeps the tip toward the little finger; the tilt toward
+          // the fold stays on the palm side, so only the normal term flips.
+          const sweep = new THREE.Vector3().crossVectors(palmNormal, dirWorld);
+          const lean = towardLittle && sweep.dot(towardLittle) < 0 ? -1 : 1;
+          axes.set(
+            bone,
+            nLocal
+              .clone()
+              .multiplyScalar(lean * Math.cos(THUMB_FLEXION_TILT))
+              .addScaledVector(fold, Math.sin(THUMB_FLEXION_TILT))
+              .normalize(),
+          );
+          continue;
+        }
 
         if (i === 0 && towardLittle) {
           const splay = nLocal.clone();

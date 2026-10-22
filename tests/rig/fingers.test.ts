@@ -21,6 +21,8 @@ const EXACT = 1e-9;
 
 const SIDES: readonly Side[] = ['L', 'R'];
 const FINGERS: readonly FingerName[] = ['thumb', 'index', 'middle', 'ring', 'little'];
+const FOUR_FINGERS: readonly FingerName[] = ['index', 'middle', 'ring', 'little'];
+const THUMB_TILT = (20 * Math.PI) / 180;
 
 function need<T>(value: T | undefined | null, what: string): T {
   if (value === undefined || value === null) throw new Error(`synthetic rig has no ${what}`);
@@ -351,7 +353,7 @@ describe('curlFinger', () => {
 
     for (const side of SIDES) {
       const palm = palmWorld(profile, rig, side);
-      for (const finger of FINGERS) {
+      for (const finger of FOUR_FINGERS) {
         const chain = need(profile.fingerBones[`${finger}.${side}`], `${finger}.${side}`);
         const tip = chain[chain.length - 1];
 
@@ -369,6 +371,98 @@ describe('curlFinger', () => {
       }
     }
     rig.reset();
+  });
+
+  describe('thumb', () => {
+    /** Palm-plane direction from the index base to the little base. */
+    function towardLittleOf(profile: Profile, palm: THREE.Vector3, side: Side): THREE.Vector3 {
+      const wp = (bone: THREE.Bone) => bone.getWorldPosition(new THREE.Vector3());
+      const index = need(profile.fingerBones[`index.${side}`], `index.${side}`)[0];
+      const little = need(profile.fingerBones[`little.${side}`], `little.${side}`)[0];
+      const v = wp(little).sub(wp(index));
+      return v.addScaledVector(palm, -v.dot(palm)).normalize();
+    }
+
+    it('curls toward the little finger rather than lifting off the palm, mirrored on both hands', () => {
+      const { profile, rig } = buildHands();
+      const across: Record<Side, number> = { L: 0, R: 0 };
+      const lift: Record<Side, number> = { L: 0, R: 0 };
+
+      for (const side of SIDES) {
+        const palm = palmWorld(profile, rig, side);
+        const littleWard = towardLittleOf(profile, palm, side);
+        const chain = need(profile.fingerBones[`thumb.${side}`], `thumb.${side}`);
+        const tip = chain[chain.length - 1];
+
+        rig.reset();
+        profile.root.updateMatrixWorld(true);
+        const before = tip.getWorldPosition(new THREE.Vector3());
+        rig.curlFinger('thumb', side, 1);
+        profile.root.updateMatrixWorld(true);
+        const moved = tip.getWorldPosition(new THREE.Vector3()).sub(before);
+
+        across[side] = moved.dot(littleWard);
+        lift[side] = moved.dot(palm);
+        expect(across[side], `${side} thumb across`).toBeGreaterThan(Math.abs(lift[side]));
+      }
+      expect(across.L).toBeCloseTo(across.R, 9);
+      expect(lift.L).toBeCloseTo(lift.R, 9);
+    });
+
+    it('hinges every bone about the palm normal tilted toward the finger fold', () => {
+      const { profile, rig } = buildHands();
+
+      for (const side of SIDES) {
+        const palm = palmWorld(profile, rig, side);
+        const littleWard = towardLittleOf(profile, palm, side);
+        const chain = need(profile.fingerBones[`thumb.${side}`], `thumb.${side}`);
+        // The synthetic tip bone has no child, so its direction is the +y fallback,
+        // parallel to the palm normal and carrying no fold.
+        for (const [i, bone] of chain.slice(0, -1).entries()) {
+          const boneQ = bone.getWorldQuaternion(new THREE.Quaternion());
+          const n = palm.clone().applyQuaternion(boneQ.clone().invert());
+          const dir = need(profile.restDir[`thumb.${side}.${i}`], `thumb.${side}.${i} dir`);
+          // The finger hinge: turning about it lifts the tip toward the palm.
+          const fold = new THREE.Vector3().crossVectors(dir, n).normalize();
+          const axis = need(rig.fingerAxis.get(bone), `thumb.${side}.${i} axis`);
+
+          expect(axis.dot(fold), `${side} bone ${i} fold`).toBeCloseTo(Math.sin(THUMB_TILT), 9);
+          // Which way the normal component points is settled by the sweep toward
+          // the little finger; the tilt toward the fold is fixed.
+          const sweep = new THREE.Vector3()
+            .crossVectors(axis, dir)
+            .applyQuaternion(boneQ)
+            .dot(littleWard);
+          expect(sweep, `${side} bone ${i} sweep`).toBeGreaterThan(0);
+          expect(Math.abs(axis.dot(n)), `${side} bone ${i} normal`).toBeCloseTo(
+            Math.cos(THUMB_TILT),
+            9,
+          );
+        }
+      }
+    });
+
+    it('splays positive spread toward the palm, at the carpometacarpal bone only', () => {
+      const { profile, rig } = buildHands();
+
+      for (const side of SIDES) {
+        const palm = palmWorld(profile, rig, side);
+        const chain = need(profile.fingerBones[`thumb.${side}`], `thumb.${side}`);
+        const tip = chain[chain.length - 1];
+
+        rig.reset();
+        profile.root.updateMatrixWorld(true);
+        const before = tip.getWorldPosition(new THREE.Vector3());
+        rig.curlHand(side, {}, { thumb: 0.3 });
+        profile.root.updateMatrixWorld(true);
+        const moved = tip.getWorldPosition(new THREE.Vector3()).sub(before);
+
+        expect(moved.dot(palm), `${side} thumb splay toward palm`).toBeGreaterThan(1e-3);
+        expect(turnedBy(rig, chain[0])).toBeCloseTo(0.3, 9);
+        for (const bone of chain.slice(1)) expect(turnedBy(rig, bone)).toBeLessThan(EXACT);
+      }
+      rig.reset();
+    });
   });
 
   it('leaves every bone at its rest orientation at curl 0', () => {

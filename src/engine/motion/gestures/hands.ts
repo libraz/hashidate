@@ -1,45 +1,64 @@
 import * as THREE from 'three';
-import type { FingerName, FingerSpec, HandContact } from '../../types';
+import type { FingerName, FingerSpec, HandContact, HandShape } from '../../types';
 import { V } from './base';
 
 /**
- * Hand shapes, as curls per finger.
+ * Hand shapes: curl per finger, and the splay the shape needs.
+ *
+ * A thumb curl sweeps the thumb across the palm toward the fingers, 1 being
+ * wrapped as in a fist; a thumb spread is its abduction away from the palm.
  *
  * Named rather than written out at each use because the same hand appears in a
  * dozen gestures and a shape that drifted between two of them would read as two
  * different hands doing the same thing.
  */
 
-// 0 = straight, 1 = fully closed.
-export const OPEN_HAND: Record<FingerName, number> = {
+/** No splay: the fingers stay where the bind pose holds them. */
+export const NO_SPREAD: FingerSpec = {};
+/** A hand shape from its curls (0 = straight, 1 = fully closed) and optional splay in radians. */
+export const shape = (
+  curl: Readonly<Record<FingerName, number>>,
+  spread: Readonly<FingerSpec> = NO_SPREAD,
+): HandShape => ({ curl, spread });
+
+export const OPEN_HAND = shape({
   thumb: 0.1,
   index: 0.06,
   middle: 0.06,
   ring: 0.08,
   little: 0.12,
-};
-export const SOFT_HAND: Record<FingerName, number> = {
+});
+export const SOFT_HAND = shape({
   thumb: 0.2,
   index: 0.22,
   middle: 0.26,
   ring: 0.3,
   little: 0.34,
-};
+});
 /**
- * The open hand with the thumb laid straight, for a hand held flat across the mouth.
+ * The blade of the hand: four fingers straight and together, the thumb swung
+ * in along the index, out from under the palm.
  *
- * Any curl turns the fingertips, and the thumb's tip, in toward the face, and
- * the face clearance then holds the whole hand off the lips by however far
- * they reach in.
+ * Thirty degrees of abduction is what takes the thumb out: at fifteen its tip
+ * still stood a finger's thickness proud of the index on both validation
+ * avatars, and a hand laid across the mouth hung off the lips by that much.
  */
-export const MOUTH_HAND: Record<FingerName, number> = { ...OPEN_HAND, thumb: 0 };
+export const CHOP_HAND = shape(
+  { thumb: 0.3, index: 0, middle: 0, ring: 0, little: 0 },
+  { thumb: THREE.MathUtils.degToRad(-30) },
+);
 /**
- * The thumb of `MOUTH_HAND` swung in along the index, out from under the palm.
+ * The open hand with the chop thumb, for a hand held flat across the mouth.
  *
- * Left where the bind pose holds it, the thumb stood proud of the palm on the
- * face side, and the face clearance held the hand off the lips by its depth.
+ * Any finger curl turns the fingertips in toward the face, and the face
+ * clearance then holds the whole hand off the lips by however far they reach
+ * in. A thumb left where the bind pose holds it stood proud of the palm on the
+ * face side and did the same, so it lies along the index instead.
  */
-export const MOUTH_SPREAD: FingerSpec = { thumb: THREE.MathUtils.degToRad(46) };
+export const MOUTH_HAND = shape(
+  { ...OPEN_HAND.curl, thumb: CHOP_HAND.curl.thumb },
+  CHOP_HAND.spread,
+);
 /**
  * Where a hand held across the mouth touches it: the index's first phalanx,
  * so the fingers run on across the lips and the palm stays beside them.
@@ -52,17 +71,24 @@ export const MOUTH_CONTACT: HandContact = {
   surface: 'pad',
 };
 /** A hand `t` of the way from one shape to another, for a hand that changes shape as it moves. */
-export const mixHand = (
-  from: Record<FingerName, number>,
-  to: Record<FingerName, number>,
-  t: number,
-): Record<FingerName, number> => ({
-  thumb: from.thumb + (to.thumb - from.thumb) * t,
-  index: from.index + (to.index - from.index) * t,
-  middle: from.middle + (to.middle - from.middle) * t,
-  ring: from.ring + (to.ring - from.ring) * t,
-  little: from.little + (to.little - from.little) * t,
-});
+export const mixHand = (from: HandShape, to: HandShape, t: number): HandShape => {
+  const lerp = (a: number, b: number) => a + (b - a) * t;
+  const spread: FingerSpec = {};
+  for (const finger of new Set([...Object.keys(from.spread), ...Object.keys(to.spread)])) {
+    const f = finger as FingerName;
+    spread[f] = lerp(from.spread[f] ?? 0, to.spread[f] ?? 0);
+  }
+  return {
+    curl: {
+      thumb: lerp(from.curl.thumb, to.curl.thumb),
+      index: lerp(from.curl.index, to.curl.index),
+      middle: lerp(from.curl.middle, to.curl.middle),
+      ring: lerp(from.curl.ring, to.curl.ring),
+      little: lerp(from.curl.little, to.curl.little),
+    },
+    spread,
+  };
+};
 
 /**
  * The other four, for a hand that is pointing with one finger.
@@ -89,80 +115,71 @@ const POINT_CLOSED: Record<FingerName, number> = {
  * there. The finger the viewer sees extended is meanwhile not the one that was
  * asked for.
  */
-export const pointHand = (finger: FingerName = 'index'): Record<FingerName, number> => ({
-  ...POINT_CLOSED,
-  [finger]: 0.02,
-});
+export const pointHand = (finger: FingerName = 'index'): HandShape =>
+  shape({ ...POINT_CLOSED, [finger]: 0.02 });
 
 /** The index-pointing hand, which is what most callers mean by pointing. */
-export const POINT_HAND: Record<FingerName, number> = pointHand('index');
-/** The index-pointing hand with the thumb laid straight, for a finger held to the lips. See `MOUTH_HAND`. */
-export const SHUSH_HAND: Record<FingerName, number> = { ...POINT_HAND, thumb: 0 };
-export const PEACE_HAND: Record<FingerName, number> = {
-  thumb: 1.0,
-  index: 0.02,
-  middle: 0.02,
-  ring: 0.95,
-  little: 0.95,
-};
+export const POINT_HAND = pointHand('index');
+/** The index-pointing hand with the chop thumb, for a finger held to the lips. See `MOUTH_HAND`. */
+export const SHUSH_HAND = shape(
+  { ...POINT_HAND.curl, thumb: CHOP_HAND.curl.thumb },
+  CHOP_HAND.spread,
+);
 /**
  * A peace sign needs motion in the palm plane as well as finger curl.
  *
  * Six degrees each way leaves a clear V on both validation avatars; their bind
- * poses separate index and middle by only 2.8 and 0.5 degrees. The thumb's 28
- * degrees carries its fully curled tip in over the palm — curl alone left a
- * round thumb sticking out beside the fist on the front-facing hand.
+ * poses separate index and middle by only 2.8 and 0.5 degrees.
  */
-export const PEACE_SPREAD: FingerSpec = {
-  thumb: THREE.MathUtils.degToRad(28),
-  index: THREE.MathUtils.degToRad(-6),
-  middle: THREE.MathUtils.degToRad(6),
-};
+export const PEACE_HAND = shape(
+  { thumb: 1.0, index: 0.02, middle: 0.02, ring: 0.95, little: 0.95 },
+  { index: THREE.MathUtils.degToRad(-6), middle: THREE.MathUtils.degToRad(6) },
+);
 export const PEACE_PALM = V(0, 0.05, 1);
-export const FIST: Record<FingerName, number> = {
-  thumb: 0.7,
+export const FIST = shape({
+  thumb: 0.85,
   index: 0.92,
   middle: 0.94,
   ring: 0.95,
   little: 0.96,
-};
+});
 /**
  * A promise keeps the fist closed except for the little finger. Derive it from
  * the eye-tuned fist: `pointHand('little')` left its thumb at 0.35, which read
  * as a second extended finger on the raised hand rather than as a closed fist.
  */
-export const PINKY_PROMISE_HAND: Record<FingerName, number> = {
-  ...FIST,
-  little: 0.02,
-};
-export const PAW: Record<FingerName, number> = {
+export const PINKY_PROMISE_HAND = shape({ ...FIST.curl, little: 0.02 });
+export const PAW = shape({
   thumb: 0.68,
   index: 0.76,
   middle: 0.8,
   ring: 0.82,
   little: 0.84,
-};
-export const THUMB_UP: Record<FingerName, number> = {
+});
+export const THUMB_UP = shape({
   thumb: 0.02,
   index: 0.95,
   middle: 0.96,
   ring: 0.97,
   little: 0.98,
-};
-export const GUN_HAND: Record<FingerName, number> = {
+});
+export const GUN_HAND = shape({
   thumb: 0.05,
   index: 0.02,
   middle: 0.95,
   ring: 0.97,
   little: 0.98,
-};
-export const HEART_HAND: Record<FingerName, number> = {
-  thumb: 0.55,
-  index: 0.62,
-  middle: 0.95,
-  ring: 0.97,
-  little: 0.98,
-};
+});
+export const HEART_HAND = shape(
+  {
+    thumb: 0.4,
+    index: 0.62,
+    middle: 0.95,
+    ring: 0.97,
+    little: 0.98,
+  },
+  { thumb: THREE.MathUtils.degToRad(20) },
+);
 /**
  * An open hand for the two-handed heart silhouette.
  *
@@ -172,17 +189,17 @@ export const HEART_HAND: Record<FingerName, number> = {
  * point; the other fingers fold out of the opening. The hands aim inward
  * across the chest: an upright hand puts the thumbs above the heart.
  */
-export const FULL_HEART_HAND: Record<FingerName, number> = {
+export const FULL_HEART_HAND = shape({
   thumb: 0.08,
   index: 0.22,
   middle: 0.92,
   ring: 0.95,
   little: 0.98,
-};
-export const CLASP_HAND: Record<FingerName, number> = {
+});
+export const CLASP_HAND = shape({
   thumb: 0.5,
   index: 0.6,
   middle: 0.62,
   ring: 0.64,
   little: 0.66,
-};
+});

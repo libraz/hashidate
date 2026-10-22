@@ -13,7 +13,15 @@
 export { ArmAnatomy, rotationTrust } from './arm';
 export { buildBodyFrame } from './body-frame';
 export { contactCost } from './cost';
-export { FINGER_WIDTH, HAND_CONTACT, INTERLACE_GAP, JOINTS, SPLAY_CAP, ZONES } from './joints';
+export {
+  FINGER_WIDTH,
+  HAND_CONTACT,
+  INTERLACE_GAP,
+  JOINTS,
+  SPLAY_CAP,
+  THUMB_FLEXION_TILT,
+  ZONES,
+} from './joints';
 export type { ArmMeasurement, ArmStrain } from './measurement';
 export type { ElevationCeiling } from './strain';
 export {

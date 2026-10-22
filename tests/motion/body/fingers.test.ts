@@ -84,7 +84,7 @@ describe('finger life', () => {
 
   it('drifts a slack hand held still, and only while idle is on', () => {
     h.body.idleAmount = 1;
-    h.body.playDef(swung(SOFT_HAND, 0), 'pose', 'R');
+    h.body.playDef(swung(SOFT_HAND.curl, 0), 'pose', 'R');
     run(h, 240);
     const live = record(h);
     run(h, 360);
@@ -92,7 +92,7 @@ describe('finger life', () => {
 
     vi.restoreAllMocks();
     const still = harness();
-    still.body.playDef(swung(SOFT_HAND, 0), 'pose', 'R');
+    still.body.playDef(swung(SOFT_HAND.curl, 0), 'pose', 'R');
     run(still, 240);
     const frozen = record(still);
     run(still, 360);
@@ -103,7 +103,7 @@ describe('finger life', () => {
 
   it('opens a slack hand on the inhale and lets it close on the exhale', () => {
     h.body.breathDepth = 1;
-    h.body.playDef(held(SOFT_HAND), 'pose', 'R');
+    h.body.playDef(held(SOFT_HAND.curl), 'pose', 'R');
     run(h, 240);
     const seen = record(h);
     const breath: number[] = [];
@@ -129,7 +129,7 @@ describe('finger life', () => {
   });
 
   it('trails a moving hand and settles back onto the shape it holds still', () => {
-    h.body.playDef(swung(SOFT_HAND, 1.5), 'pose', 'R');
+    h.body.playDef(swung(SOFT_HAND.curl, 1.5), 'pose', 'R');
     const seen = record(h);
     run(h, 90);
     const moving = seen.slice(30, 90).map((c) => c.middle);
@@ -138,12 +138,12 @@ describe('finger life', () => {
 
     vi.restoreAllMocks();
     const still = harness();
-    still.body.playDef(swung(SOFT_HAND, 0), 'pose', 'R');
+    still.body.playDef(swung(SOFT_HAND.curl, 0), 'pose', 'R');
     const ref = record(still);
     run(still, 270);
     const last = seen[seen.length - 1];
     const want = ref[ref.length - 1];
-    for (const f of Object.keys(SOFT_HAND) as FingerName[]) {
+    for (const f of Object.keys(SOFT_HAND.curl) as FingerName[]) {
       expect(last[f]).toBeCloseTo(want[f], 4);
     }
   });
@@ -151,7 +151,7 @@ describe('finger life', () => {
   it('lets a slack hand fall open palm up and close palm down', () => {
     const settle = (palm: THREE.Vector3) => {
       const k = harness();
-      k.body.playDef(held(SOFT_HAND, palm), 'pose', 'R');
+      k.body.playDef(held(SOFT_HAND.curl, palm), 'pose', 'R');
       const seen = record(k);
       run(k, 150);
       vi.restoreAllMocks();
@@ -161,13 +161,13 @@ describe('finger life', () => {
   });
 
   it('closes a hand from the index to the little finger, not all at once', () => {
-    h.body.playDef(held(OPEN_HAND), 'pose', 'R');
+    h.body.playDef(held(OPEN_HAND.curl), 'pose', 'R');
     run(h, 120);
     const seen = record(h);
-    h.body.playDef(held(FIST), 'pose', 'R');
+    h.body.playDef(held(FIST.curl), 'pose', 'R');
     run(h, 90);
     const progress = (c: Record<FingerName, number>, f: FingerName) =>
-      (c[f] - OPEN_HAND[f]) / (FIST[f] - OPEN_HAND[f]);
+      (c[f] - OPEN_HAND.curl[f]) / (FIST.curl[f] - OPEN_HAND.curl[f]);
     const lead = Math.max(...seen.map((c) => progress(c, 'index') - progress(c, 'little')));
     expect(lead).toBeGreaterThan(0.05);
     const last = seen[seen.length - 1];
@@ -182,7 +182,7 @@ describe('finger life', () => {
       hold: 10,
       sustain: true,
       build: (t) => ({
-        fingers: { R: SOFT_HAND },
+        fingers: { R: SOFT_HAND.curl },
         arms: {
           R: {
             upperArm: V(0.3, -0.9, 0.3),
@@ -213,27 +213,27 @@ describe('finger life', () => {
   });
 
   it('keeps a finger closed through a switch between two shapes that close it', () => {
-    h.body.playDef(held(FIST), 'pose', 'R');
+    h.body.playDef(held(FIST.curl), 'pose', 'R');
     run(h, 120);
     const seen = record(h);
-    h.body.playDef(held(THUMB_UP), 'pose', 'R');
+    h.body.playDef(held(THUMB_UP.curl), 'pose', 'R');
     run(h, 120);
-    const lo = Math.min(FIST.little, THUMB_UP.little);
+    const lo = Math.min(FIST.curl.little, THUMB_UP.curl.little);
     expect(lo - Math.min(...seen.map((c) => c.little))).toBeLessThan(0.01);
-    expect(seen[seen.length - 1].thumb).toBeCloseTo(THUMB_UP.thumb, 2);
+    expect(seen[seen.length - 1].thumb).toBeCloseTo(THUMB_UP.curl.thumb, 2);
   });
 
   it('lifts the middle finger part way with an index straightening alone, then lets it go', () => {
-    h.body.playDef(held(FIST), 'pose', 'R');
+    h.body.playDef(held(FIST.curl), 'pose', 'R');
     run(h, 120);
     const seen = record(h);
-    h.body.playDef(held(POINT_HAND), 'pose', 'R');
+    h.body.playDef(held(POINT_HAND.curl), 'pose', 'R');
     run(h, 180);
-    const lift = POINT_HAND.middle - Math.min(...seen.map((c) => c.middle));
+    const lift = POINT_HAND.curl.middle - Math.min(...seen.map((c) => c.middle));
     expect(lift).toBeGreaterThan(0.025);
     const last = seen[seen.length - 1];
-    expect(Math.abs(last.middle - POINT_HAND.middle)).toBeLessThan(2e-3);
-    expect(Math.abs(last.index - POINT_HAND.index)).toBeLessThan(2e-3);
+    expect(Math.abs(last.middle - POINT_HAND.curl.middle)).toBeLessThan(2e-3);
+    expect(Math.abs(last.index - POINT_HAND.curl.index)).toBeLessThan(2e-3);
   });
 
   it('fans the fingers after a hand swung across the palm', () => {

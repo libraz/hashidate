@@ -2,7 +2,7 @@ import type { GestureDef } from '../../types';
 import { V } from './base';
 import type { ArmPose } from './builders';
 import { pair, reach, reachBoth } from './builders';
-import { OPEN_HAND, PEACE_HAND, PEACE_SPREAD, POINT_HAND, SOFT_HAND } from './hands';
+import { OPEN_HAND, PEACE_HAND, POINT_HAND, SOFT_HAND } from './hands';
 
 /** Photo pose — compact silhouettes for a still frame. */
 
@@ -51,7 +51,6 @@ export const PHOTO = {
         },
         PEACE_HAND,
         { head: [0.045, 0.1 * v.side, 0.07 * v.side] },
-        PEACE_SPREAD,
       );
     },
   },

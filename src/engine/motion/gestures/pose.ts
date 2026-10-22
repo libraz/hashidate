@@ -7,9 +7,9 @@ import {
   HEART_HAND,
   PEACE_HAND,
   PEACE_PALM,
-  PEACE_SPREAD,
   PINKY_PROMISE_HAND,
   SOFT_HAND,
+  shape,
   THUMB_UP,
 } from './hands';
 
@@ -103,7 +103,7 @@ export const POSE = {
           palm: [-0.69, 0.41, -0.73],
           pole: [0.26, -0.92, 0.3],
         },
-        { thumb: 0.3, index: 0.5, middle: 0.7, ring: 0.8, little: 0.85 },
+        shape({ thumb: 0.3, index: 0.5, middle: 0.7, ring: 0.8, little: 0.85 }),
         {
           head: [0.06, 0.08 * v.side, 0.1 * v.side],
           chest: [0.03, 0.04 * v.side, 0.03 * v.side],
@@ -190,7 +190,6 @@ export const POSE = {
         },
         PEACE_HAND,
         { head: [-0.02, 0, 0] },
-        PEACE_SPREAD,
       );
     },
   },
@@ -285,7 +284,7 @@ export const POSE = {
           lowerArm: V(0.14, -0.97, 0.18),
           hand: V(0.1, -0.97, 0.2),
         },
-        { thumb: 0.3, index: 0.34, middle: 0.38, ring: 0.42, little: 0.46 },
+        shape({ thumb: 0.3, index: 0.34, middle: 0.38, ring: 0.42, little: 0.46 }),
         {
           // Tipped as well as dropped. A head that falls straight forward reads
           // as a faint rather than as sleep; the roll toward one shoulder is

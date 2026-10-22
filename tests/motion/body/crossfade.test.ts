@@ -96,7 +96,7 @@ describe('finger handover', () => {
     observeAcceptedHands(h, (frame) => {
       curls.push(frame.R.curls.index);
     });
-    const shaped = (fingers: typeof FIST, lead: number): GestureDef => ({
+    const shaped = (fingers: typeof FIST.curl, lead: number): GestureDef => ({
       label: { en: 'Shape', ja: '形' },
       group: 'pose',
       lead,
@@ -114,10 +114,10 @@ describe('finger handover', () => {
       build: () => ({ fingerSpread: { R: spread } }),
     };
 
-    h.body.playDef(shaped(FIST, 0.3), 'fist');
+    h.body.playDef(shaped(FIST.curl, 0.3), 'fist');
     for (let i = 0; i < 90; i++) step(h);
     // A brief open hand: handed over almost at once, at a small weight.
-    h.body.playDef(shaped(OPEN_HAND, 0.5), 'open');
+    h.body.playDef(shaped(OPEN_HAND.curl, 0.5), 'open');
     for (let i = 0; i < 8; i++) step(h);
     h.body.playDef(spreadOnly, 'spread');
     const from = curls.length;

@@ -3,6 +3,7 @@ import type {
   ArmDirections,
   FingerSpec,
   GestureVariation,
+  HandShape,
   Pose,
   ReachSpec,
   Side,
@@ -60,6 +61,10 @@ function put<K extends keyof Pose>(pose: Pose, key: K, value: Pose[K]): void {
   else if (key in pose) delete pose[key];
 }
 
+/** A shape's splay, or `undefined` for a shape that has none. */
+const splay = (hand: HandShape): FingerSpec | undefined =>
+  Object.keys(hand.spread).length > 0 ? hand.spread : undefined;
+
 /** Write every field of a pose into `out`, or into a new one. */
 function fill(
   out: Pose | undefined,
@@ -86,17 +91,16 @@ export const one = (
   out: Pose | undefined,
   v: GestureVariation,
   arm: ArmPose,
-  fingers: FingerSpec,
+  hand: HandShape,
   spine?: SpineOffsets,
-  fingerSpread?: FingerSpec,
 ): Pose =>
   fill(
     out,
     acting(out?.arms, v, arm),
     undefined,
-    acting(out?.fingers, v, fingers),
+    acting(out?.fingers, v, hand.curl),
     spine,
-    acting(out?.fingerSpread, v, fingerSpread),
+    acting(out?.fingerSpread, v, splay(hand)),
     undefined,
   );
 
@@ -104,17 +108,16 @@ export const one = (
 export const both = (
   out: Pose | undefined,
   arm: ArmPose,
-  fingers: FingerSpec,
+  hand: HandShape,
   spine?: SpineOffsets,
-  fingerSpread?: FingerSpec,
 ): Pose =>
   fill(
     out,
     sided(out?.arms, arm, arm),
     undefined,
-    sided(out?.fingers, fingers, fingers),
+    sided(out?.fingers, hand.curl, hand.curl),
     spine,
-    sided(out?.fingerSpread, fingerSpread, fingerSpread),
+    sided(out?.fingerSpread, splay(hand), splay(hand)),
     undefined,
   );
 
@@ -123,17 +126,17 @@ export const pair = (
   out: Pose | undefined,
   left: ArmPose,
   right: ArmPose,
-  leftFingers: FingerSpec,
-  rightFingers: FingerSpec,
+  leftHand: HandShape,
+  rightHand: HandShape,
   spine?: SpineOffsets,
 ): Pose =>
   fill(
     out,
     sided(out?.arms, left, right),
     undefined,
-    sided(out?.fingers, leftFingers, rightFingers),
+    sided(out?.fingers, leftHand.curl, rightHand.curl),
     spine,
-    undefined,
+    sided(out?.fingerSpread, splay(leftHand), splay(rightHand)),
     undefined,
   );
 
@@ -214,33 +217,32 @@ export const reach = (
   out: Pose | undefined,
   v: GestureVariation,
   spec: ReachSpec,
-  fingers: FingerSpec,
+  hand: HandShape,
   spine?: SpineOffsets,
-  fingerSpread?: FingerSpec,
 ): Pose =>
   fill(
     out,
     undefined,
     acting(out?.reach, v, spec),
-    acting(out?.fingers, v, fingers),
+    acting(out?.fingers, v, hand.curl),
     spine,
-    acting(out?.fingerSpread, v, fingerSpread),
+    acting(out?.fingerSpread, v, splay(hand)),
     undefined,
   );
 
 export const reachBoth = (
   out: Pose | undefined,
   spec: ReachSpec,
-  fingers: FingerSpec,
+  hand: HandShape,
   spine?: SpineOffsets,
 ): Pose =>
   fill(
     out,
     undefined,
     sided(out?.reach, spec, spec),
-    sided(out?.fingers, fingers, fingers),
+    sided(out?.fingers, hand.curl, hand.curl),
     spine,
-    undefined,
+    sided(out?.fingerSpread, splay(hand), splay(hand)),
     undefined,
   );
 
@@ -249,17 +251,17 @@ export const reachPair = (
   out: Pose | undefined,
   left: ReachSpec,
   right: ReachSpec,
-  leftFingers: FingerSpec,
-  rightFingers: FingerSpec,
+  leftHand: HandShape,
+  rightHand: HandShape,
   spine?: SpineOffsets,
 ): Pose =>
   fill(
     out,
     undefined,
     sided(out?.reach, left, right),
-    sided(out?.fingers, leftFingers, rightFingers),
+    sided(out?.fingers, leftHand.curl, rightHand.curl),
     spine,
-    undefined,
+    sided(out?.fingerSpread, splay(leftHand), splay(rightHand)),
     undefined,
   );
 
@@ -268,7 +270,7 @@ export const clasp = (
   out: Pose | undefined,
   v: GestureVariation,
   spec: ReachSpec,
-  fingers: FingerSpec,
+  hand: HandShape,
   dihedral: number,
   spine?: SpineOffsets,
 ): Pose => {
@@ -279,9 +281,9 @@ export const clasp = (
     out,
     undefined,
     sided(out?.reach, spec, spec),
-    sided(out?.fingers, fingers, fingers),
+    sided(out?.fingers, hand.curl, hand.curl),
     spine,
-    undefined,
+    sided(out?.fingerSpread, splay(hand), splay(hand)),
     held,
   );
 };

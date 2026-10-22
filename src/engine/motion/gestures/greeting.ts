@@ -2,7 +2,7 @@ import type { GestureDef } from '../../types';
 import { V } from './base';
 import type { ArmPose } from './builders';
 import { both, one } from './builders';
-import { FIST, mixHand, OPEN_HAND, SOFT_HAND } from './hands';
+import { FIST, mixHand, OPEN_HAND, SOFT_HAND, shape } from './hands';
 
 /**
  * Greeting — arriving, beckoning, and thanking.
@@ -14,6 +14,11 @@ import { FIST, mixHand, OPEN_HAND, SOFT_HAND } from './hands';
 
 /** Seconds per beckoning curl: about two cycles in the nominal 2.6 s hold after the opening. */
 const BECKON_PERIOD = 0.9;
+
+/** The open invitation a beckon starts from. */
+const BECKON_OPEN = shape({ thumb: 0.18, index: 0.14, middle: 0.16, ring: 0.2, little: 0.26 });
+/** The closed phase: `FIST` with the thumb held where the invitation has it. */
+const BECKON_HAND = shape({ ...FIST.curl, thumb: BECKON_OPEN.curl.thumb });
 
 export const GREETING = {
   wave: {
@@ -56,10 +61,7 @@ export const GREETING = {
       // The fingers curl between the open invitation and the existing FIST.
       const beckonTime = Math.max(0, t - openingDuration) * v.rate;
       const curl = (1 - Math.cos((2 * Math.PI * beckonTime) / BECKON_PERIOD)) / 2;
-      const fingers = {
-        ...mixHand({ thumb: 0.18, index: 0.14, middle: 0.16, ring: 0.2, little: 0.26 }, FIST, curl),
-        thumb: 0.18,
-      };
+      const fingers = mixHand(BECKON_OPEN, BECKON_HAND, curl);
       // The palm has to be stated. Aiming the hand forward leaves the roll
       // free, and an invitation with the palms rolled over is a shove. The
       // fully skyward target pinned one shoulder at its stop; this diagonal

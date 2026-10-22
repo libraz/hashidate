@@ -12,6 +12,7 @@ import {
   forwardArm,
 } from '@/engine/rig/arm-configuration';
 import type { ArmPathPlanOutput } from '@/engine/rig/arm-path';
+import { composeFingerRotation } from '@/engine/rig/hands';
 import type { ArmSlot, FingerName, GestureDef, Profile, Side } from '@/engine/types';
 import { buildRig } from '../../helpers/scene';
 import { DT, harness } from './harness';
@@ -443,17 +444,32 @@ describe('atomic arm frame transaction', () => {
       const joints = finger === 'thumb' ? h.rig.joints.thumb : h.rig.joints.finger;
       for (let i = 0; i < chain.length; i++) {
         const rest = h.rig.rest.get(chain[i]);
-        expect(rest).toBeDefined();
-        if (!rest) continue;
-        const actual = rest
-          .clone()
-          .invert()
-          .multiply(chain[i].quaternion)
-          .angleTo(new THREE.Quaternion());
-        expect(actual).toBeCloseTo(
-          Math.abs(fingerCurl(joints, i, driver.acceptedCurls[finger])),
-          6,
+        const axis = h.rig.fingerAxis.get(chain[i]);
+        expect(rest && axis).toBeTruthy();
+        if (!(rest && axis)) continue;
+        // The bone carries the accepted spread as well as the accepted curl: the
+        // finger-life lag fans a knuckle a few milliradians, which is second
+        // order in the composed angle but not in the rotation itself.
+        const expected = composeFingerRotation(
+          new THREE.Quaternion(),
+          rest,
+          axis,
+          fingerCurl(joints, i, driver.acceptedCurls[finger]),
+          i === 0 ? h.rig.fingerSplayAxis.get(chain[i]) : undefined,
+          i === 0 ? driver.acceptedSpread[finger] : 0,
+          new THREE.Quaternion(),
         );
+        // Component distance, as for the arm below: `angleTo` floors at several e-8.
+        const q = chain[i].quaternion;
+        const sign = q.dot(expected) < 0 ? -1 : 1;
+        expect(
+          Math.max(
+            Math.abs(q.x - sign * expected.x),
+            Math.abs(q.y - sign * expected.y),
+            Math.abs(q.z - sign * expected.z),
+            Math.abs(q.w - sign * expected.w),
+          ),
+        ).toBeLessThan(1e-10);
       }
     }
     const handBone = h.profile.bones['hand.R'];

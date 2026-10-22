@@ -1,7 +1,7 @@
 import type { GestureDef } from '../../types';
 import { V } from './base';
 import { both, reach, torso } from './builders';
-import { OPEN_HAND } from './hands';
+import { OPEN_HAND, shape } from './hands';
 
 /**
  * Reaction — what the character does while listening.
@@ -83,7 +83,7 @@ export const REACTION = {
           palm: [0.51, -0.79, 0.21],
           pole: [0.57, -0.93, 0.32],
         },
-        { thumb: 0.4, index: 0.15, middle: 0.7, ring: 0.85, little: 0.9 },
+        shape({ thumb: 0.4, index: 0.15, middle: 0.7, ring: 0.85, little: 0.9 }),
         { head: [0.05, 0.13 * v.side, 0.07 * v.side], chest: [0, 0.05 * v.side, 0] },
       );
     },

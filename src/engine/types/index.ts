@@ -89,6 +89,7 @@ export type {
   GesturePhase,
   GestureVariation,
   HandContact,
+  HandShape,
   PerformanceGroup,
   PointSpec,
   Pose,

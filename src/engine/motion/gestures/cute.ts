@@ -1,7 +1,7 @@
 import type { GestureDef } from '../../types';
 import { V } from './base';
 import { both, reach, reachBoth } from './builders';
-import { MOUTH_CONTACT, MOUTH_HAND, MOUTH_SPREAD, OPEN_HAND, PAW, SHUSH_HAND } from './hands';
+import { MOUTH_CONTACT, MOUTH_HAND, OPEN_HAND, PAW, SHUSH_HAND, shape } from './hands';
 
 /**
  * Mannerism — the small unprompted things a character does.
@@ -34,7 +34,7 @@ export const CUTE = {
           pole: [0.3, -0.75, -0.45],
           twist: 0.45,
         },
-        { thumb: 0.45, index: 0.04, middle: 0.85, ring: 0.9, little: 0.92 },
+        shape({ thumb: 0.45, index: 0.04, middle: 0.85, ring: 0.9, little: 0.92 }),
         { head: [0.04, 0.1 * v.side, 0.08 * v.side] },
       );
     },
@@ -88,7 +88,7 @@ export const CUTE = {
           hand: V(0.24, 0.94, 0.22),
           twist: -0.3,
         },
-        { thumb: f, index: f, middle: f * 1.1, ring: f * 1.2, little: f * 1.3 },
+        shape({ thumb: f, index: f, middle: f * 1.1, ring: f * 1.2, little: f * 1.3 }),
         { head: [-0.03, 0, 0] },
       );
     },
@@ -112,7 +112,7 @@ export const CUTE = {
           hand: [0.02, 0.86, 0.51],
           palm: [-1, 0, 0.05],
         },
-        { thumb: 0.15, index: 0.06, middle: 0.06, ring: 0.08, little: 0.1 },
+        shape({ thumb: 0.15, index: 0.06, middle: 0.06, ring: 0.08, little: 0.1 }),
         { head: [-0.07, 0, 0.02], chest: [0.03, 0, 0] },
       );
     },
@@ -170,7 +170,6 @@ export const CUTE = {
         },
         MOUTH_HAND,
         { head: [-0.1 * k, 0, 0], chest: [-0.04 * k, 0, 0] },
-        MOUTH_SPREAD,
       );
     },
   },
