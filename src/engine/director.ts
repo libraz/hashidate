@@ -82,6 +82,13 @@ function spokenEnd({ events }: VisemeTrack): number {
   return last ? last.t + last.dur : 0;
 }
 
+/**
+ * Chance a speaker blinks at a phrase end. Speakers blink at the ends of
+ * utterances and at pauses (Nakano & Kitazawa 2010), but the source gives no
+ * rate; half is a guess and needs a render check.
+ */
+const P_BREAK_BLINK = 0.5;
+
 /** What the current state asks the authored-face channel for, and how strongly. */
 interface WantedPreset {
   id: string;
@@ -191,6 +198,10 @@ export class Director {
   private readonly _beats = new HeadBeats();
   /** A plan was started and has not yet been cut by its track ending. */
   private _beatsLive = false;
+  /** Ascending mouth-clock times of the current line's blink opportunities. */
+  private _breakTimes: number[] = [];
+  /** Index of the first break the mouth clock has not yet crossed. */
+  private _breakCursor = 0;
 
   /**
    * `avatar` defaults to the profile's own descriptor rather than to an empty
@@ -446,6 +457,10 @@ export class Director {
       }),
     );
     this._beatsLive = true;
+    this._breakTimes = scheduled.breaks.filter((b) => b.kind !== 'minor').map((b) => b.t);
+    const end = spokenEnd(scheduled);
+    if (end > (this._breakTimes[this._breakTimes.length - 1] ?? 0)) this._breakTimes.push(end);
+    this._breakCursor = 0;
     return this.mouth.schedule(scheduled);
   }
 
@@ -621,6 +636,19 @@ export class Director {
       this._beatsLive = false;
     }
     if (track) this._beats.sync(this.mouth.time);
+    // Each break is one draw as the mouth clock crosses it; no track, no draw.
+    if (track) {
+      while (
+        this._breakCursor < this._breakTimes.length &&
+        this._breakTimes[this._breakCursor] <= this.mouth.time
+      ) {
+        this._breakCursor++;
+        if (this.#random() < P_BREAK_BLINK) this.triggerBlink();
+      }
+    } else if (this._breakTimes.length) {
+      this._breakTimes = [];
+      this._breakCursor = 0;
+    }
     this.body.speechNod = this._beats.update(dt);
     this.body.speechRemaining = track ? Math.max(0, track.duration - this.mouth.time) : 0;
     this.body.speechOpens = this.speechOpens;

@@ -106,14 +106,14 @@ export class Blink {
    * Ask for a blink now. Dropped, not deferred, if one is already in flight or
    * the minimum gap has not elapsed.
    *
-   * Dropping is the right answer for the only caller there is: the director
-   * fires this off a large gaze shift, because blinks cluster around saccades in
-   * life. A request that arrives too soon has no moment of its own to belong to,
-   * and holding it to fire later would put a blink at an instant nothing
-   * motivated — which is exactly the mechanical tell the clustering exists to
-   * avoid. The next saccade asks again.
+   * Dropping is the right answer for both callers, a large saccade and a
+   * phrase break: blinks cluster at each in life, and each is a moment of its
+   * own. A request that arrives too soon has none left to belong to, and
+   * holding it to fire later would put a blink at an instant nothing
+   * motivated — the mechanical tell the clustering exists to avoid. The next
+   * saccade or break asks again.
    *
-   * `suppressed` is the same signal `update` takes, so a saccade cannot blink
+   * `suppressed` is the same signal `update` takes, so a caller cannot blink
    * through eyes the director is holding open.
    */
   trigger(suppressed = false): void {

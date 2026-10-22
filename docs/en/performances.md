@@ -51,6 +51,8 @@ Under all of it the character is never still. Breathing, a weight shift from one
 
 While the character speaks, the head also nods at phrase ends. Most nods land at sentence ends and at commas the voice actually pauses on, fewer where the floor is handed over, and none at commas the voice runs through. A gesture that moves the head or neck takes precedence, so no phrase-end nod is added while one is playing.
 
+Blinks lean toward the same places: at a phrase end that is a sentence end, a question or the end of the line, the character blinks about half the time, on top of the blinks the scheduler draws. A blink that would land too close to the previous one is skipped, not delayed.
+
 Gaze follows the run of speech as well. The first line of a run may open with the eyes looking away for a moment, and the last couple of seconds of the run's final line hold the camera. Lines queued back to back count as one run. A run ends when nothing is queued behind a line, and a new one starts after an interrupt or after a gap of about a second before the next line is queued.
 
 `idle` sits above that layer rather than switching it on. With `idle` off the character stops *performing* by itself and goes on breathing. Those numbers are reached by `tune`, which is a fader per curve rather than a switch.
