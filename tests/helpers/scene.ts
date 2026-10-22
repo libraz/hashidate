@@ -37,6 +37,11 @@ export interface RigOptions {
    * that read a local translation as a world distance.
    */
   armatureScale?: number;
+  /**
+   * Degrees the skin at the lips leans to face downward, as a real lower lip
+   * does: the measured mouth's normal then no longer matches the face's forward.
+   */
+  lipTilt?: number;
   /** Include finger chains. Off produces a rig whose hands never curl. */
   fingers?: boolean;
   /** Off-axis leaf siblings exercise resolved finger-chain ordering. */
@@ -397,6 +402,7 @@ export function buildRig(opts: RigOptions = {}): SyntheticRig {
     ((headY + S.eyeUp - 1.25 * ipd - ring.bottom) / (ring.top - ring.bottom)) * (RING_BANDS - 1),
   );
   ring.mouth = { band, sector: (3 * RING_SECTORS) / 4 };
+  ring.lipTilt = opts.lipTilt ?? 0;
   const mouth = new THREE.Vector3(
     headAt.x,
     ring.bottom + (band / (RING_BANDS - 1)) * (ring.top - ring.bottom),
@@ -489,6 +495,8 @@ interface RingShape {
   bottom: number;
   /** The ring vertex the visemes move, with half as much on its four neighbours. */
   mouth?: { band: number; sector: number };
+  /** Degrees the lip band's skin leans downward; the lip vertices themselves stay put. */
+  lipTilt?: number;
 }
 
 const RING_BANDS = 16;
@@ -544,6 +552,17 @@ function makeMesh(
       position[i * 3 + 2] = origin.z / scale + Math.sin(a) * rz;
       skinIndex[i * 4] = boneIndex;
       skinWeight[i * 4] = 1;
+    }
+  }
+
+  // The bands either side of the lips swing fore and aft, leaving the lips where
+  // the front ray hits them while tilting the triangles around them.
+  if (shape?.mouth && shape.lipTilt) {
+    const { band: b, sector: s } = shape.mouth;
+    const dz = ((top - bottom) / (bands - 1)) * Math.tan((shape.lipTilt * Math.PI) / 180);
+    for (let k = s - 2; k <= s + 2; k++) {
+      position[((b + 1) * sectors + k) * 3 + 2] -= dz;
+      position[((b - 1) * sectors + k) * 3 + 2] += dz;
     }
   }
 

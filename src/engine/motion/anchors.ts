@@ -41,6 +41,9 @@ export class ReachAnchors {
   private readonly _clearP = new THREE.Vector3();
   private readonly _clearM = new THREE.Vector3();
   private readonly _clearN = new THREE.Vector3();
+  // Head-world forward while `face()` returned the measured mouth, else null.
+  private _anchorOutward: THREE.Vector3 | null = null;
+  private readonly _outward = new THREE.Vector3();
   private readonly _clearF = new THREE.Matrix3();
   private readonly _contactRotation = new THREE.Matrix3();
   private readonly _contactBind = new THREE.Matrix3();
@@ -80,6 +83,9 @@ export class ReachAnchors {
     v.addScaledVector(face.up, (a[1] + o[1]) * face.ipd);
     v.addScaledVector(face.forward, (a[2] + o[2]) * face.ipd);
     head.updateWorldMatrix(true, false);
+    this._anchorOutward = measured
+      ? this._outward.copy(face.forward).transformDirection(head.matrixWorld)
+      : null;
     return v.applyMatrix4(head.matrixWorld);
   }
 
@@ -148,6 +154,7 @@ export class ReachAnchors {
     controls?: HandControls,
   ): THREE.Vector3 | null {
     if (!r) return null;
+    this._anchorOutward = null;
     const target =
       r.space === 'body'
         ? this.body(r.at, r.offset, side)
@@ -207,13 +214,17 @@ export class ReachAnchors {
    * Move a wrist target out until the fingers it brings are off the face. In
    * place.
    *
+   * Out along the skin's normal at the anchor, or along the head's forward when
+   * the anchor is the measured mouth: its lip leans downward, and sliding along
+   * that would lower the hand onto the chin.
+   *
    * The back-off above puts the palm's contact point on the anchor and says
    * nothing about the fingers past it, which go where the hand points, as far
    * as this avatar's fingers are long: on a face small against its hands, a
    * finger pointed up at the cheek ran on into it, and a turn of the hand could
    * not bring it out. So the hand is placed as the pose orients it, holding the
    * shape it was last given, and slid out along the skin's normal at the
-   * anchor until every finger clears. Out along that one normal and not the
+   * anchor until every finger clears. Out along that one direction and not the
    * skin's under each finger: a fingertip a centimetre into the face is nearest
    * the inside of the mouth or the far wall of a cheek, and stepping the way
    * those face drew the hand further in.
@@ -243,8 +254,9 @@ export class ReachAnchors {
     if (!(shape.length && clear > 0)) return;
     face.refresh();
     // The anchor is on the skin, where its normal can be read.
-    const out = this._clearN;
-    if (face.shortfall(anchor, Number.POSITIVE_INFINITY, out) <= 0) return;
+    let out = this._clearN;
+    if (this._anchorOutward) out = this._anchorOutward;
+    else if (face.shortfall(anchor, Number.POSITIVE_INFINITY, out) <= 0) return;
     let reach = 0;
     for (const local of shape) reach = Math.max(reach, local.length());
     const clearAt = (s: number) => {

@@ -3,7 +3,7 @@ import { Body, type BodyOptions } from '@/engine/motion/body';
 import { buildProfile } from '@/engine/profile';
 import { Rig } from '@/engine/rig';
 import type { BoneSlot, FingerName, GestureDef, Profile, Side, Vec3Tuple } from '@/engine/types';
-import { buildRig } from '../../helpers/scene';
+import { buildRig, type RigOptions } from '../../helpers/scene';
 
 /**
  * How a gesture gets from where the arm is to where the pose is.
@@ -28,8 +28,8 @@ export interface PointCapture {
   palm: THREE.Vector3;
 }
 
-export function harness(yaw = 0, options: BodyOptions = {}): Harness {
-  const built = buildRig();
+export function harness(yaw = 0, options: BodyOptions = {}, rigOptions: RigOptions = {}): Harness {
+  const built = buildRig(rigOptions);
   built.root.rotation.y = yaw;
   built.root.updateMatrixWorld(true);
   const profile = buildProfile(built.root, built.descriptor);
