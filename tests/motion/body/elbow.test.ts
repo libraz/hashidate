@@ -61,8 +61,10 @@ const CLEAR_OF_THE_FACE = [
 /**
  * Reaches whose authored hold asks for more forearm roll than the joint has.
  * They arrive at that pose projected onto the joint range, not at the free one.
+ * faceFrame's wrist alone is reachable in range, but with its hand and palm
+ * weighed equally the in-range optimum holds the wrist 2.27 cm off.
  */
-const PROJECTED = ['cuteSalute'];
+const PROJECTED = ['cuteSalute', 'faceFrame'];
 
 const SIDES: Side[] = ['L', 'R'];
 

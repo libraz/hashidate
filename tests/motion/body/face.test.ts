@@ -40,7 +40,7 @@ describe('a hand held to the face', () => {
   it('holds the cover hand and palm steady from 20 through 120 Hz', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const poses = new Map<number, ReturnType<typeof handOrientation>>();
-    const stopRows = new Map<number, string[]>();
+    const strains = new Map<number, Map<string, number>>();
 
     for (const fps of [20, 30, 60, 120]) {
       const h = harness();
@@ -57,14 +57,12 @@ describe('a hand held to the face', () => {
       for (let i = 0; i < fps * 2; i++) step();
 
       poses.set(fps, handOrientation(h, 'R'));
-      stopRows.set(
-        fps,
-        (h.rig.measure('R') ?? []).filter((row) => row.zone === 'limit').map((row) => row.id),
-      );
+      strains.set(fps, new Map((h.rig.measure('R') ?? []).map((row) => [row.id, row.strain])));
     }
 
     const reference = poses.get(120);
-    if (!reference) throw new Error('120 Hz cover capture is missing');
+    const referenceStrain = strains.get(120);
+    if (!(reference && referenceStrain)) throw new Error('120 Hz cover capture is missing');
     for (const [fps, pose] of poses) {
       const handDegrees = (pose.axis.angleTo(reference.axis) * 180) / Math.PI;
       const palmDegrees = (pose.palm.angleTo(reference.palm) * 180) / Math.PI;
@@ -74,7 +72,12 @@ describe('a hand held to the face', () => {
       expect
         .soft(palmDegrees, `${fps} Hz palm differs by ${palmDegrees.toFixed(3)}°`)
         .toBeLessThan(2);
-      expect.soft(stopRows.get(fps), `${fps} Hz joint stops`).toEqual([]);
+      for (const [id, strain] of referenceStrain) {
+        const gap = Math.abs((strains.get(fps)?.get(id) ?? Number.NaN) - strain);
+        expect
+          .soft(gap, `${fps} Hz ${id} strain differs by ${gap.toFixed(4)}`)
+          .toBeLessThanOrEqual(1e-3);
+      }
     }
   });
 });
