@@ -225,7 +225,11 @@ describe('Director / authored mouth opening while speaking', () => {
 });
 
 describe('Director / declared preset composition', () => {
-  function composed(presets: Partial<PresetSpec> = {}, threeMeshViseme = false) {
+  function composed(
+    presets: Partial<PresetSpec> = {},
+    threeMeshViseme = false,
+    random?: () => number,
+  ) {
     const rig = buildRig({
       groups: [
         [HIDE_GROUP, ['H_IRIS']],
@@ -258,7 +262,7 @@ describe('Director / declared preset composition', () => {
         ...presets,
       },
     });
-    const director = new Director(profile);
+    const director = new Director(profile, undefined, random ? { random } : undefined);
     const weight = (id: string | null): number => {
       const target = id ? profile.morphTargets.get(id)?.[0] : undefined;
       return target?.mesh.morphTargetInfluences?.[target.index] ?? 0;
@@ -273,9 +277,13 @@ describe('Director / declared preset composition', () => {
   it.each(['DotEyes', 'Shock'])(
     'preserves %s during a blink and restores the current phase on exit',
     (id) => {
-      const { director, weight, blinkWeight, step } = composed({
-        composition: { [id]: { blink: 'preserve' } },
-      });
+      // A fixed mid draw rules out a double blink (needs < 0.12), so the triggered
+      // blink is over within the closing 20 frames.
+      const { director, weight, blinkWeight, step } = composed(
+        { composition: { [id]: { blink: 'preserve' } } },
+        false,
+        () => 0.5,
+      );
       step(60);
       director.triggerBlink();
       step();

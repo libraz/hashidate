@@ -330,19 +330,18 @@ it.each([false, true])(
     }
     h.body.speechNod = 0.02;
     h.step(h.target());
-    const lastBody = Math.max(
-      ...events.map((event, index) =>
-        [
-          'applyBodyContext',
-          'commitArmFrame',
-          'finishLegacyBodyFrame',
-          'commitArmTransport',
-        ].includes(event)
-          ? index
-          : -1,
-      ),
+    const bodyEvents = [
+      'applyBodyContext',
+      'commitArmFrame',
+      'finishLegacyBodyFrame',
+      'commitArmTransport',
+    ];
+    const lastBody = events.reduce(
+      (last, event, index) => (bodyEvents.includes(event) ? index : last),
+      -1,
     );
-    expect(lastBody).toBeGreaterThanOrEqual(0);
+    // The frame-closing commit of the path actually taken must be reached, and be the last body step.
+    expect(events[lastBody]).toBe(constrained ? 'commitArmFrame' : 'finishLegacyBodyFrame');
     expect(events.indexOf('readHeadOffset')).toBeGreaterThan(lastBody);
     expect(events.indexOf('commitEyes')).toBeGreaterThan(events.indexOf('readHeadOffset'));
     const head = h.delta('head');
