@@ -91,6 +91,274 @@
     "faceDecal": {
       "pattern": "Manuka_option",
       "ignoreCase": true
+    },
+    "toon": {
+      "Manuka_body": {
+        "shadow": {
+          "color": [
+            1,
+            0.961795,
+            0.943396
+          ],
+          "border": 0.117,
+          "blur": 0.189,
+          "strength": 1,
+          "normalStrength": 0
+        },
+        "shadow2": {
+          "color": [
+            0.990566,
+            0.908195,
+            0.887771,
+            1
+          ],
+          "border": 0.214,
+          "blur": 0.073
+        },
+        "rim": {
+          "color": [
+            0.764151,
+            0.546445,
+            0.526255,
+            1
+          ],
+          "border": 0.6685,
+          "blur": 0.663,
+          "fresnelPower": 2.840215,
+          "normalStrength": 0,
+          "backfaceMask": 0,
+          "shadowMask": 0,
+          "mainStrength": 0,
+          "enableLighting": 1,
+          "mode": "add",
+          "dirStrength": 0.438,
+          "dirRange": 0,
+          "indirRange": 0,
+          "indirColor": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "indirBorder": 0.6685,
+          "indirBlur": 0.663,
+          "colorTex": "Manuka_body_mask.png"
+        },
+        "outline": {
+          "width": 0.06,
+          "color": [
+            0.830189,
+            0.684854,
+            0.665717,
+            1
+          ],
+          "fixWidth": 0
+        }
+      },
+      "Manuka_costume": {
+        "shadow": {
+          "color": [
+            0.990566,
+            0.879481,
+            0.869081
+          ],
+          "border": 0.331,
+          "blur": 0.108,
+          "strength": 1,
+          "normalStrength": 1
+        },
+        "shadow2": {
+          "color": [
+            0.877359,
+            0.794589,
+            0.802878,
+            1
+          ],
+          "border": 0.281,
+          "blur": 0.153
+        },
+        "normalMap": {
+          "file": "Manuka_costume_normal.png",
+          "scale": 0.57
+        },
+        "rim": {
+          "color": [
+            0.679245,
+            0.58813,
+            0.544678,
+            1
+          ],
+          "border": 0.686,
+          "blur": 0.628,
+          "fresnelPower": 2.501858,
+          "normalStrength": 1,
+          "backfaceMask": 0,
+          "shadowMask": 0,
+          "mainStrength": 0,
+          "enableLighting": 1,
+          "mode": "add",
+          "dirStrength": 0,
+          "dirRange": 0,
+          "indirRange": 0,
+          "indirColor": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "indirBorder": 0.686,
+          "indirBlur": 0.628
+        },
+        "outline": {
+          "width": 0.06,
+          "color": [
+            0.603774,
+            0.476191,
+            0.432894,
+            1
+          ],
+          "fixWidth": 0
+        }
+      },
+      "Manuka_face": {
+        "shadow": {
+          "color": [
+            1,
+            0.961795,
+            0.943396
+          ],
+          "border": 0.117,
+          "blur": 0.189,
+          "strength": 1,
+          "normalStrength": 0,
+          "mask": "Manuka_face_mask_2.png"
+        },
+        "shadow2": {
+          "color": [
+            0.990566,
+            0.908195,
+            0.887771,
+            1
+          ],
+          "border": 0.214,
+          "blur": 0.073
+        },
+        "emission": {
+          "color": [
+            0.150943,
+            0.150943,
+            0.150943
+          ],
+          "map": "Manuka_face_emi.png"
+        },
+        "outline": {
+          "width": 0.06,
+          "color": [
+            0.831373,
+            0.686275,
+            0.666667,
+            1
+          ],
+          "fixWidth": 0,
+          "mask": "Manuka_face_mask_1.png"
+        }
+      },
+      "Manuka_hair": {
+        "shadow": {
+          "color": [
+            0.898039,
+            0.753939,
+            0.745098
+          ],
+          "border": 0.397,
+          "blur": 0.097,
+          "strength": 1,
+          "normalStrength": 1
+        },
+        "shadow2": {
+          "color": [
+            0.924528,
+            0.872197,
+            0.846031,
+            1
+          ],
+          "border": 0.346,
+          "blur": 0.155
+        },
+        "normalMap": {
+          "file": "Manuka_hair_normal.png",
+          "scale": 0.7
+        },
+        "rim": {
+          "color": [
+            0.641509,
+            0.575619,
+            0.556782,
+            1
+          ],
+          "border": 0.668,
+          "blur": 0.627,
+          "fresnelPower": 2.840215,
+          "normalStrength": 1,
+          "backfaceMask": 0,
+          "shadowMask": 0,
+          "mainStrength": 0,
+          "enableLighting": 1,
+          "mode": "add",
+          "dirStrength": 0,
+          "dirRange": 0,
+          "indirRange": 0,
+          "indirColor": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "indirBorder": 0.6865,
+          "indirBlur": 0.627
+        },
+        "outline": {
+          "width": 0.06,
+          "color": [
+            0.603774,
+            0.44738,
+            0.41011,
+            1
+          ],
+          "fixWidth": 0
+        }
+      },
+      "Manuka_option": {
+        "shadow": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "border": 0.49995,
+          "blur": 0.0001,
+          "strength": 1,
+          "normalStrength": 0
+        },
+        "shadow2": {
+          "color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "border": 0,
+          "blur": 0
+        },
+        "emission": {
+          "color": [
+            0.150943,
+            0.150943,
+            0.150943
+          ],
+          "map": "Manuka_face_emi.png"
+        }
+      }
     }
   },
   "wardrobe": {
