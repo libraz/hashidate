@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { AVATAR_ANISOTROPY, setupMaterials } from '@/engine/scene/materials';
-import type { AvatarDescriptor, MaterialRules } from '@/engine/types';
+import { LilToonMaterial, type TextureSource } from '@/engine/scene/toon';
+import type { AvatarDescriptor, MaterialRules, ToonSpec } from '@/engine/types';
 
 const avatar = (materials?: MaterialRules): AvatarDescriptor => ({
   id: 'materials-test',
@@ -639,5 +640,204 @@ describe('avatar material conversion', () => {
 
     expect(materialDispose).toHaveBeenCalledOnce();
     expect(mapDispose).toHaveBeenCalledOnce();
+  });
+});
+
+describe('authored lilToon specs', () => {
+  const shade = (extra: Partial<ToonSpec> = {}): ToonSpec => ({
+    shadow: { color: [0.9, 0.8, 0.8], border: 0.4, blur: 0.2, strength: 1, normalStrength: 1 },
+    ...extra,
+  });
+
+  /** One texture per file and kind, every ask recorded. */
+  const source = (): { textures: TextureSource; asks: string[]; made: THREE.Texture[] } => {
+    const asks: string[] = [];
+    const made: THREE.Texture[] = [];
+    const textures: TextureSource = (file, kind) => {
+      asks.push(`${kind}:${file}`);
+      const texture = new THREE.Texture();
+      texture.name = `${kind}:${file}`;
+      made.push(texture);
+      return texture;
+    };
+    return { textures, asks, made };
+  };
+
+  it('shades only a material with a spec, leaving the rest the plain toon variant', () => {
+    const skin = new THREE.MeshStandardMaterial();
+    skin.name = 'Skin';
+    const cloth = new THREE.MeshStandardMaterial();
+    cloth.name = 'Cloth';
+    const object = mesh([skin, cloth]);
+    const root = new THREE.Group().add(object);
+
+    const materials = setupMaterials(root, avatar({ toon: { Skin: shade() } }));
+    materials.apply(true);
+    const [toonSkin, toonCloth] = object.material as THREE.Material[];
+
+    expect(toonSkin).toBeInstanceOf(LilToonMaterial);
+    expect(toonCloth).toBeInstanceOf(THREE.MeshToonMaterial);
+    expect(toonCloth).not.toBeInstanceOf(LilToonMaterial);
+    expect(toonCloth.defines).toEqual({ TOON: '' });
+    expect((toonCloth as THREE.MeshToonMaterial).normalMap).toBeNull();
+    materials.dispose();
+  });
+
+  it('keeps the imported normal map and emission when the spec names none', () => {
+    const normalMap = new THREE.Texture();
+    const emissiveMap = new THREE.Texture();
+    const src = new THREE.MeshStandardMaterial({
+      normalMap,
+      normalScale: new THREE.Vector2(0.5, -0.5),
+      emissive: 0x336699,
+      emissiveMap,
+      emissiveIntensity: 2,
+    });
+    src.name = 'Skin';
+    const object = mesh(src);
+    const root = new THREE.Group().add(object);
+
+    const materials = setupMaterials(root, avatar({ toon: { Skin: shade() } }));
+    materials.apply(true);
+    const toon = object.material as LilToonMaterial;
+
+    expect(toon.normalMap).toBe(normalMap);
+    expect(toon.normalScale.toArray()).toEqual([0.5, -0.5]);
+    expect(toon.normalScale).not.toBe(src.normalScale);
+    expect(toon.emissive.equals(src.emissive)).toBe(true);
+    expect(toon.emissiveMap).toBe(emissiveMap);
+    expect(toon.emissiveIntensity).toBe(2);
+    materials.dispose();
+  });
+
+  it('lets the spec’s own normal map and emission win, asking for each file by kind', () => {
+    const src = new THREE.MeshStandardMaterial({
+      normalMap: new THREE.Texture(),
+      emissive: 0xffffff,
+      emissiveMap: new THREE.Texture(),
+      emissiveIntensity: 3,
+    });
+    src.name = 'Skin';
+    const object = mesh(src);
+    const root = new THREE.Group().add(object);
+    const { textures, asks } = source();
+
+    const materials = setupMaterials(
+      root,
+      avatar({
+        toon: {
+          Skin: shade({
+            shadow: { ...shade().shadow, mask: 'shade.png' },
+            normalMap: { file: 'normal.png', scale: 0.4 },
+            matcap: {
+              file: 'cap.png',
+              color: [1, 1, 1, 1],
+              blend: 1,
+              mode: 'add',
+              mask: 'capm.png',
+            },
+            emission: { color: [0.5, 0.5, 0.5], map: 'glow.png' },
+          }),
+        },
+      }),
+      () => null,
+      textures,
+    );
+    materials.apply(true);
+    const toon = object.material as LilToonMaterial;
+
+    expect(toon.normalMap?.name).toBe('data:normal.png');
+    expect(toon.normalScale.toArray()).toEqual([0.4, -0.4]);
+    expect(toon.emissive.r).toBeCloseTo(0.214, 3);
+    expect(toon.emissiveIntensity).toBe(1);
+    expect(toon.emissiveMap?.name).toBe('color:glow.png');
+    expect(asks.sort()).toEqual(
+      [
+        'color:cap.png',
+        'color:glow.png',
+        'data:capm.png',
+        'data:normal.png',
+        'data:shade.png',
+      ].sort(),
+    );
+    materials.dispose();
+  });
+
+  it('applies the decal and fractional-blend alpha rules to a spec material as before', () => {
+    const decal = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.6 });
+    decal.name = 'Decal';
+    const sleeve = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.5 });
+    sleeve.name = 'Sleeve';
+    const object = mesh([decal, sleeve]);
+    const root = new THREE.Group().add(object);
+
+    const materials = setupMaterials(
+      root,
+      avatar({
+        faceDecal: /^Decal$/,
+        blendTransparent: /^Sleeve$/,
+        toon: { Decal: shade(), Sleeve: shade() },
+      }),
+    );
+    materials.apply(true);
+    const [toonDecal, toonSleeve] = object.material as LilToonMaterial[];
+
+    expect(toonDecal).toBeInstanceOf(LilToonMaterial);
+    expect(toonDecal.transparent).toBe(true);
+    expect(toonDecal.alphaTest).toBe(0.35);
+    expect(toonDecal.depthWrite).toBe(true);
+    expect(toonDecal.opacity).toBe(0.6);
+    expect(toonSleeve).toBeInstanceOf(LilToonMaterial);
+    expect(toonSleeve.transparent).toBe(true);
+    expect(toonSleeve.alphaTest).toBe(0);
+    expect(toonSleeve.depthWrite).toBe(false);
+    expect(toonSleeve.opacity).toBe(0.5);
+    materials.dispose();
+  });
+
+  it('throws only when a spec names a texture and no source was given', () => {
+    const plain = new THREE.MeshStandardMaterial();
+    plain.name = 'Skin';
+    const root = new THREE.Group().add(mesh(plain));
+    setupMaterials(root, avatar({ toon: { Skin: shade() } })).dispose();
+
+    const masked = new THREE.MeshStandardMaterial();
+    masked.name = 'Skin';
+    const other = new THREE.Group().add(mesh(masked));
+    expect(() =>
+      setupMaterials(
+        other,
+        avatar({ toon: { Skin: shade({ shadow: { ...shade().shadow, mask: 'shade.png' } }) } }),
+      ),
+    ).toThrow('toon spec names a texture but no texture source was given');
+  });
+
+  it('releases the spec textures with the material that holds them', () => {
+    const src = new THREE.MeshStandardMaterial();
+    src.name = 'Skin';
+    const root = new THREE.Group().add(mesh(src));
+    const { textures, made } = source();
+
+    const materials = setupMaterials(
+      root,
+      avatar({
+        toon: {
+          Skin: shade({
+            shadow: { ...shade().shadow, mask: 'shade.png' },
+            rim: { color: [1, 1, 1, 1], border: 0.5, blur: 0.6, fresnelPower: 3, mask: 'rim.png' },
+            matcap: { file: 'cap.png', color: [1, 1, 1, 1], blend: 1, mode: 'add' },
+          }),
+        },
+      }),
+      () => null,
+      textures,
+    );
+    materials.apply(true);
+    expect(made).toHaveLength(3);
+    const disposed = made.map((texture) => vi.spyOn(texture, 'dispose'));
+
+    materials.dispose();
+
+    for (const spy of disposed) expect(spy).toHaveBeenCalledOnce();
   });
 });

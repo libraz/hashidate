@@ -2,11 +2,18 @@ import * as THREE from 'three';
 import type { GLTFParser } from 'three/addons/loaders/GLTFLoader.js';
 import { Director } from '@/engine/director';
 import { buildProfile, loadedNodeNames, readVrmHumanoid, type VrmHumanoid } from '@/engine/profile';
-import { type MaterialSet, releaseTextureImages, setupMaterials, Wardrobe } from '@/engine/scene';
+import {
+  type MaterialSet,
+  missingTextureSource,
+  releaseTextureImages,
+  setupMaterials,
+  Wardrobe,
+} from '@/engine/scene';
 import type { AvatarDescriptor, BoneOverrides, FingerOverrides, Profile } from '@/engine/types';
 import { getLocale } from '@/i18n/locale';
 import type { MessageKey } from '@/i18n/messages';
 import { translate } from '@/i18n/translate';
+import type { ToonTextures } from './toon-textures';
 import type { LoadedAvatar } from './types';
 
 /**
@@ -52,6 +59,9 @@ export function withVrmHumanoid(
  * `parser` is the loader's, read for a VRM humanoid map: its JSON for the map,
  * its associations for the node each entry became. A VRM 0.x model faces -Z,
  * so it is turned to face +Z before anything measures it.
+ *
+ * `toonTextures` is what `loadToonTextures` fetched for the descriptor. The
+ * returned material set owns it from here: its `dispose` releases both.
  */
 export function mountAvatar(
   root: THREE.Object3D,
@@ -59,6 +69,7 @@ export function mountAvatar(
   toon: boolean,
   environment: () => THREE.Texture | null,
   parser?: Pick<GLTFParser, 'json' | 'associations'>,
+  toonTextures?: ToonTextures,
 ): Mounted {
   const vrm = parser ? readVrmHumanoid(parser.json, loadedNodeNames(parser.associations)) : null;
   const avatar = vrm ? withVrmHumanoid(descriptor, vrm) : descriptor;
@@ -77,7 +88,19 @@ export function mountAvatar(
     if (o instanceof THREE.Mesh) o.castShadow = true;
   });
 
-  const materials = setupMaterials(root, avatar, environment);
+  const set = setupMaterials(
+    root,
+    avatar,
+    environment,
+    toonTextures?.textures ?? missingTextureSource,
+  );
+  const materials: MaterialSet = {
+    ...set,
+    dispose: () => {
+      set.dispose();
+      toonTextures?.dispose();
+    },
+  };
   materials.apply(toon);
 
   const profile = buildProfile(root, avatar);
@@ -89,6 +112,7 @@ export function mountAvatar(
   const say = (key: MessageKey, names: string[], separator: string) =>
     problems.push(translate(key, getLocale(), { names: names.join(separator) }));
   if (profile.missing.length) say('console.problem.profile', profile.missing, ', ');
+  if (toonTextures?.failed.length) say('console.problem.toonTexture', toonTextures.failed, ', ');
 
   const director = new Director(profile, avatar);
   const wardrobe = new Wardrobe(root, profile, avatar.wardrobe);

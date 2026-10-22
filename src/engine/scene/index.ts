@@ -7,5 +7,7 @@
  */
 
 export type { MaterialSet } from './materials';
-export { releaseTextureImages, setupMaterials } from './materials';
+export { AVATAR_ANISOTROPY, releaseTextureImages, setupMaterials } from './materials';
+export type { TextureSource } from './toon';
+export { LilToonMaterial, missingTextureSource } from './toon';
 export { Wardrobe } from './wardrobe';

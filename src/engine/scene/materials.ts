@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import type { AvatarDescriptor, MaterialRules, PbrScalarOverride } from '../types';
+import type { AvatarDescriptor, MaterialRules, PbrScalarOverride, ToonSpec } from '../types';
 import { installTransparentShadowMaterials } from './shadows';
+import { LilToonMaterial, missingTextureSource, type TextureSource } from './toon';
 
 /**
  * Material fixup for a VRChat-authored avatar rendered outside Unity.
@@ -71,6 +72,7 @@ export const AVATAR_ANISOTROPY = 8;
 /** The descriptor's rules with the fallbacks filled in. */
 type ResolvedRules = Omit<Required<MaterialRules>, 'preservedPbrOverrides' | 'toon'> & {
   preservedPbrOverrides: Record<string, PbrScalarOverride>;
+  toon: Record<string, ToonSpec>;
 };
 
 /**
@@ -81,6 +83,11 @@ type SourceMaterial = THREE.Material & {
   map?: THREE.Texture | null;
   alphaMap?: THREE.Texture | null;
   color?: THREE.Color;
+  normalMap?: THREE.Texture | null;
+  normalScale?: THREE.Vector2;
+  emissive?: THREE.Color;
+  emissiveMap?: THREE.Texture | null;
+  emissiveIntensity?: number;
 };
 
 /** The restore handle `setupMaterials` returns. */
@@ -94,10 +101,20 @@ export interface MaterialSet {
   dispose(): void;
 }
 
-/** Build a toon variant of a source material with cull/alpha rules applied. */
-function toToon(src: SourceMaterial, rules: ResolvedRules): THREE.MeshToonMaterial {
+/**
+ * Build a toon variant of a source material with cull/alpha rules applied.
+ *
+ * A material the descriptor gives a lilToon spec is shaded by it and keeps the
+ * imported normal map and emission unless the spec names its own; every other
+ * material is the plain toon variant, unchanged.
+ */
+function toToon(
+  src: SourceMaterial,
+  rules: ResolvedRules,
+  textures: TextureSource,
+): THREE.MeshToonMaterial {
   const name = src.name || '';
-  const m = new THREE.MeshToonMaterial({
+  const base: THREE.MeshToonMaterialParameters = {
     map: src.map,
     alphaMap: src.alphaMap,
     color: src.color,
@@ -105,7 +122,25 @@ function toToon(src: SourceMaterial, rules: ResolvedRules): THREE.MeshToonMateri
       ? { opacity: src.opacity }
       : {}),
     side: rules.doubleSided.test(name) ? THREE.DoubleSide : THREE.FrontSide,
-  });
+  };
+  const spec = Object.hasOwn(rules.toon, name) ? rules.toon[name] : undefined;
+  const m = spec
+    ? new LilToonMaterial(
+        {
+          ...base,
+          normalMap: src.normalMap ?? null,
+          // Cloned: the parameter is assigned, not copied, and the original keeps its own.
+          ...(src.normalScale ? { normalScale: src.normalScale.clone() } : {}),
+          ...(src.emissive ? { emissive: src.emissive } : {}),
+          emissiveMap: src.emissiveMap ?? null,
+          ...(src.emissiveIntensity !== undefined
+            ? { emissiveIntensity: src.emissiveIntensity }
+            : {}),
+        },
+        spec,
+        textures,
+      )
+    : new THREE.MeshToonMaterial(base);
   m.name = name;
   applyAlphaRules(m, name, src.transparent || src.alphaTest > 0, rules);
   return m;
@@ -229,11 +264,14 @@ function overriddenPbr(
  * Preserved imported slots remain original materials in toon mode.
  * `environment` provides the runtime's shared reflection map, and is called only
  * when a descriptor override asks for a reflection; the handle never disposes it.
+ * `textures` resolves the files a toon spec names; the textures it returns
+ * become the materials' own and are released with them.
  */
 export function setupMaterials(
   root: THREE.Object3D,
   avatar?: AvatarDescriptor,
   environment: () => THREE.Texture | null = () => null,
+  textures: TextureSource = missingTextureSource,
 ): MaterialSet {
   const preservedPbrOverrides = avatar?.materials?.preservedPbrOverrides;
   validatePbrOverrides(preservedPbrOverrides);
@@ -244,6 +282,7 @@ export function setupMaterials(
     blendTransparent: avatar?.materials?.blendTransparent ?? MATCH_NONE,
     preserveImported: avatar?.materials?.preserveImported ?? MATCH_NONE,
     preservedPbrOverrides: preservedPbrOverrides ?? {},
+    toon: avatar?.materials?.toon ?? {},
   };
   const original = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
   const toon = new Map<THREE.Mesh, THREE.Material[]>();
@@ -288,7 +327,7 @@ export function setupMaterials(
       mesh,
       src.map((m) => {
         const name = m.name || '';
-        if (!rules.preserveImported.test(name)) return toToon(m, rules);
+        if (!rules.preserveImported.test(name)) return toToon(m, rules, textures);
         if (!Object.hasOwn(rules.preservedPbrOverrides, name)) return m;
         return overriddenPbr(
           m,

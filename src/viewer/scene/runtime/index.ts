@@ -40,6 +40,7 @@ import { FOV, ShotCamera } from './camera';
 import { buildHud, HUD_INTERVAL, type Hud } from './hud';
 import { disposeAvatar, disposeRawAvatar, type Mounted, mountAvatar } from './mount';
 import { bloomPort, sceneryPort, shadingPort } from './ports';
+import { loadToonTextures } from './toon-textures';
 import type { Listener, LoadedAvatar, RuntimeStatus, StageFrame } from './types';
 
 export { FOV } from './camera';
@@ -726,17 +727,23 @@ export class AvatarRuntime {
     this.loading = avatar.id;
     this.setStatus({ phase: 'loading', avatar });
 
+    // Alongside the GLB rather than after it. Never rejects: a missing file is
+    // a finding on the console, not a failed load.
+    const toonLoad = loadToonTextures(avatar);
     let gltf: Awaited<ReturnType<GLTFLoader['loadAsync']>>;
     try {
       gltf = await this.loader.loadAsync(avatar.url);
     } catch (e) {
+      void toonLoad.then((textures) => textures.dispose());
       if (!this.isLoadCurrent(generation, avatar.id)) return;
       this.failLoad(avatar, e);
       return;
     }
+    const toonTextures = await toonLoad;
 
     if (!this.isLoadCurrent(generation, avatar.id)) {
       disposeRawAvatar(gltf.scene);
+      toonTextures.dispose();
       return;
     }
 
@@ -748,7 +755,14 @@ export class AvatarRuntime {
 
     let mounted: Mounted | undefined;
     try {
-      mounted = mountAvatar(root, avatar, this.toon, () => this.environment.texture, gltf.parser);
+      mounted = mountAvatar(
+        root,
+        avatar,
+        this.toon,
+        () => this.environment.texture,
+        gltf.parser,
+        toonTextures,
+      );
       const { profile, director, wardrobe, materials, problems } = mounted;
 
       this.shotCamera.rebuild(buildFramings(root, profile, FOV));
@@ -792,7 +806,9 @@ export class AvatarRuntime {
       // Nothing is published yet: take the half-built avatar back out so the
       // queue can move on instead of waiting on a load that already ended.
       this.scene.remove(root);
-      mounted?.materials.dispose();
+      // A mounted material set owns the toon textures; before that, nothing does.
+      if (mounted) mounted.materials.dispose();
+      else toonTextures.dispose();
       disposeRawAvatar(root);
       this.failLoad(avatar, e);
       return;

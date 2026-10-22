@@ -49,6 +49,7 @@ export const consoleEn = {
   'console.problem.wardrobe': 'Wardrobe unresolved: {names}',
   'console.problem.sway': 'Sway chains unresolved: {names}',
   'console.problem.tail': 'Tail drive unresolved: {names}',
+  'console.problem.toonTexture': 'Toon textures missing, drawn without them: {names}',
 
   // The document layer answers with a reason rather than throwing, so these are
   // read off the telemetry while a broadcast is running.
@@ -338,6 +339,7 @@ export const consoleJa: Record<keyof typeof consoleEn, string> = {
   'console.problem.wardrobe': '衣装未解決: {names}',
   'console.problem.sway': '揺れもの未解決: {names}',
   'console.problem.tail': '尻尾の駆動未解決: {names}',
+  'console.problem.toonTexture': 'トゥーン用テクスチャを読めず、無しで描画: {names}',
 
   'console.slides.empty': 'ページがありません',
   'console.slides.openFailed': '資料を開けませんでした ({url}): {reason}',
