@@ -39,6 +39,10 @@ const VOICE_WAIT = 5;
 // A script queues ahead of a run's end; a reply being composed arrives over a second after it.
 const RUN_GAP = 1.0;
 
+// Gestures closer than this run into each other instead of returning to rest:
+// Kipp et al. 2007 annotate gestures under 1.5 s apart as one unit. Needs a render check.
+const CHAIN_GAP = 1.5;
+
 /** The wait `VOICE_WAIT` allows one turn. */
 const voiceWait = (turn: Turn): number =>
   VOICE_WAIT + textToVisemes(turn.reading ?? turn.text).duration;
@@ -613,6 +617,7 @@ export class TurnQueue {
     // later, so a turn that opens on a cue opens on it. A turn with no text
     // gets every cue here: it is over on the next frame and has no clock to
     // spread them along.
+    this.chain(0);
     this.fireCues(0, 0);
     this.events.emit('turn.start', { turn: turn.id, seconds });
   }
@@ -643,6 +648,7 @@ export class TurnQueue {
           this.d.perform(action.id);
           this._performing = action.id;
           this.reportCue(action, scheduled.ordinal);
+          if (this.d.leadBound('perform', action.id) > 0) this.chain(now);
           break;
         case 'expression':
           this.d.setExpression(action.id);
@@ -650,6 +656,7 @@ export class TurnQueue {
           break;
         case 'gesture':
           this.d.gesture(action.id);
+          if (this.d.leadBound('gesture', action.id) > 0) this.chain(now);
           break;
         case 'hop':
           this.d.hop(action.id);
@@ -681,6 +688,23 @@ export class TurnQueue {
     // Outside the window no state can make the entrance long enough; skip the probe.
     if (now < t - this.d.leadBound(action.kind, action.id)) return false;
     return now + dt + this.d.leadFor(action.kind, action.id) >= t;
+  }
+
+  /**
+   * Keep the gesture on screen up when the next movement cue is close enough
+   * behind it that returning to rest would only be left again.
+   */
+  private chain(now: number): void {
+    const settle = this.d.body.settleIn();
+    if (settle === Number.POSITIVE_INFINITY) return;
+    for (const { cue, t } of this._cues) {
+      const action = cueAction(cue);
+      if (action?.kind !== 'gesture' && action?.kind !== 'perform') continue;
+      const bound = this.d.leadBound(action.kind, action.id);
+      if (bound <= 0) continue;
+      if (t - bound - (now + settle) < CHAIN_GAP) this.d.body.holdFor(t - now);
+      return;
+    }
   }
 
   /** One fired cue, under an id every renderer playing this line agrees on. */

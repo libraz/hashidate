@@ -951,6 +951,30 @@ export class Body {
   }
 
   /**
+   * Seconds until the current gesture has fully left, entrance excluded: the
+   * rest of its hold plus the exit. Infinity for no gesture or a sustained
+   * pose that is still held; 0 once released.
+   */
+  settleIn(): number {
+    const g = this.gesture;
+    if (!g) return Number.POSITIVE_INFINITY;
+    if (g.released) return 0;
+    if (g.def.sustain) return Number.POSITIVE_INFINITY;
+    return g.exitAt - g.time + g.lead * 1.25;
+  }
+
+  /**
+   * Keep the current gesture up for at least `seconds` more, so a movement due
+   * then follows it without a return to rest. Never shortens the authored hold,
+   * and does nothing once the gesture is released, sustained or already exiting.
+   */
+  holdFor(seconds: number): void {
+    const g = this.gesture;
+    if (!g || g.released || g.def.sustain || g.time >= g.exitAt) return;
+    g.exitAt = Math.max(g.lead + g.def.hold, g.time + seconds);
+  }
+
+  /**
    * Largest angle any arm link or spine slot has to cover to reach the gesture's
    * opening pose. `extra` is added to the outgoing spine at `extraWeight`.
    */
