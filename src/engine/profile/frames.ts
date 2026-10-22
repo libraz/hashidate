@@ -18,6 +18,9 @@ import type { BoneMap } from './bones';
  * avatars — a stylised head with huge eyes has a proportionally wide IPD, so a
  * mouth "1.25 IPD below the eyes" lands correctly on both a realistic head and
  * a deformed one, where an absolute distance in centimetres would not.
+ *
+ * `mouth` is the exception where the avatar can say better: `FaceFrame.mouth`,
+ * measured from the lip-sync shapes, replaces it wherever one moves the mouth.
  */
 export const FACE_ANCHORS: Record<string, Vec3Tuple> = {
   //         right,   up,  forward
@@ -123,5 +126,5 @@ export function buildFaceFrame(root: THREE.Object3D, bones: BoneMap): FaceFrame 
   // every gesture that touched the face reached around the back of the skull.
   const forward = new THREE.Vector3().crossVectors(up, right).normalize();
 
-  return { origin, right, up, forward, ipd };
+  return { origin, right, up, forward, ipd, mouth: null };
 }

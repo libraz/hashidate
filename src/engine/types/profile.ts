@@ -40,6 +40,8 @@ export interface FaceFrame {
   up: THREE.Vector3;
   forward: THREE.Vector3;
   ipd: number;
+  /** The mouth on the skin, measured from the lip-sync shapes; null where none moves it. */
+  mouth: THREE.Vector3 | null;
 }
 
 /** The torso frame, in chest-local space. `span` is trunk half-width plus arm. */

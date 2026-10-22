@@ -192,6 +192,8 @@ export interface SyntheticRig {
   meshes: Map<string, THREE.SkinnedMesh>;
   /** A descriptor that matches what was built. */
   descriptor: AvatarDescriptor;
+  /** World rest position of the face vertex the lip-sync shapes move most. */
+  mouth: THREE.Vector3;
 }
 
 /**
@@ -373,17 +375,28 @@ export function buildRig(opts: RigOptions = {}): SyntheticRig {
   // A head the size of the face frame drawn through it: ears at 1.25 IPD, the
   // chin 1.85 IPD below the eyes, the crown bone on top. Wider than that and a
   // hand placed on a face anchor measures as inside the head.
-  const headY = head.getWorldPosition(new THREE.Vector3()).y;
+  const headAt = head.getWorldPosition(new THREE.Vector3());
+  const headY = headAt.y;
   const ipd = 2 * S.eyeOut;
-  meshes.set(
-    'Face',
-    makeMesh('Face', skeleton, head, faceShapes, root, scale, deltas, {
-      rx: 1.25 * ipd,
-      rz: S.eyeFwd + 0.55 * ipd,
-      top: headY + S.headToCrown,
-      bottom: headY + S.eyeUp - 1.85 * ipd,
-    }),
+  const ring: RingShape = {
+    rx: 1.25 * ipd,
+    rz: S.eyeFwd + 0.55 * ipd,
+    top: headY + S.headToCrown,
+    bottom: headY + S.eyeUp - 1.85 * ipd,
+  };
+  // The lips: on the face's front, where the profile's frame points, in the
+  // band nearest the height the anchor table gives a mouth. The visemes move
+  // this patch and nothing else, as a real face's do.
+  const band = Math.round(
+    ((headY + S.eyeUp - 1.25 * ipd - ring.bottom) / (ring.top - ring.bottom)) * (RING_BANDS - 1),
   );
+  ring.mouth = { band, sector: (3 * RING_SECTORS) / 4 };
+  const mouth = new THREE.Vector3(
+    headAt.x,
+    ring.bottom + (band / (RING_BANDS - 1)) * (ring.top - ring.bottom),
+    headAt.z - ring.rz,
+  );
+  meshes.set('Face', makeMesh('Face', skeleton, head, faceShapes, root, scale, deltas, ring));
   // The trunk is measured between the hips and the shoulders, so that is the
   // height the body's ring has to cover.
   const shoulder = bones.get(naming.upperArm('R')) ?? chest;
@@ -416,7 +429,7 @@ export function buildRig(opts: RigOptions = {}): SyntheticRig {
     ...(opts.separator === 'asterisk' ? { separator: /^\*{3,}(.+?)\*{3,}$/ } : {}),
   };
 
-  return { root, bones, meshes, descriptor };
+  return { root, bones, meshes, descriptor, mouth };
 }
 
 /**
@@ -463,7 +476,12 @@ interface RingShape {
   rz: number;
   top: number;
   bottom: number;
+  /** The ring vertex the visemes move, with half as much on its four neighbours. */
+  mouth?: { band: number; sector: number };
 }
+
+const RING_BANDS = 16;
+const RING_SECTORS = 16;
 
 /**
  * A skinned mesh whose vertices sit in a ring around one bone.
@@ -489,8 +507,8 @@ function makeMesh(
   deltas: Record<string, number> = {},
   shape: RingShape | null = null,
 ): THREE.SkinnedMesh {
-  const bands = 16;
-  const sectors = 16;
+  const bands = RING_BANDS;
+  const sectors = RING_SECTORS;
   const count = bands * sectors;
 
   const position = new Float32Array(count * 3);
@@ -534,6 +552,7 @@ function makeMesh(
   }
   geometry.setIndex(faces);
 
+  const lipPatch = shape?.mouth ?? null;
   if (shapeNames.length) {
     const dictionary: Record<string, number> = {};
     const influences: number[] = [];
@@ -545,10 +564,26 @@ function makeMesh(
       // is how a preset's lid closure is measured — has something to find.
       const delta = new Float32Array(count * 3);
       const dy = deltas[shape] ?? ((index % 7) + 1) * 1e-3;
-      for (let i = 0; i < count; i++) delta[i * 3 + 1] = dy;
+      const lips = lipPatch && VISEME_SHAPES.includes(shape) ? lipPatch : null;
+      if (lips) {
+        const { band: b, sector: s } = lips;
+        delta[(b * sectors + s) * 3 + 1] = dy;
+        for (const [nb, ns] of [
+          [b - 1, s],
+          [b + 1, s],
+          [b, s - 1],
+          [b, s + 1],
+        ]) {
+          delta[(nb * sectors + ns) * 3 + 1] = dy / 2;
+        }
+      } else {
+        for (let i = 0; i < count; i++) delta[i * 3 + 1] = dy;
+      }
       targets.push(new THREE.BufferAttribute(delta, 3));
     });
     geometry.morphAttributes.position = targets;
+    // Deltas, as glTF stores them; three reads them as absolute positions otherwise.
+    geometry.morphTargetsRelative = true;
     const mesh = new THREE.SkinnedMesh(geometry, new THREE.MeshBasicMaterial({ name }));
     mesh.name = name;
     mesh.morphTargetDictionary = dictionary;

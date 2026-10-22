@@ -69,10 +69,13 @@ export class ReachAnchors {
     const { face, bones } = this.p;
     const head = bones.head;
     if (!(face && head)) return null;
-    const a = FACE_ANCHORS[name] ?? FACE_ANCHORS.mouth;
+    const id = Object.hasOwn(FACE_ANCHORS, name) ? name : 'mouth';
+    // The measured mouth is already on the skin; only the offset is in IPD.
+    const measured = id === 'mouth' ? face.mouth : null;
+    const a = measured ? [0, 0, 0] : FACE_ANCHORS[id];
     const o = offset ?? [0, 0, 0];
     const s = side === 'R' ? 1 : -1;
-    const v = this._anchor.copy(face.origin);
+    const v = this._anchor.copy(measured ?? face.origin);
     v.addScaledVector(face.right, (a[0] + o[0]) * s * face.ipd);
     v.addScaledVector(face.up, (a[1] + o[1]) * face.ipd);
     v.addScaledVector(face.forward, (a[2] + o[2]) * face.ipd);

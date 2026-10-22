@@ -35,6 +35,7 @@ import {
 } from './candidates';
 import { buildFaceFrame } from './frames';
 import { readGroups, routeMorphs } from './morphs';
+import { measureMouth } from './mouth';
 
 const first = (dict: Record<string, number>, names: string[]): string | null =>
   names.find((n) => n in dict) ?? null;
@@ -134,6 +135,9 @@ export function buildProfile(
   }
   const face = buildFaceFrame(root, bones);
   if (!face) missing.push('face:no frame (need head + both eyes)');
+  // Without a lip-sync shape that moves the mouth, the anchor table places it.
+  else if (bones.head)
+    face.mouth = measureMouth(bones.head, face, Object.values(viseme), morphTargets);
   const body = buildBodyFrame(root, bones);
   // Stated as what is actually required rather than as the canonical slots: the
   // frame falls back down the spine and takes the upper arm where a clavicle is

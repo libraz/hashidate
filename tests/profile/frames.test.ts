@@ -16,7 +16,7 @@ const toWorld = (v: THREE.Vector3, bone: THREE.Object3D): THREE.Vector3 =>
 
 const expectOrthonormal = (frame: FaceFrame | BodyFrame) => {
   for (const [label, v] of Object.entries(frame)) {
-    if (!(v instanceof THREE.Vector3) || label === 'origin') continue;
+    if (!(v instanceof THREE.Vector3) || label === 'origin' || label === 'mouth') continue;
     expect(v.length(), label).toBeCloseTo(1, 12);
   }
   expect(frame.right.dot(frame.up)).toBeCloseTo(0, 12);
@@ -126,6 +126,48 @@ describe('buildFaceFrame', () => {
     expect(frame.up.toArray()).toEqual([0, 1, 0]);
     expect(frame.forward.toArray()).toEqual(withNeck.forward.toArray());
     expectOrthonormal(frame);
+  });
+});
+
+describe('the measured mouth', () => {
+  const headLocal = (profile: Profile, p: THREE.Vector3) =>
+    p.clone().applyMatrix4(must(profile.bones.head, 'head').matrixWorld.clone().invert());
+
+  it('lands on the skin where the lip-sync shapes move the face', () => {
+    const rig = buildRig();
+    const profile = buildProfile(rig.root, rig.descriptor);
+    const face = faceOf(profile);
+    const mouth = must(face.mouth, 'measured mouth');
+
+    expect(mouth.distanceTo(headLocal(profile, rig.mouth))).toBeLessThan(1e-6);
+    // Nowhere near where the eye-relative table puts it on this face, which is
+    // what measuring it is for.
+    const table = face.origin
+      .clone()
+      .addScaledVector(face.up, FACE_ANCHORS.mouth[1] * face.ipd)
+      .addScaledVector(face.forward, FACE_ANCHORS.mouth[2] * face.ipd);
+    expect(mouth.distanceTo(table)).toBeGreaterThan(0.5 * face.ipd);
+  });
+
+  it('stays in head-local space when the avatar is turned', () => {
+    const straight = must(faceOf(buildProfile(buildRig().root)).mouth, 'measured mouth');
+    const turned = buildRig();
+    turned.root.rotateY(Math.PI * 0.5);
+    turned.root.updateMatrixWorld(true);
+
+    const rotated = must(faceOf(buildProfile(turned.root)).mouth, 'measured mouth');
+
+    expect(rotated.distanceTo(straight)).toBeLessThan(1e-6);
+  });
+
+  it('leaves the anchor to the table when the visemes move the whole face alike', () => {
+    const rig = buildRig();
+    const face = must(rig.meshes.get('Face'), 'face mesh');
+    for (const target of face.geometry.morphAttributes.position ?? []) {
+      for (let i = 0; i < target.count; i++) target.setXYZ(i, 0, 1e-3, 0);
+    }
+
+    expect(faceOf(buildProfile(rig.root, rig.descriptor)).mouth).toBeNull();
   });
 });
 
