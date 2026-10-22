@@ -14,7 +14,7 @@ import shutil
 import sys
 
 # The keys that hold a file name, per block of a ToonSpec.
-FILE_KEYS = {"shadow": ("mask",), "normalMap": ("file",), "rim": ("mask",),
+FILE_KEYS = {"shadow": ("mask",), "normalMap": ("file",), "rim": ("colorTex",),
              "matcap": ("file", "mask"), "emission": ("map",), "outline": ("mask",)}
 
 

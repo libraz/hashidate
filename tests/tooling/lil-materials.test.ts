@@ -161,15 +161,23 @@ const TEX_PATHS = {
 
 const body: Mat = {
   shader: SHADER.outline,
-  textures: `_MainTex=${TEX.main} _OutlineTex=${TEX.main} _RimColorTex=${TEX.mask} _BumpMap=${TEX.normal} _MatCapTex=${TEX.matcap} _EmissionMap=${TEX.glow}`,
+  textures: `_MainTex=${TEX.main} _OutlineTex=${TEX.main} _RimColorTex=${TEX.mask} _BumpMap=${TEX.normal} _MatCapTex=${TEX.matcap} _MatCapBlendMask=${TEX.other} _EmissionMap=${TEX.glow}`,
   floats:
     '_UseShadow=1 _ShadowBorder=0.39 _ShadowBlur=0.26 _ShadowStrength=1 _ShadowNormalStrength=0 ' +
     '_Shadow2ndBorder=0.214 _Shadow2ndBlur=0.073 _UseRim=1 _RimBorder=0.6685 _RimBlur=0.663 ' +
-    '_RimFresnelPower=2.8402147 _UseMatCap=1 _MatCapBlend=0.5 _MatCapBlendMode=2 _UseEmission=1 ' +
+    '_RimFresnelPower=2.8402147 _RimNormalStrength=0 _RimBackfaceMask=0 _RimShadowMask=1 ' +
+    '_RimMainStrength=0.516 _RimEnableLighting=1 _RimBlendMode=0 _RimDirStrength=1 _RimDirRange=-1 ' +
+    '_RimIndirRange=0.25 _RimIndirBorder=0.045000017 _RimIndirBlur=0.18 _UseRimShade=1 ' +
+    '_RimShadeBorder=0.619 _RimShadeBlur=1 _RimShadeFresnelPower=2.4 _RimShadeNormalStrength=0 ' +
+    '_UseMatCap=1 _MatCapBlend=0.5 _MatCapBlendMode=2 _MatCapShadowMask=0.095 ' +
+    '_MatCapEnableLighting=0 _MatCapMainStrength=0.28 _MatCapNormalStrength=0.325 ' +
+    '_MatCapBackfaceMask=1 _UseEmission=1 ' +
     '_UseBumpMap=1 _BumpScale=0.57 _AsUnlit=0.2 _OutlineWidth=0.060000002 _OutlineFixWidth=0.5',
   colors:
     '_ShadowColor=0.992,0.925,0.901,1 _Shadow2ndColor=0.5,0.4,0.3,0.6 _RimColor=0.764,0.546,0.526,1 ' +
-    '_MatCapColor=1,1,1,1 _EmissionColor=2,1.5,1,1 _OutlineColor=0.83,0.684,0.665,1',
+    '_RimIndirColor=0.99056596,0.99056596,0.99056596,0.69411767 ' +
+    '_RimShadeColor=0.76037735,0.8947521,1,1 ' +
+    '_MatCapColor=2.1,2.1,2.1,1 _EmissionColor=2,1.5,1,1 _OutlineColor=0.83,0.684,0.665,1',
 };
 
 const eye: Mat = {
@@ -217,9 +225,39 @@ describe('lil_materials.py', () => {
         border: 0.6685,
         blur: 0.663,
         fresnelPower: 2.840215,
-        mask: 'rim_mask.png',
+        normalStrength: 0,
+        backfaceMask: 0,
+        shadowMask: 1,
+        mainStrength: 0.516,
+        enableLighting: 1,
+        mode: 'normal',
+        dirStrength: 1,
+        dirRange: -1,
+        indirRange: 0.25,
+        indirColor: [0.990566, 0.990566, 0.990566, 0.694118],
+        indirBorder: 0.045,
+        indirBlur: 0.18,
+        colorTex: 'rim_mask.png',
       },
-      matcap: { file: 'shine.png', color: [1, 1, 1, 1], blend: 0.5, mode: 'screen' },
+      rimShade: {
+        color: [0.760377, 0.894752, 1, 1],
+        border: 0.619,
+        blur: 1,
+        fresnelPower: 2.4,
+        normalStrength: 0,
+      },
+      matcap: {
+        file: 'shine.png',
+        color: [2.1, 2.1, 2.1, 1],
+        blend: 0.5,
+        mode: 'screen',
+        mask: 'other.png',
+        shadowMask: 0.095,
+        enableLighting: 0,
+        mainStrength: 0.28,
+        normalStrength: 0.325,
+        backfaceMask: 1,
+      },
       emission: { color: [2, 1.5, 1], map: 'glow.png' },
       outline: { width: 0.06, color: [0.83, 0.684, 0.665, 1], fixWidth: 0.5 },
     });
@@ -227,6 +265,54 @@ describe('lil_materials.py', () => {
     expect(specs.Eye?.shadow).toMatchObject({ strength: 0 });
     expect(specs.Eye).not.toHaveProperty('outline');
     expect(specs.Tail).not.toHaveProperty('outline');
+  });
+
+  it('fills lilToon’s defaults for rim and matcap keys a .mat leaves out', async () => {
+    const pkg = unitypackage({
+      mats: {
+        'Assets/Demo/Materials/Body.mat': {
+          shader: SHADER.lilToon,
+          textures: `_MatCapTex=${TEX.matcap}`,
+          floats: '_UseShadow=1 _UseRim=1 _UseRimShade=0 _UseMatCap=1',
+        },
+      },
+      textures: TEX_PATHS,
+    });
+
+    const result = run(pkg, await glb(['Body']));
+
+    expect(result.status).toBe(0);
+    const spec = toon(result.stdout).Body;
+    expect(spec?.rim).toEqual({
+      color: [0.66, 0.5, 0.48, 1],
+      border: 0.5,
+      blur: 0.65,
+      fresnelPower: 3.5,
+      normalStrength: 1,
+      backfaceMask: 1,
+      shadowMask: 0.5,
+      mainStrength: 0,
+      enableLighting: 1,
+      mode: 'add',
+      dirStrength: 0,
+      dirRange: 0,
+      indirRange: 0,
+      indirColor: [1, 1, 1, 1],
+      indirBorder: 0.5,
+      indirBlur: 0.1,
+    });
+    expect(spec?.matcap).toEqual({
+      file: 'shine.png',
+      color: [1, 1, 1, 1],
+      blend: 1,
+      mode: 'add',
+      shadowMask: 0,
+      enableLighting: 1,
+      mainStrength: 0,
+      normalStrength: 1,
+      backfaceMask: 0,
+    });
+    expect(spec).not.toHaveProperty('rimShade');
   });
 
   it('writes a toon record that parseAvatar accepts inside a descriptor', async () => {
@@ -379,15 +465,34 @@ describe('lil_materials.py', () => {
         },
         'Assets/Demo/Materials/Eye.mat': {
           ...eye,
-          floats: '_UseGlitter=1 _RimShadowMask=0.5',
+          textures: `_RimShadeMask=${TEX.mask}`,
+          floats:
+            '_UseGlitter=1 _UseRim=1 _RimShadowMask=1 _RimDirStrength=1 _UseRimShade=1 ' +
+            '_MatCapShadowMask=1 _MatCapCustomNormal=1 _MatCapLod=2',
         },
+        // A rim on an opaque variant is never faded by alpha, whatever the flag says.
+        'Assets/Demo/Materials/Skin.mat': {
+          shader: SHADER.lilToon,
+          floats: '_UseRim=1 _RimApplyTransparency=1',
+        },
+        // Nor is a rim that is off.
+        'Assets/Demo/Materials/Lash.mat': { ...eye, floats: '_UseRim=0' },
       },
       textures: TEX_PATHS,
     });
 
-    const result = run(pkg, await glb(['Body', 'Eye']));
+    const result = run(pkg, await glb(['Body', 'Eye', 'Skin', 'Lash']));
 
     expect(result.status).toBe(0);
+    expect(result.stderr).toContain('warning: Eye (Eye.mat): _RimShadeMask = set');
+    expect(result.stderr).toContain('warning: Eye (Eye.mat): _RimApplyTransparency = 1');
+    expect(result.stderr).toContain('warning: Eye (Eye.mat): _MatCapCustomNormal = 1');
+    expect(result.stderr).toContain('warning: Eye (Eye.mat): _MatCapLod = 2');
+    expect(result.stderr).not.toContain('Skin (Skin.mat)');
+    expect(result.stderr).not.toContain('Lash (Lash.mat)');
+    for (const key of ['_RimDirStrength', '_MatCapShadowMask', '_UseRimShade']) {
+      expect(result.stderr).not.toContain(key);
+    }
     expect(result.stderr).toContain('warning: Body (Body.mat): _ShadowBorderRange = 0.08');
     expect(result.stderr).toContain(
       'warning: Body (Body.mat): _OutlineTex = differs from _MainTex',
@@ -440,7 +545,7 @@ describe('toon_textures.py', () => {
   const toonSpec = {
     Body: {
       shadow: { mask: 'shade.png' },
-      rim: { mask: 'rim_mask.png' },
+      rim: { colorTex: 'rim_mask.png' },
       matcap: { file: 'shine.png' },
     },
     Eye: { shadow: {}, emission: { map: 'glow.png' }, outline: { mask: 'line.png' } },

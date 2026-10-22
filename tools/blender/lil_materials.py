@@ -42,6 +42,14 @@ OUTLINE = {
     "fba17785": True, "3b3957e6": True, "0c762f24": True,
     "94274b8e": False, "33e950d0": False, "00795bf5": False,
 }
+# The blended variants (lilToon's LIL_RENDER 2), where _RimApplyTransparency
+# fades the rim with the albedo's alpha.
+TRANSPARENT = {
+    "165365ab", "3c79b10c", "b269573b", "71716888", "6a77405f", "9cf05406",
+    "0e3ece1b", "1c12a370", "34c2907e", "701268c0", "82226adb", "62df797f",
+    "afa1a194", "9b0c2630", "90f83c35", "67ed0252", "7e398ea5", "7e61dbad",
+    "0c762f24",
+}
 BLEND_MODES = ("normal", "add", "screen", "multiply")
 GLB_JSON_CHUNK = 0x4E4F534A
 
@@ -196,6 +204,7 @@ class Material:
         if shader[:8] not in OUTLINE:
             fail(f"{name}.mat: shader guid {shader} is not a lilToon variant; leave it out with --folder")
         self.outline = OUTLINE[shader[:8]]
+        self.transparent = shader[:8] in TRANSPARENT
         self.paths = paths
         self.warnings = []
 
@@ -228,11 +237,18 @@ def rgba(c):
     return [num(v) for v in c[:4]]
 
 
-def with_mask(block, mat, slot):
+def with_mask(block, mat, slot, key="mask"):
     mask = mat.texture(slot)
     if mask:
-        block["mask"] = mask
+        block[key] = mask
     return block
+
+
+def blend_mode(mat, key):
+    mode = int(mat.f(key, 1))
+    if not 0 <= mode < len(BLEND_MODES):
+        fail(f"{mat.name}.mat: {key} {mode} is not 0 to 3")
+    return BLEND_MODES[mode]
 
 
 def convert(mat):
@@ -259,17 +275,39 @@ def convert(mat):
             "border": num(mat.f("_RimBorder", 0.5)),
             "blur": num(mat.f("_RimBlur", 0.65)),
             "fresnelPower": num(mat.f("_RimFresnelPower", 3.5)),
-        }, mat, "_RimColorTex")
+            "normalStrength": num(mat.f("_RimNormalStrength", 1)),
+            "backfaceMask": num(mat.f("_RimBackfaceMask", 1)),
+            "shadowMask": num(mat.f("_RimShadowMask", 0.5)),
+            "mainStrength": num(mat.f("_RimMainStrength", 0)),
+            "enableLighting": num(mat.f("_RimEnableLighting", 1)),
+            "mode": blend_mode(mat, "_RimBlendMode"),
+            "dirStrength": num(mat.f("_RimDirStrength", 0)),
+            "dirRange": num(mat.f("_RimDirRange", 0)),
+            "indirRange": num(mat.f("_RimIndirRange", 0)),
+            "indirColor": rgba(mat.color("_RimIndirColor", (1, 1, 1, 1))),
+            "indirBorder": num(mat.f("_RimIndirBorder", 0.5)),
+            "indirBlur": num(mat.f("_RimIndirBlur", 0.1)),
+        }, mat, "_RimColorTex", "colorTex")
+    if mat.on("_UseRimShade"):
+        spec["rimShade"] = {
+            "color": rgba(mat.color("_RimShadeColor", (0.5, 0.5, 0.5, 1))),
+            "border": num(mat.f("_RimShadeBorder", 0.5)),
+            "blur": num(mat.f("_RimShadeBlur", 1)),
+            "fresnelPower": num(mat.f("_RimShadeFresnelPower", 1)),
+            "normalStrength": num(mat.f("_RimShadeNormalStrength", 1)),
+        }
     matcap = mat.texture("_MatCapTex")
     if mat.on("_UseMatCap") and matcap:
-        mode = int(mat.f("_MatCapBlendMode", 1))
-        if not 0 <= mode < len(BLEND_MODES):
-            fail(f"{mat.name}.mat: _MatCapBlendMode {mode} is not 0 to 3")
         spec["matcap"] = with_mask({
             "file": matcap,
             "color": rgba(mat.color("_MatCapColor", (1, 1, 1, 1))),
             "blend": num(mat.f("_MatCapBlend", 1)),
-            "mode": BLEND_MODES[mode],
+            "mode": blend_mode(mat, "_MatCapBlendMode"),
+            "shadowMask": num(mat.f("_MatCapShadowMask", 0)),
+            "enableLighting": num(mat.f("_MatCapEnableLighting", 1)),
+            "mainStrength": num(mat.f("_MatCapMainStrength", 0)),
+            "normalStrength": num(mat.f("_MatCapNormalStrength", 1)),
+            "backfaceMask": num(mat.f("_MatCapBackfaceMask", 0)),
         }, mat, "_MatCapBlendMask")
     if mat.on("_UseEmission"):
         emission = {"color": rgb(mat.color("_EmissionColor", (1, 1, 1, 1)))}
@@ -298,10 +336,12 @@ def unsupported(mat):
     float_if("_ShadowBorderRange", 0, lambda v: v > 0)
     if mat.outline and mat.textures.get("_OutlineTex") not in (None, mat.textures.get("_MainTex")):
         found.append(("_OutlineTex", "differs from _MainTex"))
-    float_if("_RimShadowMask", 0.5, lambda v: v != 0.5)
-    float_if("_RimDirStrength", 0, lambda v: v > 0)
-    float_if("_MatCapShadowMask", 0, lambda v: v != 0)
-    for key in ("_UseBacklight", "_UseRimShade", "_UseMatCap2nd", "_UseMain2ndTex",
+    # Only a drawn rim can be faded by the albedo's alpha.
+    if mat.transparent and mat.on("_UseRim"):
+        float_if("_RimApplyTransparency", 1, lambda v: v == 1)
+    float_if("_MatCapCustomNormal", 0, lambda v: v == 1)
+    float_if("_MatCapLod", 0, lambda v: v != 0)
+    for key in ("_UseBacklight", "_UseMatCap2nd", "_UseMain2ndTex",
                 "_UseMain3rdTex", "_UseGlitter", "_UseAnisotropy"):
         float_if(key, 0, lambda v: v == 1)
     third = mat.color("_Shadow3rdColor", (0, 0, 0, 0))
@@ -309,7 +349,7 @@ def unsupported(mat):
         found.append(("_Shadow3rdColor", rgba(third)))
     float_if("_ShadowMainStrength", 0, lambda v: v != 0)
     float_if("_ShadowEnvStrength", 0, lambda v: v != 0)
-    for key in ("_ShadowColorTex", "_Shadow2ndColorTex"):
+    for key in ("_ShadowColorTex", "_Shadow2ndColorTex", "_RimShadeMask"):
         if key in mat.textures:
             found.append((key, "set"))
     return found

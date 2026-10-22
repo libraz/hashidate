@@ -285,13 +285,43 @@ describe('toon materials', () => {
     shadow2: { color: [0.5, 0.5, 0.6, 0.4], border: 0.3, blur: 0.2 },
     asUnlit: 0.2,
     normalMap: { file: 'normal.png', scale: 1 },
-    rim: { color: [1, 1, 1, 0.5], border: 0.6, blur: 0.2, fresnelPower: 3, mask: 'rim.png' },
+    rim: {
+      color: [1, 1, 1, 0.5],
+      border: 0.6,
+      blur: 0.2,
+      fresnelPower: 3,
+      normalStrength: 0,
+      backfaceMask: 0,
+      shadowMask: 1,
+      mainStrength: 0,
+      enableLighting: 1,
+      mode: 'normal',
+      dirStrength: 1,
+      dirRange: 0,
+      indirRange: 0,
+      indirColor: [0.99, 0.99, 0.99, 0.69],
+      indirBorder: 0.5,
+      indirBlur: 0.18,
+      colorTex: 'rim.png',
+    },
+    rimShade: {
+      color: [0.82, 0.84, 0.92, 1],
+      border: 0.5,
+      blur: 1,
+      fresnelPower: 1,
+      normalStrength: 1,
+    },
     matcap: {
       file: 'matcap.png',
       color: [1, 1, 1, 1],
       blend: 0.5,
       mode: 'add',
       mask: 'matcap_mask.png',
+      shadowMask: 0.095,
+      enableLighting: 0,
+      mainStrength: 0.28,
+      normalStrength: 0.325,
+      backfaceMask: 0,
     },
     emission: { color: [2, 1, 0], map: 'glow.png' },
     outline: { width: 0.07, color: [0.1, 0.1, 0.1, 1], fixWidth: 0.5, mask: 'width.png' },
@@ -360,6 +390,42 @@ describe('toon materials', () => {
     expect(reject(withSpec({ shadow, matcap: { ...full.matcap, mode: undefined } }))).toContain(
       'matcap.mode',
     );
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['rim', full.rim],
+    ['rimShade', full.rimShade],
+    ['matcap', full.matcap],
+  ])('rejects a %s block missing any required key', (block, value) => {
+    const optional = new Set(['colorTex', 'mask']);
+    for (const key of Object.keys(value).filter((k) => !optional.has(k))) {
+      const { [key]: _, ...rest } = value;
+      expect(reject(withSpec({ shadow, [block]: rest }))).toContain(`${block}.${key}`);
+    }
+  });
+
+  it('keeps the rim ranges closed at -1 and 1', () => {
+    for (const key of ['dirRange', 'indirRange']) {
+      for (const value of [-1, 1]) {
+        expect(() =>
+          accept(withSpec({ shadow, rim: { ...full.rim, [key]: value } })),
+        ).not.toThrow();
+      }
+      for (const value of [-1.0001, 1.0001]) {
+        expect(reject(withSpec({ shadow, rim: { ...full.rim, [key]: value } }))).toContain(
+          `rim.${key}`,
+        );
+      }
+    }
+  });
+
+  it('allows a matcap colour channel above 1 but not its alpha', () => {
+    const withMatcapColor = (color: number[]) =>
+      withSpec({ shadow, matcap: { ...full.matcap, color } });
+    expect(() => accept(withMatcapColor([2.1, 2.1, 2.1, 1]))).not.toThrow();
+    expect(reject(withMatcapColor([1, 1, 1, 1.0001]))).toContain('matcap.color');
+    expect(reject(withMatcapColor([-0.1, 1, 1, 1]))).toContain('matcap.color');
+    expect(reject(withMatcapColor([1, 1, 1]))).toContain('matcap.color');
   });
 
   it.each([[[0.5, 0.5]], [[0.5, 0.5, 0.5, 0.5]], [[]]])(
@@ -432,12 +498,16 @@ describe('toon materials', () => {
     expect(reject(withOutline({ width: value }))).toContain('outline.width');
   });
 
-  it('rejects an unknown matcap mode', () => {
+  it('rejects an unknown matcap or rim mode', () => {
     expect(reject(withSpec({ shadow, matcap: { ...full.matcap, mode: 'overlay' } }))).toContain(
       'matcap.mode',
     );
+    expect(reject(withSpec({ shadow, rim: { ...full.rim, mode: 'overlay' } }))).toContain(
+      'rim.mode',
+    );
     for (const mode of ['normal', 'add', 'screen', 'multiply']) {
       expect(() => accept(withSpec({ shadow, matcap: { ...full.matcap, mode } }))).not.toThrow();
+      expect(() => accept(withSpec({ shadow, rim: { ...full.rim, mode } }))).not.toThrow();
     }
   });
 
@@ -447,6 +517,8 @@ describe('toon materials', () => {
     expect(reject(withSpec({ shadow, outline: { ...full.outline, extra: 1 } }))).toContain(
       '"extra"',
     );
+    // A rim takes a colour texture, not a mask.
+    expect(reject(withSpec({ shadow, rim: { ...full.rim, mask: 'rim.png' } }))).toContain('"mask"');
   });
 
   it.each(['', 'a/b.png', '..', 'x?.png', 'x#.png', 'a\\b.png'])('rejects the file %j', (file) => {
@@ -454,6 +526,9 @@ describe('toon materials', () => {
     expect(reject(withShadow({ mask: file }))).toContain('shadow.mask');
     expect(reject(withSpec({ shadow, emission: { color: [0, 0, 0], map: file } }))).toContain(
       'emission.map',
+    );
+    expect(reject(withSpec({ shadow, rim: { ...full.rim, colorTex: file } }))).toContain(
+      'rim.colorTex',
     );
   });
 

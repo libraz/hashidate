@@ -104,8 +104,8 @@ export type RgbTuple = [number, number, number];
 /** {@link RgbTuple} with an alpha channel, 0 to 1. */
 export type RgbaTuple = [number, number, number, number];
 
-/** How the matcap joins the lit colour. */
-export type ToonMatcapMode = 'normal' | 'add' | 'screen' | 'multiply';
+/** How a rim or matcap joins the colour under it, lilToon's blend modes 0 to 3 in order. */
+export type ToonBlendMode = 'normal' | 'add' | 'screen' | 'multiply';
 
 /** The lit/shaded split: where it falls, how soft it is, and what colour the shade is. */
 export interface ToonShadow {
@@ -131,21 +131,72 @@ export interface ToonNormalMap {
   scale: number;
 }
 
+/**
+ * lilToon's rim light in its directional form: a band on the lit side in
+ * `color` and, scaled by `dirStrength`, a second band on the far side in
+ * `indirColor`. Unmarked numbers are 0 to 1.
+ */
 export interface ToonRim {
   color: RgbaTuple;
   border: number;
   blur: number;
   /** Exponent on the edge term; 0 or more. */
   fresnelPower: number;
-  mask?: string;
+  /** How far the edge follows the normal map rather than the mesh normal. */
+  normalStrength: number;
+  /** 1 hides the rim on back faces, 0 keeps it. */
+  backfaceMask: number;
+  /** How far the shade dims the rim. */
+  shadowMask: number;
+  /** How far the rim colour is multiplied by the albedo. */
+  mainStrength: number;
+  /** How far the rim colour is multiplied by the light colour. */
+  enableLighting: number;
+  mode: ToonBlendMode;
+  /** How far the lit-side band follows the light, and how strong the far-side band is. */
+  dirStrength: number;
+  /** Widens the lit-side band toward 1 and narrows it toward -1; -1 to 1. */
+  dirRange: number;
+  /** As `dirRange`, for the far-side band; -1 to 1. */
+  indirRange: number;
+  indirColor: RgbaTuple;
+  indirBorder: number;
+  indirBlur: number;
+  /** Basename of an sRGB colour texture whose RGBA multiplies both bands' colours. */
+  colorTex?: string;
 }
 
+/** lilToon's darkening rim: the edge of the lit colour multiplied toward `color`. */
+export interface ToonRimShade {
+  /** The alpha is how much of it shows. */
+  color: RgbaTuple;
+  border: number;
+  blur: number;
+  /** Exponent on the edge term; 0 or more. */
+  fresnelPower: number;
+  /** How far the edge follows the normal map rather than the mesh normal, 0 to 1. */
+  normalStrength: number;
+}
+
+/** Unmarked numbers are 0 to 1. */
 export interface ToonMatcap {
   file: string;
+  /** sRGB; a colour channel may exceed 1, the alpha may not. */
   color: RgbaTuple;
   blend: number;
-  mode: ToonMatcapMode;
+  mode: ToonBlendMode;
+  /** Basename; its RGB scales the blend per channel. */
   mask?: string;
+  /** How far the shade dims the matcap. */
+  shadowMask: number;
+  /** How far the matcap is multiplied by the light colour. */
+  enableLighting: number;
+  /** How far the matcap is multiplied by the albedo. */
+  mainStrength: number;
+  /** How far the lookup follows the normal map rather than the mesh normal. */
+  normalStrength: number;
+  /** 1 hides the matcap on back faces, 0 keeps it. */
+  backfaceMask: number;
 }
 
 export interface ToonEmission {
@@ -175,6 +226,7 @@ export interface ToonSpec {
   asUnlit?: number;
   normalMap?: ToonNormalMap;
   rim?: ToonRim;
+  rimShade?: ToonRimShade;
   matcap?: ToonMatcap;
   emission?: ToonEmission;
   outline?: ToonOutline;

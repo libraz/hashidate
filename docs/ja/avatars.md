@@ -174,12 +174,13 @@ VRoid のシェイプ（ビセームの `Fcl_MTH_A` から `Fcl_MTH_O`、まば�
 | `shadow2` | `color`(RGBA)、`border`、`blur` | 影の内側に入る、さらに暗い 2 段目です。アルファが現れる割合になります。 |
 | `asUnlit` | 数値、0 から 1 | 影を明るい側の色へ戻す割合です。省略すると 0 です。 |
 | `normalMap` | `file`、`scale` | ノーマルマップとその強さです。`scale` が負なら反転します。 |
-| `rim` | `color`(RGBA)、`border`、`blur`、`fresnelPower`、`mask`? | 縁の光です。`fresnelPower` は縁の項の指数で、大きいほど細くなります。`mask` は赤チャンネルで強さに掛かるテクスチャです。 |
-| `matcap` | `file`、`color`(RGBA)、`blend`、`mode`、`mask`? | 面に映すマテリアルキャプチャ画像です。`mode` は `normal`、`add`、`screen`、`multiply` のいずれかです。 |
+| `rimShade` | `color`(RGBA)、`border`、`blur`、`fresnelPower`、`normalStrength` | 縁の陰です。シルエットに沿って、影まで済んだ色に `color` を掛けていきます。アルファが現れる割合になります。`fresnelPower` は縁の項の指数で大きいほど細くなり、`normalStrength` は縁がノーマルマップにどこまで従うかです。 |
+| `matcap` | `file`、`color`(RGBA)、`blend`、`mode`、`shadowMask`、`enableLighting`、`mainStrength`、`normalStrength`、`backfaceMask`、`mask`? | 面に映すマテリアルキャプチャ画像です。`mode` は `normal`、`add`、`screen`、`multiply` のいずれかです。`shadowMask` は影の中で弱める度合い、`enableLighting` は光の色を、`mainStrength` はアルベドを掛ける度合い、`normalStrength` は参照がノーマルマップにどこまで従うかで、`backfaceMask` が 1 なら裏面では消えます。`mask` は RGB でチャンネルごとに混ぜる強さに掛かるテクスチャです。 |
+| `rim` | `color`(RGBA)、`border`、`blur`、`fresnelPower`、`normalStrength`、`backfaceMask`、`shadowMask`、`mainStrength`、`enableLighting`、`mode`、`dirStrength`、`dirRange`、`indirRange`、`indirColor`(RGBA)、`indirBorder`、`indirBlur`、`colorTex`? | 縁の光で、マットキャップの後に描きます。`fresnelPower` は縁の項の指数で、大きいほど細くなります。`dirStrength` は `color` の帯を光の当たる側に寄せ、同じ割合で反対側に `indirColor` の帯を足します。その帯の位置とぼかしが `indirBorder` と `indirBlur` です。`dirRange` と `indirRange` は、それぞれの帯を 1 に向けて広げ、-1 に向けて狭めます。ほかのキーの意味は `matcap` と同じです。`colorTex` は RGBA で両方の帯の色に掛かるカラーテクスチャです。 |
 | `emission` | `color`、`map`? | マテリアル自身が出す光で、明るい側の色に加算されます。各チャンネルは 1 を超えられます。 |
 | `outline` | `width`、`color`(RGBA)、`fixWidth`、`mask`? | シルエットの背後に描く輪郭線です。`width` は lilToon の単位(1 が 1 cm)、0 から 1 の `fixWidth` はカメラが 1 m より近づいたときに線を細くする度合い、`mask` は赤チャンネルで太さに掛かるテクスチャです。 |
 
-色は lilToon で設定したままの sRGB で、各チャンネルは 0 から 1 です(`emission.color` だけは 1 を超えられます)。`border`、`blur`、`strength`、`normalStrength`、`blend`、`fixWidth`、`asUnlit` も 0 から 1 の範囲で、`width` と `fresnelPower` は負にできません。有限でない数値はすべて拒否され、どの階層でも未知のキーは拒否されます。
+色は lilToon で設定したままの sRGB で、各チャンネルは 0 から 1 です。ただし `emission.color` と、`matcap.color` の色のチャンネルは 1 を超えられます。`dirRange` と `indirRange` は -1 から 1 の範囲、`width` と `fresnelPower` は負にできず、`scale` は任意の数値で、それ以外の数値はすべて 0 から 1 の範囲です。有限でない数値はすべて拒否され、どの階層でも未知のキーは拒否されます。
 
 `file` は `shade.png` のような名前だけで、空にしたり `/`、`\`、`..`、`?`、`#` を含めたりできません。レンダラーは、モデルの GLB と同じ `/models/<id>/` から取得します。ファイルは `public/models/` の他の中身と同じく git に入れません。
 
@@ -347,7 +348,7 @@ Python の標準ライブラリだけで動き、標準出力に `{"toon": {...}
 
 マテリアルのシェーダーは guid で判別します。輪郭線パスを持つ種類には `outline` ブロックが付きます。lilToon の種類にない guid が出ると、マテリアル名を示して止まります。別シェーダーのフォルダーを `--folder` で除く必要があるのはこのためです。テクスチャは、パッケージ内のパスのステムに `.png` を付けた名前で指します。`make textures` が付ける名前と同じです。
 
-標準エラーで `unmatched:` から始まる行は、`.mat` のない GLB のマテリアル、または GLB に対応するマテリアルのない `.mat` です。前者はこれまでどおりに描かれ、後者は取り込まれません。`warning:` から始まる行は、マテリアル名と、そのマテリアルが使っていてもレンダラが再現しない設定を示します。影の縁の色、3 段目の影、ベーステクスチャと異なる輪郭線テクスチャ、バックライト、リムシェード、2 つ目のマットキャップ、2・3 枚目のメインテクスチャ、グリッター、異方性、影色テクスチャ、影に追従するリムやマットキャップが該当します。見た目は取り込まれますが、作者のレンダーとは差が出るという警告です。
+標準エラーで `unmatched:` から始まる行は、`.mat` のない GLB のマテリアル、または GLB に対応するマテリアルのない `.mat` です。前者はこれまでどおりに描かれ、後者は取り込まれません。`warning:` から始まる行は、マテリアル名と、そのマテリアルが使っていてもレンダラが再現しない設定を示します。影の縁の色、3 段目の影、ベーステクスチャと異なる輪郭線テクスチャ、バックライト、2 つ目のマットキャップ、2・3 枚目のメインテクスチャ、グリッター、異方性、影色テクスチャ、リムシェードのマスク、透過マテリアルのアルファで薄まるリム、専用のノーマルマップを持つマットキャップ、ぼかしたマットキャップ(`_MatCapLod`)が該当します。見た目は取り込まれますが、作者のレンダーとは差が出るという警告です。
 
 ## 見た目を確かめる
 

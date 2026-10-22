@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { setupMaterials } from '@/engine/scene/materials';
 import { LilToonMaterial, type TextureSource } from '@/engine/scene/toon';
-import type { AvatarDescriptor, ToonSpec } from '@/engine/types';
+import type { AvatarDescriptor, ToonMatcap, ToonRim, ToonRimShade, ToonSpec } from '@/engine/types';
 
 const PARS = '#include <lights_toon_pars_fragment>';
 const LIGHTS_END = '#include <lights_fragment_end>';
@@ -13,17 +13,61 @@ const SKINNING = '#include <skinning_vertex>';
 
 const FEATURES = [
   'LIL_RIM',
-  'LIL_RIM_MASK',
+  'LIL_RIM_COLORTEX',
   'LIL_MATCAP',
   'LIL_MATCAP_MASK',
   'LIL_SHADOW_MASK',
   'LIL_OUTLINE',
   'LIL_OUTLINE_MASK',
+  'LIL_RIMSHADE',
 ] as const;
 
 const shadowOnly = (): ToonSpec => ({
   shadow: { color: [0.5, 0.5, 0.5], border: 0.39, blur: 0.26, strength: 1, normalStrength: 0.8 },
 });
+
+/** A complete rim block; tests override what they look at. */
+const rimOf = (patch: Partial<ToonRim> = {}): ToonRim => ({
+  color: [1, 1, 1, 1],
+  border: 0.5,
+  blur: 0.6,
+  fresnelPower: 3,
+  normalStrength: 1,
+  backfaceMask: 1,
+  shadowMask: 0.5,
+  mainStrength: 0,
+  enableLighting: 1,
+  mode: 'add',
+  dirStrength: 0,
+  dirRange: 0,
+  indirRange: 0,
+  indirColor: [1, 1, 1, 1],
+  indirBorder: 0.5,
+  indirBlur: 0.1,
+  ...patch,
+});
+
+/** A complete matcap block; tests override what they look at. */
+const matcapOf = (patch: Partial<ToonMatcap> = {}): ToonMatcap => ({
+  file: 'm.png',
+  color: [1, 1, 1, 1],
+  blend: 1,
+  mode: 'add',
+  shadowMask: 0,
+  enableLighting: 1,
+  mainStrength: 0,
+  normalStrength: 1,
+  backfaceMask: 0,
+  ...patch,
+});
+
+const rimShade: ToonRimShade = {
+  color: [0.82, 0.84, 0.92, 1],
+  border: 0.5,
+  blur: 1,
+  fresnelPower: 1,
+  normalStrength: 1,
+};
 
 /** A texture source that hands out one named texture per file and kind, and records the asks. */
 function recordingSource(): { source: TextureSource; asks: Array<[string, string]> } {
@@ -119,8 +163,9 @@ describe('LilToonMaterial shader patch', () => {
     const full: ToonSpec = {
       ...shadowOnly(),
       shadow: { ...shadowOnly().shadow, mask: 's.png' },
-      rim: { color: [1, 1, 1, 1], border: 0.5, blur: 0.6, fresnelPower: 3, mask: 'r.png' },
-      matcap: { file: 'm.png', color: [1, 1, 1, 1], blend: 1, mode: 'add', mask: 'mm.png' },
+      rim: rimOf({ colorTex: 'r.png' }),
+      rimShade,
+      matcap: matcapOf({ mask: 'mm.png' }),
       outline: { width: 0.08, color: [0.6, 0.5, 0.7, 1], fixWidth: 0.5, mask: 'o.png' },
     };
     for (const outline of [false, true]) {
@@ -214,8 +259,28 @@ describe('LilToonMaterial values', () => {
       ...shadowOnly(),
       shadow2: { color: [0.5, 0.5, 0.5, 0.4], border: 0.15, blur: 0.1 },
       asUnlit: 0.2,
-      rim: { color: [0.5, 1, 0, 0.7], border: 0.5, blur: 0.65, fresnelPower: 3.5 },
-      matcap: { file: 'm.png', color: [1, 1, 1, 0.9], blend: 0.6, mode: 'screen' },
+      rim: rimOf({
+        color: [0.5, 1, 0, 0.7],
+        fresnelPower: 3.5,
+        mode: 'normal',
+        dirStrength: 1,
+        dirRange: -1,
+        indirRange: 1,
+        indirColor: [0.5, 0.5, 0.5, 0.69],
+        shadowMask: 1,
+        backfaceMask: 0,
+      }),
+      rimShade: { ...rimShade, color: [0.5, 0.5, 0.5, 0.8], fresnelPower: 2.4 },
+      matcap: matcapOf({
+        color: [2.1, 1, 1, 0.9],
+        blend: 0.6,
+        mode: 'screen',
+        shadowMask: 1,
+        enableLighting: 0,
+        mainStrength: 0.28,
+        normalStrength: 0.325,
+        backfaceMask: 1,
+      }),
     };
     const { uniforms } = compile(new LilToonMaterial({}, spec, recordingSource().source));
     const shade = uniforms.lilShadowColor.value as THREE.Color;
@@ -233,6 +298,64 @@ describe('LilToonMaterial values', () => {
     expect(uniforms.lilRimFresnel.value).toBe(3.5);
     expect(uniforms.lilMatcapBlend.value).toBe(0.6);
     expect(uniforms.lilMatcapMode.value).toBe(2);
+    expect(uniforms.lilRimMode.value).toBe(0);
+    expect(uniforms.lilRimDirStrength.value).toBe(1);
+    expect(uniforms.lilRimDirRange.value).toBe(-1);
+    expect(uniforms.lilRimIndirRange.value).toBe(1);
+    expect(uniforms.lilRimShadowMask.value).toBe(1);
+    expect(uniforms.lilRimBackfaceMask.value).toBe(0);
+    const indir = uniforms.lilRimIndirColor.value as THREE.Vector4;
+    expect(Math.abs(indir.x - 0.214)).toBeLessThanOrEqual(1e-4);
+    expect(indir.w).toBe(0.69);
+    const rimShadeColor = uniforms.lilRimShadeColor.value as THREE.Vector4;
+    expect(Math.abs(rimShadeColor.x - 0.214)).toBeLessThanOrEqual(1e-4);
+    expect(rimShadeColor.w).toBe(0.8);
+    expect(uniforms.lilRimShadeFresnel.value).toBe(2.4);
+    // An HDR matcap channel goes through the same sRGB curve, past 1.
+    const matcapColor = uniforms.lilMatcapColor.value as THREE.Vector4;
+    const hdr = new THREE.Color().setRGB(2.1, 0, 0, THREE.SRGBColorSpace);
+    expect(matcapColor.x).toBeCloseTo(hdr.r, 6);
+    expect(matcapColor.x).toBeGreaterThan(1);
+    expect(matcapColor.w).toBe(0.9);
+    expect(uniforms.lilMatcapShadowMask.value).toBe(1);
+    expect(uniforms.lilMatcapEnableLighting.value).toBe(0);
+    expect(uniforms.lilMatcapMainStrength.value).toBe(0.28);
+    expect(uniforms.lilMatcapNormalStrength.value).toBe(0.325);
+    expect(uniforms.lilMatcapBackfaceMask.value).toBe(1);
+  });
+
+  it('reads the rim colour texture as colour', () => {
+    const { source, asks } = recordingSource();
+    const spec: ToonSpec = { ...shadowOnly(), rim: rimOf({ colorTex: 'r.png' }) };
+    const material = new LilToonMaterial({}, spec, source);
+    expect(asks).toEqual([['r.png', 'color']]);
+    expect(material.lilRimColorTex?.name).toBe('color:r.png');
+  });
+
+  it('floors the rim range divisors so a range of -1 cannot divide by zero', () => {
+    const { fragmentShader } = compile(
+      new LilToonMaterial({}, { ...shadowOnly(), rim: rimOf() }, recordingSource().source),
+    );
+    expect(fragmentShader).toContain('max( 1e-4, 1.0 + lilRimDirRange )');
+    expect(fragmentShader).toContain('max( 1e-4, 1.0 + lilRimIndirRange )');
+  });
+
+  it('composes shadow, rim shade, matcap and rim in lilToon’s order', () => {
+    const { fragmentShader } = compile(
+      new LilToonMaterial({}, shadowOnly(), recordingSource().source),
+    );
+    let at = fragmentShader.indexOf('vec3 lilOut = mix( lilShade, lilDirect, lilT1 );');
+    expect(at).toBeGreaterThanOrEqual(0);
+    for (const step of [
+      '#ifdef LIL_RIMSHADE',
+      '#ifdef LIL_MATCAP\n',
+      '#ifdef LIL_RIM\n',
+      'reflectedLight.directDiffuse = lilOut;',
+    ]) {
+      const next = fragmentShader.indexOf(step, at);
+      expect(next, step).toBeGreaterThan(at);
+      at = next;
+    }
   });
 
   it('leaves the second shade invisible and lighting fully toon when they are absent', () => {
@@ -245,15 +368,16 @@ describe('LilToonMaterial values', () => {
     const spec: ToonSpec = {
       ...shadowOnly(),
       shadow: { ...shadowOnly().shadow, mask: 's.png' },
-      rim: { color: [1, 1, 1, 1], border: 0.5, blur: 0.6, fresnelPower: 3, mask: 'r.png' },
-      matcap: { file: 'm.png', color: [1, 1, 1, 1], blend: 1, mode: 'add', mask: 'mm.png' },
+      rim: rimOf({ colorTex: 'r.png' }),
+      rimShade,
+      matcap: matcapOf({ mask: 'mm.png' }),
       outline: { width: 0.08, color: [0.6, 0.5, 0.7, 1], fixWidth: 0.5, mask: 'o.png' },
     };
     const { source } = recordingSource();
     const body = new LilToonMaterial({}, spec, source);
     const hull = new LilToonMaterial({}, spec, source, true);
     for (const [material, names] of [
-      [body, ['lilShadowMask', 'lilRimMask', 'lilMatcap', 'lilMatcapMask']],
+      [body, ['lilShadowMask', 'lilRimColorTex', 'lilMatcap', 'lilMatcapMask']],
       [hull, ['lilOutlineMask']],
     ] as const) {
       const { uniforms } = compile(material);
@@ -338,24 +462,19 @@ describe('LilToonMaterial variants (pairwise)', () => {
         ...(rim === 'off'
           ? {}
           : {
-              rim: {
+              rim: rimOf({
                 color: [1, 0.9, 0.8, 0.6],
-                border: 0.5,
-                blur: 0.6,
-                fresnelPower: 3,
-                ...(rim === 'mask' ? { mask: 'rim.png' } : {}),
-              },
+                ...(rim === 'mask' ? { colorTex: 'rim.png' } : {}),
+              }),
             }),
         ...(matcap === 'off'
           ? {}
           : {
-              matcap: {
+              matcap: matcapOf({
                 file: 'matcap.png',
-                color: [1, 1, 1, 1],
                 blend: 0.5,
-                mode: 'add',
                 ...(matcap === 'mask' ? { mask: 'matcap-mask.png' } : {}),
-              },
+              }),
             }),
         ...(emission === 'off'
           ? {}
@@ -386,7 +505,7 @@ describe('LilToonMaterial variants (pairwise)', () => {
 
       const expected = [
         ...(rim !== 'off' ? ['LIL_RIM'] : []),
-        ...(rim === 'mask' ? ['LIL_RIM_MASK'] : []),
+        ...(rim === 'mask' ? ['LIL_RIM_COLORTEX'] : []),
         ...(matcap !== 'off' ? ['LIL_MATCAP'] : []),
         ...(matcap === 'mask' ? ['LIL_MATCAP_MASK'] : []),
         ...(shadowMask === 'T' ? ['LIL_SHADOW_MASK'] : []),
@@ -454,4 +573,27 @@ describe('LilToonMaterial variants (pairwise)', () => {
       set.dispose();
     },
   );
+});
+
+describe('LilToonMaterial rim shade switch', () => {
+  it.each([
+    ['on', true],
+    ['off', false],
+  ])('rim shade %s sets its define and its bit of the program key', (_label, on) => {
+    const spec: ToonSpec = {
+      ...shadowOnly(),
+      rim: rimOf(),
+      ...(on ? { rimShade } : {}),
+      outline: { width: 0.08, color: [0.6, 0.56, 0.73, 1], fixWidth: 0.5 },
+    };
+    const body = new LilToonMaterial({}, spec, recordingSource().source);
+    const expected = ['LIL_RIM', ...(on ? ['LIL_RIMSHADE'] : [])];
+    expect(definesOf(body)).toEqual(expected);
+    expect(body.customProgramCacheKey()).toBe(
+      `lil:${FEATURES.map((f) => (expected.includes(f) ? '1' : '0')).join('')}`,
+    );
+    // The hull paints no rim shade whatever the body does.
+    const hull = new LilToonMaterial({}, spec, recordingSource().source, true);
+    expect(definesOf(hull)).toEqual(['LIL_OUTLINE']);
+  });
 });

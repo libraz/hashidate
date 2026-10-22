@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { RgbaTuple, RgbTuple, ToonMatcapMode, ToonSpec } from '../types';
+import type { RgbaTuple, RgbTuple, ToonBlendMode, ToonSpec } from '../types';
 
 /**
  * lilToon's shading, grafted onto three's own toon material.
@@ -27,15 +27,16 @@ export const missingTextureSource: TextureSource = () => {
 /** The feature switches, in the order `customProgramCacheKey` encodes them. */
 const FEATURES = [
   'LIL_RIM',
-  'LIL_RIM_MASK',
+  'LIL_RIM_COLORTEX',
   'LIL_MATCAP',
   'LIL_MATCAP_MASK',
   'LIL_SHADOW_MASK',
   'LIL_OUTLINE',
   'LIL_OUTLINE_MASK',
+  'LIL_RIMSHADE',
 ] as const;
 
-const MATCAP_MODES: readonly ToonMatcapMode[] = ['normal', 'add', 'screen', 'multiply'];
+const BLEND_MODES: readonly ToonBlendMode[] = ['normal', 'add', 'screen', 'multiply'];
 
 const PARS_MARKER = '#include <lights_toon_pars_fragment>';
 const LIGHTS_END_MARKER = '#include <lights_fragment_end>';
@@ -73,15 +74,37 @@ uniform vec4 lilRimColor;
 uniform float lilRimBorder;
 uniform float lilRimBlur;
 uniform float lilRimFresnel;
+uniform float lilRimNormalStrength;
+uniform float lilRimBackfaceMask;
+uniform float lilRimShadowMask;
+uniform float lilRimMainStrength;
+uniform float lilRimEnableLighting;
+uniform int lilRimMode;
+uniform float lilRimDirStrength;
+uniform float lilRimDirRange;
+uniform float lilRimIndirRange;
+uniform vec4 lilRimIndirColor;
+uniform float lilRimIndirBorder;
+uniform float lilRimIndirBlur;
+uniform vec4 lilRimShadeColor;
+uniform float lilRimShadeBorder;
+uniform float lilRimShadeBlur;
+uniform float lilRimShadeFresnel;
+uniform float lilRimShadeNormalStrength;
 uniform vec4 lilMatcapColor;
 uniform float lilMatcapBlend;
 uniform int lilMatcapMode;
+uniform float lilMatcapShadowMask;
+uniform float lilMatcapEnableLighting;
+uniform float lilMatcapMainStrength;
+uniform float lilMatcapNormalStrength;
+uniform float lilMatcapBackfaceMask;
 uniform vec4 lilOutlineColor;
 #ifdef LIL_SHADOW_MASK
 uniform sampler2D lilShadowMask;
 #endif
-#ifdef LIL_RIM_MASK
-uniform sampler2D lilRimMask;
+#ifdef LIL_RIM_COLORTEX
+uniform sampler2D lilRimColorTex;
 #endif
 #ifdef LIL_MATCAP
 uniform sampler2D lilMatcap;
@@ -99,12 +122,18 @@ float lilTooning( float value, float border, float blur ) {
 }
 
 // 0 normal, 1 add, 2 screen, 3 multiply.
+vec3 lilBlended( vec3 dst, vec3 src, int mode ) {
+  if ( mode == 1 ) return dst + src;
+  if ( mode == 2 ) return max( dst + src - dst * src, dst );
+  if ( mode == 3 ) return dst * src;
+  return src;
+}
 vec3 lilBlend( vec3 dst, vec3 src, float a, int mode ) {
-  vec3 o = src;
-  if ( mode == 1 ) o = dst + src;
-  else if ( mode == 2 ) o = max( dst + src - dst * src, dst );
-  else if ( mode == 3 ) o = dst * src;
-  return mix( dst, o, a );
+  return mix( dst, lilBlended( dst, src, mode ), a );
+}
+// As lilBlend with a factor per channel, for a mask read as RGB.
+vec3 lilBlend3( vec3 dst, vec3 src, vec3 a, int mode ) {
+  return mix( dst, lilBlended( dst, src, mode ), a );
 }
 `;
 
@@ -149,31 +178,59 @@ vec3 lilLight = clamp( ( lilCol + max( lilAmbUp, lilAmbDown ) ) * RECIPROCAL_PI,
   lilShade = min( lilShade * lilLight, lilDirect );
   vec3 lilOut = mix( lilShade, lilDirect, lilT1 );
 
-  #ifdef LIL_RIM
-    float lilRim = pow( saturate( 1.0 - abs( dot( normal, geometryViewDir ) ) ), lilRimFresnel );
-    lilRim = lilTooning( lilRim, lilRimBorder, lilRimBlur );
-    // No rim on back faces, so a double-sided hair card does not glow from behind.
-    lilRim *= step( 0.0, faceDirection );
-    lilRim = mix( lilRim, lilRim * lilT1, 0.5 );
-    float lilRimAmount = 1.0;
-    #ifdef LIL_RIM_MASK
-      lilRimAmount = texture2D( lilRimMask, vUv ).r;
-    #endif
-    lilOut += lilRimColor.rgb * lilLight * lilRim * lilRimColor.a * lilRimAmount;
+  // lilToon's forward order from here: rim shade, matcap, rim; emission is three's.
+  #ifdef LIL_RIMSHADE
+    vec3 lilNs = normalize( mix( nonPerturbedNormal, normal, lilRimShadeNormalStrength ) );
+    float lilRs = pow( saturate( 1.0 - abs( dot( lilNs, geometryViewDir ) ) ), lilRimShadeFresnel );
+    lilRs = lilTooning( lilRs, lilRimShadeBorder, lilRimShadeBlur ) * lilRimShadeColor.a;
+    lilOut = mix( lilOut, lilOut * lilRimShadeColor.rgb, lilRs );
   #endif
 
   #ifdef LIL_MATCAP
     // three's own matcap frame; at a front bust it agrees with lilToon's.
+    vec3 lilNm = normalize( mix( nonPerturbedNormal, normal, lilMatcapNormalStrength ) );
     vec3 lilMx = normalize( vec3( geometryViewDir.z, 0.0, - geometryViewDir.x ) );
     vec3 lilMy = cross( geometryViewDir, lilMx );
-    vec2 lilMatcapUv = vec2( dot( lilMx, normal ), dot( lilMy, normal ) ) * 0.495 + 0.5;
+    vec2 lilMatcapUv = vec2( dot( lilMx, lilNm ), dot( lilMy, lilNm ) ) * 0.495 + 0.5;
     vec4 lilM = lilMatcapColor * texture2D( lilMatcap, lilMatcapUv );
-    lilM.rgb *= lilLight;
-    float lilMatcapAmount = 1.0;
+    lilM.rgb = mix( lilM.rgb, lilM.rgb * lilLight, lilMatcapEnableLighting );
+    lilM.a = mix( lilM.a, lilM.a * lilT1, lilMatcapShadowMask );
+    lilM.a = faceDirection < lilMatcapBackfaceMask - 1.0 ? 0.0 : lilM.a;
+    lilM.rgb = mix( lilM.rgb, lilM.rgb * lilAlbedo, lilMatcapMainStrength );
+    vec3 lilMatcapAmount = vec3( 1.0 );
     #ifdef LIL_MATCAP_MASK
-      lilMatcapAmount = texture2D( lilMatcapMask, vUv ).r;
+      lilMatcapAmount = texture2D( lilMatcapMask, vUv ).rgb;
     #endif
-    lilOut = lilBlend( lilOut, lilM.rgb, lilMatcapBlend * lilM.a * lilMatcapAmount, lilMatcapMode );
+    lilOut = lilBlend3( lilOut, lilM.rgb, lilMatcapBlend * lilM.a * lilMatcapAmount, lilMatcapMode );
+  #endif
+
+  #ifdef LIL_RIM
+    // lilGetRim, directional form: a lit-side band and a far-side band.
+    vec4 lilRimTex = vec4( 1.0 );
+    #ifdef LIL_RIM_COLORTEX
+      lilRimTex = texture2D( lilRimColorTex, vUv );
+    #endif
+    vec4 lilRc = lilRimColor * lilRimTex;
+    vec4 lilRic = lilRimIndirColor * lilRimTex;
+    lilRc.rgb = mix( lilRc.rgb, lilRc.rgb * lilAlbedo, lilRimMainStrength );
+    vec3 lilNr = normalize( mix( nonPerturbedNormal, normal, lilRimNormalStrength ) );
+    float lilLnRaw = dot( lilL, lilNr ) * 0.5 + 0.5;
+    // A range of -1 would divide by zero; lilToon allows the end, so floor the divisor.
+    float lilLnDir = saturate( ( lilLnRaw + lilRimDirRange ) / max( 1e-4, 1.0 + lilRimDirRange ) );
+    float lilLnIndir = saturate(
+      ( 1.0 - lilLnRaw + lilRimIndirRange ) / max( 1e-4, 1.0 + lilRimIndirRange )
+    );
+    float lilRim = pow( saturate( 1.0 - abs( dot( lilNr, geometryViewDir ) ) ), lilRimFresnel );
+    lilRim = faceDirection < lilRimBackfaceMask - 1.0 ? 0.0 : lilRim;
+    float lilRd = mix( lilRim, lilRim * lilLnDir, lilRimDirStrength );
+    float lilRi = lilRim * lilLnIndir * lilRimDirStrength;
+    lilRd = lilTooning( lilRd, lilRimBorder, lilRimBlur );
+    lilRi = lilTooning( lilRi, lilRimIndirBorder, lilRimIndirBlur );
+    lilRd = mix( lilRd, lilRd * lilT1, lilRimShadowMask );
+    lilRi = mix( lilRi, lilRi * lilT1, lilRimShadowMask );
+    vec3 lilRimLight = 1.0 - lilRimEnableLighting + lilLight * lilRimEnableLighting;
+    lilOut = lilBlend( lilOut, lilRc.rgb * lilRimLight, lilRd * lilRc.a, lilRimMode );
+    lilOut = lilBlend( lilOut, lilRic.rgb * lilRimLight, lilRi * lilRic.a, lilRimMode );
   #endif
 
   reflectedLight.directDiffuse = lilOut;
@@ -237,7 +294,7 @@ const linearRgba = ([r, g, b, a]: RgbaTuple): THREE.Vector4 => {
  */
 export class LilToonMaterial extends THREE.MeshToonMaterial {
   lilShadowMask: THREE.Texture | null = null;
-  lilRimMask: THREE.Texture | null = null;
+  lilRimColorTex: THREE.Texture | null = null;
   lilMatcap: THREE.Texture | null = null;
   lilMatcapMask: THREE.Texture | null = null;
   lilOutlineMask: THREE.Texture | null = null;
@@ -258,7 +315,7 @@ export class LilToonMaterial extends THREE.MeshToonMaterial {
     outline = false,
   ) {
     super(base);
-    const { shadow, shadow2, rim, matcap, emission, normalMap } = spec;
+    const { shadow, shadow2, rim, rimShade, matcap, emission, normalMap } = spec;
     const line = spec.outline;
     if (outline && !line) throw new Error('An outline material needs an outline spec');
 
@@ -268,7 +325,7 @@ export class LilToonMaterial extends THREE.MeshToonMaterial {
       this.lilOutlineMask = line.mask ? textures(line.mask, 'data') : null;
     } else {
       this.lilShadowMask = shadow.mask ? textures(shadow.mask, 'data') : null;
-      this.lilRimMask = rim?.mask ? textures(rim.mask, 'data') : null;
+      this.lilRimColorTex = rim?.colorTex ? textures(rim.colorTex, 'color') : null;
       this.lilMatcap = matcap ? textures(matcap.file, 'color') : null;
       this.lilMatcapMask = matcap?.mask ? textures(matcap.mask, 'data') : null;
       if (normalMap) {
@@ -288,12 +345,13 @@ export class LilToonMaterial extends THREE.MeshToonMaterial {
 
     const on: Record<(typeof FEATURES)[number], boolean> = {
       LIL_RIM: !outline && !!rim,
-      LIL_RIM_MASK: this.lilRimMask !== null,
+      LIL_RIM_COLORTEX: this.lilRimColorTex !== null,
       LIL_MATCAP: this.lilMatcap !== null,
       LIL_MATCAP_MASK: this.lilMatcapMask !== null,
       LIL_SHADOW_MASK: this.lilShadowMask !== null,
       LIL_OUTLINE: outline,
       LIL_OUTLINE_MASK: this.lilOutlineMask !== null,
+      LIL_RIMSHADE: !outline && !!rimShade,
     };
     const defines: Record<string, unknown> = { ...this.defines, USE_UV: '' };
     for (const name of FEATURES) if (on[name]) defines[name] = '';
@@ -316,14 +374,36 @@ export class LilToonMaterial extends THREE.MeshToonMaterial {
       lilRimBorder: { value: rim?.border ?? 0 },
       lilRimBlur: { value: rim?.blur ?? 0 },
       lilRimFresnel: { value: rim?.fresnelPower ?? 1 },
+      lilRimNormalStrength: { value: rim?.normalStrength ?? 1 },
+      lilRimBackfaceMask: { value: rim?.backfaceMask ?? 0 },
+      lilRimShadowMask: { value: rim?.shadowMask ?? 0 },
+      lilRimMainStrength: { value: rim?.mainStrength ?? 0 },
+      lilRimEnableLighting: { value: rim?.enableLighting ?? 1 },
+      lilRimMode: { value: rim ? BLEND_MODES.indexOf(rim.mode) : 0 },
+      lilRimDirStrength: { value: rim?.dirStrength ?? 0 },
+      lilRimDirRange: { value: rim?.dirRange ?? 0 },
+      lilRimIndirRange: { value: rim?.indirRange ?? 0 },
+      lilRimIndirColor: { value: rim ? linearRgba(rim.indirColor) : new THREE.Vector4() },
+      lilRimIndirBorder: { value: rim?.indirBorder ?? 0 },
+      lilRimIndirBlur: { value: rim?.indirBlur ?? 0 },
+      lilRimShadeColor: { value: rimShade ? linearRgba(rimShade.color) : new THREE.Vector4() },
+      lilRimShadeBorder: { value: rimShade?.border ?? 0 },
+      lilRimShadeBlur: { value: rimShade?.blur ?? 0 },
+      lilRimShadeFresnel: { value: rimShade?.fresnelPower ?? 1 },
+      lilRimShadeNormalStrength: { value: rimShade?.normalStrength ?? 1 },
       lilMatcapColor: { value: matcap ? linearRgba(matcap.color) : new THREE.Vector4() },
       lilMatcapBlend: { value: matcap?.blend ?? 0 },
-      lilMatcapMode: { value: matcap ? MATCAP_MODES.indexOf(matcap.mode) : 0 },
+      lilMatcapMode: { value: matcap ? BLEND_MODES.indexOf(matcap.mode) : 0 },
+      lilMatcapShadowMask: { value: matcap?.shadowMask ?? 0 },
+      lilMatcapEnableLighting: { value: matcap?.enableLighting ?? 1 },
+      lilMatcapMainStrength: { value: matcap?.mainStrength ?? 0 },
+      lilMatcapNormalStrength: { value: matcap?.normalStrength ?? 1 },
+      lilMatcapBackfaceMask: { value: matcap?.backfaceMask ?? 0 },
       lilOutlineColor: { value: line ? linearRgba(line.color) : new THREE.Vector4(1, 1, 1, 1) },
       lilOutlineWidth: { value: line?.width ?? 0 },
       lilOutlineFixWidth: { value: line?.fixWidth ?? 0 },
       lilShadowMask: { value: this.lilShadowMask },
-      lilRimMask: { value: this.lilRimMask },
+      lilRimColorTex: { value: this.lilRimColorTex },
       lilMatcap: { value: this.lilMatcap },
       lilMatcapMask: { value: this.lilMatcapMask },
       lilOutlineMask: { value: this.lilOutlineMask },

@@ -12,6 +12,15 @@ const shadow: ToonSpec['shadow'] = {
   normalStrength: 1,
 };
 
+/** The matcap keys these tests do not vary. */
+const matcapRest = {
+  shadowMask: 0,
+  enableLighting: 1,
+  mainStrength: 0,
+  normalStrength: 1,
+  backfaceMask: 0,
+};
+
 const avatar = (toon?: Record<string, ToonSpec>): AvatarDescriptor => ({
   id: 'yoka',
   label: { en: 'Yoka', ja: 'ヨカ' },
@@ -52,8 +61,37 @@ describe('loadToonTextures', () => {
         Skin: {
           shadow: { ...shadow, mask: 'shade.png' },
           normalMap: { file: 'normal.png', scale: 1 },
-          rim: { color: [1, 1, 1, 1], border: 0.5, blur: 0.6, fresnelPower: 3, mask: 'rim.png' },
-          matcap: { file: 'cap.png', color: [1, 1, 1, 1], blend: 1, mode: 'add', mask: 'capm.png' },
+          rim: {
+            color: [1, 1, 1, 1],
+            border: 0.5,
+            blur: 0.6,
+            fresnelPower: 3,
+            normalStrength: 1,
+            backfaceMask: 1,
+            shadowMask: 0.5,
+            mainStrength: 0,
+            enableLighting: 1,
+            mode: 'add',
+            dirStrength: 0,
+            dirRange: 0,
+            indirRange: 0,
+            indirColor: [1, 1, 1, 1],
+            indirBorder: 0.5,
+            indirBlur: 0.1,
+            colorTex: 'rim.png',
+          },
+          matcap: {
+            file: 'cap.png',
+            color: [1, 1, 1, 1],
+            blend: 1,
+            mode: 'add',
+            mask: 'capm.png',
+            shadowMask: 0,
+            enableLighting: 1,
+            mainStrength: 0,
+            normalStrength: 1,
+            backfaceMask: 0,
+          },
           emission: { color: [1, 1, 1], map: 'glow.png' },
           outline: { width: 0.08, color: [0, 0, 0, 1], fixWidth: 0.5, mask: 'line.png' },
         },
@@ -80,7 +118,7 @@ describe('loadToonTextures', () => {
       avatar({
         Skin: {
           shadow: { ...shadow, mask: 'shade.png' },
-          matcap: { file: 'cap.png', color: [1, 1, 1, 1], blend: 1, mode: 'add' },
+          matcap: { file: 'cap.png', color: [1, 1, 1, 1], blend: 1, mode: 'add', ...matcapRest },
         },
       }),
       loader,
@@ -103,7 +141,7 @@ describe('loadToonTextures', () => {
       avatar({
         Skin: {
           shadow: { ...shadow, mask: 'both.png' },
-          matcap: { file: 'both.png', color: [1, 1, 1, 1], blend: 1, mode: 'add' },
+          matcap: { file: 'both.png', color: [1, 1, 1, 1], blend: 1, mode: 'add', ...matcapRest },
         },
       }),
       loader,
@@ -122,7 +160,7 @@ describe('loadToonTextures', () => {
       avatar({
         Skin: {
           shadow: { ...shadow, mask: 'gone.png' },
-          matcap: { file: 'cap.png', color: [1, 1, 1, 1], blend: 1, mode: 'add' },
+          matcap: { file: 'cap.png', color: [1, 1, 1, 1], blend: 1, mode: 'add', ...matcapRest },
         },
       }),
       loader,
@@ -148,7 +186,7 @@ describe('loadToonTextures', () => {
       avatar({
         Skin: {
           shadow: { ...shadow, mask: 'gone.png' },
-          matcap: { file: 'cap.png', color: [1, 1, 1, 1], blend: 1, mode: 'add' },
+          matcap: { file: 'cap.png', color: [1, 1, 1, 1], blend: 1, mode: 'add', ...matcapRest },
         },
       }),
       loader,

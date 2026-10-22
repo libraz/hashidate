@@ -25,11 +25,13 @@ import type {
   SwayGroupSpec,
   SwaySpec,
   TailDrive,
+  ToonBlendMode,
   ToonEmission,
   ToonMatcap,
   ToonNormalMap,
   ToonOutline,
   ToonRim,
+  ToonRimShade,
   ToonShadow,
   ToonShadow2,
   ToonSpec,
@@ -264,6 +266,7 @@ type _PbrScalarMatchesEngine = Expect<Equals<z.output<typeof pbrScalarSchema>, P
 const rgb = z.tuple([unit, unit, unit]);
 const rgba = z.tuple([unit, unit, unit, unit]);
 const nonNegative = finite.min(0);
+const signedUnit = finite.min(-1).max(1);
 
 type _RgbMatchesEngine = Expect<Equals<z.output<typeof rgb>, RgbTuple>>;
 type _RgbaMatchesEngine = Expect<Equals<z.output<typeof rgba>, RgbaTuple>>;
@@ -289,20 +292,47 @@ const toonShadow2Schema = z.strictObject({ color: rgba, border: unit, blur: unit
 
 const toonNormalMapSchema = z.strictObject({ file: fileSchema, scale: finite });
 
+const blendModeSchema = z.enum(['normal', 'add', 'screen', 'multiply']);
+
 const toonRimSchema = z.strictObject({
   color: rgba,
   border: unit,
   blur: unit,
   fresnelPower: nonNegative,
-  mask: fileSchema.optional(),
+  normalStrength: unit,
+  backfaceMask: unit,
+  shadowMask: unit,
+  mainStrength: unit,
+  enableLighting: unit,
+  mode: blendModeSchema,
+  dirStrength: unit,
+  dirRange: signedUnit,
+  indirRange: signedUnit,
+  indirColor: rgba,
+  indirBorder: unit,
+  indirBlur: unit,
+  colorTex: fileSchema.optional(),
+});
+
+const toonRimShadeSchema = z.strictObject({
+  color: rgba,
+  border: unit,
+  blur: unit,
+  fresnelPower: nonNegative,
+  normalStrength: unit,
 });
 
 const toonMatcapSchema = z.strictObject({
   file: fileSchema,
-  color: rgba,
+  color: z.tuple([nonNegative, nonNegative, nonNegative, unit]),
   blend: unit,
-  mode: z.enum(['normal', 'add', 'screen', 'multiply']),
+  mode: blendModeSchema,
   mask: fileSchema.optional(),
+  shadowMask: unit,
+  enableLighting: unit,
+  mainStrength: unit,
+  normalStrength: unit,
+  backfaceMask: unit,
 });
 
 const toonEmissionSchema = z.strictObject({
@@ -323,6 +353,7 @@ const toonSpecSchema = z.strictObject({
   asUnlit: unit.optional(),
   normalMap: toonNormalMapSchema.optional(),
   rim: toonRimSchema.optional(),
+  rimShade: toonRimShadeSchema.optional(),
   matcap: toonMatcapSchema.optional(),
   emission: toonEmissionSchema.optional(),
   outline: toonOutlineSchema.optional(),
@@ -334,6 +365,8 @@ type _ToonNormalMapMatchesEngine = Expect<
   Equals<z.output<typeof toonNormalMapSchema>, ToonNormalMap>
 >;
 type _ToonRimMatchesEngine = Expect<Equals<z.output<typeof toonRimSchema>, ToonRim>>;
+type _ToonRimShadeMatchesEngine = Expect<Equals<z.output<typeof toonRimShadeSchema>, ToonRimShade>>;
+type _ToonBlendModeMatchesEngine = Expect<Equals<z.output<typeof blendModeSchema>, ToonBlendMode>>;
 type _ToonMatcapMatchesEngine = Expect<Equals<z.output<typeof toonMatcapSchema>, ToonMatcap>>;
 type _ToonEmissionMatchesEngine = Expect<Equals<z.output<typeof toonEmissionSchema>, ToonEmission>>;
 type _ToonOutlineMatchesEngine = Expect<Equals<z.output<typeof toonOutlineSchema>, ToonOutline>>;
