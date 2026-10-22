@@ -249,11 +249,12 @@ export class ArmRoute {
   ): number {
     const planned = driver.planFrom(this.goalQ, context, dt, true);
     let batches = planned.environmentBatches;
-    let useRaw = planned.status !== 'progress';
     const bounds = driver.fillBounds(raw, 0, false);
-    for (let i = 0; i < DOFS && useRaw; i++) {
-      useRaw = raw[i] >= bounds.lower[i] && raw[i] <= bounds.upper[i];
+    let inBox = true;
+    for (let i = 0; i < DOFS && inBox; i++) {
+      inBox = raw[i] >= bounds.lower[i] && raw[i] <= bounds.upper[i];
     }
+    let useRaw = planned.status !== 'progress' && inBox;
     if (useRaw) {
       forwardArm(
         configurationFromQ(this.goalQ, this.configuration),
@@ -278,12 +279,21 @@ export class ArmRoute {
       this.goalQ.set(raw);
     } else if (planned.status !== 'blocked') {
       this.goalQ.set(planned.q);
-    } else if (driver.restoreEndpointFrom(this.goalQ, context, dt, true)) {
-      // The chain's last goal is not clear in this frame: push it clear first.
-      batches += driver.output.environmentBatches;
-      this.goalQ.set(driver.output.q);
     } else {
-      batches += driver.output.environmentBatches;
+      // A blocked chain is not always a blocked arm: the solver's step can fail
+      // from a corner of the joint box, and holding the goal there would hold
+      // it for good. One box step toward an admissible raw keeps it reachable.
+      const stepped = inBox && this.stepTowardRaw(driver, context, raw, curls, spread, dt);
+      if (inBox) batches += driver.bridgeOutput.environmentBatches;
+      if (stepped) {
+        this.goalQ.set(this.step);
+      } else if (driver.restoreEndpointFrom(this.goalQ, context, dt, true)) {
+        // The chain's last goal is not clear in this frame: push it clear first.
+        batches += driver.output.environmentBatches;
+        this.goalQ.set(driver.output.q);
+      } else {
+        batches += driver.output.environmentBatches;
+      }
     }
     let projected = false;
     for (let i = 0; i < DOFS && !projected; i++) projected = this.goalQ[i] !== raw[i];
@@ -301,6 +311,26 @@ export class ArmRoute {
       this._stopping = false;
     }
     return batches;
+  }
+
+  /**
+   * Move from the goal toward `raw` by at most one frame's slew per DOF, the
+   * box a plan step searches, into `step`; true when that pose validates.
+   */
+  private stepTowardRaw(
+    driver: ArmDriver,
+    context: ArmForwardContext,
+    raw: Float64Array,
+    curls: FingerSpec,
+    spread: FingerSpec,
+    dt: number,
+  ): boolean {
+    const box = driver.fillBounds(this.goalQ, dt, true);
+    for (let i = 0; i < DOFS; i++) {
+      const target = this.goalQ[i] + difference(raw, this.goalQ, i);
+      this.step[i] = Math.min(box.upper[i], Math.max(box.lower[i], target));
+    }
+    return driver.validateLockedPose(this.step, context, curls, spread);
   }
 
   /** Commanded q: the goal plus the carry, inside the joint box. */

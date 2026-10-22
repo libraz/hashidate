@@ -367,3 +367,57 @@ describe('arm route tracking', () => {
     }
   });
 });
+
+describe('arm route recovery', () => {
+  /**
+   * A hand brought in to the chest with the forearm, wrist flexion and
+   * deviation all on their stops, as a heart held in front of it leaves them.
+   */
+  function pinned(s: Scene): Float64Array {
+    const joints = s.driver.calibration.joints;
+    return Float64Array.from([
+      1.556,
+      0.299,
+      -0.181,
+      1.655,
+      joints.elbow.dofs.rotation.max[1],
+      joints.wrist.dofs.flexion.max[0],
+      joints.wrist.dofs.deviation.max[0],
+    ]);
+  }
+
+  it('reaches an admissible raw q at rest when no plan step leaves the goal', () => {
+    const s = scene();
+    const from = pinned(s);
+    const rest = Float64Array.from([0.436, 0.336, -0.841, 0.177, 0.512, 0.049, -0.001]);
+    expect(validates(s, from)).toBe(true);
+    expect(validates(s, rest)).toBe(true);
+    // On a real mesh the solver's step can fail from a clear start on the
+    // stops: the plan reports blocked and leaves q where it started.
+    const plan = s.driver.planFrom.bind(s.driver);
+    vi.spyOn(s.driver, 'planFrom').mockImplementation((start, ...rest) => {
+      const out = plan(start, ...rest);
+      out.status = 'blocked';
+      out.q.set(start);
+      return out;
+    });
+    const route = new ArmRoute(TAIL);
+    route.reset(from);
+    const dt = 1 / 60;
+    let reached = -1;
+    for (let k = 0; k < 60 && reached < 0; k++) {
+      requestAt(s, rest);
+      s.driver.accept(route.qAcc, s.context, NO_FINGERS, NO_FINGERS);
+      route.track(s.driver, s.context, rest, NO_FINGERS, NO_FINGERS, dt);
+      route.accept(route.command(s.driver, new Float64Array(7)), dt);
+      let gap = 0;
+      for (let i = 0; i < 7; i++) gap = Math.max(gap, Math.abs(route.goalQ[i] - rest[i]));
+      if (gap < 1e-9) reached = k;
+    }
+    // One box step per frame at the slew limit covers the widest DOF.
+    let widest = 0;
+    for (let i = 0; i < 7; i++) widest = Math.max(widest, Math.abs(rest[i] - from[i]));
+    expect(reached).toBeGreaterThanOrEqual(0);
+    expect(reached).toBeLessThanOrEqual(Math.ceil(widest / (LIMIT_SLEW * dt)));
+  });
+});
