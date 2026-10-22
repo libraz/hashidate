@@ -38,6 +38,8 @@ export class Wardrobe {
   readonly presetDefs: Record<string, WardrobePreset>;
   readonly note: Localized | null;
   readonly all: THREE.Mesh[] = [];
+  /** Every object carrying a glTF node name in `userData.name`. */
+  private readonly namedObjects: THREE.Object3D[] = [];
   /** Which item is worn in each slot, or null for none. */
   readonly state: Record<string, string | null> = {};
   /** Item meshes the descriptor names that this GLB does not have. */
@@ -59,6 +61,7 @@ export class Wardrobe {
     this.note = table?.note ?? null;
     root.traverse((o) => {
       if (o instanceof THREE.Mesh) this.all.push(o);
+      if (typeof o.userData?.name === 'string') this.namedObjects.push(o);
     });
 
     for (const [slot, def] of Object.entries(this.slots)) {
@@ -78,15 +81,25 @@ export class Wardrobe {
    *   "<mesh>__<material>" — we split multi-material meshes ourselves
    *   "<mesh>_<n>"         — glTF disambiguates a clash with a bone of the
    *                          same name, which is how "Pillow" became "Pillow_1"
+   * A glTF node name also matches: the node's Mesh, or for a multi-primitive
+   * node (a Group) its direct child Meshes.
    */
   private resolve(name: string): THREE.Mesh[] {
     // Mesh names reach the scene through the loader's sanitiser; the descriptor
     // may spell them as the authoring tool did.
     const wanted = THREE.PropertyBinding.sanitizeNodeName(name);
-    return this.all.filter(
-      (m) =>
-        m.name === wanted || m.name.startsWith(`${wanted}__`) || isNumberedClash(m.name, wanted),
+    const found = new Set(
+      this.all.filter(
+        (m) =>
+          m.name === wanted || m.name.startsWith(`${wanted}__`) || isNumberedClash(m.name, wanted),
+      ),
     );
+    for (const o of this.namedObjects) {
+      if (THREE.PropertyBinding.sanitizeNodeName(o.userData.name) !== wanted) continue;
+      if (o instanceof THREE.Mesh) found.add(o);
+      else for (const c of o.children) if (c instanceof THREE.Mesh) found.add(c);
+    }
+    return [...found];
   }
 
   set(slot: string, itemId: string | null): void {

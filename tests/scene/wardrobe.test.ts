@@ -1,4 +1,4 @@
-import type * as THREE from 'three';
+import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { buildProfile } from '@/engine/profile';
 import { Wardrobe } from '@/engine/scene/wardrobe';
@@ -431,5 +431,85 @@ describe('wardrobe mesh names', () => {
     );
 
     expect(wardrobe.missing).toEqual([]);
+  });
+});
+
+describe('wardrobe glTF node names', () => {
+  const tableFor = (meshes: string[]): WardrobeTable => ({
+    slots: { outfit: { label: same('Outfit'), items: [{ id: 'on', label: same('On'), meshes }] } },
+  });
+
+  /** A mesh as the loader leaves it: named after the glTF mesh, node name in userData. */
+  const mesh = (name: string): THREE.Mesh => {
+    const m = new THREE.Mesh();
+    m.name = name;
+    return m;
+  };
+
+  /** A multi-primitive node: a Group over Meshes named `<mesh>`, `<mesh>_1`, … */
+  const group = (nodeName: string, children: string[]): THREE.Group => {
+    const g = new THREE.Group();
+    g.name = THREE.PropertyBinding.sanitizeNodeName(nodeName);
+    g.userData.name = nodeName;
+    for (const c of children) g.add(mesh(c));
+    return g;
+  };
+
+  const wear = (attach: (root: THREE.Object3D) => void, entries: string[]) => {
+    const rig = buildRig({});
+    attach(rig.root);
+    const wardrobe = new Wardrobe(
+      rig.root,
+      buildProfile(rig.root, rig.descriptor),
+      tableFor(entries),
+    );
+    const resolve = (wardrobe as unknown as { resolve(n: string): THREE.Mesh[] }).resolve.bind(
+      wardrobe,
+    );
+    return { wardrobe, resolve };
+  };
+
+  it('matches a single-primitive node by the name in userData', () => {
+    const ribbon = mesh('Mesh_17');
+    ribbon.userData.name = 'Ribbon';
+    const { wardrobe } = wear((root) => root.add(ribbon), ['Ribbon']);
+
+    expect(wardrobe.missing).toEqual([]);
+    expect(ribbon.visible).toBe(false);
+  });
+
+  it('matches the child Meshes of a multi-primitive node', () => {
+    const coat = group('Coat', ['CoatMesh', 'CoatMesh_1']);
+    const { wardrobe, resolve } = wear((root) => root.add(coat), ['Coat']);
+
+    expect(wardrobe.missing).toEqual([]);
+    expect(resolve('Coat')).toEqual(coat.children);
+    for (const child of coat.children) expect(child.visible).toBe(false);
+  });
+
+  it('matches a node name with a space by either spelling', () => {
+    const coat = group('Coat Front', ['FrontMesh', 'FrontMesh_1']);
+    const { wardrobe, resolve } = wear((root) => root.add(coat), ['Coat Front']);
+
+    expect(wardrobe.missing).toEqual([]);
+    expect(resolve('Coat Front')).toEqual(coat.children);
+    expect(resolve('Coat_Front')).toEqual(coat.children);
+  });
+
+  it('still matches a legacy mesh-name entry beside a node-name entry', () => {
+    const coat = group('Coat', ['CoatMesh', 'CoatMesh_1']);
+    const { wardrobe, resolve } = wear((root) => root.add(coat), ['CoatMesh', 'Coat']);
+
+    expect(wardrobe.missing).toEqual([]);
+    expect(resolve('CoatMesh')).toEqual([coat.children[0], coat.children[1]]);
+  });
+
+  it('resolves a Mesh matched by both mesh name and node name once', () => {
+    const cape = group('Cape', ['Cape', 'Lining']);
+    const { wardrobe, resolve } = wear((root) => root.add(cape), ['Cape']);
+
+    expect(resolve('Cape')).toHaveLength(2);
+    expect(wardrobe.missing).toEqual([]);
+    for (const child of cape.children) expect(child.visible).toBe(false);
   });
 });
