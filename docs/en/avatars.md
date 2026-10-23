@@ -114,7 +114,7 @@ Every object in a file is strict: an unknown key is an error naming its path, an
 Two details sit inside sway groups and materials:
 
 - `anchor` on a sway group attaches the group's root to a point weighted across bones that are already simulated, so a part of a garment follows the skin it sits on.
-- `reflection` on a preserved PBR material sets how strongly it reflects the runtime's own studio environment. Without it the material sees only the scene environment, which is empty without a backdrop, and a metal draws dark.
+- `reflection` on a preserved PBR material sets how strongly it reflects the runtime's own metal environment: a dark studio with three softboxes, the brightest on the default key light's side, so the reflection moves across an edge as the body turns. It is the same whatever room is up, and with slides on screen there is no room at all. Without it the material sees only the scene environment, which is empty without a backdrop, and a metal draws dark.
 
 ### Bone names
 
@@ -170,7 +170,7 @@ Only `shadow` is required, and inside a block every key is required except those
 
 | Block | Keys | Meaning |
 |---|---|---|
-| `shadow` | `color`, `border`, `blur`, `strength`, `normalStrength`, `mask`? | The shade. `color` tints the albedo where the surface turns from the light, `border` and `blur` place and soften the edge, `strength` scales the shade (0 turns it off), and `normalStrength` sets how far the shade follows the normal map instead of the mesh normal. `mask` is a texture whose red channel scales `strength`. |
+| `shadow` | `color`, `border`, `blur`, `strength`, `normalStrength`, `receive`?, `mask`? | The shade. `color` tints the albedo where the surface turns from the light, `border` and `blur` place and soften the edge, `strength` scales the shade (0 turns it off), and `normalStrength` sets how far the shade follows the normal map instead of the mesh normal. `receive` (0 to 1, absent is 0) is how far a cast shadow pushes the surface into the shade — the room's lights cast, and with no room up the default key casts onto the avatar itself; it moves the border rather than darkening the light, so a cast shadow takes the shade's colour and edge. `mask` is a texture whose red channel scales `strength`. |
 | `shadow2` | `color` (RGBA), `border`, `blur` | A second, darker band inside the shade. The alpha is how much of it shows. |
 | `asUnlit` | number, 0 to 1 | How far the shade is lifted back toward the lit colour. Omitted is 0. |
 | `normalMap` | `file`, `scale` | A normal map and its strength. A negative `scale` flips it. |
@@ -222,7 +222,9 @@ For supported standing rigs, the feet keep their rest positions and orientations
 
 ## Wardrobe
 
-Slots, presets and the hide-shapes that go with them, read from the model's meshes:
+Slots, presets and the hide-shapes that go with them, read from the model's meshes.
+
+A name in an item's `meshes` matches a mesh of that name, the `<mesh>__<material>` pieces a multi-material mesh is split into, and the `<mesh>_<n>` spelling glTF gives a mesh whose name clashes with a bone. It also matches a glTF node name: the node's mesh, or every primitive of a node that holds several. A table written from node names therefore does not depend on how the exporter named the meshes.
 
 ```sh
 yarn ctl wear --slot outer none
