@@ -23,7 +23,7 @@ import { rendererId } from '../../renderer-id';
 import { stageMode } from '../../stage-mode';
 import { BrowserVoice } from '../../voice';
 import { BackdropStage } from '../backdrop';
-import { StudioEnvironment } from '../environment';
+import { MetalEnvironment, StudioEnvironment } from '../environment';
 import { buildFramings } from '../framing';
 import {
   FULL_AVATAR,
@@ -35,6 +35,7 @@ import {
   type StageSize,
 } from '../placement';
 import { PostStage } from '../post';
+import { DefaultRig } from '../rig';
 import { SlideStage } from '../slides';
 import { FOV, ShotCamera } from './camera';
 import { buildHud, HUD_INTERVAL, type Hud } from './hud';
@@ -76,9 +77,11 @@ export class AvatarRuntime {
   private readonly host: HTMLElement;
   private readonly loader: Pick<GLTFLoader, 'loadAsync'>;
   /** The three lights the viewer ships with, together so a room can hide them. */
-  private readonly defaultRig = new THREE.Group();
+  private readonly defaultRig = new DefaultRig();
   private readonly backdrop: BackdropStage;
   private readonly environment: StudioEnvironment;
+  /** What an avatar's preserved metals reflect, apart from whatever room is up. */
+  private readonly metalEnvironment: StudioEnvironment;
   /** The document layer, which sits behind everything the renderer draws. */
   private readonly slides: SlideStage;
   /** Where the camera stands, and how a drag on it is published. */
@@ -241,22 +244,10 @@ export class AvatarRuntime {
     );
     this.postStage = new PostStage(this.renderer, undefined, { multisample: !this.embedded });
 
-    // Toon materials blow out easily; these levels are tuned for MeshToonMaterial.
-    //
-    // Held in a group so a backdrop can hide the whole rig with one flag. A room
-    // brings its own light — that is most of what distinguishes one room from
-    // another — and the alternative to switching this off is scaling it, which
-    // would mean these numbers being read and multiplied somewhere else.
-    this.defaultRig.add(new THREE.HemisphereLight(0xffffff, 0x4a5160, 0.85));
-    const key = new THREE.DirectionalLight(0xffffff, 1.05);
-    key.position.set(1, 1.6, 2.5);
-    this.defaultRig.add(key);
-    const rim = new THREE.DirectionalLight(0xbcd2ff, 0.35);
-    rim.position.set(-1.6, 0.8, -2);
-    this.defaultRig.add(rim);
     this.scene.add(this.defaultRig);
 
     this.environment = new StudioEnvironment(this.renderer);
+    this.metalEnvironment = new StudioEnvironment(this.renderer, () => new MetalEnvironment());
     this.backdrop = new BackdropStage(
       this.scene,
       this.renderer,
@@ -675,17 +666,18 @@ export class AvatarRuntime {
   };
 
   /**
-   * Three rebuilds its own state on restore; the reflection map was rendered
-   * into the lost context, so it is rebuilt and handed to the room, the
-   * furniture and the avatar's reflective clones.
+   * Three rebuilds its own state on restore; the reflection maps were rendered
+   * into the lost context, so each is rebuilt and handed back to what borrowed
+   * it: the studio map to the room and the furniture, the metal map to the
+   * avatar's reflective clones.
    */
   private readonly onContextRestored = (): void => {
     if (this.disposed) return;
     const lost = this.environment.invalidate();
-    if (!lost) return;
-    const rebuilt = this.environment.texture;
-    this.backdrop.rebindEnvironment(lost, rebuilt);
-    this.current?.materials.rebindEnvironment(rebuilt);
+    if (lost) this.backdrop.rebindEnvironment(lost, this.environment.texture);
+    if (this.metalEnvironment.invalidate()) {
+      this.current?.materials.rebindEnvironment(this.metalEnvironment.texture);
+    }
   };
 
   /**
@@ -759,7 +751,7 @@ export class AvatarRuntime {
         root,
         avatar,
         this.toon,
-        () => this.environment.texture,
+        () => this.metalEnvironment.texture,
         gltf.parser,
         toonTextures,
       );
@@ -928,6 +920,7 @@ export class AvatarRuntime {
     this.slides.dispose();
     this.backdrop.dispose();
     this.environment.dispose();
+    this.metalEnvironment.dispose();
     this.shotCamera.dispose();
     this.postStage.dispose();
     this.renderer.dispose();
@@ -987,6 +980,7 @@ export class AvatarRuntime {
     if (cur && focus) {
       this.focusWorld.copy(focus.centre).applyMatrix4(cur.root.matrixWorld);
       this.postStage.setFocus(this.focusWorld, focus.radius);
+      this.defaultRig.fitShadow(this.focusWorld, focus.radius);
     }
     this.postStage.render(this.scene, this.camera);
     // The composer exists from the first frame bloom or a finish is on, and its

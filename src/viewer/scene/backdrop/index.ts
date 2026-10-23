@@ -37,9 +37,9 @@ import type { TextureBin } from './textures';
  *
  * ## Shadows
  *
- * Left on permanently. With no backdrop mounted nothing declares itself a
- * receiver, so the shadow pass has nothing to draw and costs a state change —
- * whereas toggling `shadowMap.enabled` invalidates every compiled program in
+ * Left on permanently. With no backdrop mounted the default rig's key still
+ * casts, onto the avatar alone, so the pass is one skinned draw of the
+ * character — whereas toggling `shadowMap.enabled` invalidates every compiled program in
  * the scene, which is a visible hitch at exactly the moment the operator is
  * looking at the render. For the same reason `prewarm` compiles the state a
  * transition is about to switch to, since the tone mapping, fog and light set

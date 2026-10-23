@@ -176,7 +176,7 @@ describe('the finish follows the room', () => {
 });
 
 describe('the focus follows the avatar', () => {
-  it('hands the stage the measured sphere in world space before each render', () => {
+  it('hands the stage and the key shadow the measured sphere in world space before each render', () => {
     const order: string[] = [];
     const seen: { centre: THREE.Vector3; radius: number }[] = [];
     const setFocus = vi.fn((centre: THREE.Vector3, radius: number) => {
@@ -202,12 +202,19 @@ describe('the focus follows the avatar', () => {
       focusSphere: { centre: new THREE.Vector3(0, 1.2, 0), radius: 0.9 },
       focusWorld: new THREE.Vector3(),
       postStage: { render: () => order.push('render'), setFocus, target: null },
+      defaultRig: {
+        fitShadow: (centre: THREE.Vector3, radius: number) => {
+          order.push('shadow');
+          seen.push({ centre: centre.clone(), radius });
+        },
+      },
       warmedTarget: null,
     });
 
     runtime.tick();
 
-    expect(order).toEqual(['focus', 'render']);
+    expect(order).toEqual(['focus', 'shadow', 'render']);
+    expect(seen[1]).toEqual(seen[0]);
     expect(seen[0].centre.toArray()).toEqual([0.5, 1.2, -1]);
     expect(seen[0].radius).toBe(0.9);
   });

@@ -68,6 +68,7 @@ function bareRuntime(loader: { loadAsync: (url: string) => Promise<unknown> }): 
     slides: { dispose: vi.fn() },
     backdrop: { dispose: vi.fn() },
     environment: { dispose: vi.fn(), texture: null },
+    metalEnvironment: { dispose: vi.fn(), texture: null },
     toon: true,
     shotCamera: { dispose: vi.fn() },
   });
