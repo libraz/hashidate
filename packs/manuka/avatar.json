@@ -103,7 +103,8 @@
           "border": 0.117,
           "blur": 0.189,
           "strength": 1,
-          "normalStrength": 0
+          "normalStrength": 0,
+          "receive": 1
         },
         "shadow2": {
           "color": [
@@ -165,7 +166,8 @@
           "border": 0.331,
           "blur": 0.108,
           "strength": 1,
-          "normalStrength": 1
+          "normalStrength": 1,
+          "receive": 1
         },
         "shadow2": {
           "color": [
@@ -231,6 +233,7 @@
           "blur": 0.189,
           "strength": 1,
           "normalStrength": 0,
+          "receive": 1,
           "mask": "Manuka_face_mask_2.png"
         },
         "shadow2": {
@@ -273,7 +276,8 @@
           "border": 0.397,
           "blur": 0.097,
           "strength": 1,
-          "normalStrength": 1
+          "normalStrength": 1,
+          "receive": 1
         },
         "shadow2": {
           "color": [
@@ -338,7 +342,8 @@
           "border": 0.49995,
           "blur": 0.0001,
           "strength": 1,
-          "normalStrength": 0
+          "normalStrength": 0,
+          "receive": 1
         },
         "shadow2": {
           "color": [

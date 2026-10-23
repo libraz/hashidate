@@ -12,7 +12,9 @@ import type { RgbaTuple, RgbTuple, ToonBlendMode, ToonSpec } from '../types';
  * per light.
  *
  * Skinning, morphs, maps, alpha, emission, fog and tone mapping stay three's,
- * which is why this patches four include markers rather than owning a shader.
+ * which is why this patches five include markers rather than owning a shader;
+ * the one chunk rewritten is the light loop, so a shadow reaches the border
+ * rather than the light.
  * The outline variant is the same material drawn as an inverted hull.
  */
 
@@ -41,8 +43,29 @@ const BLEND_MODES: readonly ToonBlendMode[] = ['normal', 'add', 'screen', 'multi
 
 const PARS_MARKER = '#include <lights_toon_pars_fragment>';
 const LIGHTS_END_MARKER = '#include <lights_fragment_end>';
+const LIGHTS_BEGIN_MARKER = '#include <lights_fragment_begin>';
 const ALPHA_TEST_MARKER = '#include <alphatest_fragment>';
 const SKINNING_MARKER = '#include <skinning_vertex>';
+
+/** Where three folds a light's shadow into its colour: once per light type with a shadow. */
+const SHADOW_FOLD = 'directLight.color *= ( directLight.visible && receiveShadow ) ?';
+const SHADOW_FOLDS = 4;
+
+/**
+ * three's light loop with each shadow kept out of its light's colour.
+ *
+ * lilToon moves the first border by a cast shadow instead of darkening the
+ * light, so the shadow is left in `lilShadowNow` for `RE_Direct_Lil` to weigh.
+ */
+function lightsBegin(): string {
+  const parts = THREE.ShaderChunk.lights_fragment_begin.split(SHADOW_FOLD);
+  if (parts.length - 1 !== SHADOW_FOLDS) {
+    throw new Error(
+      `Toon material light loop folds ${parts.length - 1} shadows, not ${SHADOW_FOLDS}`,
+    );
+  }
+  return parts.join('lilShadowNow = ( directLight.visible && receiveShadow ) ?');
+}
 
 /**
  * Replaces three's toon pars. The varying and the struct are kept because
@@ -53,10 +76,21 @@ varying vec3 vViewPosition;
 struct ToonMaterial { vec3 diffuseColor; };
 vec3 lilDir = vec3( 0.0 );
 vec3 lilCol = vec3( 0.0 );
+// A light that casts no shadow never writes this, so each light resets it after use.
+float lilShadowNow = 1.0;
+float lilShadowSum = 0.0;
+float lilReachSum = 0.0;
 float lilLum( vec3 c ) { return dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ); }
 void RE_Direct_Lil( const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in ToonMaterial material, inout ReflectedLight reflectedLight ) {
-  lilDir += directLight.direction * lilLum( directLight.color );
+  float lilW = lilLum( directLight.color );
+  lilDir += directLight.direction * lilW;
   lilCol += directLight.color;
+  // A light the surface faces away from casts nothing on it: the body's own back
+  // is not a shadow on its front, so it carries no weight here.
+  float lilReach = lilW * max( dot( geometryNormal, directLight.direction ), 0.0 );
+  lilShadowSum += lilReach * lilShadowNow;
+  lilReachSum += lilReach;
+  lilShadowNow = 1.0;
 }
 void RE_IndirectDiffuse_Lil( const in vec3 irradiance, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in ToonMaterial material, inout ReflectedLight reflectedLight ) {}
 #define RE_Direct RE_Direct_Lil
@@ -67,6 +101,7 @@ uniform float lilShadowBorder;
 uniform float lilShadowBlur;
 uniform float lilShadowStrength;
 uniform float lilShadowNormalStrength;
+uniform float lilShadowReceive;
 uniform vec4 lilShadow2Color;
 uniform float lilShadow2Border;
 uniform float lilShadow2Blur;
@@ -167,7 +202,11 @@ vec3 lilLight = clamp( ( lilCol + max( lilAmbUp, lilAmbDown ) ) * RECIPROCAL_PI,
   vec3 lilAlbedo = diffuseColor.rgb;
   vec3 lilN1 = normalize( mix( nonPerturbedNormal, normal, lilShadowNormalStrength ) );
   float lilLn = saturate( dot( lilL, lilN1 ) * 0.5 + 0.5 );
-  float lilT1 = lilTooning( lilLn, lilShadowBorder, lilShadowBlur );
+  // lilToon's received shadow, fused by how much of each light reaches the
+  // surface, eased where the fused direction leaves the lights' own; the first border only.
+  float lilAtten = lilReachSum > 0.0 ? lilShadowSum / lilReachSum : 1.0;
+  float lilCast = saturate( lilAtten + distance( lilL, lilDir / max( length( lilDir ), 1e-6 ) ) );
+  float lilT1 = lilTooning( lilLn * mix( 1.0, lilCast, lilShadowReceive ), lilShadowBorder, lilShadowBlur );
   float lilT2 = lilTooning( lilLn, lilShadow2Border, lilShadow2Blur );
   float lilShadowAmount = 1.0;
   #ifdef LIL_SHADOW_MASK
@@ -308,6 +347,8 @@ export class LilToonMaterial extends THREE.MeshToonMaterial {
   lilMatcap: THREE.Texture | null = null;
   lilMatcapMask: THREE.Texture | null = null;
   lilOutlineMask: THREE.Texture | null = null;
+  /** Whether a cast shadow moves this material's border; the hull never takes one. */
+  readonly receivesShadow: boolean;
   /** What `onBeforeCompile` hands the program; values are fixed at construction. */
   readonly lilUniforms: Record<string, THREE.IUniform>;
   private readonly programKey: string;
@@ -368,6 +409,7 @@ export class LilToonMaterial extends THREE.MeshToonMaterial {
     const defines: Record<string, unknown> = { ...this.defines, USE_UV: '' };
     for (const name of FEATURES) if (on[name]) defines[name] = '';
     this.defines = defines;
+    this.receivesShadow = !outline && (shadow.receive ?? 0) > 0;
     this.programKey = `lil:${FEATURES.map((name) => (on[name] ? '1' : '0')).join('')}`;
 
     this.lilUniforms = {
@@ -376,6 +418,7 @@ export class LilToonMaterial extends THREE.MeshToonMaterial {
       lilShadowBlur: { value: shadow.blur },
       lilShadowStrength: { value: shadow.strength },
       lilShadowNormalStrength: { value: shadow.normalStrength },
+      lilShadowReceive: { value: shadow.receive ?? 0 },
       lilShadow2Color: {
         value: shadow2 ? linearRgba(shadow2.color) : new THREE.Vector4(0, 0, 0, 0),
       },
@@ -434,6 +477,7 @@ export class LilToonMaterial extends THREE.MeshToonMaterial {
     };
     let fragment = shader.fragmentShader;
     fragment = patch(fragment, PARS_MARKER, 'toon lights pars', PARS);
+    fragment = patch(fragment, LIGHTS_BEGIN_MARKER, 'lights begin', lightsBegin());
     fragment = patch(fragment, LIGHTS_END_MARKER, 'lights end', `${LIGHTS_END_MARKER}\n${COMPOSE}`);
     fragment = patch(
       fragment,

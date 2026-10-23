@@ -253,13 +253,16 @@ def blend_mode(mat, key):
 
 def convert(mat):
     """A ToonSpec for one material (src/protocol/avatars.ts is the reference)."""
-    spec = {"shadow": with_mask({
+    shadow = {
         "color": rgb(mat.color("_ShadowColor", (0.82, 0.76, 0.85, 1))),
         "border": num(mat.f("_ShadowBorder", 0.5)),
         "blur": num(mat.f("_ShadowBlur", 0.1)),
         "strength": num(mat.f("_ShadowStrength", 1)) if mat.on("_UseShadow") else 0,
         "normalStrength": num(mat.f("_ShadowNormalStrength", 1)),
-    }, mat, "_ShadowStrengthMask")}
+    }
+    if mat.f("_ShadowReceive", 0) > 0:
+        shadow["receive"] = num(mat.f("_ShadowReceive", 0))
+    spec = {"shadow": with_mask(shadow, mat, "_ShadowStrengthMask")}
     second = mat.color("_Shadow2ndColor", (0.68, 0.66, 0.79, 0))
     if second[3] > 0:
         spec["shadow2"] = {"color": rgba(second), "border": num(mat.f("_Shadow2ndBorder", 0.15)),
@@ -347,6 +350,7 @@ def unsupported(mat):
     third = mat.color("_Shadow3rdColor", (0, 0, 0, 0))
     if third[3] > 0:
         found.append(("_Shadow3rdColor", rgba(third)))
+    float_if("_Shadow2ndReceive", 0, lambda v: v > 0)
     float_if("_ShadowMainStrength", 0, lambda v: v != 0)
     float_if("_ShadowEnvStrength", 0, lambda v: v != 0)
     for key in ("_ShadowColorTex", "_Shadow2ndColorTex"):

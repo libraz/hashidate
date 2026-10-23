@@ -115,6 +115,8 @@ export interface ToonShadow {
   strength: number;
   /** How far the shade follows the normal map rather than the mesh normal, 0 to 1. */
   normalStrength: number;
+  /** How far a cast shadow moves the first border, 0 to 1, as lilToon's `_ShadowReceive`. Absent is 0. */
+  receive?: number;
   /** Basename; its red channel scales `strength`. */
   mask?: string;
 }

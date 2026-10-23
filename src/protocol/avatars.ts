@@ -285,6 +285,7 @@ const toonShadowSchema = z.strictObject({
   blur: unit,
   strength: unit,
   normalStrength: unit,
+  receive: unit.optional(),
   mask: fileSchema.optional(),
 });
 

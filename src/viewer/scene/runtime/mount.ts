@@ -78,12 +78,12 @@ export function mountAvatar(
     root.updateMatrixWorld(true);
   }
 
-  // Casts, but does not receive. The shadow the avatar throws on the wall
-  // behind it is what puts it in the room rather than in front of a picture of
-  // one, and costs a second pass over geometry that is already skinned.
-  // Receiving is the other half and is deliberately left off: a skinned mesh
-  // self-shadowing at these bone counts stipples the face at exactly the
-  // framing the stream spends all its time at.
+  // Every mesh casts. The shadow the avatar throws on the wall behind it is
+  // what puts it in the room rather than in front of a picture of one, and
+  // costs a second pass over geometry that is already skinned. Receiving is the
+  // material set's call: three's own darkening on a skinned mesh at these bone
+  // counts stipples the face at exactly the framing the stream spends all its
+  // time at, so only an authored lilToon border is moved by a shadow.
   root.traverse((o) => {
     if (o instanceof THREE.Mesh) o.castShadow = true;
   });

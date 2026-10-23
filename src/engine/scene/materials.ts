@@ -359,6 +359,12 @@ export function setupMaterials(
       const orig = original.get(mesh);
       if (!orig) continue;
       mesh.material = useToon ? (Array.isArray(orig) ? mats : mats[0]) : orig;
+      // Any other material would take three's own darkening, which stipples a
+      // skinned face, so one such slot keeps the whole mesh from receiving.
+      mesh.receiveShadow =
+        useToon &&
+        mats.every((m) => m instanceof LilToonMaterial) &&
+        mats.some((m) => (m as LilToonMaterial).receivesShadow);
     }
     // The hull belongs to the authored look, so the imported set draws without it.
     if (outlines) for (const child of outlines.values()) child.visible = useToon;

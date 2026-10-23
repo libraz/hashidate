@@ -8,7 +8,9 @@ import type { AvatarDescriptor, ToonMatcap, ToonRim, ToonRimShade, ToonSpec } fr
 
 const PARS = '#include <lights_toon_pars_fragment>';
 const LIGHTS_END = '#include <lights_fragment_end>';
+const LIGHTS_BEGIN = '#include <lights_fragment_begin>';
 const ALPHA_TEST = '#include <alphatest_fragment>';
+const SHADOW_FOLD = 'directLight.color *= ( directLight.visible && receiveShadow ) ?';
 const SKINNING = '#include <skinning_vertex>';
 
 const FEATURES = [
@@ -160,6 +162,37 @@ describe('LilToonMaterial shader patch', () => {
     expect(vertexShader.indexOf('transformed += lilN * ( lilW / lilS );')).toBeGreaterThan(skin);
   });
 
+  it('keeps every light’s shadow out of its colour and moves the first border by it', () => {
+    const { fragmentShader } = compile(
+      new LilToonMaterial({}, shadowOnly(), recordingSource().source),
+    );
+    expect(fragmentShader).not.toContain(LIGHTS_BEGIN);
+    expect(fragmentShader).not.toContain(SHADOW_FOLD);
+    const folds = fragmentShader.split('lilShadowNow = ( directLight.visible && receiveShadow ) ?');
+    expect(folds).toHaveLength(5);
+    // A light with no shadow map writes nothing, so the last one's must not carry over.
+    expect(fragmentShader).toMatch(/lilReachSum \+= lilReach;\s*lilShadowNow = 1\.0;/);
+    // Weighted by what reaches the surface, so a light behind it shadows nothing.
+    expect(fragmentShader).toContain(
+      'lilW * max( dot( geometryNormal, directLight.direction ), 0.0 )',
+    );
+    expect(fragmentShader).toContain(
+      'lilTooning( lilLn * mix( 1.0, lilCast, lilShadowReceive ), lilShadowBorder, lilShadowBlur )',
+    );
+    expect(fragmentShader).toContain('lilTooning( lilLn, lilShadow2Border, lilShadow2Blur )');
+  });
+
+  it('throws when three’s light loop folds a different number of shadows', () => {
+    const material = new LilToonMaterial({}, shadowOnly(), recordingSource().source);
+    const chunk = THREE.ShaderChunk.lights_fragment_begin;
+    try {
+      THREE.ShaderChunk.lights_fragment_begin = `${chunk}\n${SHADOW_FOLD} 1.0 : 1.0;`;
+      expect(() => compile(material)).toThrow(/folds 5 shadows, not 4/);
+    } finally {
+      THREE.ShaderChunk.lights_fragment_begin = chunk;
+    }
+  });
+
   it('supplies a uniform for every lil uniform either stage declares', () => {
     const { source } = recordingSource();
     const full: ToonSpec = {
@@ -180,6 +213,7 @@ describe('LilToonMaterial shader patch', () => {
 
   it.each([
     ['fragment', PARS],
+    ['fragment', LIGHTS_BEGIN],
     ['fragment', LIGHTS_END],
     ['fragment', ALPHA_TEST],
     ['vertex', SKINNING],
@@ -297,6 +331,7 @@ describe('LilToonMaterial values', () => {
     expect(uniforms.lilShadowBorder.value).toBe(0.39);
     expect(uniforms.lilShadowBlur.value).toBe(0.26);
     expect(uniforms.lilShadowNormalStrength.value).toBe(0.8);
+    expect(uniforms.lilShadowReceive.value).toBe(0);
     expect(uniforms.lilAsUnlit.value).toBe(0.2);
     expect(uniforms.lilRimFresnel.value).toBe(3.5);
     expect(uniforms.lilMatcapBlend.value).toBe(0.6);
@@ -399,6 +434,19 @@ describe('LilToonMaterial values', () => {
         expect(uniforms[name].value).toBe(texture);
       }
     }
+  });
+
+  it('receives as authored on the body and never on the hull', () => {
+    const receiving: ToonSpec = {
+      shadow: { ...shadowOnly().shadow, receive: 1 },
+      outline: { width: 0.08, color: [0.6, 0.5, 0.7, 1], fixWidth: 0.5 },
+    };
+    const { source } = recordingSource();
+    const body = new LilToonMaterial({}, receiving, source);
+    expect(body.receivesShadow).toBe(true);
+    expect(compile(body).uniforms.lilShadowReceive.value).toBe(1);
+    expect(new LilToonMaterial({}, receiving, source, true).receivesShadow).toBe(false);
+    expect(new LilToonMaterial({}, shadowOnly(), source).receivesShadow).toBe(false);
   });
 
   it('refuses an outline variant without an outline spec', () => {

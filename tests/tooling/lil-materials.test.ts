@@ -166,6 +166,7 @@ const body: Mat = {
   textures: `_MainTex=${TEX.main} _OutlineTex=${TEX.main} _RimColorTex=${TEX.mask} _BumpMap=${TEX.normal} _MatCapTex=${TEX.matcap} _MatCapBlendMask=${TEX.other} _RimShadeMask=${TEX.shade} _EmissionMap=${TEX.glow}`,
   floats:
     '_UseShadow=1 _ShadowBorder=0.39 _ShadowBlur=0.26 _ShadowStrength=1 _ShadowNormalStrength=0 ' +
+    '_ShadowReceive=1 ' +
     '_Shadow2ndBorder=0.214 _Shadow2ndBlur=0.073 _UseRim=1 _RimBorder=0.6685 _RimBlur=0.663 ' +
     '_RimFresnelPower=2.8402147 _RimNormalStrength=0 _RimBackfaceMask=0 _RimShadowMask=1 ' +
     '_RimMainStrength=0.516 _RimEnableLighting=1 _RimBlendMode=0 _RimDirStrength=1 _RimDirRange=-1 ' +
@@ -218,6 +219,7 @@ describe('lil_materials.py', () => {
         blur: 0.26,
         strength: 1,
         normalStrength: 0,
+        receive: 1,
       },
       shadow2: { color: [0.5, 0.4, 0.3, 0.6], border: 0.214, blur: 0.073 },
       asUnlit: 0.2,
@@ -267,6 +269,8 @@ describe('lil_materials.py', () => {
     });
     // _UseShadow=0 keeps the block and turns it off; no outline off an outline-less shader.
     expect(specs.Eye?.shadow).toMatchObject({ strength: 0 });
+    // lilToon's _ShadowReceive defaults to 0, and a material left at it receives nothing.
+    expect(specs.Eye?.shadow).not.toHaveProperty('receive');
     expect(specs.Eye).not.toHaveProperty('outline');
     expect(specs.Tail).not.toHaveProperty('outline');
   });
@@ -466,7 +470,9 @@ describe('lil_materials.py', () => {
         'Assets/Demo/Materials/Body.mat': {
           shader: SHADER.outline,
           textures: `_MainTex=${TEX.main} _OutlineTex=${TEX.other}`,
-          floats: '_UseShadow=1 _ShadowBorderRange=0.08 _UseBacklight=1 _ShadowEnvStrength=0.5',
+          floats:
+            '_UseShadow=1 _ShadowBorderRange=0.08 _UseBacklight=1 _ShadowEnvStrength=0.5 ' +
+            '_Shadow2ndReceive=1',
         },
         'Assets/Demo/Materials/Eye.mat': {
           ...eye,
@@ -501,6 +507,7 @@ describe('lil_materials.py', () => {
     );
     expect(result.stderr).toContain('warning: Body (Body.mat): _UseBacklight = 1');
     expect(result.stderr).toContain('warning: Body (Body.mat): _ShadowEnvStrength = 0.5');
+    expect(result.stderr).toContain('warning: Body (Body.mat): _Shadow2ndReceive = 1');
     expect(result.stderr).toContain('warning: Eye (Eye.mat): _UseGlitter = 1');
     expect(result.stderr).not.toContain('_RimShadowMask');
   });

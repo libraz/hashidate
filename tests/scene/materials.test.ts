@@ -683,6 +683,29 @@ describe('authored lilToon specs', () => {
     materials.dispose();
   });
 
+  it.each([
+    ['every slot authored and one receiving', { A: 1, B: 0 }, true],
+    ['every slot authored and none receiving', { A: 0, B: 0 }, false],
+    ['one slot left to the plain toon variant', { A: 1 }, false],
+  ] as const)('receives on a mesh with %s only in toon mode', (_, receive, expected) => {
+    const named = (name: string) => Object.assign(new THREE.MeshStandardMaterial(), { name });
+    const object = mesh([named('A'), named('B')]);
+    const root = new THREE.Group().add(object);
+    const toon = Object.fromEntries(
+      Object.entries(receive).map(([name, value]) => [
+        name,
+        shade({ shadow: { ...shade().shadow, receive: value } }),
+      ]),
+    );
+
+    const materials = setupMaterials(root, avatar({ toon }));
+    materials.apply(true);
+    expect(object.receiveShadow).toBe(expected);
+    materials.apply(false);
+    expect(object.receiveShadow).toBe(false);
+    materials.dispose();
+  });
+
   it('keeps the imported normal map and emission when the spec names none', () => {
     const normalMap = new THREE.Texture();
     const emissiveMap = new THREE.Texture();
