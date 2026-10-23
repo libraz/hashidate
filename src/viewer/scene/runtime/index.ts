@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import type { WornState } from '@/engine/scene';
 import { Session } from '@/engine/session';
 import type {
   AvatarDescriptor,
@@ -213,6 +214,8 @@ export class AvatarRuntime {
 
   /** A swap asked for while another was in flight. Started when that one lands. */
   private queued: AvatarDescriptor | null = null;
+  /** What the queued avatar wears over its `default` preset. */
+  private queuedWorn: WornState | undefined;
   /** Invalidates every load continuation once teardown starts. */
   private disposed = false;
   private loadGeneration = 0;
@@ -703,7 +706,7 @@ export class AvatarRuntime {
    * previous avatar — a morph still driven, a panel timer still polling a dead
    * director — shows up here rather than in production.
    */
-  async load(avatar: AvatarDescriptor): Promise<void> {
+  async load(avatar: AvatarDescriptor, worn?: WornState): Promise<void> {
     if (this.disposed) return;
     // Asked for during another load, the request waits rather than being
     // dropped. That case used to be theoretical and is now the ordinary one:
@@ -711,10 +714,12 @@ export class AvatarRuntime {
     // connects, and the stream connects while the first model is still coming
     // down. Dropped, the avatar the operator chose would silently not appear.
     if (this.loading) {
-      this.queued = avatar.id === this.loading ? null : avatar;
+      this.queued = avatar.id === this.loading && !worn ? null : avatar;
+      this.queuedWorn = worn;
       return;
     }
-    if (avatar.id === this.current?.avatar.id) return;
+    // The same avatar again only to wear a different pose, which is built in.
+    if (avatar.id === this.current?.avatar.id && !worn) return;
     const generation = ++this.loadGeneration;
     this.loading = avatar.id;
     this.setStatus({ phase: 'loading', avatar });
@@ -754,8 +759,10 @@ export class AvatarRuntime {
         () => this.metalEnvironment.texture,
         gltf.parser,
         toonTextures,
+        worn,
       );
       const { profile, director, wardrobe, materials, problems } = mounted;
+      wardrobe.onPoseChange = (state) => void this.load(avatar, state);
 
       this.shotCamera.rebuild(buildFramings(root, profile, FOV));
 
@@ -877,8 +884,10 @@ export class AvatarRuntime {
   private drainQueued(): void {
     if (this.disposed) return;
     const next = this.queued;
+    const worn = this.queuedWorn;
     this.queued = null;
-    if (next) void this.load(next);
+    this.queuedWorn = undefined;
+    if (next) void this.load(next, worn);
   }
 
   /** Release a loaded avatar: scene graph and every GPU resource it brought. */

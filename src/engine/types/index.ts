@@ -66,6 +66,7 @@ export type {
   ToonShadow2,
   ToonSpec,
   WardrobeItem,
+  WardrobeNodePose,
   WardrobePreset,
   WardrobeSlot,
   WardrobeTable,

@@ -256,12 +256,24 @@ export interface MaterialRules {
   toon?: Record<string, ToonSpec>;
 }
 
+/** A node's local transform while an item is worn; a part left out keeps the GLB's. */
+export interface WardrobeNodePose {
+  rotation?: [number, number, number, number];
+  translation?: Vec3Tuple;
+}
+
 export interface WardrobeItem {
   id: string;
   label: Localized;
   meshes: string[];
   /** Shapes this item raises while worn — VRChat `*Hide`, or a `Shrink_*` family. */
   hide?: string[];
+  /**
+   * Rest transforms by glTF node name while this item is worn, such as the
+   * foot angle a heel needs. They are the pose the rig is built from, so
+   * wearing a different pose rebuilds the avatar.
+   */
+  pose?: Record<string, WardrobeNodePose>;
 }
 
 export interface WardrobeSlot {

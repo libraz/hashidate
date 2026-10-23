@@ -102,7 +102,7 @@ Every object in a file is strict: an unknown key is an error naming its path, an
 | `mouthShapePattern` | A pattern for the shapes the mouth layer owns while speaking. |
 | `overlays` | A drawn-shape group of effects over the face, with the same `group`, `exclude` and `label` as `presets`. |
 | `materials` | `doubleSided`, `faceDecal`, `blendTransparent` and `preserveImported` as [patterns](#patterns) over material names, and `preservedPbrOverrides`, which sets `metalness`, `roughness` and optionally `reflection` for a named preserved material. `metalness` and `roughness` must lie in 0 to 1 and `reflection` may not be negative; a file outside those ranges is rejected with the path of the value. `toon` gives named materials the look their author set in lilToon; see [Toon materials](#toon-materials). |
-| `wardrobe` | `slots`, each with `items` (`id`, `label`, `meshes`, `hide`), plus `presets` that set a slot to an item or to `null`, and a `note` shown above the slots. |
+| `wardrobe` | `slots`, each with `items` (`id`, `label`, `meshes`, `hide`, `pose`), plus `presets` that set a slot to an item or to `null`, and a `note` shown above the slots. |
 | `sway` | Secondary motion: `groups` with their figures and roots, and `colliders` sets that groups refer to by name. See [Sway tuning](#sway-tuning). |
 | `drive` | `tail`: which sway group is posed rather than only simulated, with `swing`, `lift` and `rest`. |
 | `script` | Demo turns, played by the viewer's script button. Each is a turn as the control API takes it. |
@@ -226,6 +226,14 @@ For supported standing rigs, the feet keep their rest positions and orientations
 Slots, presets and the hide-shapes that go with them, read from the model's meshes.
 
 A name in an item's `meshes` matches a mesh of that name, the `<mesh>__<material>` pieces a multi-material mesh is split into, and the `<mesh>_<n>` spelling glTF gives a mesh whose name clashes with a bone. It also matches a glTF node name: the node's mesh, or every primitive of a node that holds several. A table written from node names therefore does not depend on how the exporter named the meshes.
+
+An item can also carry a `pose`: rest transforms by glTF node name that hold while it is worn, each with a `rotation` quaternion, a `translation`, or both, in the node's local space. A pair of heels uses it to tilt `Foot_L`, `Foot_R` and the toes, and to raise the model's root by the heel height. When two worn items pose the same node, the item in the later slot wins. The rig, the grounded legs and sway all read the rest pose once when the avatar is built, so a change of outfit that changes the pose rebuilds the avatar wearing the new outfit, from the same GLB. A change that keeps the pose only switches meshes. A pose node the model lacks is reported in the wardrobe's unresolved names.
+
+```json
+{ "id": "heels", "label": { "en": "Heels", "ja": "ヒール" }, "meshes": ["Boot_L", "Boot_R"],
+  "pose": { "Foot_L": { "rotation": [-0.62, 0, 0, 0.78] }, "Foot_R": { "rotation": [-0.62, 0, 0, 0.78] },
+            "mimesisAvatarRoot": { "translation": [0, 0.021, 0] } } }
+```
 
 ```sh
 yarn ctl wear --slot outer none

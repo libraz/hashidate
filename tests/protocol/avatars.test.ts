@@ -41,6 +41,19 @@ describe('parseAvatar', () => {
     expect(reject({ ...minimal, extras: [] })).toContain('extras');
   });
 
+  it('checks a wardrobe item pose', () => {
+    const item = (pose: unknown) => ({
+      ...minimal,
+      wardrobe: { slots: { shoes: { label, items: [{ id: 'heels', label, meshes: [], pose }] } } },
+    });
+    const pose = { Foot_L: { rotation: [0.26, 0, 0, 0.97] }, Root: { translation: [0, 0.02, 0] } };
+    expect(accept(item(pose)).wardrobe?.slots.shoes.items[0].pose).toEqual(pose);
+    expect(reject(item({ Foot_L: {} }))).toContain('Foot_L');
+    expect(reject(item({ Foot_L: { rotation: [0, 0, 0, 0] } }))).toContain('zero');
+    expect(reject(item({ Foot_L: { rotation: [0, 0, 1] } }))).toContain('rotation');
+    expect(reject(item({ Foot_L: { scale: [1, 1, 1] } }))).toContain('"scale"');
+  });
+
   it('rejects a label missing a language', () => {
     expect(reject({ label: { en: 'x' } })).toContain('label.ja');
     expect(reject({ label: { ja: 'x' } })).toContain('label.en');

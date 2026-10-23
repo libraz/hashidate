@@ -403,11 +403,22 @@ type _MaterialKeysMatchEngine = Expect<
 
 // --- wardrobe -----------------------------------------------------------------
 
+const wardrobeNodePoseSchema = z
+  .strictObject({
+    rotation: z
+      .tuple([finite, finite, finite, finite])
+      .refine(([x, y, z, w]) => Math.hypot(x, y, z, w) > 1e-6, 'a rotation must not be zero')
+      .optional(),
+    translation: z.tuple([finite, finite, finite]).optional(),
+  })
+  .refine((pose) => pose.rotation || pose.translation, 'a pose needs a rotation or a translation');
+
 const wardrobeItemSchema = z.strictObject({
   id: z.string(),
   label: localizedSchema,
   meshes: names,
   hide: names.optional(),
+  pose: z.record(z.string().min(1), wardrobeNodePoseSchema).optional(),
 });
 
 type _WardrobeItemMatchesEngine = Expect<Equals<z.output<typeof wardrobeItemSchema>, WardrobeItem>>;

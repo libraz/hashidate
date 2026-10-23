@@ -102,7 +102,7 @@ yarn ctl vocab
 | `mouthShapePattern` | 発話中に口のレイヤーが受け持つシェイプのパターンです。 |
 | `overlays` | 顔の上に重ねる描き起こしエフェクトのグループです。`group`、`exclude`、`label` は `presets` と同じです。 |
 | `materials` | マテリアル名に対する `doubleSided`、`faceDecal`、`blendTransparent`、`preserveImported` の[パターン](#パターン)と、名前を指定した保持マテリアルの `metalness`、`roughness`、任意の `reflection` を設定する `preservedPbrOverrides` です。`metalness` と `roughness` は 0 から 1 の範囲、`reflection` は負にできません。範囲外のファイルは、その値のパスを示して拒否されます。 `toon` は、作者が lilToon で設定した見た目をマテリアルに与えます。[トゥーンマテリアル](#トゥーンマテリアル)を参照してください。 |
-| `wardrobe` | 各スロットの `slots`（`items` は `id`、`label`、`meshes`、`hide`）と、スロットにアイテムまたは `null` を割り当てる `presets`、スロットの上に出す `note` です。 |
+| `wardrobe` | 各スロットの `slots`（`items` は `id`、`label`、`meshes`、`hide`、`pose`）と、スロットにアイテムまたは `null` を割り当てる `presets`、スロットの上に出す `note` です。 |
 | `sway` | 揺れもの（二次モーション）です。数値と根を持つ `groups` と、グループが名前で参照する `colliders` の集合を書きます。[揺れの調整](#揺れの調整)を参照してください。 |
 | `drive` | `tail` で、どの揺れグループをシミュレートだけでなくポーズで動かすかを、`swing`、`lift`、`rest` とともに指定します。 |
 | `script` | ビューアのスクリプトボタンで再生するデモの行です。各行は制御 API が受け取る turn の形です。 |
@@ -226,6 +226,14 @@ yarn ctl avatars
 スロット、組み合わせのプリセット、それに伴う隠しシェイプを、モデルのメッシュから読み取ります。
 
 アイテムの `meshes` に書いた名前は、同じ名前のメッシュに一致します。複数マテリアルのメッシュを分けた `<mesh>__<material>` と、ボーンと名前が重なったときに glTF が付ける `<mesh>_<n>` にも一致します。glTF のノード名にも一致し、そのノードのメッシュ、プリミティブが複数あるノードならそのすべてが対象になります。ノード名で書いた表は、エクスポーターがメッシュにどんな名前を付けたかに左右されません。
+
+アイテムには `pose` も書けます。着ているあいだに使う基本姿勢を glTF のノード名ごとに書いたもので、ノードのローカル空間での `rotation`（クォータニオン）か `translation`、またはその両方を指定します。たとえばヒールでは、`Foot_L`・`Foot_R` と足指を傾け、モデルのルートをヒールの高さぶん持ち上げるのに使います。着ている2つのアイテムが同じノードを指定した場合は、後のスロットのアイテムが優先されます。リグ、接地する脚、揺れは、アバターを組み立てるときに基本姿勢を一度だけ読みます。そのため、姿勢が変わる着替えでは、同じ GLB から新しい衣装を着た状態でアバターを組み立て直します。姿勢が変わらない着替えは、メッシュを切り替えるだけです。モデルにない `pose` のノードは、衣装の未解決の名前として報告します。
+
+```json
+{ "id": "heels", "label": { "en": "Heels", "ja": "ヒール" }, "meshes": ["Boot_L", "Boot_R"],
+  "pose": { "Foot_L": { "rotation": [-0.62, 0, 0, 0.78] }, "Foot_R": { "rotation": [-0.62, 0, 0, 0.78] },
+            "mimesisAvatarRoot": { "translation": [0, 0.021, 0] } } }
+```
 
 ```sh
 yarn ctl wear --slot outer none

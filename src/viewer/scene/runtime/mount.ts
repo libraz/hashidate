@@ -5,9 +5,12 @@ import { buildProfile, loadedNodeNames, readVrmHumanoid, type VrmHumanoid } from
 import {
   type MaterialSet,
   missingTextureSource,
+  poseWardrobe,
   releaseTextureImages,
   setupMaterials,
   Wardrobe,
+  type WornState,
+  wornState,
 } from '@/engine/scene';
 import type { AvatarDescriptor, BoneOverrides, FingerOverrides, Profile } from '@/engine/types';
 import { getLocale } from '@/i18n/locale';
@@ -62,6 +65,9 @@ export function withVrmHumanoid(
  *
  * `toonTextures` is what `loadToonTextures` fetched for the descriptor. The
  * returned material set owns it from here: its `dispose` releases both.
+ *
+ * `worn` names items to wear over the `default` preset. Their pose is written
+ * onto the scene before anything measures it.
  */
 export function mountAvatar(
   root: THREE.Object3D,
@@ -70,6 +76,7 @@ export function mountAvatar(
   environment: () => THREE.Texture | null,
   parser?: Pick<GLTFParser, 'json' | 'associations'>,
   toonTextures?: ToonTextures,
+  worn?: WornState,
 ): Mounted {
   const vrm = parser ? readVrmHumanoid(parser.json, loadedNodeNames(parser.associations)) : null;
   const avatar = vrm ? withVrmHumanoid(descriptor, vrm) : descriptor;
@@ -77,6 +84,9 @@ export function mountAvatar(
     root.rotateY(Math.PI);
     root.updateMatrixWorld(true);
   }
+
+  const state = wornState(avatar.wardrobe, worn);
+  poseWardrobe(root, avatar.wardrobe, state);
 
   // Every mesh casts. The shadow the avatar throws on the wall behind it is
   // what puts it in the room rather than in front of a picture of one, and
@@ -115,7 +125,7 @@ export function mountAvatar(
   if (toonTextures?.failed.length) say('console.problem.toonTexture', toonTextures.failed, ', ');
 
   const director = new Director(profile, avatar);
-  const wardrobe = new Wardrobe(root, profile, avatar.wardrobe);
+  const wardrobe = new Wardrobe(root, profile, avatar.wardrobe, state);
   // After everything that walks the meshes, so a hull is never measured as body
   // or routed as a garment of its own.
   materials.installOutlines();

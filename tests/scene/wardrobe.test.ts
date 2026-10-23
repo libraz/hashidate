@@ -1,7 +1,13 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { buildProfile } from '@/engine/profile';
-import { Wardrobe } from '@/engine/scene/wardrobe';
+import {
+  poseWardrobe,
+  Wardrobe,
+  type WornState,
+  wardrobePose,
+  wornState,
+} from '@/engine/scene/wardrobe';
 import type { Profile, WardrobeTable } from '@/engine/types';
 import { same } from '@/i18n/locale';
 import { buildRig, type SyntheticRig } from '../helpers/scene';
@@ -511,5 +517,90 @@ describe('wardrobe glTF node names', () => {
     expect(resolve('Cape')).toHaveLength(2);
     expect(wardrobe.missing).toEqual([]);
     for (const child of cape.children) expect(child.visible).toBe(false);
+  });
+});
+
+describe('wardrobe pose', () => {
+  const leggedRig = () =>
+    buildRig({ garments: ['Tops', 'Cardigan', 'Skirt', 'Skirt_Long'], legs: true });
+  const HEEL: [number, number, number, number] = [0.2588, 0, 0, 0.9659];
+  const table: WardrobeTable = {
+    slots: {
+      top: {
+        label: same('Tops'),
+        items: [
+          { id: 'camisole', label: same('Camisole'), meshes: ['Tops'] },
+          {
+            id: 'blouse',
+            label: same('Blouse'),
+            meshes: ['Cardigan'],
+            pose: { Foot_L: { rotation: [0, 0, 0, 1] } },
+          },
+        ],
+      },
+      shoes: {
+        label: same('Shoes'),
+        items: [
+          {
+            id: 'heels',
+            label: same('Heels'),
+            meshes: ['Skirt'],
+            pose: { Foot_L: { rotation: HEEL }, Armature: { translation: [0, 0.02, 0] } },
+          },
+          { id: 'flats', label: same('Flats'), meshes: ['Skirt_Long'] },
+          {
+            id: 'ghost',
+            label: same('Ghost'),
+            meshes: ['Skirt_Long'],
+            pose: { Nowhere: { rotation: HEEL } },
+          },
+        ],
+      },
+    },
+    presets: { default: { label: same('Default'), set: { top: 'camisole', shoes: 'heels' } } },
+  };
+
+  it('starts from the default preset and lets the initial state override a slot it has', () => {
+    expect(wornState(table)).toEqual({ top: 'camisole', shoes: 'heels' });
+    expect(wornState(table, { shoes: 'flats', unknown: 'x' })).toEqual({
+      top: 'camisole',
+      shoes: 'flats',
+    });
+    expect(wornState(undefined)).toEqual({});
+  });
+
+  it('resolves the worn pose with a later slot winning on the same node', () => {
+    const pose = wardrobePose(table, { top: 'blouse', shoes: 'heels' });
+    expect(pose.get('Foot_L')).toEqual({ rotation: HEEL });
+    expect(pose.get('Armature')).toEqual({ translation: [0, 0.02, 0] });
+    expect(wardrobePose(table, { top: 'blouse', shoes: 'flats' }).get('Foot_L')).toEqual({
+      rotation: [0, 0, 0, 1],
+    });
+  });
+
+  it('writes the pose onto the scene and reports names the scene lacks', () => {
+    const rig = leggedRig();
+    const foot = must(rig.bones.get('Foot_L'), 'Foot_L');
+    expect(poseWardrobe(rig.root, table, wornState(table))).toEqual([]);
+    expect(foot.quaternion.toArray()).toEqual(
+      new THREE.Quaternion().fromArray(HEEL).normalize().toArray(),
+    );
+    expect(rig.root.position.y).toBe(0.02);
+    expect(poseWardrobe(rig.root, table, { shoes: 'ghost' })).toEqual(['Nowhere']);
+  });
+
+  it('asks for a rebuild only when the worn pose changes', () => {
+    const rig = leggedRig();
+    const state = wornState(table);
+    poseWardrobe(rig.root, table, state);
+    const wardrobe = new Wardrobe(rig.root, buildProfile(rig.root, rig.descriptor), table, state);
+    const rebuilds: WornState[] = [];
+    wardrobe.onPoseChange = (next) => rebuilds.push(next);
+    wardrobe.set('top', 'camisole');
+    expect(rebuilds).toEqual([]);
+    wardrobe.set('shoes', 'flats');
+    expect(rebuilds).toEqual([{ top: 'camisole', shoes: 'flats' }]);
+    expect(must(rig.meshes.get('Skirt_Long'), 'Skirt_Long').visible).toBe(true);
+    expect(wardrobe.missing).toEqual(['shoes/ghost: Nowhere']);
   });
 });
