@@ -108,6 +108,7 @@ Every object in a file is strict: an unknown key is an error naming its path, an
 | `script` | Demo turns, played by the viewer's script button. Each is a turn as the control API takes it. |
 | `anatomy` | Joint table for an avatar that is deliberately not human. |
 | `armRest` | Resting arm directions in character space, for a garment such as a full skirt that needs the arms held clear of the body. Slots left out keep the standing pose, and gestures blend from the declared one. |
+| `extras` | Data a tool keeps in the file for itself, keyed by the tool's name, as glTF `extras` is used. The runtime does not read it; an authoring tool that merges into the file can record there which entries it wrote. |
 
 `gaze`, `presets`, `emotionShapes`, `mouthShapePattern` and `overlays` accept `null`, which means the same as leaving them out. Writing it records that the model was looked at.
 

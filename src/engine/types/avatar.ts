@@ -400,4 +400,6 @@ export interface AvatarDescriptor {
    * keep the engine's standing pose; gestures still blend from these.
    */
   armRest?: Partial<Record<ArmSlot, Vec3Tuple>>;
+  /** Data a tool keeps in the file for itself, as glTF `extras`; the runtime ignores it. */
+  extras?: Record<string, unknown>;
 }

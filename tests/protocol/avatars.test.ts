@@ -35,6 +35,12 @@ describe('parseAvatar', () => {
     expect(reject({ ...minimal, sway: { groups: [], extra: 1 } })).toContain('"extra"');
   });
 
+  it('accepts any tool data under extras', () => {
+    const extras = { mimesis: { wardrobe: { slots: ['outfit'], presets: [] } }, other: [1] };
+    expect(accept({ ...minimal, extras }).extras).toEqual(extras);
+    expect(reject({ ...minimal, extras: [] })).toContain('extras');
+  });
+
   it('rejects a label missing a language', () => {
     expect(reject({ label: { en: 'x' } })).toContain('label.ja');
     expect(reject({ label: { ja: 'x' } })).toContain('label.en');

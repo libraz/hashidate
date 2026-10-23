@@ -587,6 +587,7 @@ export const avatarFileSchema = z.strictObject({
   script: z.array(turnSchema).optional(),
   anatomy: jointTableSchema.optional(),
   armRest: armRestSchema.optional(),
+  extras: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type AvatarFile = z.output<typeof avatarFileSchema>;
