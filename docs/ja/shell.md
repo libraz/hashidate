@@ -57,6 +57,7 @@ with HASHIDATE_CONTROL_PORT.
 | Window | hashidate — Control | パネルを前に出します。閉じてあれば開き直します |
 | Window | hashidate — Stage | ステージを前に出します。閉じてあれば開き直します |
 | Window | Mute Stage | ステージウィンドウを無音で開くかどうか。次回起動時にも引き継ぎます |
+| Window | Full Screen Stage（`⌘⇧F` / `Ctrl+Shift+F`） | ステージウィンドウを、いま載っているディスプレイいっぱいに枠なしで広げます。パネルにフォーカスがあっても効くので、ステージを 2 枚目のディスプレイに置いたまま切り替えられます。次回そのディスプレイが繋がっているとは限らないため、引き継ぎません |
 | Window | Open Slides / Scripts / Motions / Avatars / BGM / Recordings Folder | 該当するディレクトリをファイルマネージャで開きます |
 | Window | 状態表示 3 行 | 読むだけの行です。次節を参照してください |
 

@@ -196,7 +196,9 @@ function makeWindow(kind: WindowKind): BrowserWindow {
   window.setTitle(spec.title);
   guardNavigation(window, spec.path);
 
-  const remember = () => store.remember(kind, window.getBounds());
+  // Normal bounds, so a window closed while fullscreen reopens as a window
+  // rather than as a frame the size of the display it filled.
+  const remember = () => store.remember(kind, window.getNormalBounds());
   window.on('move', remember);
   window.on('resize', remember);
   window.on('close', () => {
@@ -208,7 +210,14 @@ function makeWindow(kind: WindowKind): BrowserWindow {
   window.on('closed', () => {
     if (kind === 'control' && controlWindow === window) controlWindow = null;
     if (kind === 'stage' && stageWindow === window) stageWindow = null;
+    if (kind === 'stage') rebuildMenu();
   });
+  if (kind === 'stage') {
+    // The green button and the menu item are two ways in; the checkmark
+    // follows the window, not whichever of them was used.
+    window.on('enter-full-screen', rebuildMenu);
+    window.on('leave-full-screen', rebuildMenu);
+  }
 
   void window
     .loadURL(windowURL(kind))
@@ -298,6 +307,24 @@ function setStageMuted(muted: boolean): void {
 }
 
 /**
+ * Fill the display the stage window is on, or give it its frame back.
+ *
+ * Its own item rather than the standard View toggle, which acts on the focused
+ * window: during a broadcast that is the panel, and the stage is on the other
+ * display. Not remembered, because a placement on an HDMI display that is not
+ * plugged in next time is restored onto the desk's own screen instead.
+ */
+function setStageFullScreen(fullScreen: boolean): void {
+  const window = stageWindow;
+  // With no stage open the checkbox has already flipped itself; put it back.
+  if (window === null || window.isDestroyed()) {
+    rebuildMenu();
+    return;
+  }
+  window.setFullScreen(fullScreen);
+}
+
+/**
  * The application menu, rebuilt rather than mutated.
  *
  * A status line changes a handful of times in an evening — the control server
@@ -316,6 +343,13 @@ function buildMenu(): Menu {
       type: 'checkbox',
       checked: state?.stageMuted ?? false,
       click: (item) => setStageMuted(item.checked),
+    },
+    {
+      label: 'Full Screen Stage',
+      type: 'checkbox',
+      accelerator: 'CommandOrControl+Shift+F',
+      checked: stageWindow !== null && !stageWindow.isDestroyed() && stageWindow.isFullScreen(),
+      click: (item) => setStageFullScreen(item.checked),
     },
     { type: 'separator' },
     { label: 'Open Slides Folder', click: () => void openDirectory(paths.slides) },

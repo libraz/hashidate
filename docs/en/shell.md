@@ -57,6 +57,7 @@ A second `yarn shell` does not start a second application. It raises the windows
 | Window | hashidate — Control | Raise the panel, or reopen it if it was closed |
 | Window | hashidate — Stage | Raise the stage, or reopen it |
 | Window | Mute Stage | Whether the stage window opens silent. Remembered between runs |
+| Window | Full Screen Stage (`⌘⇧F` / `Ctrl+Shift+F`) | Fill the display the stage window is on, with no frame. Works while the panel has focus, so the stage can sit on a second display. Not remembered, since that display may not be there next time |
 | Window | Open Slides / Scripts / Motions / Avatars / BGM / Recordings Folder | Open one of those directories in the file manager |
 | Window | Three status lines | Read-only. See below |
 
