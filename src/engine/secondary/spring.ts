@@ -91,6 +91,9 @@ const STEP = 1 / 60;
  */
 const MAX_STEPS = 4;
 
+/** Relative slack on `Collider#beyond`; far above rounding, far below a millimetre. */
+const CULL_MARGIN = 1 + 1e-4;
+
 const GROUP_DEFAULTS = {
   stiffness: 1, // restoring force toward the rest direction
   drag: 0.4, // fraction of velocity lost per step, 0..1
@@ -108,12 +111,14 @@ const _next = new THREE.Vector3();
 const _vel = new THREE.Vector3();
 const _dir = new THREE.Vector3();
 const _to = new THREE.Vector3();
-const _seg = new THREE.Vector3();
 const _d = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _pq = new THREE.Quaternion();
 const _aim = new THREE.Quaternion();
 const _flip = new THREE.Quaternion();
+// A bone's quaternion resyncs its Euler on every write, so a result is built here
+// and written once.
+const _solved = new THREE.Quaternion();
 const _ax = new THREE.Vector3();
 const _back = new THREE.Vector3();
 const _m = new THREE.Matrix4();
@@ -128,6 +133,23 @@ const _lr = new THREE.Vector3();
 
 const boneChildren = (bone: THREE.Object3D): THREE.Bone[] =>
   bone.children.filter((c): c is THREE.Bone => c instanceof THREE.Bone);
+
+/**
+ * Origin of `bone` hung from its parent's world matrix `parent`, formed term for
+ * term as `updateMatrix` and `multiplyMatrices` would form it. A pivot moves the
+ * origin with the rotation, so a bone with one returns false and is left alone.
+ */
+function hungOrigin(bone: THREE.Object3D, parent: THREE.Matrix4, out: THREE.Vector3): boolean {
+  if (bone.pivot !== null) return false;
+  const e = parent.elements;
+  const { x, y, z } = bone.position;
+  out.set(
+    e[0] * x + e[4] * y + e[8] * z + e[12],
+    e[1] * x + e[5] * y + e[9] * z + e[13],
+    e[2] * x + e[6] * y + e[10] * z + e[14],
+  );
+  return true;
+}
 
 /** World rotation of a node, with any scale on the hierarchy divided out. */
 function worldQuat(node: THREE.Object3D, out: THREE.Quaternion): THREE.Quaternion {
@@ -165,6 +187,8 @@ export class Joint {
   limits: Float32Array;
   /** The same for the whole link, root to tail, against outside colliders. */
   spans: Float32Array;
+  /** The parent's world rotation, refreshed once per step, if no chain moves the parent. */
+  parentQuat: THREE.Quaternion | null = null;
 
   constructor(bone: THREE.Bone, parent: THREE.Object3D, kids: THREE.Bone[]) {
     this.bone = bone;
@@ -240,7 +264,7 @@ export class Joint {
    * one's. Above 1 it continues past the last result along the same arc.
    */
   present(s: number): void {
-    this.bone.quaternion.slerpQuaternions(this.prevSolvedQ, this.solvedQ, s);
+    this.bone.quaternion.copy(_solved.slerpQuaternions(this.prevSolvedQ, this.solvedQ, s));
     this.bone.updateMatrix();
   }
 }
@@ -256,6 +280,8 @@ class Input {
   readonly world = new THREE.Matrix4();
   /** The world matrix a step between the two frames reads. */
   readonly between = new THREE.Matrix4();
+  /** World rotation of the node's current matrix, refreshed once per step. */
+  readonly quat = new THREE.Quaternion();
   readonly #pos = new THREE.Vector3();
   readonly #quat = new THREE.Quaternion();
   readonly #scale = new THREE.Vector3();
@@ -318,6 +344,9 @@ export class Collider {
   readonly inside: boolean;
   readonly a: THREE.Vector3;
   readonly b: THREE.Vector3;
+  /** `b - a` and its squared length, as of the last `place`. */
+  readonly #seg = new THREE.Vector3();
+  #len2 = 0;
 
   constructor(bone: THREE.Bone, spec: ColliderSpec) {
     this.bone = bone;
@@ -329,13 +358,17 @@ export class Collider {
     this.b = new THREE.Vector3();
   }
 
-  /** Refresh world-space geometry. Once per step, before any joint reads it. */
-  place(): void {
-    worldQuat(this.bone, _q);
+  /**
+   * Refresh world-space geometry. Once per step, before any joint reads it.
+   *
+   * @param rotation  the bone's world rotation, if the caller already has it
+   */
+  place(rotation: THREE.Quaternion = worldQuat(this.bone, _q)): void {
     _p.setFromMatrixPosition(this.bone.matrixWorld);
-    this.a.copy(this.offset).applyQuaternion(_q).add(_p);
-    if (this.tailOffset) this.b.copy(this.tailOffset).applyQuaternion(_q).add(_p);
+    this.a.copy(this.offset).applyQuaternion(rotation).add(_p);
+    if (this.tailOffset) this.b.copy(this.tailOffset).applyQuaternion(rotation).add(_p);
     else this.b.copy(this.a);
+    this.#len2 = this.#seg.subVectors(this.b, this.a).lengthSq();
   }
 
   /**
@@ -344,15 +377,26 @@ export class Collider {
    * centre without a special case.
    */
   nearest(point: THREE.Vector3): number {
-    _seg.subVectors(this.b, this.a);
-    const len2 = _seg.lengthSq();
+    const len2 = this.#len2;
     let t = 0;
     if (len2 > 1e-12) {
-      t = _d.subVectors(point, this.a).dot(_seg) / len2;
+      t = _d.subVectors(point, this.a).dot(this.#seg) / len2;
       t = t < 0 ? 0 : t > 1 ? 1 : t;
     }
-    _p.copy(this.a).addScaledVector(_seg, t);
+    _p.copy(this.a).addScaledVector(this.#seg, t);
     return _d.subVectors(point, _p).length();
+  }
+
+  /**
+   * Whether `push` and `clearLink` are sure to leave a link alone: an outside
+   * sphere further from `root` than the link's `length` plus either clearance,
+   * with the tip at that length. Neither test is run on a culled pair, so
+   * the margin keeps the cull clear of their rounding.
+   */
+  beyond(root: THREE.Vector3, length: number, limit: number, span: number): boolean {
+    if (this.inside || this.#len2 > 1e-12) return false;
+    const reach = (length + Math.max(limit, span)) * CULL_MARGIN;
+    return this.a.distanceToSquared(root) > reach * reach;
   }
 
   /**
@@ -360,21 +404,21 @@ export class Collider {
    * For a sphere, its centre.
    */
   nearestToLink(p0: THREE.Vector3, p1: THREE.Vector3, out: THREE.Vector3): THREE.Vector3 {
-    _seg.subVectors(this.b, this.a);
-    const e = _seg.lengthSq();
+    const seg = this.#seg;
+    const e = this.#len2;
     if (e <= 1e-12) return out.copy(this.a);
     _d.subVectors(p1, p0);
     _lr.subVectors(p0, this.a);
     const a = _d.lengthSq();
-    const b = _d.dot(_seg);
+    const b = _d.dot(seg);
     const c = _d.dot(_lr);
-    const f = _seg.dot(_lr);
+    const f = seg.dot(_lr);
     // Closest points of two segments (Ericson 5.1.9). Only the axis point is
     // wanted, so the link parameter is not re-clamped after the axis one.
     const denom = a * e - b * b;
     const s = denom > 1e-12 ? THREE.MathUtils.clamp((b * f - c * e) / denom, 0, 1) : 0;
     const t = THREE.MathUtils.clamp((b * s + f) / e, 0, 1);
-    return out.copy(this.a).addScaledVector(_seg, t);
+    return out.copy(this.a).addScaledVector(seg, t);
   }
 
   /** Distance from the axis to the segment `p0`–`p1`. */
@@ -527,6 +571,24 @@ export class Spring {
    * as a chain hung from a plain node riding on another chain. Shallowest first.
    */
   readonly #bridges: Hung[] = [];
+  /**
+   * The part of `#rebase` a step reads before it re-hangs it itself, and what
+   * that hangs from: a step re-hangs every other entry before anything reads it.
+   */
+  readonly #stepRebase: Hung[] = [];
+  /**
+   * Per group, the bridges its pass can move: those hanging from a joint it
+   * simulates or inside the subtree its attachment rewrites. Any other bridge
+   * would be re-hung onto an unchanged parent, to the same matrix.
+   */
+  readonly #bridgesMovedBy: Hung[][] = [];
+  /**
+   * Colliders on a node no chain moves, which holds still through a step and so
+   * is placed once per step rather than once per group sharing it.
+   */
+  readonly #fixedColliders: Array<{ collider: Collider; input: Input }> = [];
+  /** Each group's colliders on a node a chain moves, placed in turn. */
+  readonly #movingColliders = new Map<SpringGroup, Collider[]>();
 
   /**
    * @param profile  the avatar profile; only `root` is used, since sway chains
@@ -770,11 +832,15 @@ export class Spring {
       }
       return found;
     };
-    const add = (node: THREE.Object3D | null): void => {
-      if (!node || this.#inputWorld.has(node)) return;
+    const inputOf = new Map<THREE.Object3D, Input>();
+    const add = (node: THREE.Object3D): Input => {
+      const known = inputOf.get(node);
+      if (known) return known;
       const input = new Input(node);
       this.#inputs.push(input);
       this.#inputWorld.set(node, input.between);
+      inputOf.set(node, input);
+      return input;
     };
     const depth = new Map<THREE.Object3D, number>();
     const depthOf = (node: THREE.Object3D): number => {
@@ -793,26 +859,87 @@ export class Spring {
     };
     for (const g of this.groups) {
       for (const j of g.joints) {
-        if (outside(j.parent) === j.parent) add(j.parent);
+        if (outside(j.parent) === j.parent) j.parentQuat = add(j.parent).quat;
         if (g.anchor) continue;
         if (!simulated.has(j.parent)) bridge(j.parent);
         depth.set(j.bone, depthOf(j.bone));
         this.#rebase.push(j);
       }
+      const moving: Collider[] = [];
       for (const c of g.colliders) {
-        if (outside(c.bone) === c.bone) add(c.bone);
-        else if (!simulated.has(c.bone)) bridge(c.bone);
+        const input = outside(c.bone) === c.bone ? add(c.bone) : undefined;
+        if (input) {
+          if (!this.#fixedColliders.some((f) => f.collider === c)) {
+            this.#fixedColliders.push({ collider: c, input });
+          }
+        } else {
+          if (!simulated.has(c.bone)) bridge(c.bone);
+          moving.push(c);
+        }
       }
+      this.#movingColliders.set(g, moving);
       if (g.anchor) {
-        add(outside(g.anchor.root.parent));
-        for (const influence of g.anchor.influences) add(outside(influence.bone));
+        const parent = outside(g.anchor.root.parent);
+        if (parent) add(parent);
+        for (const influence of g.anchor.influences) {
+          const source = outside(influence.bone);
+          if (source) add(source);
+        }
       }
     }
     const byDepth = (a: Hung, b: Hung): number =>
       (depth.get(a.bone) ?? 0) - (depth.get(b.bone) ?? 0);
     this.#bridges.sort(byDepth);
+    const groupsOf = new Map<THREE.Object3D, number[]>();
+    this.groups.forEach((g, k) => {
+      for (const j of g.joints) groupsOf.set(j.bone, [...(groupsOf.get(j.bone) ?? []), k]);
+    });
+    this.#bridgesMovedBy.push(...this.groups.map((): Hung[] => []));
+    for (const b of this.#bridges) {
+      let owner = b.bone.parent;
+      while (owner && !simulated.has(owner)) owner = owner.parent;
+      const movers = new Set(owner ? groupsOf.get(owner) : []);
+      this.groups.forEach((g, k) => {
+        const root = g.anchor?.root;
+        for (let n: THREE.Object3D | null = b.bone; root && n; n = n.parent) {
+          if (n === root) movers.add(k);
+        }
+      });
+      for (const k of movers) this.#bridgesMovedBy[k].push(b);
+    }
     this.#rebase.push(...this.#bridges);
     this.#rebase.sort(byDepth);
+    this.#collectStepRebase();
+  }
+
+  /**
+   * Walk a step in `#step`'s order and keep what is read before it is written.
+   * An attached group is taken to write nothing and to read as if running, as
+   * either may change at runtime.
+   */
+  #collectStepRebase(): void {
+    const parentOf = new Map<THREE.Object3D, THREE.Object3D>();
+    for (const h of this.#rebase) parentOf.set(h.bone, h.parent);
+    const written = new Set<THREE.Object3D>();
+    const read = new Set<THREE.Object3D>();
+    const reads = (node: THREE.Object3D): void => {
+      if (parentOf.has(node) && !written.has(node)) read.add(node);
+    };
+    for (const g of this.groups) {
+      for (const b of this.#bridges) {
+        reads(b.parent);
+        written.add(b.bone);
+      }
+      for (const c of this.#movingColliders.get(g) ?? []) reads(c.bone);
+      for (const j of g.joints) {
+        reads(j.parent);
+        if (!g.anchor) written.add(j.bone);
+      }
+    }
+    for (const node of [...read]) {
+      for (let n = parentOf.get(node); n && parentOf.has(n); n = parentOf.get(n)) read.add(n);
+    }
+    for (const h of this.#rebase) if (read.has(h.bone)) this.#stepRebase.push(h);
   }
 
   /** Current weighted target and root residual for attachment diagnostics. */
@@ -1164,9 +1291,14 @@ export class Spring {
    */
   #keepClear(): boolean {
     let held = false;
+    let placed = false;
     for (const g of this.groups) {
       if (!(g.enabled && g.colliders.length) || g.anchor) continue;
-      for (const c of g.colliders) c.place();
+      if (!placed) {
+        this.#placeFixed();
+        placed = true;
+      }
+      for (const c of this.#movingColliders.get(g) ?? []) c.place();
       for (const j of g.joints) {
         // An earlier link may have been held back, so hang this one again first.
         j.bone.matrixWorld.multiplyMatrices(j.parent.matrixWorld, j.bone.matrix);
@@ -1177,8 +1309,10 @@ export class Spring {
           .add(_bp.setFromMatrixPosition(j.bone.matrixWorld));
         let inside = false;
         for (let i = 0; i < g.colliders.length; i++) {
-          if (g.colliders[i].push(_next, j.limits[i])) inside = true;
-          if (g.colliders[i].clearLink(_bp, _next, j.length, j.spans[i])) inside = true;
+          const c = g.colliders[i];
+          if (!inside && c.beyond(_bp, j.length, j.limits[i], j.spans[i])) continue;
+          if (c.push(_next, j.limits[i])) inside = true;
+          if (c.clearLink(_bp, _next, j.length, j.spans[i])) inside = true;
         }
         if (!inside) continue;
         j.present(1);
@@ -1187,6 +1321,12 @@ export class Spring {
       }
     }
     return held;
+  }
+
+  /** Read every input's rotation off its current matrix, and place the colliders on them. */
+  #placeFixed(): void {
+    for (const input of this.#inputs) worldQuat(input.node, input.quat);
+    for (const { collider, input } of this.#fixedColliders) collider.place(input.quat);
   }
 
   /** Write every running group's rotations at `s`; see `Joint#present`. */
@@ -1198,8 +1338,8 @@ export class Spring {
   }
 
   /** Recompute unattached joints' world matrices from their parents, as a world update would. */
-  #rehang(): void {
-    for (const j of this.#rebase) {
+  #rehang(nodes: readonly Hung[] = this.#rebase): void {
+    for (const j of nodes) {
       j.bone.matrixWorld.multiplyMatrices(j.parent.matrixWorld, j.bone.matrix);
     }
   }
@@ -1214,10 +1354,13 @@ export class Spring {
     inputs: ReadonlyMap<THREE.Object3D, THREE.Matrix4> | undefined,
     rebase: boolean,
   ): void {
-    if (rebase) this.#rehang();
-    for (const g of this.groups) {
-      // A group may hang from a node an earlier group just moved.
-      for (const b of this.#bridges)
+    if (rebase) this.#rehang(this.#stepRebase);
+    this.#placeFixed();
+    for (let k = 0; k < this.groups.length; k++) {
+      const g = this.groups[k];
+      // A group may hang from a node an earlier group just moved: the first
+      // re-hangs every bridge, each later one what the group before could move.
+      for (const b of k === 0 ? this.#bridges : this.#bridgesMovedBy[k - 1])
         b.bone.matrixWorld.multiplyMatrices(b.parent.matrixWorld, b.bone.matrix);
       // Place after prior cloth/producer groups in this same fixed step, even
       // when this accessory group itself is switched off.
@@ -1232,7 +1375,7 @@ export class Spring {
         }
         continue;
       }
-      for (const c of g.colliders) c.place();
+      for (const c of this.#movingColliders.get(g) ?? []) c.place();
 
       const stiffness = g.stiffness * this.stiffnessScale * dt;
       const gravity = g.gravity * this.gravityScale * dt;
@@ -1243,16 +1386,21 @@ export class Spring {
       for (const j of g.joints) {
         const bone = j.bone;
         const parent = j.parent;
-        if (!g.anchor || bone !== g.anchor.root) {
-          // Every joint may have a solved parent from the preceding link. Read
-          // this bone's origin from that fresh parent before integrating it;
-          // only an attached root keeps the placement written by its anchor.
+        // Every joint may have a solved parent from the preceding link. Read
+        // this bone's origin from that fresh parent before integrating it;
+        // only an attached root keeps the placement written by its anchor.
+        // Nothing reads the rest of its world matrix before the end of this
+        // link rewrites it, so only the origin is formed.
+        if (g.anchor && bone === g.anchor.root) {
+          _bp.setFromMatrixPosition(bone.matrixWorld);
+        } else if (!hungOrigin(bone, parent.matrixWorld, _bp)) {
           bone.updateMatrix();
           bone.matrixWorld.multiplyMatrices(parent.matrixWorld, bone.matrix);
+          _bp.setFromMatrixPosition(bone.matrixWorld);
         }
-        worldQuat(parent, _pq);
+        if (j.parentQuat) _pq.copy(j.parentQuat);
+        else worldQuat(parent, _pq);
         if (g.anchor) _pq.normalize();
-        _bp.setFromMatrixPosition(bone.matrixWorld);
         j.restDir(_pq, _dir);
         if (g.anchor) _dir.normalize();
 
@@ -1270,7 +1418,14 @@ export class Spring {
         _next.copy(_bp).addScaledVector(_to.normalize(), j.length);
 
         if (g.colliders.length) {
-          for (let i = 0; i < g.colliders.length; i++) g.colliders[i].push(_next, j.limits[i]);
+          // A moved tip is off its length, which `beyond` assumes, so the
+          // rest of the joint's colliders are tested in full.
+          let moved = false;
+          for (let i = 0; i < g.colliders.length; i++) {
+            const c = g.colliders[i];
+            if (!moved && c.beyond(_bp, j.length, j.limits[i], j.spans[i])) continue;
+            if (c.push(_next, j.limits[i])) moved = true;
+          }
           // Collision moved the point off the sphere the length constraint put
           // it on, so the constraint is reapplied. Doing it once at the end
           // rather than after every collider costs a little accuracy where two
@@ -1280,8 +1435,11 @@ export class Spring {
             _next.copy(_bp).addScaledVector(_to.normalize(), j.length);
           }
           // Then the rest of the link. This swing keeps the length by itself.
+          moved = false;
           for (let i = 0; i < g.colliders.length; i++) {
-            g.colliders[i].clearLink(_bp, _next, j.length, j.spans[i]);
+            const c = g.colliders[i];
+            if (!moved && c.beyond(_bp, j.length, j.limits[i], j.spans[i])) continue;
+            if (c.clearLink(_bp, _next, j.length, j.spans[i])) moved = true;
           }
         }
 
@@ -1315,10 +1473,11 @@ export class Spring {
         _q.copy(_pq);
         if (j.driven) _q.multiply(j.drive);
         _q.multiply(j.rest).premultiply(_aim);
-        bone.quaternion.copy(_pq).invert().multiply(_q);
-        if (g.anchor) bone.quaternion.normalize();
+        _solved.copy(_pq).invert().multiply(_q);
+        if (g.anchor) _solved.normalize();
+        bone.quaternion.copy(_solved);
         j.prevSolvedQ.copy(j.solvedQ);
-        j.solvedQ.copy(bone.quaternion);
+        j.solvedQ.copy(_solved);
 
         // The next joint down reads this bone's world matrix, and three will not
         // refresh it until render. Propagating one link by hand is cheaper than

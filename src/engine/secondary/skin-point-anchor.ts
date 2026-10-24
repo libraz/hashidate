@@ -7,9 +7,52 @@ const MANUAL_MATRIX_SCALE_TOLERANCE = 2e-7;
 const UNIFORM_SCALE_TOLERANCE = 1e-5;
 const ORTHOGONAL_TOLERANCE = 1e-6;
 
+/** One node on a matrix path, shared by every path of an anchor that passes through it. */
+interface PathNode {
+  readonly node: THREE.Object3D;
+  readonly transform: TransformGuard;
+  /** The node's local matrix as last read; see `passed`. */
+  readonly local: THREE.Matrix4;
+  /** Position, quaternion and scale `local` was composed from and passed the guard with. */
+  readonly passed: Float64Array;
+  hasPassed: boolean;
+}
+
+/**
+ * Whether `entry.local` still stands for the node: a composed local matrix and
+ * its guard depend on nothing else, so the same values compose and pass the same.
+ * Only values that passed are kept, and a NaN never passes, so `Object.is` cannot
+ * match one; it also tells the two zeros apart, as composing does.
+ */
+function stillPassed(entry: PathNode): boolean {
+  const { node, passed } = entry;
+  if (!(entry.hasPassed && node.matrixAutoUpdate)) return false;
+  const { position: p, quaternion: q, scale: k } = node;
+  return (
+    Object.is(p.x, passed[0]) &&
+    Object.is(p.y, passed[1]) &&
+    Object.is(p.z, passed[2]) &&
+    Object.is(q.x, passed[3]) &&
+    Object.is(q.y, passed[4]) &&
+    Object.is(q.z, passed[5]) &&
+    Object.is(q.w, passed[6]) &&
+    Object.is(k.x, passed[7]) &&
+    Object.is(k.y, passed[8]) &&
+    Object.is(k.z, passed[9])
+  );
+}
+
+function rememberPassed(entry: PathNode): void {
+  const { node, passed } = entry;
+  entry.hasPassed = node.matrixAutoUpdate;
+  if (!entry.hasPassed) return;
+  node.position.toArray(passed, 0);
+  node.quaternion.toArray(passed, 3);
+  node.scale.toArray(passed, 7);
+}
+
 interface MatrixPath {
-  nodes: THREE.Object3D[];
-  transforms: TransformGuard[];
+  nodes: PathNode[];
 }
 
 type TransformGuard =
@@ -42,8 +85,8 @@ function readLocalMatrix(node: THREE.Object3D, out: THREE.Matrix4): THREE.Matrix
   return out.copy(node.matrix);
 }
 
-/** Validate affine, nearly uniform, orthogonal scale and return its magnitude/sign. */
-function transformScale(node: THREE.Object3D, matrix: THREE.Matrix4): [number, number] {
+/** Validate affine, nearly uniform, orthogonal scale and return its magnitude. */
+function transformScale(node: THREE.Object3D, matrix: THREE.Matrix4): number {
   const e = matrix.elements;
   const element = (index: number): number => e[index] ?? Number.NaN;
   requireAnchor(
@@ -73,15 +116,15 @@ function transformScale(node: THREE.Object3D, matrix: THREE.Matrix4): [number, n
       Math.abs(yz) <= ORTHOGONAL_TOLERANCE * y * z,
     `anchor:${node.name} does not support shear`,
   );
-  return [(x + y + z) / 3, Math.sign(matrix.determinant())];
+  return (x + y + z) / 3;
 }
 
 function snapshotTransform(node: THREE.Object3D, matrix: THREE.Matrix4): TransformGuard {
-  const [scale, sign] = transformScale(node, matrix);
+  const scale = transformScale(node, matrix);
   if (node.matrixAutoUpdate) {
     return { matrixAutoUpdate: true, scale: [node.scale.x, node.scale.y, node.scale.z] };
   }
-  return { matrixAutoUpdate: false, scale, sign };
+  return { matrixAutoUpdate: false, scale, sign: Math.sign(matrix.determinant()) };
 }
 
 function assertTransformStable(
@@ -93,7 +136,7 @@ function assertTransformStable(
     node.matrixAutoUpdate === expected.matrixAutoUpdate,
     `anchor:${node.name} transform mode changed after resolution`,
   );
-  const [scale, sign] = transformScale(node, matrix);
+  const scale = transformScale(node, matrix);
   if (expected.matrixAutoUpdate) {
     // A changing quaternion can perturb composed column lengths by Float32
     // roundoff. The Object3D TRS scale itself is the immutable contract.
@@ -107,28 +150,44 @@ function assertTransformStable(
   }
   requireAnchor(
     Math.abs(scale - expected.scale) <=
-      MANUAL_MATRIX_SCALE_TOLERANCE * Math.max(1, expected.scale) && sign === expected.sign,
+      MANUAL_MATRIX_SCALE_TOLERANCE * Math.max(1, expected.scale) &&
+      Math.sign(matrix.determinant()) === expected.sign,
     `anchor:${node.name} scale changed after resolution`,
   );
 }
 
-function matrixPath(node: THREE.Object3D, local: THREE.Matrix4): MatrixPath {
-  const nodes: THREE.Object3D[] = [];
+function matrixPath(
+  node: THREE.Object3D,
+  local: THREE.Matrix4,
+  shared: Map<THREE.Object3D, PathNode>,
+): MatrixPath {
+  const chain: THREE.Object3D[] = [];
   for (let current: THREE.Object3D | null = node; current; current = current.parent) {
-    nodes.unshift(current);
+    chain.unshift(current);
   }
-  const transforms: TransformGuard[] = [];
-  for (let i = 0; i < nodes.length; i++) {
-    const current = nodes[i];
+  const nodes: PathNode[] = [];
+  for (let i = 0; i < chain.length; i++) {
+    const current = chain[i];
     requireAnchor(current, 'anchor path contains a missing node');
     requireAnchor(
       current.matrixWorldAutoUpdate,
       `anchor:${current.name} has a manual matrixWorld override`,
     );
-    readLocalMatrix(current, local);
-    transforms.push(snapshotTransform(current, local));
+    let entry = shared.get(current);
+    if (!entry) {
+      readLocalMatrix(current, local);
+      entry = {
+        node: current,
+        transform: snapshotTransform(current, local),
+        local: new THREE.Matrix4(),
+        passed: new Float64Array(10),
+        hasPassed: false,
+      };
+      shared.set(current, entry);
+    }
+    nodes.push(entry);
   }
-  return { nodes, transforms };
+  return { nodes };
 }
 
 function isRootOrDescendant(root: THREE.Object3D, node: THREE.Object3D): boolean {
@@ -182,6 +241,7 @@ export class SkinPointAnchor {
     );
 
     const names = new Set<string>();
+    const shared = new Map<THREE.Object3D, PathNode>();
     const resolved: ResolvedInfluence[] = [];
     let sum = 0;
     let positiveCount = 0;
@@ -215,7 +275,7 @@ export class SkinPointAnchor {
         !isRootOrDescendant(root, source),
         `anchor source cannot be root or descendant: ${bone}`,
       );
-      const path = matrixPath(source, this.#local);
+      const path = matrixPath(source, this.#local, shared);
       const record: ResolvedInfluence = {
         bone: source,
         weight,
@@ -238,7 +298,7 @@ export class SkinPointAnchor {
     );
     this.root = root;
     this.influences = resolved;
-    this.#parentPath = matrixPath(root.parent, this.#local);
+    this.#parentPath = matrixPath(root.parent, this.#local, shared);
     this.#rootTransform = snapshotTransform(root, readLocalMatrix(root, this.#local));
     this.#readSubtreeTransforms(root);
   }
@@ -273,7 +333,7 @@ export class SkinPointAnchor {
     let start = 0;
     if (inputs) {
       for (let i = path.nodes.length - 1; i >= 0; i--) {
-        const world = inputs.get(path.nodes[i]);
+        const world = inputs.get(path.nodes[i].node);
         if (world) {
           out.copy(world);
           start = i + 1;
@@ -282,12 +342,12 @@ export class SkinPointAnchor {
       }
     }
     for (let i = 0; i < path.nodes.length; i++) {
-      const node = path.nodes[i];
-      const expected = path.transforms[i];
-      requireAnchor(node && expected, 'anchor path changed after resolution');
+      const entry = path.nodes[i];
+      const node = entry.node;
+      requireAnchor(node && entry.transform, 'anchor path changed after resolution');
       if (i > 0) {
         requireAnchor(
-          node.parent === path.nodes[i - 1],
+          node.parent === path.nodes[i - 1].node,
           `anchor path was reparented at ${node.name}`,
         );
       } else {
@@ -297,9 +357,14 @@ export class SkinPointAnchor {
         node.matrixWorldAutoUpdate,
         `anchor:${node.name} has a manual matrixWorld override`,
       );
-      readLocalMatrix(node, this.#local);
-      assertTransformStable(node, this.#local, expected);
-      if (i >= start) out.multiply(this.#local);
+      // A node shared by several paths, or one nothing has moved since the last
+      // placement, is read and guarded once.
+      if (!(entry.transform.matrixAutoUpdate && stillPassed(entry))) {
+        readLocalMatrix(node, entry.local);
+        assertTransformStable(node, entry.local, entry.transform);
+        rememberPassed(entry);
+      }
+      if (i >= start) out.multiply(entry.local);
     }
     return out;
   }
@@ -327,7 +392,7 @@ export class SkinPointAnchor {
    */
   place(inputs?: ReadonlyMap<THREE.Object3D, THREE.Matrix4>): void {
     requireAnchor(
-      this.root.parent === this.#parentPath.nodes.at(-1),
+      this.root.parent === this.#parentPath.nodes.at(-1)?.node,
       `anchor root was reparented at ${this.root.name}`,
     );
     requireAnchor(
