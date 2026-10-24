@@ -187,6 +187,8 @@ export class Joint {
   limits: Float32Array;
   /** The same for the whole link, root to tail, against outside colliders. */
   spans: Float32Array;
+  /** Squared cull distance per collider, from `limits` and `spans`; see `Collider#beyond`. */
+  reach: Float64Array;
   /** The parent's world rotation, refreshed once per step, if no chain moves the parent. */
   parentQuat: THREE.Quaternion | null = null;
 
@@ -196,6 +198,7 @@ export class Joint {
     this.rest = bone.quaternion.clone();
     this.limits = new Float32Array(0);
     this.spans = new Float32Array(0);
+    this.reach = new Float64Array(0);
 
     // An additive rotation an outside layer may put on this joint's rest pose,
     // in the *parent's* frame. Only the root of a driven group carries one —
@@ -266,6 +269,15 @@ export class Joint {
   present(s: number): void {
     this.bone.quaternion.copy(_solved.slerpQuaternions(this.prevSolvedQ, this.solvedQ, s));
     this.bone.updateMatrix();
+  }
+
+  /** Recompute `reach` after calibration has changed `limits` or `spans`. */
+  fitReach(): void {
+    this.reach = new Float64Array(this.limits.length);
+    for (let i = 0; i < this.limits.length; i++) {
+      const r = (this.length + Math.max(this.limits[i], this.spans[i])) * CULL_MARGIN;
+      this.reach[i] = r * r;
+    }
   }
 }
 
@@ -389,14 +401,13 @@ export class Collider {
 
   /**
    * Whether `push` and `clearLink` are sure to leave a link alone: an outside
-   * sphere further from `root` than the link's `length` plus either clearance,
-   * with the tip at that length. Neither test is run on a culled pair, so
-   * the margin keeps the cull clear of their rounding.
+   * sphere further from `root` than the link's length plus either clearance
+   * (`Joint#reach`, squared), with the tip at that length. Neither test is run
+   * on a culled pair, so the margin keeps the cull clear of their rounding.
    */
-  beyond(root: THREE.Vector3, length: number, limit: number, span: number): boolean {
+  beyond(root: THREE.Vector3, reach: number): boolean {
     if (this.inside || this.#len2 > 1e-12) return false;
-    const reach = (length + Math.max(limit, span)) * CULL_MARGIN;
-    return this.a.distanceToSquared(root) > reach * reach;
+    return this.a.distanceToSquared(root) > reach;
   }
 
   /**
@@ -996,6 +1007,7 @@ export class Spring {
             : Math.min(c.radius + g.radius, dist);
           if (!c.inside) j.spans[i] = Math.min(c.radius + g.radius, c.linkDistance(_bp, j.cur));
         }
+        j.fitReach();
       }
     }
   }
@@ -1047,6 +1059,7 @@ export class Spring {
       }
     }
 
+    for (const j of g.joints) j.fitReach();
     for (const j of g.rootJoints) j.drive.identity();
     this.root.updateMatrixWorld(true);
     for (const grp of this.groups) {
@@ -1310,7 +1323,7 @@ export class Spring {
         let inside = false;
         for (let i = 0; i < g.colliders.length; i++) {
           const c = g.colliders[i];
-          if (!inside && c.beyond(_bp, j.length, j.limits[i], j.spans[i])) continue;
+          if (!inside && c.beyond(_bp, j.reach[i])) continue;
           if (c.push(_next, j.limits[i])) inside = true;
           if (c.clearLink(_bp, _next, j.length, j.spans[i])) inside = true;
         }
@@ -1423,7 +1436,7 @@ export class Spring {
           let moved = false;
           for (let i = 0; i < g.colliders.length; i++) {
             const c = g.colliders[i];
-            if (!moved && c.beyond(_bp, j.length, j.limits[i], j.spans[i])) continue;
+            if (!moved && c.beyond(_bp, j.reach[i])) continue;
             if (c.push(_next, j.limits[i])) moved = true;
           }
           // Collision moved the point off the sphere the length constraint put
@@ -1438,7 +1451,7 @@ export class Spring {
           moved = false;
           for (let i = 0; i < g.colliders.length; i++) {
             const c = g.colliders[i];
-            if (!moved && c.beyond(_bp, j.length, j.limits[i], j.spans[i])) continue;
+            if (!moved && c.beyond(_bp, j.reach[i])) continue;
             if (c.clearLink(_bp, _next, j.length, j.spans[i])) moved = true;
           }
         }
