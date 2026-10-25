@@ -3,7 +3,7 @@ import { hasCueMarkup, isWellFormed } from '@/engine/cues';
 import type { AvatarDescriptor, CameraFrame } from '@/engine/types';
 import { useT } from '@/i18n';
 import { Chip, ChipRow } from '@/ui/Chip';
-import { LocaleSwitch } from '@/ui/LocaleSwitch';
+import { LocalePicker } from '@/ui/LocalePicker';
 import { Segmented, Tabs } from '@/ui/Segmented';
 import { Toggle } from '@/ui/Toggle';
 import type { ControlStatus } from '../control-client';
@@ -177,7 +177,7 @@ export function Console({ runtime, avatars, status, control, rejected, onSwitch 
           </span>
           {/* Set once a session at most, so it sits on the identity line rather
               than among the controls reached for every minute. */}
-          <LocaleSwitch />
+          <LocalePicker />
         </div>
         {avatars.length > 0 ? (
           <Segmented

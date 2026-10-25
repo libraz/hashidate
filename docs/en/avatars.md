@@ -89,8 +89,8 @@ Every object in a file is strict: an unknown key is an error naming its path, an
 
 | Field | What it states |
 |---|---|
-| `label` | The name shown in the pickers, as `{ "en", "ja" }`. Required. |
-| `author` | Credit for the model, as `{ "en", "ja" }`. |
+| `label` | The name shown in the pickers, as `{ "en", "ja" }`. Required. Only `en` must be given; a language left out shows the English. |
+| `author` | Credit for the model, in the same shape as `label`. |
 | `url` | Where the viewer fetches the GLB from. Defaults to `/models/<id>.glb`. See [url](#url). |
 | `separator` | A [pattern](#patterns) matching the dummy shapes an author puts between shape groups, with the group name in its one capture group. |
 | `gaze` | Measured eye, head and neck limits (`eyeYaw`, `eyePitch`, `headYaw`, `headPitch`, `neckYaw`, `neckPitch`). Any left out keep the engine's conservative defaults. |

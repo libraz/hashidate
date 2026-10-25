@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { type MessageKey, useT } from '@/i18n';
 import type { Snapshot, SpeechState } from '@/protocol';
-import { LocaleSwitch } from '@/ui/LocaleSwitch';
 import { clear, interrupt, setPaused } from './api';
 import { BgmTab } from './bgm/BgmTab';
 import { DressTab } from './dress/DressTab';
@@ -15,6 +14,7 @@ import { clock } from './queue/QueueRow';
 import { QueueTab } from './queue/QueueTab';
 import { Rail, type RailOption } from './Rail';
 import { elapsed, RecordTab } from './record/RecordTab';
+import { SettingsTab } from './settings/SettingsTab';
 import { KEYS, shortcut, withKey } from './shortcuts';
 import { SlidesTab } from './slides/SlidesTab';
 import { StageSource } from './stage/StageSource';
@@ -63,9 +63,10 @@ import { VoiceTab } from './voice/VoiceTab';
  * The first six are touched during one: the script, the take being recorded,
  * the acting, the voice, the music, and the document being presented — a page
  * is turned between two sentences, which puts the slides with the live half
- * rather than with the setup half. The last three are set before it and looked
+ * rather than with the setup half. The next three are set before it and looked
  * at when something is wrong — a costume, the layer underneath the character,
- * and the readouts. The four names borrowed from the console are the console's,
+ * and the readouts — and the last holds what is set once a machine, such as
+ * the language. The four names borrowed from the console are the console's,
  * deliberately: an operator moving between the two screens should not have to
  * learn a second vocabulary for the same jobs.
  *
@@ -81,7 +82,8 @@ type Tab =
   | 'slides'
   | 'dress'
   | 'tune'
-  | 'inspect';
+  | 'inspect'
+  | 'settings';
 
 /**
  * What the header says about the voice, per state, and null for the two states
@@ -119,6 +121,7 @@ const TAB_LABELS: Array<{ value: Tab; key: MessageKey; group: Group }> = [
   { value: 'dress', key: 'panel.tabs.dress', group: 'panel.tabs.group.setup' },
   { value: 'tune', key: 'panel.tabs.tune', group: 'panel.tabs.group.setup' },
   { value: 'inspect', key: 'panel.tabs.inspect', group: 'panel.tabs.group.setup' },
+  { value: 'settings', key: 'panel.tabs.settings', group: 'panel.tabs.group.setup' },
 ];
 
 /**
@@ -173,7 +176,8 @@ export function Panel() {
     value,
     label: t(key),
     group: t(group),
-    shortcut: String(index + 1),
+    // Only the digits are keys, so a tenth tab has none to show.
+    shortcut: index < 9 ? String(index + 1) : undefined,
     ...railMarks(value, data),
   }));
   const current = TAB_LABELS.find((entry) => entry.value === tab) ?? TAB_LABELS[0];
@@ -265,16 +269,14 @@ export function Panel() {
         ) : null}
 
         {/* The right-hand group: what the operator reaches for, against the edge
-            they reach from. The setup controls — the source address and the
-            language — are set once a session and the transport is pressed all
-            through one, so a rule separates them and the transport keeps the
-            corner. */}
+            they reach from. The source address is set once a session and the
+            transport is pressed all through one, so a rule separates them and
+            the transport keeps the corner. */}
         <div className={styles.tools}>
           <button type="button" className={styles.tool} popoverTarget={SOURCE_ID}>
             {t('panel.source.title')}
             <span className={styles.chevron} aria-hidden="true" />
           </button>
-          <LocaleSwitch />
           <span className={styles.divider} aria-hidden="true" />
           <div className={styles.transport}>
             <button
@@ -346,6 +348,7 @@ export function Panel() {
             {tab === 'dress' ? <DressTab snapshot={data} refresh={refresh} /> : null}
             {tab === 'tune' ? <TuneTab snapshot={data} /> : null}
             {tab === 'inspect' ? <InspectTab snapshot={data} /> : null}
+            {tab === 'settings' ? <SettingsTab /> : null}
           </div>
         </section>
       </div>

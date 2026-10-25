@@ -94,8 +94,12 @@ describe('motionBodySchema', () => {
     expect(motionBodySchema.safeParse(body({ group: 'teleport' })).success).toBe(false);
   });
 
-  it('wants both languages on the label', () => {
-    expect(motionBodySchema.safeParse(body({ label: { en: 'Wave' } })).success).toBe(false);
+  it('wants the source language on the label and fills the rest from it', () => {
+    expect(motionBodySchema.safeParse(body({ label: { ja: '手を振る' } })).success).toBe(false);
+    expect(motionBodySchema.parse(body({ label: { en: 'Wave' } })).label).toEqual({
+      en: 'Wave',
+      ja: 'Wave',
+    });
   });
 
   it('wants a direction to be three numbers', () => {

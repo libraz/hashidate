@@ -22,7 +22,7 @@ interface Props<T extends PresetPickerItem> {
 }
 
 const searchable = (item: PresetPickerItem): string =>
-  `${item.id} ${item.label.en} ${item.label.ja}`.toLowerCase();
+  [item.id, ...Object.values(item.label)].join(' ').toLowerCase();
 
 /**
  * Pick one item from a vocabulary without turning the group row into a tab

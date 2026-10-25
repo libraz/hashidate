@@ -56,7 +56,7 @@ frames:
 
 | Field | What it is |
 |---|---|
-| `label` | Both languages, like everything user-visible in the engine. |
+| `label` | Per language, as in a descriptor: `en` is required, and a language left out shows the English. |
 | `group` | One of `reaction`, `greeting`, `explain`, `emote`, `cute`, `pose`, `affection`, `playful`, `idol`, `cheer`, `dance`, `photo`. |
 | `lead` | Seconds of entrance. A floor — the real lead scales with how far the arms and spine have to travel, and is never under 0.12 s. |
 | `hold` | Seconds held at full weight before the exit begins. |

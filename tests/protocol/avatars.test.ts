@@ -54,9 +54,9 @@ describe('parseAvatar', () => {
     expect(reject(item({ Foot_L: { scale: [1, 1, 1] } }))).toContain('"scale"');
   });
 
-  it('rejects a label missing a language', () => {
-    expect(reject({ label: { en: 'x' } })).toContain('label.ja');
+  it('wants the source language on a label and fills the rest from it', () => {
     expect(reject({ label: { ja: 'x' } })).toContain('label.en');
+    expect(accept({ label: { en: 'x' } }).label).toEqual({ en: 'x', ja: 'x' });
   });
 
   it('accepts -0 and rejects non-finite numbers', () => {

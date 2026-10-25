@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  fillLocalized,
   getLocale,
   isLocale,
   LOCALES,
@@ -12,6 +13,7 @@ import {
 } from '@/i18n/locale';
 import { CATALOGS, EN } from '@/i18n/messages';
 import { translate } from '@/i18n/translate';
+import { localizedSchema } from '@/protocol';
 
 /**
  * The language the operator is addressed in.
@@ -78,8 +80,23 @@ describe('localized values', () => {
     expect(pick(label, 'ja')).toBe('バスト');
   });
 
-  it('carries a name that cannot be translated through both sides', () => {
+  it('carries a name that cannot be translated through every side', () => {
     expect(same('F_NIKONIKO')).toEqual({ en: 'F_NIKONIKO', ja: 'F_NIKONIKO' });
+  });
+
+  it('fills a language a file left out from the source one, and keeps what it gave', () => {
+    expect(fillLocalized({ en: 'Salute' })).toEqual({ en: 'Salute', ja: 'Salute' });
+    expect(fillLocalized({ en: 'Salute', ja: '敬礼' })).toEqual({ en: 'Salute', ja: '敬礼' });
+  });
+});
+
+describe('localizedSchema', () => {
+  it('completes a label stated in the source language alone', () => {
+    expect(localizedSchema.parse({ en: 'Salute' })).toEqual({ en: 'Salute', ja: 'Salute' });
+  });
+
+  it('refuses a label without the source language', () => {
+    expect(localizedSchema.safeParse({ ja: '敬礼' }).success).toBe(false);
   });
 });
 
@@ -109,7 +126,7 @@ describe('the store', () => {
 });
 
 describe('isLocale', () => {
-  it('accepts only the two that exist', () => {
+  it('accepts only the locales that exist', () => {
     expect(isLocale('en')).toBe(true);
     expect(isLocale('ja')).toBe(true);
     for (const raw of ['EN', 'ja-JP', 'fr', '', null, undefined, 3]) {

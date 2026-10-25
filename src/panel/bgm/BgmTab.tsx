@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useT } from '@/i18n';
+import { type Locale, useT } from '@/i18n';
 import {
   BGM_DEFAULT_LOOP,
   BGM_DEFAULT_VOLUME,
@@ -151,9 +151,9 @@ function rosterKey(tracks: readonly BgmTrack[]): string {
   return tracks.map((track) => `${track.id}\u0000${track.bytes}\u0000${track.at}`).join('\u0001');
 }
 
-function modified(at: number, locale: 'en' | 'ja'): string {
+function modified(at: number, locale: Locale): string {
   if (!Number.isFinite(at) || at <= 0) return '—';
-  return new Date(at * 1000).toLocaleString(locale === 'ja' ? 'ja-JP' : 'en-US', {
+  return new Date(at * 1000).toLocaleString(locale, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',

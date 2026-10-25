@@ -1,18 +1,34 @@
 /**
- * Which language the operator is being addressed in.
+ * Which languages the operator can be addressed in.
  *
- * Two, and deliberately only two. The panel and the console are the surfaces a
- * person drives a stream from, so the labels have to be readable at a glance
- * rather than merely present; a locale nobody proof-reads is worse than an
- * English fallback, because a half-translated button looks like a bug in the
- * renderer rather than a gap in a catalogue.
+ * Adding one is a line here and in `LOCALE_NAMES`, a catalogue under
+ * `messages/`, and a translation of every `Localized` written in code — the
+ * compiler lists each one, because a locale nobody proof-reads is worse than an
+ * English fallback: a half-translated button looks like a bug in the renderer
+ * rather than a gap in a catalogue.
  */
 export const LOCALES = ['en', 'ja'] as const;
 
 export type Locale = (typeof LOCALES)[number];
 
 /**
- * A string that exists in both languages at the point it is defined.
+ * The language every label exists in, and what any other falls back to.
+ *
+ * English, because that is what the code, the CLI and the logs are already in.
+ */
+export const SOURCE_LOCALE = 'en' satisfies Locale;
+
+/**
+ * Each locale named in itself — `English`, `日本語` — and never translated: the
+ * person picking one is by definition looking at a language they did not want.
+ */
+export const LOCALE_NAMES: Record<Locale, string> = {
+  en: 'English',
+  ja: '日本語',
+};
+
+/**
+ * A string in every locale at the point it is defined.
  *
  * Used for the avatar-derived vocabulary — wardrobe slots, performances,
  * backdrops, camera frames — rather than the message catalogue. Those labels
@@ -21,22 +37,34 @@ export type Locale = (typeof LOCALES)[number];
  * stale the moment it were copied into a catalogue keyed by hand.
  *
  * It also has to survive the wire. The panel never imports the avatar tables —
- * it learns the vocabulary from the control server — so both languages travel
+ * it learns the vocabulary from the control server — so every language travels
  * together and the client picks one, instead of the server guessing which
  * language the person watching the panel reads.
+ *
+ * Complete by type. A label read off disk need only carry `SOURCE_LOCALE`;
+ * `fillLocalized` completes it where it is parsed, so nothing past the schema
+ * ever meets a missing language.
  */
-export interface Localized {
-  en: string;
-  ja: string;
+export type Localized = Record<Locale, string>;
+
+/** A label as an operator's file may state it: the source language and any others. */
+export type PartialLocalized = Record<typeof SOURCE_LOCALE, string> &
+  Partial<Record<Locale, string>>;
+
+/** Complete a label from a file, each missing language taking the source one. */
+export function fillLocalized(text: PartialLocalized): Localized {
+  return Object.fromEntries(
+    LOCALES.map((locale) => [locale, text[locale] ?? text[SOURCE_LOCALE]]),
+  ) as Localized;
 }
 
-/** Resolve a two-language value against the locale in force. */
+/** Resolve a value against the locale in force. */
 export function pick(text: Localized, locale: Locale): string {
   return text[locale];
 }
 
 /**
- * A label that reads the same in both languages.
+ * A label that reads the same in every language.
  *
  * Not laziness — most of these cannot be translated at all. Expression and
  * overlay names are *discovered* from an avatar's own shape keys, so the label
@@ -45,7 +73,7 @@ export function pick(text: Localized, locale: Locale): string {
  * a pair that simply has not been filled in yet.
  */
 export function same(text: string): Localized {
-  return { en: text, ja: text };
+  return fillLocalized({ [SOURCE_LOCALE]: text });
 }
 
 export function isLocale(value: unknown): value is Locale {
@@ -53,15 +81,6 @@ export function isLocale(value: unknown): value is Locale {
 }
 
 const STORAGE_KEY = 'hashidate.locale';
-
-/**
- * The default when nothing has been chosen and nothing can be detected.
- *
- * English, because that is what the code, the CLI and the logs are already in.
- * A browser that reports Japanese overrides it below; a terminal does not, and
- * a terminal is where the fallback actually lands.
- */
-const FALLBACK: Locale = 'en';
 
 function fromStorage(): Locale | null {
   try {
@@ -93,11 +112,12 @@ function fromEnv(): Locale | null {
 
 /**
  * An explicit choice outranks a detected one, and detection outranks the
- * fallback. `HASHIDATE_LOCALE` sits between the two so that a script can pin the
+ * source language. A browser that reports Japanese overrides it; a terminal
+ * does not, and a terminal is where the fallback actually lands. `HASHIDATE_LOCALE` sits between the two so that a script can pin the
  * language of a CLI run without writing to anyone's browser storage.
  */
 function detect(): Locale {
-  return fromStorage() ?? fromEnv() ?? fromNavigator() ?? FALLBACK;
+  return fromStorage() ?? fromEnv() ?? fromNavigator() ?? SOURCE_LOCALE;
 }
 
 let current: Locale = detect();

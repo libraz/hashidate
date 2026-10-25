@@ -5,7 +5,13 @@ import type {
   Vec3Tuple,
   VisemeName,
 } from '../../engine/types';
-import type { Localized } from '../../i18n/locale';
+import {
+  fillLocalized,
+  LOCALES,
+  type Locale,
+  type Localized,
+  SOURCE_LOCALE,
+} from '../../i18n/locale';
 import type { Equals, Expect } from '../commands';
 
 /**
@@ -13,17 +19,26 @@ import type { Equals, Expect } from '../commands';
  */
 
 /**
- * A display string in both languages at once.
+ * A display string in every language at once.
  *
  * The wire carries the pair and the client picks one. The alternative — resolving
  * at the source — would mean the server choosing a language on behalf of whoever
  * happens to be reading the panel, and there is nothing in a control request that
  * says who that is.
+ *
+ * Only the source language is required, because the same shape is written by
+ * hand in avatar descriptors, packs and motion files; a missing language is
+ * filled from it here, so everything downstream holds a complete `Localized`.
  */
-export const localizedSchema = z.object({
-  en: z.string(),
-  ja: z.string(),
-});
+export const localizedSchema = z
+  .object({
+    ...(Object.fromEntries(LOCALES.map((locale) => [locale, z.string().optional()])) as Record<
+      Locale,
+      z.ZodOptional<z.ZodString>
+    >),
+    [SOURCE_LOCALE]: z.string(),
+  })
+  .transform((text): Localized => fillLocalized(text));
 
 type _LocalizedMatchesEngine = Expect<Equals<z.infer<typeof localizedSchema>, Localized>>;
 
