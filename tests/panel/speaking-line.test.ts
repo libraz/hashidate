@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EMPTY } from '@/panel/hooks';
-import { lineOnAir } from '@/panel/preview/SpeakingLine';
+import { idleActOnAir, lineOnAir } from '@/panel/preview/SpeakingLine';
 import type { QueueEntry, Snapshot } from '@/protocol';
 
 /**
@@ -66,5 +66,50 @@ describe('the line on air', () => {
     // Distinct from null: something is on air, and it has nothing to say. The
     // strip draws that as a note rather than as standing by.
     expect(lineOnAir(snapshot({ state: { turn: 'q1' }, airing: [entry('q1', '')] }))).toBe('');
+  });
+});
+
+describe('the idle act on air', () => {
+  const peace = {
+    id: 'peace',
+    label: { en: 'Peace', ja: 'ピース' },
+    group: 'idol' as const,
+    emotion: { joy: 1 },
+    gesture: 'peace',
+    hop: null,
+    sustain: false,
+  };
+  const vocabulary = { performances: [peace] };
+
+  it("names the autopilot's pick while the idle is engaged between turns", () => {
+    expect(
+      idleActOnAir(
+        snapshot({ state: { turn: null, idle: true, performance: 'peace' }, vocabulary }),
+      ),
+    ).toEqual(peace.label);
+  });
+
+  it('says nothing while a turn is running, which the strip reads out instead', () => {
+    expect(
+      idleActOnAir(
+        snapshot({ state: { turn: 'q1', idle: true, performance: 'peace' }, vocabulary }),
+      ),
+    ).toBeNull();
+  });
+
+  it("says nothing when the idle is not engaged, since the performance is the caller's", () => {
+    expect(
+      idleActOnAir(
+        snapshot({ state: { turn: null, idle: false, performance: 'peace' }, vocabulary }),
+      ),
+    ).toBeNull();
+  });
+
+  it('says nothing for an id the avatar does not offer', () => {
+    expect(
+      idleActOnAir(
+        snapshot({ state: { turn: null, idle: true, performance: 'ghost' }, vocabulary }),
+      ),
+    ).toBeNull();
   });
 });

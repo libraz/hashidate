@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { CameraFrame, Shot } from '@/engine/types';
 import { SHOT_LIMITS } from '@/engine/types';
-import { sendMonitorShot } from '../../monitor-link';
 import type { Framings } from '../framing';
 import type { Rect } from '../placement';
 import type { Listener } from './types';
@@ -11,9 +10,9 @@ import type { Listener } from './types';
  * Where the camera stands, and how it gets told.
  *
  * A shot is a named framing plus how far the operator has moved off it, and
- * this owns both halves plus the two directions they travel: `setShot` puts the
- * camera where a command says, and a drag on an embedded page reads it back and
- * publishes it. Everything is derived from the framings, so a swap that
+ * this owns both halves: `setShot` puts the camera where a command says. A drag
+ * in the panel's preview is turned into that command by the panel itself (see
+ * `src/panel/preview/shot-drag.ts`), so nothing here reads a shot back. Everything is derived from the framings, so a swap that
  * rebuilds them puts the same shot on a differently-proportioned avatar rather
  * than leaving the camera where the last one needed it.
  *
@@ -39,21 +38,9 @@ export function lensShift(camera: THREE.PerspectiveCamera, shift: number): void 
   camera.updateProjectionMatrix();
 }
 
-/**
- * How often a dragged shot is published, in milliseconds.
- *
- * Every one of these is a request out of the panel and a frame back down to
- * every renderer, so a drag published per frame would put sixty round trips a
- * second on the wire to move one camera. Ten is enough for the picture going to
- * air to look like it is following the one being dragged.
- */
-const SHOT_INTERVAL = 100;
-
 export interface ShotCameraOptions {
   /** Whether the pointer may move the camera at all. */
   pointer: boolean;
-  /** Whether this page is a preview inside a panel, which publishes its drags. */
-  embedded: boolean;
 }
 
 export class ShotCamera {
@@ -64,12 +51,8 @@ export class ShotCamera {
   private frame: CameraFrame = 'bust';
   /** How far the camera has been moved off the framing. See `Shot`. */
   private orbit = { yaw: 0, pitch: 0, zoom: 1 };
-  /** True while `place` is moving the camera, so its own change is not published. */
-  private placing = false;
-  private shotSentAt = 0;
   /** Set when `place` moved the camera, until the frame loop takes it. See `takeCut`. */
   private cut = false;
-  private shotTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly listeners = new Set<Listener<CameraFrame>>();
 
   /**
@@ -79,7 +62,7 @@ export class ShotCamera {
    */
   constructor(
     domElement: HTMLElement,
-    { pointer, embedded }: ShotCameraOptions,
+    { pointer }: ShotCameraOptions,
     private readonly onFramed: () => void,
   ) {
     this.camera = new THREE.PerspectiveCamera(FOV, 1, 0.01, 100);
@@ -87,35 +70,15 @@ export class ShotCamera {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     /**
-     * The pointer moves the camera on a page that is a tool, and not on one
-     * that is an output.
+     * The pointer moves the camera on the console, which is the development
+     * view, and nowhere else.
      *
-     * A bare page is what OBS opens, and a shot nudged there by a stray drag is
-     * a shot the panel no longer agrees with — silently, because nothing tells
-     * the panel it happened. The console has the pointer because it is the
-     * development view, and an embedded preview has it because that is now how
-     * the shot is set: the panel frames this page and publishes what the drag
-     * produced. See `readShot` and `monitor-link.ts`.
+     * A bare page is what OBS opens and the stage window shows, and a shot
+     * nudged there by a stray drag is a shot the panel no longer agrees with —
+     * silently, because nothing tells the panel it happened. The panel's
+     * preview sets the shot by sending the `camera` command instead.
      */
     this.controls.enabled = pointer;
-    if (embedded) {
-      // Panning moves the target off the framing, and there is no pan axis in a
-      // `Shot` to say so — a shot read back from a panned camera would be a
-      // bearing around the wrong point.
-      this.controls.enablePan = false;
-      // Slower than the default, because the picture being dragged is a monitor
-      // a few hundred pixels tall and three.js measures a rotation against that
-      // height. At 1.0 a short drag swings the camera round behind the
-      // character; the operator here is nudging a shot, not exploring a model.
-      this.controls.rotateSpeed = 0.4;
-      this.controls.zoomSpeed = 0.5;
-      // Stopped where the wire stops. A drag that could push the camera past
-      // what the schema accepts would produce a command that is dropped on
-      // arrival, and the preview would be the only picture that moved.
-      this.controls.minPolarAngle = Math.PI / 2 - THREE.MathUtils.degToRad(SHOT_LIMITS.pitch.max);
-      this.controls.maxPolarAngle = Math.PI / 2 - THREE.MathUtils.degToRad(SHOT_LIMITS.pitch.min);
-      this.controls.addEventListener('change', () => this.shotMoved());
-    }
   }
 
   /**
@@ -209,12 +172,7 @@ export class ShotCamera {
     );
     this.controls.target.copy(f.target);
     this.camera.position.copy(f.target).add(new THREE.Vector3().setFromSpherical(spherical));
-    // `update` dispatches a change, and on an embedded page a change is what
-    // publishes the shot. Without the flag, a shot arriving from the panel
-    // would be sent straight back to it.
-    this.placing = true;
     this.controls.update();
-    this.placing = false;
     this.cut = true;
   }
 
@@ -256,62 +214,7 @@ export class ShotCamera {
   }
 
   dispose(): void {
-    if (this.shotTimer !== null) {
-      clearTimeout(this.shotTimer);
-      this.shotTimer = null;
-    }
     this.controls.dispose();
     this.listeners.clear();
-  }
-
-  /**
-   * The pointer moved the camera on an embedded page. Tell whoever framed us.
-   *
-   * Throttled with a trailing send rather than published per frame: a drag is
-   * sixty changes a second and every one of them would be an HTTP request out
-   * of the panel and an SSE frame back to every renderer. The trailing send is
-   * the one that matters — damping keeps the camera moving after the pointer
-   * has stopped, so the last change is the only one that says where the shot
-   * actually ended up.
-   */
-  private shotMoved(): void {
-    if (this.placing) return;
-    const since = Date.now() - this.shotSentAt;
-    if (since >= SHOT_INTERVAL) {
-      this.publishShot();
-      return;
-    }
-    if (this.shotTimer !== null) return;
-    this.shotTimer = setTimeout(() => {
-      this.shotTimer = null;
-      this.publishShot();
-    }, SHOT_INTERVAL - since);
-  }
-
-  private publishShot(): void {
-    const shot = this.readShot();
-    if (!shot) return;
-    this.shotSentAt = Date.now();
-    sendMonitorShot(shot);
-  }
-
-  /**
-   * Read the shot back off the camera, after the pointer has moved it.
-   *
-   * The inverse of `place`, and only meaningful while the target is still the
-   * framing's — which is why panning is switched off wherever this is used.
-   */
-  private readShot(): Required<Shot> | null {
-    const f = this.framings?.[this.frame];
-    if (!f) return null;
-    const offset = this.camera.position.clone().sub(this.controls.target);
-    const spherical = new THREE.Spherical().setFromVector3(offset);
-    if (spherical.radius < 1e-4) return null;
-    return {
-      frame: this.frame,
-      yaw: THREE.MathUtils.radToDeg(spherical.theta),
-      pitch: 90 - THREE.MathUtils.radToDeg(spherical.phi),
-      zoom: f.position.distanceTo(f.target) / spherical.radius,
-    };
   }
 }

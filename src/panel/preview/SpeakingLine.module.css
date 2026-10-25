@@ -97,3 +97,9 @@
   color: var(--fg-faint);
   font-size: var(--text-sm);
 }
+
+/* The idle's pick is a stage direction rather than a line, so it is set in the
+   muted ink and never in `--live`. */
+.act {
+  color: var(--fg-dim);
+}

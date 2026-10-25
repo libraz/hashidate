@@ -69,7 +69,7 @@ describe('display pixel ratio', () => {
     });
     vi.stubGlobal('devicePixelRatio', 1);
     const setPixelRatio = vi.fn();
-    const runtime = bareRuntime({ embedded: false, renderer: { setPixelRatio } });
+    const runtime = bareRuntime({ preview: false, renderer: { setPixelRatio } });
     const resize = vi.fn();
     runtime.resize = resize;
     // The bound listener is a constructor-made field; this is what it calls.
@@ -88,14 +88,14 @@ describe('display pixel ratio', () => {
     expect(queries[1]?.listeners.size).toBe(1);
   });
 
-  it('renders the framed preview at 1x whatever the display', () => {
+  it('renders the panel preview at 1x whatever the display', () => {
     vi.stubGlobal('matchMedia', () => ({
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
     }));
     vi.stubGlobal('devicePixelRatio', 2);
     const setPixelRatio = vi.fn();
-    const runtime = bareRuntime({ embedded: true, renderer: { setPixelRatio } });
+    const runtime = bareRuntime({ preview: true, renderer: { setPixelRatio } });
     runtime.resize = vi.fn();
 
     runtime.applyPixelRatio();

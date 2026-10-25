@@ -24,11 +24,7 @@ function framings(): Framings {
 }
 
 function shotCamera(): ShotCamera {
-  const camera = new ShotCamera(
-    document.createElement('div'),
-    { pointer: true, embedded: false },
-    () => {},
-  );
+  const camera = new ShotCamera(document.createElement('div'), { pointer: true }, () => {});
   camera.rebuild(framings());
   camera.takeCut();
   return camera;

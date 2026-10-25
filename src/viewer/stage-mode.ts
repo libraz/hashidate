@@ -130,6 +130,24 @@ export interface StageMode {
    */
   muted: boolean;
   /**
+   * Send the composed frame to the panel's preview. Off unless `?feed=1`.
+   *
+   * The stage window's page asks for it, because that is the picture the
+   * preview should be showing; see `src/viewer/stage-feed.ts`. On the URL for
+   * the reason the mute is: what a renderer does beyond drawing is read off its
+   * address.
+   */
+  feed: boolean;
+  /**
+   * Draw as the panel's preview: at 1x and without composer MSAA. Off unless
+   * `?preview=1`.
+   *
+   * On the URL rather than read off being framed by another page, because the
+   * stage window frames its renderer too, and that one is the picture going to
+   * the projector.
+   */
+  preview: boolean;
+  /**
    * Which document to open on, or null for none.
    *
    * On the URL for the reason the room is: a scene in OBS that is the slide
@@ -255,6 +273,8 @@ export function readStageMode(search: string): StageMode {
     backdrop: parseBackdrop(params.get('backdrop')),
     transparent: isOn(params.get('transparent')),
     muted: isOn(params.get('mute')),
+    feed: isOn(params.get('feed')),
+    preview: isOn(params.get('preview')),
     deck: parseDeck(params.get('deck')),
     place: parsePlace(params.get('place')),
   };

@@ -292,7 +292,7 @@ export class BrowserVoice implements Voice {
    * It was changeable once, over a message from the page that embedded this
    * one. Now the address is the only thing that decides it, so a renderer that
    * is silent is silent for a reason that is written down where an operator can
-   * read it. See `monitor-link.ts`.
+   * read it.
    */
   private readonly muted: boolean;
   private readonly providedOutput: BrowserAudioOutput | null;

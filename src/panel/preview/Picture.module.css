@@ -1,0 +1,44 @@
+/*
+ * The picture is the camera control: drag to swing round, wheel to come in.
+ * `grab` rather than the default arrow, because nothing else on this page
+ * responds to being dragged and the affordance is otherwise invisible.
+ */
+.picture {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+  touch-action: none;
+}
+
+.picture:active {
+  cursor: grabbing;
+}
+
+/* The feed's canvas or the fallback renderer. Neither takes the pointer; the
+   picture above them does, so a drag means the same thing over either. */
+.layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  pointer-events: none;
+}
+
+.layer[hidden] {
+  display: none;
+}
+
+.badge {
+  position: absolute;
+  top: var(--space-3);
+  left: var(--space-3);
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-sm);
+  background: rgb(0 0 0 / 0.55);
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  pointer-events: auto;
+  user-select: none;
+}

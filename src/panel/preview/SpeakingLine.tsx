@@ -1,5 +1,5 @@
 import { parseLine } from '@/engine/cues';
-import { useT } from '@/i18n';
+import { type Localized, useT } from '@/i18n';
 import type { Snapshot } from '@/protocol';
 import styles from './SpeakingLine.module.css';
 
@@ -54,9 +54,26 @@ export function lineOnAir(snapshot: Snapshot): string | null {
   return parseLine(entry.text ?? '').text;
 }
 
+/**
+ * The performance the idle autopilot has up, or null when it is not driving.
+ *
+ * Only between turns: the renderer reports the idle's pick as `performance`
+ * while its idle is engaged, and a running turn outranks it in the strip. The
+ * label is the avatar's own vocabulary entry, so an id the renderer does not
+ * offer reads as nothing rather than as a raw id.
+ */
+export function idleActOnAir(snapshot: Snapshot): Localized | null {
+  const { state, vocabulary } = snapshot;
+  if ((state.turn ?? null) !== null || !(state.idle ?? false)) return null;
+  const id = state.performance ?? null;
+  if (id === null) return null;
+  return vocabulary.performances?.find((performance) => performance.id === id)?.label ?? null;
+}
+
 export function SpeakingLine({ snapshot }: { snapshot: Snapshot }) {
-  const { t } = useT();
+  const { t, tx } = useT();
   const line = lineOnAir(snapshot);
+  const act = line === null ? idleActOnAir(snapshot) : null;
   const speaking = snapshot.state.speaking ?? false;
 
   return (
@@ -74,13 +91,23 @@ export function SpeakingLine({ snapshot }: { snapshot: Snapshot }) {
             here, per the token file. */}
         <span className={styles.dot} aria-hidden="true" />
         <span className={styles.label}>
-          {t(line === null ? 'panel.preview.speaking.standingBy' : 'panel.preview.speaking')}
+          {t(
+            line !== null
+              ? 'panel.preview.speaking'
+              : act !== null
+                ? 'panel.preview.speaking.idle'
+                : 'panel.preview.speaking.standingBy',
+          )}
         </span>
       </div>
-      <p key={line ?? ''} className={styles.line}>
-        {line === null
-          ? null
-          : line || <span className={styles.silent}>{t('panel.row.silent')}</span>}
+      <p key={line ?? (act === null ? '' : `act:${act.en}`)} className={styles.line}>
+        {line === null ? (
+          act === null ? null : (
+            <span className={styles.act}>{tx(act)}</span>
+          )
+        ) : (
+          line || <span className={styles.silent}>{t('panel.row.silent')}</span>
+        )}
       </p>
     </div>
   );

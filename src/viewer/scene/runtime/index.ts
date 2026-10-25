@@ -21,6 +21,7 @@ import { BrowserAudioOutput } from '../../audio-output';
 import { BrowserBgm } from '../../bgm';
 import { StageRecorder } from '../../record';
 import { rendererId } from '../../renderer-id';
+import { StageFeed } from '../../stage-feed';
 import { stageMode } from '../../stage-mode';
 import { BrowserVoice } from '../../voice';
 import { BackdropStage } from '../backdrop';
@@ -129,10 +130,10 @@ export class AvatarRuntime {
   private readonly camWorld = new THREE.Vector3();
   private readonly resizeObserver: ResizeObserver;
   /**
-   * Whether another page frames this one, which only the panel's preview does.
-   * A monitor a few hundred pixels tall, so it renders at 1x without composer MSAA.
+   * The panel's own preview (`?preview=1`): a monitor a few hundred pixels
+   * tall, so it renders at 1x without composer MSAA.
    */
-  private readonly embedded: boolean;
+  private readonly preview = stageMode().preview;
   /** Matches the current device pixel ratio only, so it fires on a display change. */
   private pixelRatioQuery: MediaQueryList | null = null;
   /**
@@ -156,6 +157,11 @@ export class AvatarRuntime {
     openAudio: () => this.audio.captureStream(),
     rendererId,
   });
+
+  /** The stage window's picture, for the panel's preview. See `src/viewer/stage-feed.ts`. */
+  private readonly feed = stageMode().feed
+    ? new StageFeed({ onFrame: (fn) => this.onFrame(fn), source: rendererId })
+    : null;
 
   private toon = true;
 
@@ -228,7 +234,6 @@ export class AvatarRuntime {
     // behind the character needs the frame to be clearable to nothing. With
     // none up the scene's background paints every pixel opaque, so this costs
     // an alpha channel nothing ever reads.
-    this.embedded = window.parent !== window;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(this.pixelRatio());
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -242,10 +247,10 @@ export class AvatarRuntime {
 
     this.shotCamera = new ShotCamera(
       this.renderer.domElement,
-      { pointer: stageMode().console || this.embedded, embedded: this.embedded },
+      { pointer: stageMode().console },
       () => this.resize(),
     );
-    this.postStage = new PostStage(this.renderer, undefined, { multisample: !this.embedded });
+    this.postStage = new PostStage(this.renderer, undefined, { multisample: !this.preview });
 
     this.scene.add(this.defaultRig);
 
@@ -341,9 +346,8 @@ export class AvatarRuntime {
   /**
    * Every frame, immediately after it is drawn. See `frameListeners`.
    *
-   * Nothing subscribes to this in the ordinary course of a broadcast; it exists
-   * for the recorder, and costs one empty loop a frame while nobody is
-   * recording.
+   * Subscribed only while a take is recording or a preview is watching the
+   * stage feed, and costs one empty loop a frame otherwise.
    */
   onFrame(fn: Listener<StageFrame>): () => void {
     this.frameListeners.add(fn);
@@ -644,7 +648,7 @@ export class AvatarRuntime {
 
   /** The renderer's pixel ratio: the display's, capped at 2, or 1 in the preview. */
   private pixelRatio(): number {
-    return Math.min(devicePixelRatio, this.embedded ? 1 : 2);
+    return Math.min(devicePixelRatio, this.preview ? 1 : 2);
   }
 
   /** Re-arm the display-change query for the ratio now in effect. */
@@ -922,6 +926,7 @@ export class AvatarRuntime {
     // itself may finish after this synchronous scene teardown, which is why the
     // recorder owns the await rather than this method blocking the page.
     void this.recorder.dispose();
+    this.feed?.dispose();
     this.unmount();
     this.bgm.dispose();
     this.voice.dispose();

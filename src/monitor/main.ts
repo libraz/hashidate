@@ -26,9 +26,12 @@ frame.setAttribute('allow', 'autoplay');
  * is how the native shell silences this window: it reopens the page at
  * `/monitor/?mute=1` and the flag arrives at the renderer exactly as it does
  * for a browser source. See `stageURL`.
+ *
+ * `feed` is the one flag added: this is the picture the panel's preview shows.
  */
 const viewer = new URL('/', window.location.href);
 viewer.search = window.location.search;
+viewer.searchParams.set('feed', '1');
 frame.src = viewer.href;
 
 host.append(frame);

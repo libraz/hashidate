@@ -1,45 +1,39 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { type MessageKey, type Translator, useT } from '@/i18n';
 import type { CameraFrame, Shot, Snapshot } from '@/protocol';
 import { Segmented } from '@/ui/Segmented';
 import { Toggle } from '@/ui/Toggle';
-import { onMonitorShot } from '@/viewer/monitor-link';
 import { CAMERA_FRAMES, CAMERA_LABELS } from '@/viewer/scene/framing';
 import {
+  place,
   setBackdrop as sendBackdrop,
   setAvatar,
   setCamera,
   setDebugReadout,
   setIdle,
 } from '../api';
+import { Picture } from './Picture';
 import styles from './Preview.module.css';
 import { SpeakingLine } from './SpeakingLine';
+import { throttleShots } from './shot-drag';
 
 /**
  * The character, beside the controls that drive it.
  *
- * ## It is a second renderer, and that is not a compromise here
+ * ## The stage's picture when there is one, a renderer of its own when not
  *
- * Everything else in this panel is deliberately not a renderer — one avatar, one
- * WebGL context, one set of blinks. This is the exception, and the reason it is
- * allowed is that OBS is *already* a second renderer: its browser source runs in
- * its own CEF process, in its own address space, and cannot be observed from
- * this page by any means. There is no single output to mirror. Whatever appears
- * on the stream and whatever appears here are two renders of the same commands
- * either way, so a third one costs nothing that was not already spent.
- *
- * What that means in practice: the state is identical — emotion, expression,
- * performance, gesture, camera, wardrobe, room, and the queue itself, because
- * all of it is command-driven, and so are the idle's picks, which the server
- * makes once for every renderer. What differs is the cosmetic improvisation:
- * blink timing, saccades, breathing phase, each gesture's small variation. Those
- * run on `Math.random()` and two renderers do not agree about them. It is a monitor
- * of the performance, not a frame-accurate program feed, and there is no way to
- * make it the latter.
+ * With a stage window up in the same browser profile — the native shell — the
+ * picture is that window's own frame, sent across (`src/viewer/stage-feed.ts`),
+ * and this panel renders nothing. Otherwise it falls back to a second renderer
+ * of the same commands, as OBS's browser source already is. That one agrees on
+ * every command-driven state and on the idle's picks, which the server makes
+ * once for every renderer, but not on what runs on `Math.random()` — blinks,
+ * saccades, breathing phase, each gesture's small variation — which is why the
+ * feed is preferred and why the picture says which of the two it is showing.
  *
  * ## Always silent, and not by declining to speak
  *
- * The embedded viewer is opened with `?mute=1`, which zeroes the last gain in
+ * The fallback viewer is opened with `?mute=1`, which zeroes the last gain in
  * its audio graph. It still asks for every line and still plays the take: a
  * preview that skipped synthesis would fall back to the text estimate, end its
  * lines at different moments, and drift out of step with the queue it exists to
@@ -62,13 +56,11 @@ import { SpeakingLine } from './SpeakingLine';
  *
  * ## The picture is also the camera control
  *
- * Drag to swing round the character, wheel to come in. The frame takes the
- * pointer for this, which it deliberately did not before — the reason it did
- * not was that the camera was a property of *that* renderer and dollying it
- * moved a shot the stream did not share. It is shared now: the embedded viewer
- * reads its own camera back and posts it up here, and this turns it into the
- * ordinary `camera` command an orchestrator could have sent, so the renderer on
- * air swings with it. See `monitor-link.ts` and `Shot`.
+ * Drag to swing round the character, wheel to come in. The panel reads the
+ * pointer itself and sends the ordinary `camera` command an orchestrator could
+ * have sent, so every renderer swings with it — the same whether the picture is
+ * the stage's feed, which has no camera to drag, or the fallback renderer, which
+ * no longer takes the pointer. See `shot-drag.ts` and `Shot`.
  *
  * The cost is that a wheel over the picture no longer scrolls the panel. Worth
  * it: the shot is the one thing that can only be judged by looking, and this is
@@ -198,6 +190,8 @@ export function Preview({
   const blocked = useHeld(snapshot.voice?.blocked ?? false, BLOCKED_HOLD_MS);
   const backdrops = snapshot.vocabulary.backdrops ?? [];
   const idle = snapshot.state.idleEnabled ?? false;
+  // Read back rather than held, unlike the readout: the layout is reported.
+  const hidden = snapshot.placement?.avatar.visible === false;
 
   /**
    * The set, held rather than followed.
@@ -221,21 +215,13 @@ export function Preview({
    */
   const [shot, setShot] = useState<Required<Shot>>(STRAIGHT_ON);
 
-  /**
-   * What the drag produced, coming back out of the picture.
-   *
-   * The preview reads its own camera and posts it up; this turns it into the
-   * ordinary command an orchestrator could have sent. Rate-limited inside the
-   * frame — see `SHOT_INTERVAL` in the runtime — so this fires about ten times
-   * a second while a drag is happening and once when it settles.
-   */
-  useEffect(() => {
-    if (!on) return;
-    return onMonitorShot((moved) => {
-      setShot(moved);
-      void setCamera(moved);
-    });
-  }, [on]);
+  /** What the drag produced, sent about ten times a second and once when it settles. */
+  const shots = useMemo(() => throttleShots((moved) => void setCamera(moved)), []);
+  useEffect(() => () => shots.cancel(), [shots]);
+  const dragged = (moved: Required<Shot>): void => {
+    setShot(moved);
+    shots.push(moved);
+  };
 
   /** Name a framing, keeping wherever the operator is standing to see it. */
   const frameAt = (next: CameraFrame): void => {
@@ -254,28 +240,6 @@ export function Preview({
     <section className={styles.preview}>
       <div className={styles.head}>
         <span className={styles.title}>{t('panel.preview.title')}</span>
-        {/* The same readout `?debug=1` opens on, and an ordinary command — so it
-            goes to every renderer attached, this preview included. That is the
-            point: the question it answers is nearly always about the picture
-            going to air, and the preview then shows what that picture looks
-            like because it is a second renderer of the same commands. It is
-            never folded into the standing setup, so a renderer that reloads
-            comes back clean; see `debugCommandSchema`. */}
-        <button
-          type="button"
-          className={`${styles.toggle} ${measured ? styles.armed : ''}`}
-          aria-pressed={measured}
-          onClick={() => {
-            const next = !measured;
-            setMeasured(next);
-            void setDebugReadout(next);
-          }}
-          title={t(
-            measured ? 'panel.preview.readout.hideTitle' : 'panel.preview.readout.showTitle',
-          )}
-        >
-          {t(measured ? 'panel.preview.readout.on' : 'panel.preview.readout.off')}
-        </button>
         <button
           type="button"
           className={styles.toggle}
@@ -289,26 +253,7 @@ export function Preview({
 
       <div className={`${styles.frame} ${speaking ? styles.live : ''}`}>
         {on ? (
-          <iframe
-            // Keyed on the avatar so a swap reloads the preview rather than
-            // leaving it on the character that is no longer loaded. The embedded
-            // viewer picks its avatar from its own stored selection, which is
-            // only read at load.
-            key={avatar ?? 'none'}
-            className={styles.canvas}
-            // No `?size`: the canvas matches the element. A browser source is
-            // pinned to a pixel size so nothing resamples it; a monitor on a
-            // window somebody resizes wants the opposite.
-            src="/?mute=1"
-            title={t('panel.preview.frameTitle')}
-            // The picture takes the pointer, and that is the whole point of it
-            // now: drag to swing round the character, wheel to come in. What
-            // the drag produces is read back and sent as an ordinary `camera`
-            // command, so the renderer on air moves with it. The cost is that a
-            // wheel over the picture no longer scrolls the panel — worth it,
-            // since the shot is the one thing judged by looking.
-            tabIndex={-1}
-          />
+          <Picture avatar={avatar} shot={shot} onShot={dragged} />
         ) : (
           <p className={styles.off}>{t('panel.preview.stopped')}</p>
         )}
@@ -407,6 +352,30 @@ export function Preview({
             label={t('panel.preview.idle')}
             checked={idle}
             onChange={(v) => void setIdle(v).then(refresh)}
+          />
+          {/* The same readout `?debug=1` opens on, and an ordinary command — so it
+              goes to every renderer attached, this preview included. That is the
+              point: the question it answers is nearly always about the picture
+              going to air, and the preview then shows what that picture looks
+              like because it is a second renderer of the same commands. It is
+              never folded into the standing setup, so a renderer that reloads
+              comes back clean; see `debugCommandSchema`. */}
+          <Toggle
+            label={t('panel.preview.readout')}
+            title={t('panel.preview.readout.title')}
+            checked={measured}
+            onChange={(next) => {
+              setMeasured(next);
+              void setDebugReadout(next);
+            }}
+          />
+          {/* The same switch as the layout's shown/hidden, here for debugging the
+              document or the backdrop with nobody standing in front of it. */}
+          <Toggle
+            label={t('panel.preview.hideAvatar')}
+            title={t('panel.preview.hideAvatar.title')}
+            checked={hidden}
+            onChange={(hide) => void place({ avatar: { visible: !hide } }).then(refresh)}
           />
         </div>
       </div>

@@ -189,4 +189,16 @@ describe('readStageMode', () => {
     });
     expect(readStageMode('?stage=1&console=1').console).toBe(true);
   });
+
+  it('sends its picture to the preview only when the address asks', () => {
+    expect(readStageMode('').feed).toBe(false);
+    expect(readStageMode('?feed=1').feed).toBe(true);
+    expect(readStageMode('?feed=0').feed).toBe(false);
+  });
+
+  it('draws as the cheap preview only when the address asks', () => {
+    expect(readStageMode('').preview).toBe(false);
+    expect(readStageMode('?mute=1&preview=1').preview).toBe(true);
+    expect(readStageMode('?feed=1').preview).toBe(false);
+  });
 });
