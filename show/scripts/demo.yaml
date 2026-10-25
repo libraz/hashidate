@@ -28,24 +28,26 @@ setup:
     on: false
   - cmd: look
     amount: 1
+  # The opening set, up as soon as the script is loaded rather than on the first
+  # line, so the shot can be framed against it while the queue is held.
+  - cmd: backdrop
+    id: dusk
+  - cmd: camera
+    frame: bust
+  - cmd: room
+    id: room
 
 lines:
-  # The opening shot travels with the line rather than being sent ahead of it.
-  # Sent separately it would land while the previous segment was still on air.
   - text: "[hello]こんばんは。今日は、わたしが動いている仕組みそのものの話をします。"
-    stage:
-      camera: bust
-      backdrop: dusk
-      room: room
 
   - text: "[explain]この土台は hashidate といいます。ブラウザの中にわたしを描いて、外から一手ずつ指示を受け取る。やっていることはそれだけです。"
-    reading: "このどだいははしだてといいます。ブラウザのなかにわたしをえがいて、そとからひとてずつしじをうけとる。やっていることはそれだけです。"
+    reading: "この土台は、はしだてといいます。ブラウザの中にわたしを描いて、外からひとてずつ指示を受け取る。やっていることはそれだけです。"
 
   - text: "[wonder]それだけ、という顔をしましたね。"
 
   - text: "[agree]それだけなんです。何を喋るかは、ここでは決めません。"
 
-  - text: "[explain]台詞を考えるのは外側にいる誰かの仕事で、わたしの側が引き受けるのは、その台詞をどう言うか。"
+  - text: "[explain]セリフを考えるのは外側にいる誰かの仕事で、わたしの側が引き受けるのは、そのセリフをどう言うか。"
 
   - text: "[notice]この線がはっきりしていることが、いちばん大事なところです。"
 
@@ -56,24 +58,29 @@ lines:
       neutral: 0.6
       joy: 0.3
 
-  - text: "[present]動きには名前がついていて、たとえば今のこれは present、こちらへどうぞ、です。"
-    reading: "うごきにはなまえがついていて、たとえばいまのこれはプレゼント、こちらへどうぞ、です。"
+  - text: "[present]動きには名前がついていて、たとえば今のこれは「こちらです」。"
+
+  # The vocabulary showing its range, one performance per clause. Spaced a
+  # clause apart so each is seen before the next one replaces it.
+  - text: "[countOne]数えてみたら、八十を超えていました。[peace]ピースも、[heartHands]ハートも、[cuteSalute]敬礼もできます。"
+
+  - text: "[shy]……全部やると日が暮れるので、このくらいにしておきます。"
 
   # The cue markup demonstrating itself. Three performances inside one sentence,
   # each starting where it is written — which is the only place a caller can put
   # one, since a second turn would break the clause in half.
-  - text: "[explain]名前は台詞の途中にも書けます。[happy]ここで嬉しくなって、[gloomy]ここでしょんぼりして、[calm]また戻ってくる。全部ひとつの台詞です。"
+  - text: "[explain]名前はセリフの途中にも書けます。[happy]ここで嬉しくなって、[gloomy]ここでしょんぼりして、[calm]また戻ってくる。全部ひとつのセリフです。"
 
-  - text: "[explain]絵と音の置き場所も、台詞に付けて渡せます。"
+  - text: "[explain]絵と音の置き場所も、セリフに付けて渡せます。"
 
   # Said in the shot it is talking about. The camera and the backdrop move as
   # this line starts, so what is described and what is seen are the same frame.
-  - text: "[refresh]たとえば——引きの絵にして、外を夜にしました。"
+  - text: "[spotlight]たとえば——引きの絵にして、外を夜にしました。"
     stage:
       camera: full
       backdrop: night
 
-  - text: "[explain]声が響く場所も別に選べます。今いるのは、ホールということになっています。"
+  - text: "[listening]声が響く場所も別に選べます。今いるのは、ホールということになっています。"
     stage:
       room: hall
 
@@ -93,7 +100,7 @@ lines:
   # Without it these lines still run: an id the renderer cannot open is reported
   # and the stream carries on, so what is lost is the picture, not the segment.
   - text: "[present]資料を出すこともできます。PDF を置いておくと、後ろに映ります。"
-    reading: "しりょうをだすこともできます。ピーディーエフをおいておくと、うしろにうつります。"
+    reading: "資料を出すこともできます。ピーディーエフを置いておくと、後ろに映ります。"
     stage:
       camera: upper
       deck: hashidate
@@ -112,7 +119,9 @@ lines:
   - text: "[interested]しかも中の文章は読めるので、資料を見て台本を書くところまで、外側の誰かに任せられます。"
 
   # Down and back to the middle in one line, for the same reason as going up.
-  - text: "[explain]下ろすのも、戻るのも、一行です。"
+  # The one-finger count on "one line" is the point of picking it.
+  - text: "[countOne]下ろすのも、戻るのも、一行です。"
+    reading: "下ろすのも、戻るのも、いちぎょうです。"
     stage:
       camera: bust
       deck: null
@@ -122,9 +131,9 @@ lines:
   - text: "[secret]それから、ここだけの話。"
 
   - text: "[explain]この仕組みは、ローカルホスト、つまりこの機械の中からしか届きません。"
-    reading: "このしくみは、ローカルホスト、つまりこのきかいのなかからしかとどきません。"
+    reading: "この仕組みは、ローカルホスト、つまりこの機械の中からしか届きません。"
 
-  - text: "[calm]わたしの見た目も声も借りものだからです。外に出さないのは、遠慮ではなくて約束のほう。"
+  - text: "[calm]わたしの見た目も声も借りものだからです。[promise]外に出さないのは、遠慮ではなくて約束のほう。"
     emotion:
       relaxed: 0.7
       neutral: 0.3
