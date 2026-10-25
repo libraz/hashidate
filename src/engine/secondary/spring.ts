@@ -94,6 +94,9 @@ const MAX_STEPS = 4;
 /** Relative slack on `Collider#beyond`; far above rounding, far below a millimetre. */
 const CULL_MARGIN = 1 + 1e-4;
 
+/** Most colliders one `Cluster` holds; a cost trade, with no effect on the result. */
+const CLUSTER_SIZE = 8;
+
 const GROUP_DEFAULTS = {
   stiffness: 1, // restoring force toward the rest direction
   drag: 0.4, // fraction of velocity lost per step, 0..1
@@ -130,6 +133,8 @@ const _lw = new THREE.Vector3();
 const _lu = new THREE.Vector3();
 const _le = new THREE.Vector3();
 const _lr = new THREE.Vector3();
+// Per collider of the joint being tested, whether `Collider#beyond` culls it.
+let _far = new Uint8Array(0);
 
 const boneChildren = (bone: THREE.Object3D): THREE.Bone[] =>
   bone.children.filter((c): c is THREE.Bone => c instanceof THREE.Bone);
@@ -189,6 +194,8 @@ export class Joint {
   spans: Float32Array;
   /** Squared cull distance per collider, from `limits` and `spans`; see `Collider#beyond`. */
   reach: Float64Array;
+  /** Per cluster of the group's colliders, the widest of its members' cull distances, unsquared. */
+  clusterReach: Float64Array;
   /** The parent's world rotation, refreshed once per step, if no chain moves the parent. */
   parentQuat: THREE.Quaternion | null = null;
 
@@ -199,6 +206,7 @@ export class Joint {
     this.limits = new Float32Array(0);
     this.spans = new Float32Array(0);
     this.reach = new Float64Array(0);
+    this.clusterReach = new Float64Array(0);
 
     // An additive rotation an outside layer may put on this joint's rest pose,
     // in the *parent's* frame. Only the root of a driven group carries one —
@@ -271,13 +279,19 @@ export class Joint {
     this.bone.updateMatrix();
   }
 
-  /** Recompute `reach` after calibration has changed `limits` or `spans`. */
-  fitReach(): void {
+  /** Recompute `reach` and `clusterReach` after calibration has changed `limits` or `spans`. */
+  fitReach(clusters: readonly Cluster[]): void {
     this.reach = new Float64Array(this.limits.length);
     for (let i = 0; i < this.limits.length; i++) {
       const r = (this.length + Math.max(this.limits[i], this.spans[i])) * CULL_MARGIN;
       this.reach[i] = r * r;
     }
+    this.clusterReach = new Float64Array(clusters.length);
+    clusters.forEach((cluster, q) => {
+      for (const i of cluster.members) {
+        this.clusterReach[q] = Math.max(this.clusterReach[q], Math.sqrt(this.reach[i]));
+      }
+    });
   }
 }
 
@@ -401,13 +415,31 @@ export class Collider {
 
   /**
    * Whether `push` and `clearLink` are sure to leave a link alone: an outside
-   * sphere further from `root` than the link's length plus either clearance
-   * (`Joint#reach`, squared), with the tip at that length. Neither test is run
-   * on a culled pair, so the margin keeps the cull clear of their rounding.
+   * collider whose axis is further from `root` than the link's length plus
+   * either clearance (`Joint#reach`, squared), with the tip at most that length
+   * away. Neither test is run on a culled pair, so the margin keeps the cull
+   * clear of their rounding. Every axis point either test uses is at least this
+   * far, so a capsule is culled on the same terms as a sphere.
    */
   beyond(root: THREE.Vector3, reach: number): boolean {
-    if (this.inside || this.#len2 > 1e-12) return false;
-    return this.a.distanceToSquared(root) > reach;
+    return !this.inside && this.#axisDistanceSq(root) > reach;
+  }
+
+  /** Squared distance from `point` to the axis; its rounding is far inside the cull margin. */
+  #axisDistanceSq(point: THREE.Vector3): number {
+    const a = this.a;
+    let dx = point.x - a.x;
+    let dy = point.y - a.y;
+    let dz = point.z - a.z;
+    const len2 = this.#len2;
+    if (len2 > 1e-12) {
+      const s = this.#seg;
+      const t = Math.min(1, Math.max(0, (dx * s.x + dy * s.y + dz * s.z) / len2));
+      dx -= s.x * t;
+      dy -= s.y * t;
+      dz -= s.z * t;
+    }
+    return dx * dx + dy * dy + dz * dz;
   }
 
   /**
@@ -427,8 +459,9 @@ export class Collider {
     // Closest points of two segments (Ericson 5.1.9). Only the axis point is
     // wanted, so the link parameter is not re-clamped after the axis one.
     const denom = a * e - b * b;
-    const s = denom > 1e-12 ? THREE.MathUtils.clamp((b * f - c * e) / denom, 0, 1) : 0;
-    const t = THREE.MathUtils.clamp((b * s + f) / e, 0, 1);
+    // `MathUtils.clamp(v, 0, 1)` spelled out, which it is word for word.
+    const s = denom > 1e-12 ? Math.max(0, Math.min(1, (b * f - c * e) / denom)) : 0;
+    const t = Math.max(0, Math.min(1, (b * s + f) / e));
     return out.copy(this.a).addScaledVector(seg, t);
   }
 
@@ -498,6 +531,108 @@ export class Collider {
     point.copy(_p).addScaledVector(_d, min);
     return true;
   }
+}
+
+/**
+ * Outside colliders of one group on one bone, near each other, bounded by a
+ * sphere refitted to their placed axes. A root further from the sphere than the
+ * widest of the members' cull distances is further than each from its own axis,
+ * so one test culls them all. A lone collider is tested on its own.
+ */
+class Cluster {
+  readonly members: readonly number[];
+  readonly centre = new THREE.Vector3();
+  radius = 0;
+
+  constructor(members: readonly number[]) {
+    this.members = members;
+  }
+
+  /** Fit the sphere around every member's axis ends as last placed. */
+  refit(colliders: readonly Collider[]): void {
+    const centre = this.centre.set(0, 0, 0);
+    for (const i of this.members) centre.add(colliders[i].a).add(colliders[i].b);
+    centre.multiplyScalar(1 / (2 * this.members.length));
+    let r2 = 0;
+    for (const i of this.members) {
+      const c = colliders[i];
+      r2 = Math.max(r2, centre.distanceToSquared(c.a), centre.distanceToSquared(c.b));
+    }
+    this.radius = Math.sqrt(r2);
+  }
+
+  /** Whether the sphere is further from `root` than `reach`. */
+  beyond(root: THREE.Vector3, reach: number): boolean {
+    const r = this.radius + reach;
+    return this.centre.distanceToSquared(root) > r * r;
+  }
+}
+
+/**
+ * Partition a group's colliders, as placed, into clusters: each bone's outside
+ * colliders split along their widest extent until no part exceeds `CLUSTER_SIZE`.
+ */
+function clusterColliders(colliders: readonly Collider[]): Cluster[] {
+  const out: Cluster[] = [];
+  const byBone = new Map<THREE.Object3D, number[]>();
+  colliders.forEach((c, i) => {
+    if (c.inside) {
+      out.push(new Cluster([i]));
+      return;
+    }
+    const members = byBone.get(c.bone) ?? [];
+    members.push(i);
+    byBone.set(c.bone, members);
+  });
+  const mid = (i: number): THREE.Vector3 =>
+    new THREE.Vector3().addVectors(colliders[i].a, colliders[i].b).multiplyScalar(0.5);
+  const split = (members: number[]): void => {
+    if (members.length <= CLUSTER_SIZE) {
+      out.push(new Cluster(members));
+      return;
+    }
+    const box = new THREE.Box3().setFromPoints(members.map(mid));
+    const size = box.getSize(new THREE.Vector3());
+    const axis = size.x >= size.y && size.x >= size.z ? 'x' : size.y >= size.z ? 'y' : 'z';
+    const sorted = [...members].sort((p, q) => mid(p)[axis] - mid(q)[axis]);
+    const half = sorted.length >> 1;
+    split(sorted.slice(0, half));
+    split(sorted.slice(half));
+  };
+  for (const members of byBone.values()) split(members);
+  return out;
+}
+
+function refitClusters(clusters: readonly Cluster[], colliders: readonly Collider[]): void {
+  for (const cluster of clusters) if (cluster.members.length > 1) cluster.refit(colliders);
+}
+
+/**
+ * Mark into `_far` each collider `Collider#beyond` culls for `j` from `root`.
+ * Returns whether any is left to test.
+ */
+function cull(
+  colliders: readonly Collider[],
+  clusters: readonly Cluster[],
+  j: Joint,
+  root: THREE.Vector3,
+): boolean {
+  if (_far.length < colliders.length) _far = new Uint8Array(colliders.length);
+  let near = false;
+  for (let q = 0; q < clusters.length; q++) {
+    const members = clusters[q].members;
+    if (members.length > 1 && clusters[q].beyond(root, j.clusterReach[q])) {
+      for (let k = 0; k < members.length; k++) _far[members[k]] = 1;
+      continue;
+    }
+    for (let k = 0; k < members.length; k++) {
+      const i = members[k];
+      const far = colliders[i].beyond(root, j.reach[i]);
+      _far[i] = far ? 1 : 0;
+      near ||= !far;
+    }
+  }
+  return near;
 }
 
 /** A node hung from its parent by hand, as a world update would. */
@@ -600,6 +735,10 @@ export class Spring {
   readonly #fixedColliders: Array<{ collider: Collider; input: Input }> = [];
   /** Each group's colliders on a node a chain moves, placed in turn. */
   readonly #movingColliders = new Map<SpringGroup, Collider[]>();
+  /** Groups whose every joint `#rehang` re-hangs. */
+  readonly #rehung = new Set<SpringGroup>();
+  /** Each group's colliders, partitioned for culling; see `Cluster`. */
+  readonly #clusters = new Map<SpringGroup, Cluster[]>();
 
   /**
    * @param profile  the avatar profile; only `root` is used, since sway chains
@@ -869,6 +1008,7 @@ export class Spring {
       }
     };
     for (const g of this.groups) {
+      if (!g.anchor) this.#rehung.add(g);
       for (const j of g.joints) {
         if (outside(j.parent) === j.parent) j.parentQuat = add(j.parent).quat;
         if (g.anchor) continue;
@@ -995,6 +1135,8 @@ export class Spring {
     for (const g of this.groups) {
       if (!g.colliders.length) continue;
       for (const c of g.colliders) c.place();
+      const clusters = clusterColliders(g.colliders);
+      this.#clusters.set(g, clusters);
       for (const j of g.joints) {
         j.limits = new Float32Array(g.colliders.length);
         j.spans = new Float32Array(g.colliders.length);
@@ -1007,7 +1149,7 @@ export class Spring {
             : Math.min(c.radius + g.radius, dist);
           if (!c.inside) j.spans[i] = Math.min(c.radius + g.radius, c.linkDistance(_bp, j.cur));
         }
-        j.fitReach();
+        j.fitReach(clusters);
       }
     }
   }
@@ -1059,7 +1201,8 @@ export class Spring {
       }
     }
 
-    for (const j of g.joints) j.fitReach();
+    const clusters = this.#clusters.get(g) ?? [];
+    for (const j of g.joints) j.fitReach(clusters);
     for (const j of g.rootJoints) j.drive.identity();
     this.root.updateMatrixWorld(true);
     for (const grp of this.groups) {
@@ -1312,18 +1455,23 @@ export class Spring {
         placed = true;
       }
       for (const c of this.#movingColliders.get(g) ?? []) c.place();
+      const clusters = this.#clusters.get(g) ?? [];
+      refitClusters(clusters, g.colliders);
+      const rehung = this.#rehung.has(g);
       for (const j of g.joints) {
         // An earlier link may have been held back, so hang this one again first.
-        j.bone.matrixWorld.multiplyMatrices(j.parent.matrixWorld, j.bone.matrix);
-        _next
-          .copy(j.axis)
-          .multiplyScalar(j.length)
-          .applyQuaternion(worldQuat(j.bone, _q))
-          .add(_bp.setFromMatrixPosition(j.bone.matrixWorld));
+        // Until one is, `#rehang` has just formed this same matrix.
+        if (held || !rehung) {
+          j.bone.matrixWorld.multiplyMatrices(j.parent.matrixWorld, j.bone.matrix);
+        }
+        _bp.setFromMatrixPosition(j.bone.matrixWorld);
+        // A link every collider is culled for cannot be held back.
+        if (!cull(g.colliders, clusters, j, _bp)) continue;
+        _next.copy(j.axis).multiplyScalar(j.length).applyQuaternion(worldQuat(j.bone, _q)).add(_bp);
         let inside = false;
         for (let i = 0; i < g.colliders.length; i++) {
           const c = g.colliders[i];
-          if (!inside && c.beyond(_bp, j.reach[i])) continue;
+          if (!inside && _far[i]) continue;
           if (c.push(_next, j.limits[i])) inside = true;
           if (c.clearLink(_bp, _next, j.length, j.spans[i])) inside = true;
         }
@@ -1389,6 +1537,8 @@ export class Spring {
         continue;
       }
       for (const c of this.#movingColliders.get(g) ?? []) c.place();
+      const clusters = this.#clusters.get(g) ?? [];
+      refitClusters(clusters, g.colliders);
 
       const stiffness = g.stiffness * this.stiffnessScale * dt;
       const gravity = g.gravity * this.gravityScale * dt;
@@ -1431,12 +1581,14 @@ export class Spring {
         _next.copy(_bp).addScaledVector(_to.normalize(), j.length);
 
         if (g.colliders.length) {
+          // Both passes below test from the same root, so each pair is culled once.
+          cull(g.colliders, clusters, j, _bp);
           // A moved tip is off its length, which `beyond` assumes, so the
           // rest of the joint's colliders are tested in full.
           let moved = false;
           for (let i = 0; i < g.colliders.length; i++) {
             const c = g.colliders[i];
-            if (!moved && c.beyond(_bp, j.reach[i])) continue;
+            if (!moved && _far[i]) continue;
             if (c.push(_next, j.limits[i])) moved = true;
           }
           // Collision moved the point off the sphere the length constraint put
@@ -1451,7 +1603,7 @@ export class Spring {
           moved = false;
           for (let i = 0; i < g.colliders.length; i++) {
             const c = g.colliders[i];
-            if (!moved && c.beyond(_bp, j.reach[i])) continue;
+            if (!moved && _far[i]) continue;
             if (c.clearLink(_bp, _next, j.length, j.spans[i])) moved = true;
           }
         }

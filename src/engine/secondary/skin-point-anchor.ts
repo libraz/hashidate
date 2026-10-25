@@ -16,6 +16,12 @@ interface PathNode {
   /** Position, quaternion and scale `local` was composed from and passed the guard with. */
   readonly passed: Float64Array;
   hasPassed: boolean;
+  /** The placement that last guarded this node; see `SkinPointAnchor#walk`. */
+  guarded: number;
+  /** The path's product down to this node in placement `formed`, starting after `from`. */
+  readonly world: THREE.Matrix4;
+  formed: number;
+  from: PathNode | null;
 }
 
 /**
@@ -76,6 +82,11 @@ function requireAnchor(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
+/** The same failure for a guard run on every placement, whose message is only built when it trips. */
+function fail(message: string): never {
+  throw new Error(message);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -89,33 +100,42 @@ function readLocalMatrix(node: THREE.Object3D, out: THREE.Matrix4): THREE.Matrix
 function transformScale(node: THREE.Object3D, matrix: THREE.Matrix4): number {
   const e = matrix.elements;
   const element = (index: number): number => e[index] ?? Number.NaN;
-  requireAnchor(
-    e.every(Number.isFinite) &&
+  if (
+    !(
+      e.every(Number.isFinite) &&
       Math.abs(element(3)) <= 1e-8 &&
       Math.abs(element(7)) <= 1e-8 &&
       Math.abs(element(11)) <= 1e-8 &&
-      Math.abs(element(15) - 1) <= 1e-8,
-    `anchor:${node.name} requires a finite affine local transform`,
-  );
+      Math.abs(element(15) - 1) <= 1e-8
+    )
+  ) {
+    fail(`anchor:${node.name} requires a finite affine local transform`);
+  }
   const x = Math.hypot(element(0), element(1), element(2));
   const y = Math.hypot(element(4), element(5), element(6));
   const z = Math.hypot(element(8), element(9), element(10));
   const maximum = Math.max(x, y, z);
-  requireAnchor(maximum > 1e-12, `anchor:${node.name} has a singular local transform`);
-  requireAnchor(
-    Math.abs(x - y) <= UNIFORM_SCALE_TOLERANCE * maximum &&
-      Math.abs(x - z) <= UNIFORM_SCALE_TOLERANCE * maximum,
-    `anchor:${node.name} does not support nonuniform scale`,
-  );
+  if (!(maximum > 1e-12)) fail(`anchor:${node.name} has a singular local transform`);
+  if (
+    !(
+      Math.abs(x - y) <= UNIFORM_SCALE_TOLERANCE * maximum &&
+      Math.abs(x - z) <= UNIFORM_SCALE_TOLERANCE * maximum
+    )
+  ) {
+    fail(`anchor:${node.name} does not support nonuniform scale`);
+  }
   const xy = element(0) * element(4) + element(1) * element(5) + element(2) * element(6);
   const xz = element(0) * element(8) + element(1) * element(9) + element(2) * element(10);
   const yz = element(4) * element(8) + element(5) * element(9) + element(6) * element(10);
-  requireAnchor(
-    Math.abs(xy) <= ORTHOGONAL_TOLERANCE * x * y &&
+  if (
+    !(
+      Math.abs(xy) <= ORTHOGONAL_TOLERANCE * x * y &&
       Math.abs(xz) <= ORTHOGONAL_TOLERANCE * x * z &&
-      Math.abs(yz) <= ORTHOGONAL_TOLERANCE * y * z,
-    `anchor:${node.name} does not support shear`,
-  );
+      Math.abs(yz) <= ORTHOGONAL_TOLERANCE * y * z
+    )
+  ) {
+    fail(`anchor:${node.name} does not support shear`);
+  }
   return (x + y + z) / 3;
 }
 
@@ -132,28 +152,33 @@ function assertTransformStable(
   matrix: THREE.Matrix4,
   expected: TransformGuard,
 ): void {
-  requireAnchor(
-    node.matrixAutoUpdate === expected.matrixAutoUpdate,
-    `anchor:${node.name} transform mode changed after resolution`,
-  );
+  if (node.matrixAutoUpdate !== expected.matrixAutoUpdate) {
+    fail(`anchor:${node.name} transform mode changed after resolution`);
+  }
   const scale = transformScale(node, matrix);
   if (expected.matrixAutoUpdate) {
     // A changing quaternion can perturb composed column lengths by Float32
     // roundoff. The Object3D TRS scale itself is the immutable contract.
-    requireAnchor(
-      node.scale.x === expected.scale[0] &&
+    if (
+      !(
+        node.scale.x === expected.scale[0] &&
         node.scale.y === expected.scale[1] &&
-        node.scale.z === expected.scale[2],
-      `anchor:${node.name} scale changed after resolution`,
-    );
+        node.scale.z === expected.scale[2]
+      )
+    ) {
+      fail(`anchor:${node.name} scale changed after resolution`);
+    }
     return;
   }
-  requireAnchor(
-    Math.abs(scale - expected.scale) <=
-      MANUAL_MATRIX_SCALE_TOLERANCE * Math.max(1, expected.scale) &&
-      Math.sign(matrix.determinant()) === expected.sign,
-    `anchor:${node.name} scale changed after resolution`,
-  );
+  if (
+    !(
+      Math.abs(scale - expected.scale) <=
+        MANUAL_MATRIX_SCALE_TOLERANCE * Math.max(1, expected.scale) &&
+      Math.sign(matrix.determinant()) === expected.sign
+    )
+  ) {
+    fail(`anchor:${node.name} scale changed after resolution`);
+  }
 }
 
 function matrixPath(
@@ -182,6 +207,10 @@ function matrixPath(
         local: new THREE.Matrix4(),
         passed: new Float64Array(10),
         hasPassed: false,
+        guarded: -1,
+        world: new THREE.Matrix4(),
+        formed: -1,
+        from: null,
       };
       shared.set(current, entry);
     }
@@ -222,6 +251,8 @@ export class SkinPointAnchor {
   readonly #rootMatrix = new THREE.Matrix4();
   readonly #point = new THREE.Vector3();
   readonly #rootTransform: TransformGuard;
+  /** Counts placements, so a path node shared by several paths is handled once in each. */
+  #placement = 0;
 
   constructor(
     root: THREE.Bone,
@@ -341,22 +372,29 @@ export class SkinPointAnchor {
         }
       }
     }
+    const from = start > 0 ? path.nodes[start - 1] : null;
+    const placement = this.#placement;
     for (let i = 0; i < path.nodes.length; i++) {
       const entry = path.nodes[i];
+      // Nothing a placement does moves a path node, so one guarded by an earlier
+      // path of this placement passes again, and a product formed from the same
+      // start comes out the same.
+      if (entry.guarded === placement) {
+        if (i >= start) this.#extend(entry, out, from, placement);
+        continue;
+      }
       const node = entry.node;
       requireAnchor(node && entry.transform, 'anchor path changed after resolution');
       if (i > 0) {
-        requireAnchor(
-          node.parent === path.nodes[i - 1].node,
-          `anchor path was reparented at ${node.name}`,
-        );
-      } else {
-        requireAnchor(node.parent === null, `anchor path root was reparented at ${node.name}`);
+        if (node.parent !== path.nodes[i - 1].node) {
+          fail(`anchor path was reparented at ${node.name}`);
+        }
+      } else if (node.parent !== null) {
+        fail(`anchor path root was reparented at ${node.name}`);
       }
-      requireAnchor(
-        node.matrixWorldAutoUpdate,
-        `anchor:${node.name} has a manual matrixWorld override`,
-      );
+      if (!node.matrixWorldAutoUpdate) {
+        fail(`anchor:${node.name} has a manual matrixWorld override`);
+      }
       // A node shared by several paths, or one nothing has moved since the last
       // placement, is read and guarded once.
       if (!(entry.transform.matrixAutoUpdate && stillPassed(entry))) {
@@ -364,22 +402,34 @@ export class SkinPointAnchor {
         assertTransformStable(node, entry.local, entry.transform);
         rememberPassed(entry);
       }
-      if (i >= start) out.multiply(entry.local);
+      entry.guarded = placement;
+      if (i >= start) this.#extend(entry, out, from, placement);
     }
     return out;
+  }
+
+  /** Carry `out` through `entry`'s local matrix, or take the product already formed there. */
+  #extend(entry: PathNode, out: THREE.Matrix4, from: PathNode | null, placement: number): void {
+    if (entry.formed === placement && entry.from === from) {
+      out.copy(entry.world);
+      return;
+    }
+    out.multiply(entry.local);
+    entry.world.copy(out);
+    entry.formed = placement;
+    entry.from = from;
   }
 
   #refreshSubtree(node: THREE.Object3D): void {
     for (const child of node.children) {
       const expected = this.#subtreeTransforms.get(child);
-      requireAnchor(expected, `anchor subtree changed at ${child.name}`);
-      requireAnchor(
-        child.matrixWorldAutoUpdate,
-        `anchor:${child.name} has a manual matrixWorld override`,
-      );
+      if (!expected) fail(`anchor subtree changed at ${child.name}`);
+      if (!child.matrixWorldAutoUpdate) {
+        fail(`anchor:${child.name} has a manual matrixWorld override`);
+      }
       if (child.matrixAutoUpdate) child.updateMatrix();
       assertTransformStable(child, child.matrix, expected);
-      requireAnchor(child.parent === node, `anchor subtree was reparented at ${child.name}`);
+      if (child.parent !== node) fail(`anchor subtree was reparented at ${child.name}`);
       child.matrixWorld.multiplyMatrices(node.matrixWorld, child.matrix);
       child.matrixWorldNeedsUpdate = false;
       this.#refreshSubtree(child);
@@ -391,14 +441,13 @@ export class SkinPointAnchor {
    *                step between two frames composes from the body between them
    */
   place(inputs?: ReadonlyMap<THREE.Object3D, THREE.Matrix4>): void {
-    requireAnchor(
-      this.root.parent === this.#parentPath.nodes.at(-1)?.node,
-      `anchor root was reparented at ${this.root.name}`,
-    );
-    requireAnchor(
-      this.root.matrixWorldAutoUpdate,
-      `anchor:${this.root.name} has a manual matrixWorld override`,
-    );
+    this.#placement++;
+    if (this.root.parent !== this.#parentPath.nodes.at(-1)?.node) {
+      fail(`anchor root was reparented at ${this.root.name}`);
+    }
+    if (!this.root.matrixWorldAutoUpdate) {
+      fail(`anchor:${this.root.name} has a manual matrixWorld override`);
+    }
     this.targetWorld.set(0, 0, 0);
     for (const influence of this.influences) {
       if (influence.weight === 0) continue;
