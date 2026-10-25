@@ -28,5 +28,6 @@ export type {
   VisemeTrack,
 } from './lipsync';
 export { Mouth, scaleTrack, textToVisemes } from './lipsync';
+export { MorphFrame } from './morph-frame';
 export type { ExpressionPreset, LidClosure } from './presets';
 export { buildIdleFaces, buildOverlays, buildPresets, lidClosure } from './presets';

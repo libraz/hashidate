@@ -21,6 +21,7 @@ import {
   dominantEmotion,
   EMOTIONS,
   lidClosure,
+  MorphFrame,
   Mouth,
   scaleTrack,
   softMouthScale,
@@ -145,6 +146,7 @@ export class Director {
    * number it produces to whatever the avatar calls its blink shapes.
    */
   readonly #blink: Blink;
+  readonly #morphs: MorphFrame;
 
   readonly #random: () => number;
 
@@ -191,10 +193,6 @@ export class Director {
   /** Effects raised by idle, kept apart from caller-owned overlays. */
   private readonly _autoOverlay = new Map<string, number>();
 
-  /** mesh -> Map<index, value> for this frame; inner maps are emptied, not replaced */
-  private readonly _morphs = new Map<THREE.Mesh, Map<number, number>>();
-  /** mesh -> Set<index> written last frame; emptied and refilled each frame */
-  private readonly _written = new Map<THREE.Mesh, Set<number>>();
   // Per-frame scratch, held so the face path allocates nothing in steady state.
   private readonly _composed: Record<string, number> = {};
   private readonly _blinkCtx: BlinkContext = { speaking: false, suppressed: false };
@@ -227,6 +225,7 @@ export class Director {
     this.a = avatar;
     this.#random = random;
     this.#blink = new Blink({ random });
+    this.#morphs = new MorphFrame(profile);
     this.rig = new Rig(profile);
     this.body = new Body(this.rig, profile, { random });
     this.mouth = new Mouth();
@@ -280,7 +279,7 @@ export class Director {
 
   /** Write one emotion-channel shape and count the lid travel it carries. */
   private setEmotionShape(shape: string, w: number): void {
-    this.set(shape, w);
+    this.#morphs.set(shape, w);
     const lid = this._emotionLid.get(shape);
     if (!lid) return;
     const v = Math.min(1, w);
@@ -919,27 +918,6 @@ export class Director {
     this._vrmW += (w - this._vrmW) * k;
   }
 
-  // --- morph writing -----------------------------------------------------
-
-  /**
-   * Route a canonical shape name to every (mesh, index) that carries it.
-   * A name can live on more than one mesh, so the profile hands back a list.
-   */
-  private set(name: string | null | undefined, v: number): void {
-    if (!name) return;
-    const targets = this.p.morphTargets.get(name);
-    if (!targets) return;
-    const val = Math.min(1, v);
-    for (const { mesh, index } of targets) {
-      let m = this._morphs.get(mesh);
-      if (!m) {
-        m = new Map();
-        this._morphs.set(mesh, m);
-      }
-      m.set(index, Math.max(m.get(index) ?? 0, val));
-    }
-  }
-
   /**
    * Sum the effective viseme targets this frame, once per routed shape name.
    * The face writer below uses the same 0.005 cutoff and max rule for shapes
@@ -985,7 +963,7 @@ export class Director {
   private writeFace(dt: number): void {
     const { p, mouth } = this;
     const emotion = this.effectiveEmotion;
-    for (const m of this._morphs.values()) m.clear();
+    this.#morphs.begin();
 
     // An authored face goes down first and the composed one yields to it in
     // proportion. Layering muscle weights on top of a finished drawing does not
@@ -994,7 +972,7 @@ export class Director {
     const preset = this._preset ? this.presetById.get(this._preset) : null;
     const pw = preset ? this._presetW : 0;
     if (preset) {
-      this.set(preset.id, pw);
+      this.#morphs.set(preset.id, pw);
       // Authored faces may carry an open mouth of their own. During speech,
       // reverse that travel with the authored inverse or measured canonical
       // close first, then leave the viseme layer on top. At rest the drawing is untouched.
@@ -1006,9 +984,9 @@ export class Director {
           preset.speechNeutralizerEnvelope === 'viseme-support'
             ? Math.max(mouth.busy, this.visemeSupport())
             : mouth.busy;
-        this.set(preset.speechNeutralizer, pw * envelope);
+        this.#morphs.set(preset.speechNeutralizer, pw * envelope);
       } else if (preset.mouthClose > 0) {
-        this.set('mouthClose', pw * preset.mouthClose * mouth.busy);
+        this.#morphs.set('mouthClose', pw * preset.mouthClose * mouth.busy);
       }
     }
     const composed = 1 - pw;
@@ -1053,10 +1031,10 @@ export class Director {
     // Drawn effects go on top and are not scaled by `composed`: an overlay is
     // meant to sit over whatever face is showing, and a heart pupil that fades
     // out as the smile underneath it grows is not the effect the author drew.
-    for (const [id, w] of this._overlay) this.set(id, w);
+    for (const [id, w] of this._overlay) this.#morphs.set(id, w);
     if (this._auto) {
       for (const [id, w] of this._autoOverlay) {
-        this.set(id, Math.max(this._overlay.get(id) ?? 0, w));
+        this.#morphs.set(id, Math.max(this._overlay.get(id) ?? 0, w));
       }
     }
 
@@ -1066,12 +1044,12 @@ export class Director {
       const w = mouth.weights[v];
       if (w < 0.005) continue;
       const shape = p.viseme[v];
-      if (shape) this.set(shape, w);
+      if (shape) this.#morphs.set(shape, w);
     }
     // The authored visemes already move the jaw; this only adds a little
     // weight underneath them. Too much and the mouth hangs open.
     if (this.useArkit && mouth.openness > 0.01) {
-      this.set('jawOpen', mouth.openness * 0.16);
+      this.#morphs.set('jawOpen', mouth.openness * 0.16);
     }
 
     // Blink last so nothing can hold the eyes open — except an authored face
@@ -1096,33 +1074,13 @@ export class Director {
       const roomL = Math.max(0, 1 - (lid ? (lid.L ?? 0) * pw : 0) - squint.L);
       const roomR = Math.max(0, 1 - (lid ? (lid.R ?? 0) * pw : 0) - squint.R);
       if (p.blink.L && p.blink.R) {
-        this.set(p.blink.L, blink * roomL);
-        this.set(p.blink.R, blink * roomR);
+        this.#morphs.set(p.blink.L, blink * roomL);
+        this.#morphs.set(p.blink.R, blink * roomR);
       } else {
-        this.set(p.blink.both, blink * Math.min(roomL, roomR));
+        this.#morphs.set(p.blink.both, blink * Math.min(roomL, roomR));
       }
     }
 
-    // Clear exactly what was written last frame and nothing else. Wiping a
-    // whole influence array would also erase the wardrobe's outfit-hide shapes,
-    // which live on the same meshes but are owned by another layer.
-    for (const [mesh, indices] of this._written) {
-      const infl = mesh.morphTargetInfluences;
-      if (infl) for (const i of indices) infl[i] = 0;
-      indices.clear();
-    }
-    for (const [mesh, values] of this._morphs) {
-      const infl = mesh.morphTargetInfluences;
-      if (!infl || values.size === 0) continue;
-      let indices = this._written.get(mesh);
-      if (!indices) {
-        indices = new Set<number>();
-        this._written.set(mesh, indices);
-      }
-      for (const [i, v] of values) {
-        infl[i] = v;
-        indices.add(i);
-      }
-    }
+    this.#morphs.flush();
   }
 }
