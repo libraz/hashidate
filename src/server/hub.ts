@@ -24,6 +24,7 @@ import type { BgmSource } from './bgm';
 import { BgmCoordinator } from './bgm-state';
 import type { DeckSource } from './decks';
 import { EventLog } from './event-log';
+import { OnAirOwners } from './on-air';
 import { type RewindMode, TurnQueue } from './queue';
 import type { AppendResult, OpenOptions, RecordingStore } from './recordings';
 import { type Random, withSide } from './side';
@@ -97,9 +98,6 @@ interface ViewerClient {
   held?: boolean;
 }
 
-/** Internal owner marker for a legacy report that carried no renderer id. */
-const ANONYMOUS_OWNER = '';
-
 /** What `waitFor` settles with. */
 export interface WaitResult {
   snapshot: Snapshot;
@@ -125,12 +123,6 @@ export class Hub {
   // to see half a report: the lock is gone, and the condition variable is the
   // set of pending promises that `report` settles.
   private readonly clients = new Set<ViewerClient>();
-  /** Number of live SSE connections for each renderer identity. */
-  private readonly rendererConnections = new Map<string, number>();
-  /** Distinct renderers that have acknowledged each line currently on air. */
-  private readonly onAirOwners = new Map<string, Set<string>>();
-  /** Grace timers for lines whose last known owner disconnected. */
-  private readonly onAirTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly waiters = new Set<Waiter>();
   private readonly log = new EventLog();
   private state: Partial<SessionState> = {};
@@ -155,6 +147,7 @@ export class Hub {
    */
   readonly queue: TurnQueue;
   private readonly take: TakeControl;
+  private readonly owners: OnAirOwners;
 
   /**
    * The setup, so a renderer opened at the top of the broadcast is not opened on
@@ -206,8 +199,14 @@ export class Hub {
       recordings,
       this.queue,
       (message) => this.send(message),
-      (owner) => this.rendererConnections.get(owner) ?? 0,
+      (owner) => this.owners.connections(owner),
       () => this.state.speaking === true,
+    );
+    this.owners = new OnAirOwners(
+      this.queue,
+      (rendererId) => [...this.clients].some((client) => client.rendererId !== rendererId),
+      (turnId) => this.fileAbandoned(turnId),
+      STATE_STALE_SECONDS * 1000,
     );
     this.autopilot = new Autopilot(random);
     this.standing = new Standing(
@@ -241,9 +240,9 @@ export class Hub {
     const client: ViewerClient = { listener, rendererId };
     this.clients.add(client);
     if (rendererId !== undefined) {
-      this.rendererConnections.set(rendererId, (this.rendererConnections.get(rendererId) ?? 0) + 1);
+      this.owners.attach(rendererId);
       this.take.cancelOrphan(rendererId);
-      this.rendererConnected(rendererId);
+      this.owners.rendererConnected(rendererId);
     }
     // After the ownership pass, which may have filed an abandoned line.
     client.held = this.queue.airing().length > 0;
@@ -296,111 +295,11 @@ export class Hub {
     if (!this.clients.delete(client)) return;
     const rendererId = client.rendererId;
     if (rendererId === undefined) return;
-    const count = (this.rendererConnections.get(rendererId) ?? 1) - 1;
-    if (count > 0) {
-      this.rendererConnections.set(rendererId, count);
-      return;
-    }
-    this.rendererConnections.delete(rendererId);
-    this.rendererDisconnected(rendererId);
-    this.take.armOrphan(rendererId);
+    if (this.owners.detach(rendererId)) this.take.armOrphan(rendererId);
   }
 
-  /** Cancel or recover on-air grace when a renderer attaches. */
-  private rendererConnected(rendererId: string): void {
-    for (const [turnId, owners] of [...this.onAirOwners]) {
-      if (owners.has(ANONYMOUS_OWNER)) continue;
-      if (owners.has(rendererId)) {
-        this.clearOnAirTimer(turnId);
-        continue;
-      }
-      // Another connected page may still be posting its first turn.start.
-      // A newcomer must not shorten that page's report grace and prematurely
-      // file its live line as interrupted.
-      if (!this.hasLiveOwner(owners)) {
-        if ([...this.clients].some((client) => client.rendererId !== rendererId)) {
-          this.armOnAirTimer(turnId);
-        } else {
-          this.recoverOnAir(turnId);
-        }
-      }
-    }
-  }
-
-  /** Arm grace for every on-air line owned by a renderer that just left. */
-  private rendererDisconnected(rendererId: string): void {
-    for (const [turnId, owners] of this.onAirOwners) {
-      if (!owners.has(rendererId) || owners.has(ANONYMOUS_OWNER)) continue;
-      if (!this.hasLiveOwner(owners)) this.armOnAirTimer(turnId);
-    }
-  }
-
-  private hasLiveOwner(owners: Set<string>): boolean {
-    for (const owner of owners) {
-      if (owner !== ANONYMOUS_OWNER && (this.rendererConnections.get(owner) ?? 0) > 0) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /** Remember one renderer's ownership of a line, including duplicate starts. */
-  private noteTurnOwner(turnId: string, rendererId?: string): void {
-    const known = this.onAirOwners.get(turnId);
-    const active =
-      known !== undefined ||
-      this.queue.list().some((entry) => entry.id === turnId) ||
-      this.queue.airing().some((entry) => entry.id === turnId);
-    if (!active) return;
-
-    const owners = known ?? new Set<string>();
-    owners.add(rendererId ?? ANONYMOUS_OWNER);
-    this.onAirOwners.set(turnId, owners);
-    if (rendererId !== undefined && (this.rendererConnections.get(rendererId) ?? 0) > 0) {
-      this.clearOnAirTimer(turnId);
-    } else if (rendererId !== undefined) {
-      // A report may race the stream handshake (or come from a caller that
-      // never opened SSE). Treat that owner as already absent until it connects.
-      this.armOnAirTimer(turnId);
-    }
-  }
-
-  /** Start a grace timer after all named owners of a line have disconnected. */
-  private armOnAirTimer(turnId: string): void {
-    if (this.onAirTimers.has(turnId)) return;
-    const owners = this.onAirOwners.get(turnId);
-    if (owners === undefined || owners.has(ANONYMOUS_OWNER) || this.hasLiveOwner(owners)) return;
-    const timer = setTimeout(() => {
-      this.onAirTimers.delete(turnId);
-      const current = this.onAirOwners.get(turnId);
-      if (current === undefined || current.has(ANONYMOUS_OWNER) || this.hasLiveOwner(current)) {
-        return;
-      }
-      this.recoverOnAir(turnId);
-    }, STATE_STALE_SECONDS * 1000);
-    timer.unref?.();
-    this.onAirTimers.set(turnId, timer);
-  }
-
-  private clearOnAirTimer(turnId: string): void {
-    const timer = this.onAirTimers.get(turnId);
-    if (timer !== undefined) clearTimeout(timer);
-    this.onAirTimers.delete(turnId);
-  }
-
-  /** Forget owner state when a turn completes normally or by an interrupt. */
-  private clearTurnOwners(turnId: string): void {
-    this.clearOnAirTimer(turnId);
-    this.onAirOwners.delete(turnId);
-  }
-
-  /** Finish an abandoned line, preserving every pending line behind it. */
-  private recoverOnAir(turnId: string): void {
-    if (!this.queue.airing().some((entry) => entry.id === turnId)) {
-      this.clearTurnOwners(turnId);
-      return;
-    }
-    this.clearTurnOwners(turnId);
+  /** File a line whose owners are all gone, preserving every pending line behind it. */
+  private fileAbandoned(turnId: string): void {
     const at = now();
     this.log.append({ type: 'turn.end', turn: turnId, interrupted: true }, at);
     // The end this files stands for every renderer's, should one still arrive.
@@ -732,9 +631,7 @@ export class Hub {
   dispose(): void {
     this.stopIdleClock();
     this.take.dispose();
-    for (const timer of this.onAirTimers.values()) clearTimeout(timer);
-    this.onAirTimers.clear();
-    this.onAirOwners.clear();
+    this.owners.dispose();
     const snapshot = this.snapshot();
     for (const waiter of this.waiters) {
       clearTimeout(waiter.timer);
@@ -778,7 +675,7 @@ export class Hub {
       // every connected renderer, and each distinct renderer must be eligible to
       // keep the line alive if another owner disappears.
       if (event.type === 'turn.start' && event.turn) {
-        this.noteTurnOwner(event.turn, rendererId);
+        this.owners.noteTurnOwner(event.turn, rendererId);
       }
       // BGM cues are transport intents, not renderer observations. A muted or
       // unknown renderer is deliberately ignored, and its id is left free for
@@ -809,7 +706,7 @@ export class Hub {
       // one left — and the panel is looking at rows, not at a number.
       if (event.type === 'turn.end' && event.turn) {
         this.queue.complete(event.turn, { interrupted: event.interrupted });
-        this.clearTurnOwners(event.turn);
+        this.owners.clearTurnOwners(event.turn);
       }
       // The line that was cut off is filed rather than dropped — it was said, if
       // only partly, and it is the one most likely to be wanted back. The
@@ -819,7 +716,7 @@ export class Hub {
       // and acts on nothing.
       if (event.type === 'turn.interrupted' && event.turn) {
         this.queue.complete(event.turn, { interrupted: true });
-        this.clearTurnOwners(event.turn);
+        this.owners.clearTurnOwners(event.turn);
       }
     }
     this.log.trim();
