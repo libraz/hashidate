@@ -5,7 +5,7 @@ import { Rig } from '@/engine/rig';
 import type { Vec3Tuple } from '@/engine/types';
 import { buildRig } from '../helpers/scene';
 
-/** The sternoclavicular travel `rig.ts` bounds the girdle turn by. */
+/** The sternoclavicular travel `girdle.ts` bounds the girdle turn by. */
 const GIRDLE_ROM = 0.38;
 
 describe('girdle room', () => {

@@ -25,6 +25,7 @@ import type { ArmPathEnvironment, ArmPathPlanOutput } from './arm-path';
 import { ArmTwists } from './arm-twists';
 import { ElbowSearch } from './elbow';
 import { FingerClearance, handFrame } from './finger-clearance';
+import { ShoulderGirdle } from './girdle';
 import {
   captureHandContactGeometry,
   type HandContactCalibration,
@@ -53,24 +54,16 @@ import { type OffsetSlot, SpineOffsets } from './spine';
  * spine chain, then aims the arm chains parent-first.
  *
  * What is here is the arm: aiming a chain, keeping it inside its anatomical
- * stops, and spending the roll that turns a palm over. The four questions that
+ * stops, and spending the roll that turns a palm over. The five questions that
  * are not the arm's are beside it — `spine.ts` for the additive half of a
  * frame, `hands.ts` for the fingers, `elbow.ts` for where the elbow goes once a
- * wrist position is fixed, and `point.ts` for turning a fingertip bearing into
- * a wrist target. `legs.ts` adds optional standing contact before those arm
- * targets are solved, so a pelvis correction also moves their reach origins.
+ * wrist position is fixed, `girdle.ts` for the clavicle's turn that makes the
+ * arm room, and `point.ts` for turning a fingertip bearing into a wrist
+ * target. `legs.ts` adds optional standing contact before those arm targets
+ * are solved, so a pelvis correction also moves their reach origins.
  */
 
 const _q = new THREE.Quaternion();
-const _gC = new THREE.Vector3();
-const _gS = new THREE.Vector3();
-const _gA = new THREE.Vector3();
-const _gB = new THREE.Vector3();
-const _gX = new THREE.Vector3();
-// How far the clavicle may turn to get the arm room. The sternoclavicular joint
-// gives roughly ten degrees of depression and twenty of retraction, and a swing
-// away from a target in front of the face is a mix of the two.
-const GIRDLE_ROM = 0.38;
 const _armS = new THREE.Vector3();
 // Stands in for a bone that was never given a rest orientation, which cannot
 // happen for a bone the profile resolved. Only ever read.
@@ -192,6 +185,8 @@ export class Rig {
 
   /** The additive half of a frame: spine and eyes. See `spine.ts`. */
   private readonly spine: SpineOffsets;
+  /** The clavicle's room-making turn. See `girdle.ts`. */
+  private readonly girdle: ShoulderGirdle;
   /** Optional standing legs: foot contact is solved before the arms. */
   private readonly legs: GroundedLegs | null;
   /** The pass that stands in for a full one once only bones have moved; see `skeletonOnly`. */
@@ -385,6 +380,7 @@ export class Rig {
     this.legs = GroundedLegs.create(profile, (bone) => this.restOf(bone));
 
     this.joints = profile.anatomy ?? JOINTS;
+    this.girdle = new ShoulderGirdle(profile, this.joints);
     this.hands = new Hands(profile, this.joints, (bone) => this.restOf(bone));
 
     // Anatomy has to be built after the finger axes: it reads the same rest
@@ -1399,32 +1395,7 @@ export class Rig {
     hips.updateMatrix();
   }
 
-  /**
-   * Swing the shoulder girdle away from a reach, in place, before the arm is
-   * solved from it.
-   *
-   * A hand cannot be brought to the face by the arm alone. The elbow's flexion
-   * fixes a nearest reachable point — fold it as far as it goes and the wrist
-   * is still a fixed distance from the shoulder — so on a narrow-shouldered,
-   * short-necked figure the face can sit inside that radius and no choice of
-   * elbow, pole or wrist reaches it. Measured on the validation avatar the
-   * shoulder is 0.09 to 0.14 from the face anchors against an arm of 0.33; the
-   * same ratio on a person is around a half to two thirds.
-   *
-   * What a person does about it is drop and draw back the shoulder, and that is
-   * what this does: the clavicle turns away from the target until the wrist can
-   * sit where the elbow's *comfortable* range wants it, bounded by the girdle's
-   * own travel. It buys a couple of centimetres, which is the difference
-   * between a forearm folded flat and one that reads as resting.
-   *
-   * `dir` is the clavicle's aim, and the turn it needs, scaled by `weight`, is
-   * added to `turnOut` as a rotation vector rather than applied: every reach in
-   * play adds its share, and `turnGirdle` applies the sum, bounded by the
-   * girdle's travel. The current angle is taken from `dir` rather than from
-   * where the bone actually points, so the result is a function of the request
-   * alone — read back from the posed bone it would measure its own correction,
-   * find nothing left to do, and let the shoulder spring back on the next frame.
-   */
+  /** See `ShoulderGirdle.girdleRoom`. */
   girdleRoom(
     side: Side,
     targetWorld: THREE.Vector3,
@@ -1432,64 +1403,12 @@ export class Rig {
     weight: number,
     turnOut: THREE.Vector3,
   ): void {
-    const { bones, limb } = this.p;
-    const clav = bones[`shoulder.${side}`];
-    const upper = bones[`upperArm.${side}`];
-    const La = limb?.[`upper.${side}`];
-    const Lf = limb?.[`lower.${side}`];
-    if (!(clav && upper && La && Lf) || weight <= 0) return;
-
-    clav.updateWorldMatrix(true, false);
-    upper.updateWorldMatrix(true, false);
-    const C = clav.getWorldPosition(_gC);
-    // Turning the clavicle cannot change this, so the posed bones give the rest
-    // length as readily as the rest pose would.
-    const r = C.distanceTo(upper.getWorldPosition(_gS));
-    if (r < 1e-4) return;
-
-    const a = _gA.set(dir[0], dir[1], dir[2]);
-    if (a.lengthSq() < 1e-8) return;
-    a.normalize();
-    const b = _gB.copy(targetWorld).sub(C);
-    const L = b.length();
-    if (L < 1e-4) return;
-    b.multiplyScalar(1 / L);
-
-    // Where the wrist has to sit for the elbow to stay inside its free range.
-    const flexFree = this.joints?.elbow?.dofs?.flexion?.free?.[1] ?? Math.PI;
-    const want = Math.sqrt(La * La + Lf * Lf - 2 * La * Lf * Math.cos(Math.PI - flexFree));
-    // Law of cosines on the triangle root-shoulder-target: the shoulder sits on
-    // a sphere of radius r about the clavicle root, and this is the cosine that
-    // puts it `want` from the target.
-    const K = (r * r + L * L - want * want) / (2 * r * L);
-    const cos0 = THREE.MathUtils.clamp(a.dot(b), -1, 1);
-    if (!(K < cos0)) return;
-
-    const need = Math.acos(THREE.MathUtils.clamp(K, -1, 1)) - Math.acos(cos0);
-    const turn = Math.min(need, GIRDLE_ROM) * weight;
-    if (turn < 1e-4) return;
-    // b cross a, not a cross b: rotating about the latter carries the shoulder
-    // *toward* the target, which is the wrong way round and reads as a hunch.
-    const axis = _gX.crossVectors(b, a);
-    if (axis.lengthSq() < 1e-8) return;
-    turnOut.addScaledVector(axis.normalize(), turn);
+    this.girdle.girdleRoom(side, targetWorld, dir, weight, turnOut);
   }
 
-  /**
-   * Turn the clavicle's aim `dir` in place by the rotation `girdleRoom`
-   * gathered, its angle clamped to the girdle's travel however many reaches
-   * contributed.
-   */
+  /** See `ShoulderGirdle.turnGirdle`. */
   turnGirdle(dir: Vec3Tuple, turn: THREE.Vector3): void {
-    const angle = Math.min(turn.length(), GIRDLE_ROM);
-    if (angle < 1e-4) return;
-    const a = _gA
-      .set(dir[0], dir[1], dir[2])
-      .normalize()
-      .applyAxisAngle(_gX.copy(turn).normalize(), angle);
-    dir[0] = a.x;
-    dir[1] = a.y;
-    dir[2] = a.z;
+    this.girdle.turnGirdle(dir, turn);
   }
 
   /**
