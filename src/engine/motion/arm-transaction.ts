@@ -428,7 +428,8 @@ export class ArmTransaction {
   commit(dt: number, hipsRise: number, hipsTurn = 0): void {
     const rig = this.rig;
     rig.captureProposedBodyContext(hipsRise, hipsTurn);
-    const rise = rig.applyBodyContext(1, 1);
+    // `Body.update` planted the legs before staging, and the frame has moved only bones since.
+    const rise = rig.applyBodyContext(1, 1, true);
     const frameReady = this.axes.ready();
     let feasible = true;
     for (const side of SIDES) {
@@ -452,7 +453,9 @@ export class ArmTransaction {
     const left = this._commit.L;
     const right = this._commit.R;
     let committed =
-      feasible && !!(left && right) && rig.commitArmFrame({ L: left, R: right }, rise, hipsTurn);
+      feasible &&
+      !!(left && right) &&
+      rig.commitArmFrame({ L: left, R: right }, rise, hipsTurn, true);
 
     if (committed) {
       const acceptedFrameReady = this.axes.ready();
@@ -501,9 +504,9 @@ export class ArmTransaction {
 
     // A failed articulation must not hold back the common signed jump
     // translation. This is its own accepted result, not a validated arm frame.
-    if (!committed) committed = rig.commitArmTransport(hipsRise, hipsTurn);
+    if (!committed) committed = rig.commitArmTransport(hipsRise, hipsTurn, true);
     if (!committed) {
-      rig.applyBodyContext(0, 0);
+      rig.applyBodyContext(0, 0, true);
       for (const side of SIDES) {
         const driver = rig.armDriver(side);
         const context = rig.armForwardContextFromUpdatedBody(side);

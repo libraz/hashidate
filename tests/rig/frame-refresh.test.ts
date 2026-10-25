@@ -1,9 +1,10 @@
-import type * as THREE from 'three';
+import * as THREE from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Body } from '@/engine/motion/body';
 import { HOPS } from '@/engine/motion/jump';
 import { buildProfile } from '@/engine/profile';
 import { Rig } from '@/engine/rig';
+import type { SkeletonRefresh } from '@/engine/rig/skeleton';
 import type { Side } from '@/engine/types';
 import { buildRig } from '../helpers/scene';
 
@@ -124,4 +125,61 @@ describe('per-frame scene refresh', () => {
     expect(new Set(perCommit)).toEqual(new Set([1]));
     expect(passes.mock.calls.length).toBeLessThan(eagerPasses.mock.calls.length);
   });
+});
+
+/** Every node's raw matrices, skinned bind inverses included. */
+function scene(root: THREE.Object3D): number[][] {
+  const out: number[][] = [];
+  root.traverse((object) => {
+    out.push(object.matrix.elements.slice(), object.matrixWorld.elements.slice());
+    if (object instanceof THREE.SkinnedMesh) out.push(object.bindMatrixInverse.elements.slice());
+  });
+  return out;
+}
+
+/** Move a mesh beside the skeleton from inside the left arm's evaluation. */
+function customEvaluator(h: Fixture): void {
+  const driver = h.rig.armDriver('L');
+  let mesh: THREE.Object3D | undefined;
+  h.profile.root.traverse((object) => {
+    if (!mesh && object instanceof THREE.SkinnedMesh) mesh = object;
+  });
+  if (!(driver && mesh)) throw new Error('missing evaluator or mesh');
+  const moved = mesh;
+  const original = driver.environment.sample;
+  driver.environment.sample = (points, rows) => {
+    moved.position.x += 1e-4;
+    original(points, rows);
+  };
+}
+
+describe('skeleton refresh after the frame plant', () => {
+  it.each([false, true])(
+    'plays every frame as full passes would, custom evaluator=%s',
+    (custom) => {
+      const actual = fixture(true);
+      const reference = fixture(true);
+      const skeleton = Reflect.get(actual.rig, 'skeleton') as SkeletonRefresh;
+      const skeletonPasses = vi.spyOn(skeleton, 'run');
+      const full = Reflect.get(reference.rig, 'skeleton') as SkeletonRefresh;
+      full.run = () => reference.profile.root.updateMatrixWorld(true);
+      for (const h of [actual, reference]) {
+        if (custom) customEvaluator(h);
+        start(h);
+      }
+      for (let frame = 0; frame < FRAMES; frame++) {
+        for (const h of [actual, reference]) {
+          // Moved between frames, as a viewer places the avatar: the plant's full pass catches it.
+          h.profile.root.rotation.y += 0.05;
+          h.profile.root.position.x += 0.01;
+          h.rig.reset();
+          h.body.update(1 / 30);
+        }
+        expect(scene(actual.profile.root)).toEqual(scene(reference.profile.root));
+        expect(histories(actual)).toEqual(histories(reference));
+      }
+      if (custom) expect(skeletonPasses).not.toHaveBeenCalled();
+      else expect(skeletonPasses.mock.calls.length).toBeGreaterThanOrEqual(2 * FRAMES);
+    },
+  );
 });

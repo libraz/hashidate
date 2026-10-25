@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { LegBoneSlot, Profile, Side } from '../types';
+import type { SkeletonRefresh } from './skeleton';
 
 /** The two sides are kept explicit so a one-sided rig can never look grounded. */
 interface LegState {
@@ -366,11 +367,15 @@ export class GroundedLegs {
    * A non-zero `turn` (radians about world up) rotates the anchors, the knee
    * poles and the foot orientations about the stance centre first, so the solve
    * that follows is the rest configuration turned and nothing else.
+   *
+   * A `skeleton` refreshes in place of the whole scene, for a caller that knows
+   * nothing but bones has moved since the scene's last full pass.
    */
-  apply(rise: number, turn = 0): boolean {
+  apply(rise: number, turn = 0, skeleton: SkeletonRefresh | null = null): boolean {
     // Unconditional and first: `Rig.applyBodyContext` relies on this pass, plus
     // each write below refreshing its own subtree, to leave the scene fresh.
-    this.root.updateMatrixWorld(true);
+    if (skeleton) skeleton.run();
+    else this.root.updateMatrixWorld(true);
     this.metric.updateWorldMatrix(true, false);
     this.metricInverse.copy(this.metric.matrixWorld).invert();
     this.metricInverseLinear.setFromMatrix4(this.metricInverse);

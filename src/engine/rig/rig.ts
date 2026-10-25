@@ -38,6 +38,7 @@ import { GroundedLegs } from './legs';
 import { type PointRequest, PointSolver } from './point';
 import type { ArmSolution, ReachLinks } from './reach';
 import { solveReach } from './reach';
+import { SkeletonRefresh } from './skeleton';
 import { type OffsetSlot, SpineOffsets } from './spine';
 
 /**
@@ -193,6 +194,8 @@ export class Rig {
   private readonly spine: SpineOffsets;
   /** Optional standing legs: foot contact is solved before the arms. */
   private readonly legs: GroundedLegs | null;
+  /** The pass that stands in for a full one once only bones have moved; see `skeletonOnly`. */
+  private readonly skeleton: SkeletonRefresh;
   /** The fingers, which are curled rather than aimed. See `hands.ts`. */
   private readonly hands: Hands;
   /** Fingers held off the face, and the shape they last took. See `finger-clearance.ts`. */
@@ -372,6 +375,7 @@ export class Rig {
   constructor(profile: Profile) {
     this.p = profile;
     profile.root.updateWorldMatrix(true, true);
+    this.skeleton = new SkeletonRefresh(profile.root);
     this.captureArmFrameMetrics();
 
     const all = [...Object.values(profile.bones), ...Object.values(profile.fingerBones).flat()];
@@ -832,9 +836,18 @@ export class Rig {
    * Custom evaluators and a hips frame outside the root retain eager refreshes.
    */
   armForwardContextFromUpdatedBody(side: Side): ArmForwardContext | null {
-    for (const armSide of ['L', 'R'] as const) {
-      const driver = this._armDrivers[armSide];
-      const native = this._nativeArmEnvironment[armSide];
+    if (!this.nativeArmEvaluation()) return this.armForwardContext(side);
+    for (let parent = this.p.bones.hips?.parent; parent; parent = parent.parent) {
+      if (parent === this.p.root) return this.readArmForwardContext(side, false);
+    }
+    return this.armForwardContext(side);
+  }
+
+  /** Both arms evaluate natively, which writes scratch state and never the scene. */
+  private nativeArmEvaluation(): boolean {
+    for (const side of ['L', 'R'] as const) {
+      const driver = this._armDrivers[side];
+      const native = this._nativeArmEnvironment[side];
       if (
         !(
           driver &&
@@ -845,12 +858,23 @@ export class Rig {
           driver.sampleEnvironment === native.sampleEnvironment
         )
       )
-        return this.armForwardContext(side);
+        return false;
     }
-    for (let parent = this.p.bones.hips?.parent; parent; parent = parent.parent) {
-      if (parent === this.p.root) return this.readArmForwardContext(side, false);
-    }
-    return this.armForwardContext(side);
+    return true;
+  }
+
+  /**
+   * True when the legs were planted this frame and only bones have moved since:
+   * that plant refreshed the whole scene, so the skeleton is all a pass need cover.
+   * A custom arm evaluator may have moved anything after it, so it keeps full passes.
+   */
+  private skeletonOnly(afterPlant: boolean): boolean {
+    return afterPlant && this.legs !== null && this.nativeArmEvaluation();
+  }
+
+  private refreshScene(afterPlant: boolean): void {
+    if (this.skeletonOnly(afterPlant)) this.skeleton.run();
+    else this.p.root.updateMatrixWorld(true);
   }
 
   private readArmForwardContext(side: Side, refreshScene: boolean): ArmForwardContext | null {
@@ -879,8 +903,13 @@ export class Rig {
     this.captureBodyPose(this._proposedBodyPose, rise, turn);
   }
 
-  /** Rebuild articulation and common airborne transport with separate progress. */
-  applyBodyContext(alpha: number, transportProgress = alpha): number {
+  /**
+   * Rebuild articulation and common airborne transport with separate progress.
+   *
+   * @param afterPlant the caller planted the legs earlier this frame and has
+   *                   moved only bones since
+   */
+  applyBodyContext(alpha: number, transportProgress = alpha, afterPlant = false): number {
     const a = this._acceptedBodyPose;
     const b = this._proposedBodyPose;
     const blend = THREE.MathUtils.clamp(alpha, 0, 1);
@@ -907,7 +936,7 @@ export class Rig {
       b.turn,
       THREE.MathUtils.clamp(transportProgress, 0, 1),
     );
-    this.plantLegs(rise, turn);
+    this.plantLegs(rise, turn, afterPlant);
     // Grounded legs refresh the whole scene before they read it and every bone
     // they write after that, so only a body without them still needs a pass.
     if (!this.legs) this.p.root.updateMatrixWorld(true);
@@ -929,8 +958,17 @@ export class Rig {
     return true;
   }
 
-  /** Apply and accept both sides only after the common-alpha frame is complete. */
-  commitArmFrame(plans: Record<Side, ArmFrameSideCommit>, rise: number, turn = 0): boolean {
+  /**
+   * Apply and accept both sides only after the common-alpha frame is complete.
+   *
+   * @param afterPlant as for `applyBodyContext`
+   */
+  commitArmFrame(
+    plans: Record<Side, ArmFrameSideCommit>,
+    rise: number,
+    turn = 0,
+    afterPlant = false,
+  ): boolean {
     for (const side of ['L', 'R'] as Side[]) if (!this.canWriteArm(side)) return false;
     // Each side writes only its own chain and reads its parents fresh, so one
     // pass after both covers what either side's fingers left stale.
@@ -940,7 +978,7 @@ export class Rig {
       this.hands.curlHand(side, plan.curls, plan.spread);
       this.copyPosedFingerSpec(side, plan.curls, plan.spread);
     }
-    this.p.root.updateMatrixWorld(true);
+    this.refreshScene(afterPlant);
     for (const side of ['L', 'R'] as Side[]) {
       const plan = plans[side];
       const driver = this._armDrivers[side];
@@ -967,7 +1005,7 @@ export class Rig {
    * custom environments and carriers outside the hips subtree have no such
    * guarantee.
    */
-  commitArmTransport(lift: number, turn = 0): boolean {
+  commitArmTransport(lift: number, turn = 0, afterPlant = false): boolean {
     if (
       !(
         Number.isFinite(lift) &&
@@ -1010,11 +1048,11 @@ export class Rig {
         if (!(q && [q.x, q.y, q.z, q.w].every(Number.isFinite))) return false;
       }
     }
-    this.applyBodyContext(0, 1);
+    this.applyBodyContext(0, 1, afterPlant);
     const left = this.armForwardContextFromUpdatedBody('L');
     const right = this.armForwardContextFromUpdatedBody('R');
     if (!(left && right && this._lastPlantSuccess)) {
-      this.applyBodyContext(0, 0);
+      this.applyBodyContext(0, 0, afterPlant);
       return false;
     }
     // Both contexts are ready before accepted history changes on either side.
@@ -1027,7 +1065,7 @@ export class Rig {
       this.hands.curlHand(side, driver.acceptedCurls, driver.acceptedSpread);
       this.copyPosedFingerSpec(side, driver.acceptedCurls, driver.acceptedSpread);
     }
-    this.p.root.updateMatrixWorld(true);
+    this.refreshScene(afterPlant);
     for (const side of ['L', 'R'] as Side[]) {
       const driver = this._armDrivers[side] as ArmDriver;
       this.fingers.noteFingers(side);
@@ -1320,9 +1358,10 @@ export class Rig {
   /**
    * Keep standing feet planted, or carry their contact points through a hop.
    * `turn` (radians about world up) yaws the whole skeleton about the stance
-   * centre and carries the legs through the same turn.
+   * centre and carries the legs through the same turn. `afterPlant` as for
+   * `applyBodyContext`.
    */
-  plantLegs(rise: number, turn = 0): void {
+  plantLegs(rise: number, turn = 0, afterPlant = false): void {
     const hips = this.p.bones.hips;
     if (hips) {
       this._prePlantHips.copy(hips.position);
@@ -1330,7 +1369,9 @@ export class Rig {
     }
     const yaw = Number.isFinite(turn) ? turn : 0;
     if (hips && yaw !== 0) this.turnHips(hips, yaw);
-    this._lastPlantSuccess = this.legs ? this.legs.apply(rise, yaw) : true;
+    this._lastPlantSuccess = this.legs
+      ? this.legs.apply(rise, yaw, this.skeletonOnly(afterPlant) ? this.skeleton : null)
+      : true;
     if (hips) {
       this._postPlantHips.copy(hips.position);
       this._postTurnHipsQ.copy(hips.quaternion);
