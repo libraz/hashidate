@@ -22,9 +22,15 @@ const HUD: Hud = {
   breath: 0.5,
   blink: 0,
   gazeX: 0,
+  gazeY: 0,
+  mouth: 0,
+  strain: { L: 0, R: 0 },
   speaking: false,
+  performance: null,
   gesture: null,
   expression: null,
+  emotion: [],
+  lookAt: 1,
   auto: false,
   voiceBlocked: false,
 };
@@ -123,6 +129,47 @@ describe('readout', () => {
     const gaze = (x: number) => sample({ hud: { gazeX: x } }).gauges[2];
     expect(gaze(0).value).toBe('+0.00');
     expect(gaze(-0.08).value).toBe('-0.08');
+  });
+
+  it('keeps every gauge the same width, the new ones included', () => {
+    const gauges = sample({
+      hud: { gazeY: -0.9, mouth: 1.4, strain: { L: 3, R: 0.7 } },
+    }).gauges;
+    expect(gauges.map((g) => g.key)).toEqual([
+      'breath',
+      'blink',
+      'gaze.x',
+      'gaze.y',
+      'mouth',
+      'arm.L',
+      'arm.R',
+    ]);
+    for (const g of gauges) expect(barText(g.bar), g.key).toHaveLength(16);
+  });
+
+  it('fills an arm two thirds at the strain where it starts to stretch', () => {
+    const arm = sample({ hud: { strain: { L: 1, R: 0 } } }).gauges.find((g) => g.key === 'arm.L');
+    expect(arm?.bar.fill).toHaveLength(11);
+    expect(arm?.value).toBe('1.00');
+  });
+
+  it('names the performance and the strongest emotions, or prints nothing', () => {
+    const fact = (over: Partial<Hud>, key: string) =>
+      sample({ hud: over }).facts.find((f) => f.key === key);
+    expect(fact({}, 'perf')).toEqual({ key: 'perf', value: '-', tone: 'faint' });
+    expect(fact({ performance: 'peace' }, 'perf')?.value).toBe('peace');
+    expect(fact({}, 'emotion')?.value).toBe('-');
+    expect(
+      fact(
+        {
+          emotion: [
+            ['joy', 0.62],
+            ['wonder', 0.3],
+          ],
+        },
+        'emotion',
+      )?.value,
+    ).toBe('joy 0.62  wonder 0.30');
   });
 
   it('says a rig resolved cleanly by saying nothing about it', () => {

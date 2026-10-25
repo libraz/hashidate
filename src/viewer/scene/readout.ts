@@ -116,6 +116,12 @@ const TRACK = '░';
 const GAZE_SPAN = 0.5;
 
 /**
+ * Strain reads about 1 where the arm starts reaching for something it cannot
+ * comfortably get to, so the track runs to 1.5 and a stretch fills two thirds.
+ */
+const STRAIN_SPAN = 1.5;
+
+/**
  * When the frame rate is worth colouring.
  *
  * The one number on this panel that changes colour on its own, because it is
@@ -189,8 +195,17 @@ export function readout(sample: {
   const facts: Field[] = [
     { key: 'morph', value: String(hud.morphs), tone: 'ink' },
     { key: 'sway', value: hud.sway === null ? 'off' : String(hud.sway), tone: 'ink' },
+    { key: 'perf', value: hud.performance ?? NONE, tone: hud.performance ? 'accent' : 'faint' },
     { key: 'gesture', value: hud.gesture ?? NONE, tone: hud.gesture ? 'accent' : 'faint' },
     { key: 'expr', value: hud.expression ?? NONE, tone: hud.expression ? 'accent' : 'faint' },
+    {
+      key: 'emotion',
+      value: hud.emotion.length
+        ? hud.emotion.map(([name, v]) => `${name} ${v.toFixed(2)}`).join('  ')
+        : NONE,
+      tone: hud.emotion.length ? 'ink' : 'faint',
+    },
+    { key: 'look', value: hud.lookAt.toFixed(2), tone: 'ink' },
     { key: 'auto', value: hud.auto ? 'on' : 'off', tone: hud.auto ? 'accent' : 'faint' },
   ];
   // Only when there is something to say. A rig that resolved cleanly printing
@@ -224,6 +239,22 @@ export function readout(sample: {
         key: 'gaze.x',
         bar: bar(hud.gazeX, { span: GAZE_SPAN, centred: true }),
         value: signed(hud.gazeX),
+      },
+      {
+        key: 'gaze.y',
+        bar: bar(hud.gazeY, { span: GAZE_SPAN, centred: true }),
+        value: signed(hud.gazeY),
+      },
+      { key: 'mouth', bar: bar(hud.mouth), value: hud.mouth.toFixed(2) },
+      {
+        key: 'arm.L',
+        bar: bar(hud.strain.L, { span: STRAIN_SPAN }),
+        value: hud.strain.L.toFixed(2),
+      },
+      {
+        key: 'arm.R',
+        bar: bar(hud.strain.R, { span: STRAIN_SPAN }),
+        value: hud.strain.R.toFixed(2),
       },
     ],
     facts,
