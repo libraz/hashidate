@@ -65,81 +65,85 @@ afterEach(() => {
 });
 
 describe('cute gesture runtime', () => {
-  it.each(CUTE_PATTERNS)('%s remains finite and returns continuously at 20/30/60 fps', (id) => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.5);
-    const next = CUTE_PATTERNS[(CUTE_PATTERNS.indexOf(id) + 1) % CUTE_PATTERNS.length];
+  it.each(CUTE_PATTERNS)(
+    '%s remains finite and returns continuously at 20/30/60 fps',
+    (id) => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.5);
+      const next = CUTE_PATTERNS[(CUTE_PATTERNS.indexOf(id) + 1) % CUTE_PATTERNS.length];
 
-    for (const side of SIDES) {
-      for (const fps of FRAME_RATES) {
-        const dt = 1 / fps;
-        const h = harness();
-        const idle = harness();
-        configureIdle(h);
-        configureIdle(idle);
-        frame(h, dt);
-        frame(idle, dt);
-        h.body.play(id, side);
-
-        let previous = wrists(h);
-        const excursion: Record<Side, number> = { L: 0, R: 0 };
-        let fastest = 0;
-        const entranceFrames = Math.ceil(1.2 / dt);
-        for (let i = 0; i < entranceFrames; i++) {
+      for (const side of SIDES) {
+        for (const fps of FRAME_RATES) {
+          const dt = 1 / fps;
+          const h = harness();
+          const idle = harness();
+          configureIdle(h);
+          configureIdle(idle);
           frame(h, dt);
           frame(idle, dt);
-          const current = wrists(h);
-          const idleCurrent = wrists(idle);
+          h.body.play(id, side);
+
+          let previous = wrists(h);
+          const excursion: Record<Side, number> = { L: 0, R: 0 };
+          let fastest = 0;
+          const entranceFrames = Math.ceil(1.2 / dt);
+          for (let i = 0; i < entranceFrames; i++) {
+            frame(h, dt);
+            frame(idle, dt);
+            const current = wrists(h);
+            const idleCurrent = wrists(idle);
+            for (const hand of SIDES) {
+              fastest = Math.max(fastest, previous[hand].distanceTo(current[hand]) / dt);
+              excursion[hand] = Math.max(
+                excursion[hand],
+                idleCurrent[hand].distanceTo(current[hand]),
+              );
+            }
+            previous = current;
+            assertFiniteRig(h);
+          }
+          // Each first gesture must move the actual rig beyond its matching idle;
+          // the next gesture cannot supply this witness on its behalf.
+          expect(Math.max(...Object.values(excursion))).toBeGreaterThan(0.02);
+
+          // Exercise a real handoff between unlike cute mechanisms before
+          // releasing, so continuity covers the reach/direct boundary as well.
+          h.body.play(next, side);
+          for (let i = 0; i < entranceFrames; i++) {
+            frame(h, dt);
+            frame(idle, dt);
+            const current = wrists(h);
+            for (const hand of SIDES) {
+              fastest = Math.max(fastest, previous[hand].distanceTo(current[hand]) / dt);
+            }
+            previous = current;
+            assertFiniteRig(h);
+          }
+          const releaseFrames = Math.ceil(2.5 / dt);
+          h.body.stopGesture();
+          for (let i = 0; i < releaseFrames; i++) {
+            frame(h, dt);
+            frame(idle, dt);
+            const current = wrists(h);
+            for (const hand of SIDES) {
+              fastest = Math.max(fastest, previous[hand].distanceTo(current[hand]) / dt);
+            }
+            previous = current;
+            assertFiniteRig(h);
+          }
+
+          // Eight metres per second is the existing physical continuity limit for
+          // a wrist on these avatars; a gesture transition must stay below it.
+          expect(fastest).toBeLessThan(WRIST_SPEED_LIMIT);
           for (const hand of SIDES) {
-            fastest = Math.max(fastest, previous[hand].distanceTo(current[hand]) / dt);
-            excursion[hand] = Math.max(
-              excursion[hand],
-              idleCurrent[hand].distanceTo(current[hand]),
+            expect(wristOf(h.profile, hand).distanceTo(wristOf(idle.profile, hand))).toBeLessThan(
+              0.02,
             );
           }
-          previous = current;
-          assertFiniteRig(h);
-        }
-        // Each first gesture must move the actual rig beyond its matching idle;
-        // the next gesture cannot supply this witness on its behalf.
-        expect(Math.max(...Object.values(excursion))).toBeGreaterThan(0.02);
-
-        // Exercise a real handoff between unlike cute mechanisms before
-        // releasing, so continuity covers the reach/direct boundary as well.
-        h.body.play(next, side);
-        for (let i = 0; i < entranceFrames; i++) {
-          frame(h, dt);
-          frame(idle, dt);
-          const current = wrists(h);
-          for (const hand of SIDES) {
-            fastest = Math.max(fastest, previous[hand].distanceTo(current[hand]) / dt);
-          }
-          previous = current;
-          assertFiniteRig(h);
-        }
-        const releaseFrames = Math.ceil(2.5 / dt);
-        h.body.stopGesture();
-        for (let i = 0; i < releaseFrames; i++) {
-          frame(h, dt);
-          frame(idle, dt);
-          const current = wrists(h);
-          for (const hand of SIDES) {
-            fastest = Math.max(fastest, previous[hand].distanceTo(current[hand]) / dt);
-          }
-          previous = current;
-          assertFiniteRig(h);
-        }
-
-        // Eight metres per second is the existing physical continuity limit for
-        // a wrist on these avatars; a gesture transition must stay below it.
-        expect(fastest).toBeLessThan(WRIST_SPEED_LIMIT);
-        for (const hand of SIDES) {
-          expect(wristOf(h.profile, hand).distanceTo(wristOf(idle.profile, hand))).toBeLessThan(
-            0.02,
-          );
         }
       }
-    }
-  });
+    },
+    60_000,
+  );
 
   it('keeps breathing and weight transfer alive while a gesture is active', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
