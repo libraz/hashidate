@@ -80,6 +80,9 @@ export const slidesEn = {
     'Read the script from this page to the end, staged as if it had run from the top',
   'panel.script.rescan': 'Rescan',
   'panel.script.rescan.title': 'Read the script directory again',
+  'panel.script.discard': 'Discard',
+  'panel.script.discard.title':
+    'Empty the queue and put the stage back as a session opens: no document, full-frame layout, BGM stopped, idle on, no hold. The line being spoken finishes as it is.',
   'panel.script.empty': 'No scripts. Put a YAML file in scripts/ and press Rescan.',
   'panel.script.hold': 'Load without starting',
   'panel.script.hold.title':
@@ -167,6 +170,9 @@ export const slidesJa: Record<keyof typeof slidesEn, string> = {
   'panel.script.from.run.title': 'このページから最後までを、最初から流したときと同じ見た目で読む',
   'panel.script.rescan': '再読込',
   'panel.script.rescan.title': '台本ディレクトリを読み直す',
+  'panel.script.discard': '破棄',
+  'panel.script.discard.title':
+    '待ち行列を空にして初期状態に戻す（資料を下ろし、配置を全画面に、BGM を停止、アイドル再開、保留解除）。いま言っている行はそのまま終わります',
   'panel.script.empty': '台本がない。scripts/ に YAML を置いて再読込を押す。',
   'panel.script.hold': '読み込んだら止めておく',
   'panel.script.hold.title':

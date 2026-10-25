@@ -4,7 +4,19 @@ import type { QueueEntry, ScriptSummary, ScriptsResponse } from '@/protocol';
 import { Chip, ChipRow } from '@/ui/Chip';
 import { Select } from '@/ui/Select';
 import { Toggle } from '@/ui/Toggle';
-import { isFailure, readError, readScripts, runScript } from '../api';
+import { FULL_AVATAR, FULL_SLIDE } from '@/viewer/scene/placement';
+import {
+  deck,
+  isFailure,
+  place,
+  queueClear,
+  readError,
+  readScripts,
+  runScript,
+  setBgm,
+  setIdle,
+  setPaused,
+} from '../api';
 import { ago } from '../slides/SlidesTab';
 import styles from './ScriptPicker.module.css';
 
@@ -42,6 +54,8 @@ import styles from './ScriptPicker.module.css';
 interface Props {
   /** The pending queue, so the picker can say which script it came from. */
   entries: QueueEntry[];
+  /** Whether the queue is held, which a discard puts back the way a load found it. */
+  paused: boolean;
   refresh: () => void;
 }
 
@@ -53,7 +67,7 @@ export function loadedScript(
   return entries.find((entry) => entry.source !== undefined && known.has(entry.source))?.source;
 }
 
-export function ScriptPicker({ entries, refresh }: Props) {
+export function ScriptPicker({ entries, paused, refresh }: Props) {
   const { t } = useT();
   const [roster, setRoster] = useState<ScriptsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +109,31 @@ export function ScriptPicker({ entries, refresh }: Props) {
     if (result.setupFates.includes('lost')) {
       setNotice(t('panel.script.noRenderer'));
     }
+    refresh();
+  };
+
+  /**
+   * Take a loaded script back off and put the stage back the way a session
+   * opens: the whole queue (a load replaced the whole queue), the document and
+   * the layout a setup may have put up, its BGM, and the idle and hold it turned
+   * off and on. The release may be refused while the voice is down; the rest
+   * applies either way.
+   */
+  const discard = async (): Promise<void> => {
+    setBusy(true);
+    setNotice(null);
+    const result = await queueClear();
+    if (isFailure(result)) setNotice(result.error);
+    else {
+      await Promise.all([
+        deck(null),
+        place({ avatar: FULL_AVATAR, slide: FULL_SLIDE }),
+        setBgm({ action: 'stop' }),
+        setIdle(true),
+        paused ? setPaused(false) : null,
+      ]);
+    }
+    setBusy(false);
     refresh();
   };
 
@@ -149,6 +188,17 @@ export function ScriptPicker({ entries, refresh }: Props) {
           title={t('panel.script.rescan.title')}
           onClick={() => void rescan()}
         />
+        {/* Only while a script's lines are pending: with none there is nothing
+            to take back, and the queue tab's own controls cover a hand-typed line. */}
+        {loaded !== undefined ? (
+          <Chip
+            label={t('panel.script.discard')}
+            variant="action"
+            title={t('panel.script.discard.title')}
+            disabled={busy}
+            onClick={() => void discard()}
+          />
+        ) : null}
         <div className={styles.setting}>
           <Toggle
             label={t('panel.script.hold')}

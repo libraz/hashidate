@@ -6,10 +6,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setLocale } from '@/i18n';
 import { pageOptions, ScriptPicker } from '@/panel/script/ScriptPicker';
 import type { QueueEntry, ScriptSummary } from '@/protocol';
+import { FULL_AVATAR, FULL_SLIDE } from '@/viewer/scene/placement';
 
 const api = vi.hoisted(() => ({
   readScripts: vi.fn(),
   runScript: vi.fn(),
+  queueClear: vi.fn(),
+  setPaused: vi.fn(),
+  deck: vi.fn(),
+  place: vi.fn(),
+  setBgm: vi.fn(),
+  setIdle: vi.fn(),
 }));
 
 vi.mock('@/panel/api', async (importOriginal) => {
@@ -58,13 +65,13 @@ describe('ScriptPicker from a page', () => {
     vi.clearAllMocks();
   });
 
-  const mount = async (scripts: ScriptSummary[], entries: QueueEntry[] = []) => {
+  const mount = async (scripts: ScriptSummary[], entries: QueueEntry[] = [], paused = false) => {
     api.readScripts.mockResolvedValue({ scripts, errors: [] });
     host = document.createElement('div');
     document.body.append(host);
     root = createRoot(host);
     await act(async () => {
-      root?.render(createElement(ScriptPicker, { entries, refresh: () => {} }));
+      root?.render(createElement(ScriptPicker, { entries, paused, refresh: () => {} }));
       await Promise.resolve();
     });
     return host;
@@ -131,5 +138,97 @@ describe('pageOptions', () => {
         { line: 3, deck: 'b', page: 2 },
       ]).map((o) => o.label),
     ).toEqual(['a p.1', 'b p.2']);
+  });
+});
+
+describe('ScriptPicker discard', () => {
+  let root: Root | null = null;
+  let host: HTMLDivElement | null = null;
+
+  beforeEach(() => {
+    setLocale('en');
+    api.queueClear.mockResolvedValue({ queue: [], viewers: 1 });
+    api.setPaused.mockResolvedValue({});
+    api.deck.mockResolvedValue({});
+    api.place.mockResolvedValue({});
+    api.setBgm.mockResolvedValue({});
+    api.setIdle.mockResolvedValue({});
+  });
+
+  afterEach(() => {
+    if (root !== null) {
+      act(() => root?.unmount());
+      root = null;
+    }
+    host?.remove();
+    host = null;
+    vi.clearAllMocks();
+  });
+
+  const mount = async (entries: QueueEntry[], paused: boolean) => {
+    api.readScripts.mockResolvedValue({ scripts: [TALK], errors: [] });
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root?.render(createElement(ScriptPicker, { entries, paused, refresh: () => {} }));
+      await Promise.resolve();
+    });
+    return host;
+  };
+
+  const discard = (where: HTMLElement): HTMLButtonElement | undefined =>
+    [...where.querySelectorAll('button')].find((b) => b.textContent === 'Discard');
+
+  const loaded: QueueEntry[] = [{ id: 'q1', text: 'あ', at: 1, source: 'talk' }];
+
+  it('is offered only while a script has lines pending', async () => {
+    expect(discard(await mount([], true))).toBeUndefined();
+    act(() => root?.unmount());
+    root = null;
+    const handmade: QueueEntry[] = [{ id: 'q1', text: 'あ', at: 1 }];
+    expect(discard(await mount(handmade, true))).toBeUndefined();
+    act(() => root?.unmount());
+    root = null;
+    expect(discard(await mount(loaded, true))).toBeDefined();
+  });
+
+  it('empties the queue and lifts the hold the load put on it', async () => {
+    const where = await mount(loaded, true);
+    await act(async () => {
+      discard(where)?.click();
+    });
+    expect(api.queueClear).toHaveBeenCalledTimes(1);
+    expect(api.setPaused).toHaveBeenCalledWith(false);
+  });
+
+  it('puts the stage back as a session opens: no document, full frame, no BGM, idle on', async () => {
+    const where = await mount(loaded, false);
+    await act(async () => {
+      discard(where)?.click();
+    });
+    expect(api.deck).toHaveBeenCalledWith(null);
+    expect(api.place).toHaveBeenCalledWith({ avatar: FULL_AVATAR, slide: FULL_SLIDE });
+    expect(api.setBgm).toHaveBeenCalledWith({ action: 'stop' });
+    expect(api.setIdle).toHaveBeenCalledWith(true);
+  });
+
+  it('touches nothing else when the queue could not be emptied', async () => {
+    api.queueClear.mockResolvedValue({ error: 'boom' });
+    const where = await mount(loaded, true);
+    await act(async () => {
+      discard(where)?.click();
+    });
+    expect(api.deck).not.toHaveBeenCalled();
+    expect(api.setPaused).not.toHaveBeenCalled();
+  });
+
+  it('leaves the hold alone when there is none to lift', async () => {
+    const where = await mount(loaded, false);
+    await act(async () => {
+      discard(where)?.click();
+    });
+    expect(api.queueClear).toHaveBeenCalledTimes(1);
+    expect(api.setPaused).not.toHaveBeenCalled();
   });
 });

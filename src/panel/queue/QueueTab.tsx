@@ -136,7 +136,7 @@ export function QueueTab({ snapshot, refresh }: Props) {
 
   return (
     <div className={styles.tab}>
-      <ScriptPicker entries={entries} refresh={refresh} />
+      <ScriptPicker entries={entries} paused={snapshot.paused} refresh={refresh} />
 
       {/* Past above, present under it, future below: the three regions read as
           one timeline, and a rewind moves a row from the top of it to the
