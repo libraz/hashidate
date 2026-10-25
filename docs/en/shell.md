@@ -57,7 +57,8 @@ A second `yarn shell` does not start a second application. It raises the windows
 | Window | hashidate — Control | Raise the panel, or reopen it if it was closed |
 | Window | hashidate — Stage | Raise the stage, or reopen it |
 | Window | Mute Stage | Whether the stage window opens silent. Remembered between runs |
-| Window | Full Screen Stage (`⌘⇧F` / `Ctrl+Shift+F`) | Fill the display the stage window is on, with no frame. Works while the panel has focus, so the stage can sit on a second display. Not remembered, since that display may not be there next time |
+| Window | Full Screen Stage (`⌘⇧F` / `Ctrl+Shift+F`) | Fill the display the stage window is on, with no frame. Works while the panel has focus, so the stage can sit on a second display. Esc on the full-screen stage gives the frame back. Not remembered, since that display may not be there next time |
+| Window | Present Stage On ▸ display name | Move the stage to the chosen display and fill it, in one step. The way to put it on an HDMI screen. The list follows displays being plugged in and out |
 | Window | Open Slides / Scripts / Motions / Avatars / BGM / Recordings Folder | Open one of those directories in the file manager |
 | Window | Three status lines | Read-only. See below |
 
@@ -72,6 +73,10 @@ The three status lines at the foot of the Window menu are refreshed every two se
 The interval is slower than the panel's own polling on purpose: this is three lines behind a menu opened once something already seems wrong, rather than a surface read during a broadcast. `Renderers` counts every attached renderer, which is at least the stage window. It is not a claim that OBS is live, because OBS has no distinct identity on the control protocol.
 
 `Speech: absent` means no sidecar was found, which is the ordinary state of a checkout that has not run `make voice`. `down` means one answered earlier and has stopped, which is the state worth acting on: the queue still drains and the mouth still moves, so a voice that died mid-broadcast is otherwise invisible. See [Speech](speech.md).
+
+### The right-click menu
+
+Right-click on either the panel or the stage brings up Mute Stage, Full Screen Stage and Present Stage On, the same items as in the Window menu. Over a text field, Cut, Copy and Paste come first.
 
 ## Mute Stage
 

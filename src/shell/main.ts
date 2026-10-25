@@ -27,6 +27,7 @@ import {
   stageURL,
   TTS_LOG_NAME,
 } from './config';
+import { boundsOn, type DisplayInfo, displayLabel, displayUnder } from './displays';
 import { ControlProcess, TtsProcess } from './process';
 import { type DisplayBounds, ShellState, STATE_FILE_NAME } from './state';
 import type { WindowBounds } from './types';
@@ -195,6 +196,9 @@ function makeWindow(kind: WindowKind): BrowserWindow {
 
   window.setTitle(spec.title);
   guardNavigation(window, spec.path);
+  window.webContents.on('context-menu', (_event, params) => {
+    contextMenu(params.isEditable).popup({ window });
+  });
 
   // Normal bounds, so a window closed while fullscreen reopens as a window
   // rather than as a frame the size of the display it filled.
@@ -217,6 +221,13 @@ function makeWindow(kind: WindowKind): BrowserWindow {
     // follows the window, not whichever of them was used.
     window.on('enter-full-screen', rebuildMenu);
     window.on('leave-full-screen', rebuildMenu);
+    // Esc gives the frame back, as it does for any full-screen picture. Only while
+    // full screen, so the page keeps the key the rest of the time.
+    window.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown' || input.key !== 'Escape' || !window.isFullScreen()) return;
+      event.preventDefault();
+      window.setFullScreen(false);
+    });
   }
 
   void window
@@ -325,19 +336,65 @@ function setStageFullScreen(fullScreen: boolean): void {
 }
 
 /**
- * The application menu, rebuilt rather than mutated.
+ * Put the stage on one display and fill it, in one step.
  *
- * A status line changes a handful of times in an evening — the control server
- * coming up, a voice finishing its model, a renderer attaching — so building
- * the whole menu on each change costs nothing, and it is the one way of
- * changing a native menu that behaves the same on every platform.
+ * Full screen fills whichever display the window is already on, so the window is
+ * moved there first. A window that is full screen elsewhere has to leave it
+ * before it can move, and on macOS leaving is animated — hence the wait.
  */
-function buildMenu(): Menu {
-  const disabled = (label: string): MenuItemConstructorOptions => ({ label, enabled: false });
+function presentStageOn(displayId: number): void {
+  const display = screen.getAllDisplays().find((candidate) => candidate.id === displayId);
+  if (display === undefined) {
+    rebuildMenu();
+    return;
+  }
+  const window = stageWindow;
+  if (window === null || window.isDestroyed()) {
+    showWindow('stage');
+    stageWindow?.once('ready-to-show', () => presentStageOn(displayId));
+    return;
+  }
+  const move = () => {
+    window.setBounds(boundsOn(window.getNormalBounds(), display));
+    window.setFullScreen(true);
+    window.show();
+  };
+  if (window.isFullScreen()) {
+    window.once('leave-full-screen', move);
+    window.setFullScreen(false);
+  } else {
+    move();
+  }
+}
 
-  const windowMenu: MenuItemConstructorOptions[] = [
-    { label: CONTROL_TITLE, click: () => showWindow('control') },
-    { label: STAGE_TITLE, click: () => showWindow('stage') },
+/** The connected displays, in the shape `displays.ts` reads. */
+function displayInfo(): DisplayInfo[] {
+  return screen.getAllDisplays().map(({ id, label, internal, bounds, workArea }) => ({
+    id,
+    label,
+    internal,
+    bounds: { ...bounds },
+    workArea: { ...workArea },
+  }));
+}
+
+/** One item per display; the one the stage fills is checked. */
+function presentMenu(): MenuItemConstructorOptions[] {
+  const displays = displayInfo();
+  const window = stageWindow !== null && !stageWindow.isDestroyed() ? stageWindow : null;
+  const filling =
+    window?.isFullScreen() === true ? displayUnder(window.getBounds(), displays) : null;
+  return displays.map((display, index) => ({
+    label: displayLabel(display, index),
+    type: 'checkbox',
+    checked: filling?.id === display.id,
+    click: () => presentStageOn(display.id),
+  }));
+}
+
+/** The stage's own controls, shared by the Window menu and the right-click menu. */
+function stageItems(): MenuItemConstructorOptions[] {
+  return [
     {
       label: 'Mute Stage',
       type: 'checkbox',
@@ -351,6 +408,39 @@ function buildMenu(): Menu {
       checked: stageWindow !== null && !stageWindow.isDestroyed() && stageWindow.isFullScreen(),
       click: (item) => setStageFullScreen(item.checked),
     },
+    // The HDMI case in one click: choose the display and the stage moves there
+    // and fills it, instead of dragging it over and then toggling full screen.
+    { label: 'Present Stage On', submenu: presentMenu() },
+  ];
+}
+
+/**
+ * Right-click, on either window: where an operator looks first for "put this on
+ * the other screen". A text field gets the edit commands ahead of it, since that
+ * is what a right-click there is for.
+ */
+function contextMenu(editable: boolean): Menu {
+  const edit: MenuItemConstructorOptions[] = editable
+    ? [{ role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { type: 'separator' }]
+    : [];
+  return Menu.buildFromTemplate([...edit, ...stageItems()]);
+}
+
+/**
+ * The application menu, rebuilt rather than mutated.
+ *
+ * A status line changes a handful of times in an evening — the control server
+ * coming up, a voice finishing its model, a renderer attaching — so building
+ * the whole menu on each change costs nothing, and it is the one way of
+ * changing a native menu that behaves the same on every platform.
+ */
+function buildMenu(): Menu {
+  const disabled = (label: string): MenuItemConstructorOptions => ({ label, enabled: false });
+
+  const windowMenu: MenuItemConstructorOptions[] = [
+    { label: CONTROL_TITLE, click: () => showWindow('control') },
+    { label: STAGE_TITLE, click: () => showWindow('stage') },
+    ...stageItems(),
     { type: 'separator' },
     { label: 'Open Slides Folder', click: () => void openDirectory(paths.slides) },
     { label: 'Open Scripts Folder', click: () => void openDirectory(paths.scripts) },
@@ -554,6 +644,10 @@ app
     void tts.start();
 
     state = new ShellState(join(app.getPath('userData'), STATE_FILE_NAME));
+    // The display list in the menu follows the cable.
+    screen.on('display-added', rebuildMenu);
+    screen.on('display-removed', rebuildMenu);
+    screen.on('display-metrics-changed', rebuildMenu);
     rebuildMenu();
     makeWindow('control');
     makeWindow('stage');
