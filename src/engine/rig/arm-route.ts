@@ -237,7 +237,9 @@ export class ArmRoute {
    * as the per-frame solve always has. The raw decomposition replaces it only
    * when that step is not still travelling and raw is within one frame's slew
    * of the chain: elsewhere it can be another branch of the same hand, and
-   * switching to it is a jump. Returns the environment batches spent.
+   * switching to it is a jump. Only a blocked chain moves to raw's branch, by
+   * `reseed`, and the slew and the carry's absorb keep that jump off the
+   * committed arm. Returns the environment batches spent.
    */
   track(
     driver: ArmDriver,
@@ -249,6 +251,8 @@ export class ArmRoute {
   ): number {
     const planned = driver.planFrom(this.goalQ, context, dt, true);
     let batches = planned.environmentBatches;
+    const blocked = planned.status === 'blocked';
+    const chainError = planned.positionError;
     const bounds = driver.fillBounds(raw, 0, false);
     let inBox = true;
     for (let i = 0; i < DOFS && inBox; i++) {
@@ -301,6 +305,9 @@ export class ArmRoute {
         batches += driver.output.environmentBatches;
       }
     }
+    if (blocked && !inBox && Number.isFinite(chainError)) {
+      batches += this.reseed(driver, context, raw, chainError, dt);
+    }
     let projected = false;
     for (let i = 0; i < DOFS && !projected; i++) projected = this.goalQ[i] !== raw[i];
     this._projected = projected;
@@ -317,6 +324,33 @@ export class ArmRoute {
       this._stopping = false;
     }
     return batches;
+  }
+
+  /**
+   * Take a blocked chain over to the branch the request's own inverse names,
+   * where a plan from there misses the request by less than the chain does.
+   * Returns the environment batches spent.
+   *
+   * The chain is a local descent, so it keeps the branch it started on: from
+   * listen, whose forearm holds its pronation stop, cover's chain stopped
+   * blocked at that stop with a finger on the cheek, 4 cm and 73° of palm off,
+   * while the same request from rest settled on the supination stop 1.4 cm and
+   * 3° off. `raw` decomposes the request without that history; held to the box,
+   * it seeds one plan on the request's branch. The carry eases the switch.
+   */
+  private reseed(
+    driver: ArmDriver,
+    context: ArmForwardContext,
+    raw: Float64Array,
+    chainError: number,
+    dt: number,
+  ): number {
+    clampToBox(raw, driver.fillBounds(raw, 0, false), this.step);
+    const seeded = driver.planFrom(this.step, context, dt, true);
+    if (seeded.status !== 'blocked' && seeded.positionError < chainError) {
+      this.goalQ.set(seeded.q);
+    }
+    return seeded.environmentBatches;
   }
 
   /**

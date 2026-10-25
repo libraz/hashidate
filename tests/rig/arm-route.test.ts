@@ -449,4 +449,47 @@ describe('arm route recovery', () => {
     expect(validate).not.toHaveBeenCalled();
     expect(Array.from(route.goalQ)).toEqual(Array.from(planned ?? []));
   });
+
+  it.each([
+    ['progress', 0.01, true],
+    ['progress', 0.09, false],
+    ['blocked', 0.01, false],
+  ] as const)(
+    'reseeds a blocked chain from raw held to the box, taking a %s plan %s m off only when it misses by less',
+    (status, error, taken) => {
+      const s = scene();
+      const from = sideways();
+      const raw = overRolled(s.driver, from, 0.2);
+      requestAt(s, raw);
+      const plan = s.driver.planFrom.bind(s.driver);
+      const starts: Float64Array[] = [];
+      let seeded: Float64Array | null = null;
+      vi.spyOn(s.driver, 'planFrom').mockImplementation((start, ...rest) => {
+        starts.push(Float64Array.from(start));
+        const out = plan(start, ...rest);
+        if (starts.length === 1) {
+          // The chain: stuck where it started, 5 cm off.
+          out.status = 'blocked';
+          out.positionError = 0.05;
+          out.q.set(start);
+        } else {
+          out.status = status;
+          out.positionError = error;
+          seeded = Float64Array.from(out.q);
+        }
+        return out;
+      });
+      const route = new ArmRoute(TAIL);
+      route.reset(from);
+
+      route.track(s.driver, s.context, raw, NO_FINGERS, NO_FINGERS, 1 / 60);
+
+      expect(starts).toHaveLength(2);
+      const held = clampToBox(raw, s.driver.fillBounds(raw, 0, false), new Float64Array(7));
+      expect(Array.from(starts[1])).toEqual(Array.from(held));
+      expect(seeded).not.toBeNull();
+      if (taken) expect(Array.from(route.goalQ)).toEqual(Array.from(seeded ?? []));
+      else expect(Array.from(route.goalQ)).not.toEqual(Array.from(seeded ?? []));
+    },
+  );
 });
