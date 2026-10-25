@@ -2,8 +2,8 @@
  * The hop, as a pure function of the time since it started.
  *
  * No skeleton and no state: `planJump` turns the two physical figures into the
- * arc's durations once, and `sampleJump` reads the hips off it. The body layer
- * holds the elapsed time and writes the result into the rig.
+ * arc's durations once, and `sampleJump` reads the hips off it. `HopRun`
+ * holds the elapsed time and the body layer writes the result into the rig.
  *
  * `HOPS` at the foot of the file is the vocabulary the rest of the runtime uses
  * — a hop, a bounce, a leap, a spin — so that nothing above the motion layer has to

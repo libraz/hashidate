@@ -29,7 +29,8 @@ import { Gaze, type SpeechGaze } from './gaze';
 import { BASE_FINGERS, BASE_PALM, BASE_POSE, pointHand } from './gestures';
 import { OPEN_HAND } from './gestures/hands';
 import { HipsMetric } from './hips-metric';
-import { CROUCH_T, type HopSpec, type JumpArc, planJump, sampleJump } from './jump';
+import { HopRun } from './hop-run';
+import type { HopSpec } from './jump';
 import { aimEyes, LOOK_FOLLOW, makeGazeFrame, prepareGaze } from './look';
 import { type BreathTerms, IdlePosture, type PostureInput } from './posture';
 import { ArmResolver, mkReachScratch, type ResolvedArm } from './resolve';
@@ -206,12 +207,6 @@ export interface ActiveGesture {
  * firing gestures faster than their leads would otherwise grow the list without bound.
  */
 const MAX_FADING = 4;
-
-/** Whether `n` hops of `turn` radians each make a whole number of revolutions. */
-function closes(n: number, turn: number): boolean {
-  const revolutions = (n * turn) / (2 * Math.PI);
-  return Math.abs(revolutions - Math.round(revolutions)) < 1e-9;
-}
 
 const mkSlotWeights = (): Record<ArmSlot, number> => ({
   shoulder: 0,
@@ -420,15 +415,7 @@ export class Body {
 
   saccade: number;
 
-  private _jump: JumpArc | null;
-  private _jumpT: number;
-  /** A run asked for while one was in flight; it starts when that one lands. */
-  private _hopQueued: HopSpec | null;
-  private _rise: number;
-  private _load: number;
-  /** Radians the skeleton is yawed this frame, and the chest's lead over the pelvis. */
-  private _yaw = 0;
-  private _lead = 0;
+  private readonly _hop = new HopRun();
   /** Whether the current gesture's exit has begun, and how far through it is. */
   private _exiting = false;
   private _exitU = 0;
@@ -611,11 +598,6 @@ export class Body {
     // the character hang at the top, which is a look and not an error.
     this.jumpHeight = 0.08;
     this.gravity = 9.81;
-    this._jump = null;
-    this._jumpT = 0;
-    this._hopQueued = null;
-    this._rise = 0; // hips above rest this frame, metres
-    this._load = 0; // 0..1, how far into the dip the body is
 
     // Gaze wanders and snaps back rather than staring; `saccade` carries the
     // amplitude on the frame a new fixation starts so the director can blink
@@ -1284,63 +1266,17 @@ export class Body {
    * than one is continuous — see there for why it needs no gap between them.
    */
   hop({ height = this.jumpHeight, count = 1, turn = 0 }: Partial<HopSpec> = {}): void {
-    // Restarting a run in flight would drop the hips to rest in one frame; the
-    // new one waits for the landing, which ends standing and at rest.
-    if (this._jump) {
-      this._hopQueued = { height, count, turn };
-      return;
-    }
-    this._jump = planJump(height, this.gravity, count, turn);
-    this._jumpT = 0;
+    this._hop.start({ height, count, turn }, this.gravity);
   }
 
   /** Finish the current hop, dropping any later cycles from a run and any run queued after it. */
   finishHop(): void {
-    this._hopQueued = null;
-    const jump = this._jump;
-    if (!jump) return;
-    const cycle = jump.push + jump.flight + jump.brake;
-    const elapsed = Math.max(0, this._jumpT - CROUCH_T);
-    const current = Math.min(jump.count, Math.floor(elapsed / cycle) + 1);
-    // A turning run keeps the hops it needs to face front again.
-    let end = current;
-    while (end < jump.count && !closes(end, jump.turn)) end++;
-    jump.count = end;
+    this._hop.finish();
   }
 
   /** Whether a hop is in flight. Read by the panel. */
   get jumping(): boolean {
-    return this._jump !== null;
-  }
-
-  /**
-   * Advance the hop, leaving the hips' rise and the body's compression in
-   * `_rise` and `_load`. Both are zero on every frame that is not part of one.
-   */
-  private jumpStep(dt: number): void {
-    this._rise = 0;
-    this._load = 0;
-    this._yaw = 0;
-    this._lead = 0;
-    const j = this._jump;
-    if (!j) return;
-
-    this._jumpT += dt;
-    const s = sampleJump(j, this._jumpT);
-    if (s.done) {
-      this._jump = null;
-      const next = this._hopQueued;
-      if (next) {
-        this._hopQueued = null;
-        this._jump = planJump(next.height, this.gravity, next.count, next.turn);
-        this._jumpT = 0;
-      }
-      return;
-    }
-    this._rise = s.rise;
-    this._load = s.load;
-    this._yaw = s.yaw;
-    this._lead = s.lead;
+    return this._hop.active;
   }
 
   /** Current gaze offset in radians, x = yaw, y = pitch. */
@@ -1594,7 +1530,7 @@ export class Body {
     // shift, the hop's fold through the trunk, the head's drift. See
     // `posture.ts`. The hop is advanced first because the fold reads its
     // output; nothing about it touches the rig.
-    this.jumpStep(dt);
+    this._hop.step(dt, this.gravity);
     this._hipsMetric.refresh(this.hipsRight, this.hipsUp);
     const pin = this._postureIn;
     pin.t = this.t;
@@ -1609,9 +1545,9 @@ export class Body {
     pin.hipsRight = this.hipsRight;
     pin.hipsUp = this.hipsUp;
     pin.jumpHeight = this.jumpHeight;
-    pin.rise = this._rise;
-    pin.load = this._load;
-    pin.lead = this._lead;
+    pin.rise = this._hop.rise;
+    pin.load = this._hop.load;
+    pin.lead = this._hop.lead;
     const terms = this._posture.apply(rig, p, dt, pin);
     this._attitude.apply(rig, dt);
     this._spine.compose(dt, this._spineFading, g?.spine, this.blend);
@@ -1637,7 +1573,7 @@ export class Body {
       this._gazeFrame,
       dt,
       cut,
-      this._yaw + this._lead,
+      this._hop.yaw + this._hop.lead,
     );
   }
 
@@ -1787,7 +1723,7 @@ export class Body {
 
     rig.commitSpine();
     // Before the live frame and reach origins are read; springs still see the pose last.
-    rig.plantLegs(this._rise, this._yaw);
+    rig.plantLegs(this._hop.rise, this._hop.yaw);
     // Spine offsets change the body frame. Resolve it once here, after commit,
     // so every direction sent to Rig in this frame uses the same live basis.
     const frameReady = rig.anat.update();
@@ -1923,8 +1859,8 @@ export class Body {
       }
     }
 
-    if (armTransaction) this._transaction.commit(dt, this._rise, this._yaw);
-    else rig.finishLegacyBodyFrame(this._rise, this._yaw);
+    if (armTransaction) this._transaction.commit(dt, this._hop.rise, this._hop.yaw);
+    else rig.finishLegacyBodyFrame(this._hop.rise, this._hop.yaw);
     aimEyes(rig, p, this._gazeFrame);
     rig.commitEyes();
   }
