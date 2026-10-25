@@ -159,24 +159,26 @@ describe('the path between two poses', () => {
     step();
     h.body.play('listen');
     for (let i = 0; i < 180; i++) step();
+    const [minimumDeviation, maximumDeviation] = h.rig.joints.wrist.dofs.deviation.free;
+    // The listen hold itself sits inside the comfortable deviation band.
+    const listenDeviation = actualWristDeviation(h);
+    expect(listenDeviation).toBeGreaterThanOrEqual(minimumDeviation - 1e-6);
+    expect(listenDeviation).toBeLessThanOrEqual(maximumDeviation + 1e-6);
 
     hand.updateWorldMatrix(true, false);
     const heldWorldOrientation = hand.getWorldQuaternion(new THREE.Quaternion());
     const clearance = h.rig.fingerClearance('R');
     expect(clearance).toBeGreaterThan(0);
-    // On the live path the clearance turn is part of the solved wrist, so it is
-    // bounded where the wrist is: inside its comfortable deviation, not its stop.
-    const [minimumDeviation, maximumDeviation] = h.rig.joints.wrist.dofs.deviation.free;
     const transitionCommits = vi.spyOn(h.rig, 'commitArmFrame');
     let greatestHandTurn = 0;
 
     h.body.play('cover');
+    const deviations: number[] = [];
     for (let i = 0; i < 60; i++) {
       step();
       const deviation = actualWristDeviation(h);
       expect(Number.isFinite(deviation)).toBe(true);
-      expect(deviation).toBeGreaterThanOrEqual(minimumDeviation - 1e-6);
-      expect(deviation).toBeLessThanOrEqual(maximumDeviation + 1e-6);
+      deviations.push(deviation);
       expect(fingerDepth(h, 'R')).toBeLessThan(clearance);
 
       hand.updateWorldMatrix(true, false);
@@ -192,6 +194,17 @@ describe('the path between two poses', () => {
       ),
     ).toBe(true);
     expect(greatestHandTurn).toBeGreaterThan(1e-3);
+
+    for (let i = 0; i < 120; i++) step();
+    const goal = actualWristDeviation(h);
+    // The clearance turn is part of the solved wrist, so the path may not turn it
+    // past both the comfortable band and where the hold itself needs it (cover's
+    // palm needs the ulnar stop). With the hold on that stop the lower bound is the
+    // stop itself, so here it is the radial side that binds.
+    for (const deviation of deviations) {
+      expect(deviation).toBeGreaterThanOrEqual(Math.min(minimumDeviation, goal) - 1e-6);
+      expect(deviation).toBeLessThanOrEqual(Math.max(maximumDeviation, goal) + 1e-6);
+    }
   });
 });
 

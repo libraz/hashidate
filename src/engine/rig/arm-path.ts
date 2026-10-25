@@ -40,6 +40,14 @@ const SETTLED_ORIENTATION = 1e-5;
  */
 const STATIONARY_FRACTION = 1e-3;
 const FRAME_TOLERANCE = 1e-4;
+/**
+ * Weight of squared wrist deviation past its comfortable band, in radians, beside
+ * the elbow's squared miss. At 10 the pole still held fingerTouch at −20.1°; at
+ * 100 every hold the band can reach lands between −19.8° and −19.0°.
+ */
+const DEVIATION_COMFORT_WEIGHT = 100;
+/** How far inside the band the comfort term aims, so the pole cannot balance it on the edge. */
+const DEVIATION_COMFORT_MARGIN = Math.PI / 180;
 
 export type ArmPathPointKind = 'upper' | 'forearm' | 'hand' | 'finger';
 
@@ -437,6 +445,7 @@ export class ArmStepSolver {
   private readonly elbowJacobian = new Float64Array(DIRECTION_COMPONENTS * DOFS);
   private readonly projectedElbowJacobian = new Float64Array(DIRECTION_COMPONENTS * DOFS);
   private readonly secondaryVector = new Float64Array(DOFS);
+  private readonly comfortRow = new Float64Array(DOFS);
   private pointJacobian = new Float64Array(0);
   private readonly trialQ = new Float64Array(DOFS);
   private readonly normalMatrix = new Float64Array(DOFS * DOFS);
@@ -1326,7 +1335,9 @@ export class ArmStepSolver {
       const dx = (this.targetElbow.x - state.forward.elbow.x) / this.span;
       const dy = (this.targetElbow.y - state.forward.elbow.y) / this.span;
       const dz = (this.targetElbow.z - state.forward.elbow.z) / this.span;
-      state.secondaryError = dx * dx + dy * dy + dz * dz;
+      const excess = this.deviationExcess(state.q[6]);
+      state.secondaryError =
+        dx * dx + dy * dy + dz * dz + DEVIATION_COMFORT_WEIGHT * excess * excess;
     } else {
       state.secondaryError = 0;
     }
@@ -2034,6 +2045,19 @@ export class ArmStepSolver {
         this.projectedElbowJacobian[DOFS + i] * elbowErrorY +
         this.projectedElbowJacobian[2 * DOFS + i] * elbowErrorZ;
     }
+    // The pole may not spend wrist deviation past the comfortable band the hand does not need.
+    const excess = this.deviationExcess(state.q[6] + this.primaryDelta[6]);
+    if (excess !== 0) {
+      const row = this.comfortRow;
+      row.fill(0);
+      row[6] = 1;
+      this.projectToPrimaryNullspace(row);
+      for (let i = 0; i < DOFS; i++) {
+        for (let j = 0; j < DOFS; j++)
+          this.normalMatrix[i * DOFS + j] += DEVIATION_COMFORT_WEIGHT * row[i] * row[j];
+        this.rightHand[i] -= DEVIATION_COMFORT_WEIGHT * row[i] * excess;
+      }
+    }
     let trace = 0;
     for (let i = 0; i < DOFS; i++) trace += this.normalMatrix[i * DOFS + i];
     const damping = Math.max(trace / DOFS, 1e-12) * 1e-4;
@@ -2052,6 +2076,16 @@ export class ArmStepSolver {
     }
     for (let dof = 0; dof < DOFS; dof++) this.qpDelta[dof] += this.primaryDelta[dof];
     return this.qpDelta.every(Number.isFinite);
+  }
+
+  /** Signed radians `deviation` lies past its comfort aim, zero inside it. */
+  private deviationExcess(deviation: number): number {
+    const [free0, free1] = this.calibration.joints.wrist.dofs.deviation.free;
+    const lower = free0 + DEVIATION_COMFORT_MARGIN;
+    const upper = free1 - DEVIATION_COMFORT_MARGIN;
+    if (deviation < lower) return deviation - lower;
+    if (deviation > upper) return deviation - upper;
+    return 0;
   }
 
   private projectToPrimaryNullspace(vector: Float64Array, vectorOffset = 0): void {
