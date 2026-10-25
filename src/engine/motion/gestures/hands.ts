@@ -37,15 +37,16 @@ export const SOFT_HAND = shape({
 });
 /**
  * The blade of the hand: four fingers straight and together, the thumb swung
- * in along the index, out from under the palm.
+ * in along the index on the palm side.
  *
- * Thirty degrees of abduction is what takes the thumb out: at fifteen its tip
- * still stood a finger's thickness proud of the index on both validation
- * avatars, and a hand laid across the mouth hung off the lips by that much.
+ * Twenty degrees of adduction leaves the tip 0.1-0.6 pitch out of the palm from
+ * the index base on all three validation avatars. Thirty crossed the palm plane
+ * and laid the thumb along the back of a hand held over the mouth; fifteen left
+ * it a finger's thickness proud, and the hand hung off the lips by that much.
  */
 export const CHOP_HAND = shape(
   { thumb: 0.3, index: 0, middle: 0, ring: 0, little: 0 },
-  { thumb: THREE.MathUtils.degToRad(-30) },
+  { thumb: THREE.MathUtils.degToRad(-20) },
 );
 /**
  * The open hand with the chop thumb, for a hand held flat across the mouth.
