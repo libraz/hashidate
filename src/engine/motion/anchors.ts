@@ -47,6 +47,7 @@ export class ReachAnchors {
   private readonly _clearF = new THREE.Matrix3();
   private readonly _contactRotation = new THREE.Matrix3();
   private readonly _contactBind = new THREE.Matrix3();
+  private readonly _reachedFrame = new THREE.Matrix3();
   private readonly _clearAt = new THREE.Vector3();
   private readonly _travelS = new THREE.Vector3();
   private readonly _travelA = new THREE.Vector3();
@@ -208,6 +209,30 @@ export class ReachAnchors {
       if (r.palm) this.clearFace(target, anchor, r.hand, r.palm, side, frameReady);
     }
     return target;
+  }
+
+  /**
+   * Move this frame's wrist target out until the hand as last posed, placed
+   * there, is off the face. In place; after `target`, whose anchor it reuses.
+   *
+   * `target` clears the stated hand, which a pose past the forearm's roll
+   * range never reaches. The arm arrives with the hand it can have, and on the
+   * way in its fingers ran into the cheek at speed and stopped the arm dead
+   * there: a cuteSalute entrance peaked at 58 m/s². Clearing the request with
+   * the reached hand as well, on the way in and at the hold, brought it to 15.
+   */
+  clearReached(target: THREE.Vector3, r: ReachSpec, side: Side, frameReady?: boolean): void {
+    if (!(r.hand && r.palm && r.space !== 'body')) return;
+    this.clearFace(
+      target,
+      this._clearAt,
+      r.hand,
+      r.palm,
+      side,
+      frameReady,
+      undefined,
+      this._reachedFrame.copy(this.rig.fingerFrame(side)),
+    );
   }
 
   /**

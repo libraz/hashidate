@@ -70,6 +70,11 @@ const _fIn = Array.from({ length: 5 }, () => ({
 export class FingerClearance {
   /** Each hand's fingers as last posed, in its own frame. See `fingerShape`. */
   private readonly _fingerShape: Record<Side, THREE.Vector3[]> = { L: [], R: [] };
+  /** The frame each hand reached when its shape was recorded. See `fingerFrame`. */
+  private readonly _fingerFrame: Record<Side, THREE.Matrix3> = {
+    L: new THREE.Matrix3(),
+    R: new THREE.Matrix3(),
+  };
 
   private readonly palmLocal: Hands['palmLocal'];
 
@@ -85,6 +90,11 @@ export class FingerClearance {
   /** The fingers as last posed, in the frame the hand reached. See `Rig.fingerShape`. */
   fingerShape(side: Side): readonly THREE.Vector3[] {
     return this._fingerShape[side];
+  }
+
+  /** The frame the hand reached when `fingerShape` was recorded. See `Rig.fingerFrame`. */
+  fingerFrame(side: Side): Readonly<THREE.Matrix3> {
+    return this._fingerFrame[side];
   }
 
   /**
@@ -110,6 +120,7 @@ export class FingerClearance {
     _fN.copy(palm).applyQuaternion(_fParent);
     const F = handFrame(_fG, _fN, _fFrame);
     if (!F) return;
+    this._fingerFrame[side].copy(F);
     F.transpose();
     const W = hand.getWorldPosition(_fW);
     const out = this._fingerShape[side];

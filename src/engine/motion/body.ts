@@ -1793,21 +1793,19 @@ export class Body {
     const frameReady = rig.anat.update();
     const armTransaction = rig.beginBodyArmFrame();
     const handOrder = g?.clasp ? (g.clasp.lead === 'L' ? ORDER_L : ORDER_R) : SIDES;
-    if (armTransaction) {
-      for (const side of handOrder) {
-        this.advanceFingerControls(
-          side,
-          g,
-          dt,
-          idle,
-          br,
-          d,
-          handSource,
-          rig.lastAcceptedHandPose(side),
-        );
-      }
+    for (const side of handOrder) {
+      this.advanceFingerControls(
+        side,
+        g,
+        dt,
+        idle,
+        br,
+        d,
+        handSource,
+        rig.lastAcceptedHandPose(side),
+      );
     }
-    const handControls = armTransaction ? this._effectiveHandControls : undefined;
+    const handControls = this._effectiveHandControls;
 
     // --- arms -------------------------------------------------------------
     const armDrift = 0.016 * idle;
@@ -1915,7 +1913,6 @@ export class Body {
         this._arm.note(side, dirs.upperArm, dirs.lowerArm, dirs.hand);
       }
 
-      if (!armTransaction) this.advanceFingerControls(side, g, dt, idle, br, d, handSource);
       const spec = this._fingerSpec[side];
       const spread = this._fingerSpreadSpec[side];
       const cc = g?.clasp;

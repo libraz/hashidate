@@ -137,7 +137,7 @@ describe('requested hand contact target', () => {
     expect(predict).not.toHaveBeenCalled();
   });
 
-  it('rejects disabled limits and a changed opposite arm frame without invalidating history', () => {
+  it('predicts with the limiter off and rejects a changed opposite arm frame without invalidating history', () => {
     const h = setup();
     expect(h.rig.predictHandContact('R', required(request.contact), curls, spread)).not.toBeNull();
     const revision = h.rig.externalArmRevision;
@@ -146,7 +146,9 @@ describe('requested hand contact target', () => {
     expect(h.rig.externalArmRevision).toBe(revision);
     const other = setup();
     other.rig.limitsEnabled = false;
-    expect(other.rig.predictHandContact('R', required(request.contact), curls, spread)).toBeNull();
+    expect(
+      other.rig.predictHandContact('R', required(request.contact), curls, spread),
+    ).not.toBeNull();
   });
 
   it.each([undefined, 'L', 'R'] as const)(

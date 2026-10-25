@@ -556,6 +556,7 @@ export class ArmResolver {
       if (e < 1) this.anchors.travel(target, this._wristFrom[side], side, e);
       this._travelling[side] = true;
     }
+    this.anchors.clearReached(target, r, side, frameReady);
 
     const out = reach[side];
     out.clasp = false;

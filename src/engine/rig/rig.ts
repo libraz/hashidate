@@ -208,7 +208,9 @@ export class Rig {
    * Off switch for the anatomical limiting, so a pose can be compared against
    * what the raw geometry produces. Worth keeping: when a gesture looks
    * wrong, the first question is whether the limiter caused it or revealed
-   * it, and that is one toggle rather than an afternoon.
+   * it, and that is one toggle rather than an afternoon. Only the limiting
+   * goes: hand contact is still predicted and the face still clears the hand,
+   * so both runs are asked for the same reach.
    */
   get limitsEnabled(): boolean {
     return this._limitsEnabled;
@@ -697,7 +699,12 @@ export class Rig {
     return this._armDrivers[side];
   }
 
-  /** Borrowed metric hand-bone geometry; valid until the next prediction for this side. */
+  /**
+   * Borrowed metric hand-bone geometry; valid until the next prediction for this side.
+   *
+   * Not gated on the limiter: the calibration is the avatar's shape alone, and
+   * withholding it with the limiter off moved that run's blowKiss request 5.8 cm.
+   */
   predictHandContact(
     side: Side,
     selector: HandContact,
@@ -709,7 +716,7 @@ export class Rig {
     readonly bindFrame: Readonly<THREE.Matrix3>;
   } | null {
     const prediction = this._contactPrediction[side];
-    if (!(prediction && this._limitsEnabled && this.bothArmFramesSupported())) return null;
+    if (!(prediction && this.bothArmFramesSupported())) return null;
     if (
       !sampleHandContact(
         prediction.calibration,
@@ -1904,5 +1911,13 @@ export class Rig {
    */
   fingerShape(side: Side): readonly THREE.Vector3[] {
     return this.fingers.fingerShape(side);
+  }
+
+  /**
+   * The world frame, as `handFrame` builds it, that the hand reached when
+   * `fingerShape` was recorded: the two together are the hand as last posed.
+   */
+  fingerFrame(side: Side): Readonly<THREE.Matrix3> {
+    return this.fingers.fingerFrame(side);
   }
 }
