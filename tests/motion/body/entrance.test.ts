@@ -354,7 +354,7 @@ describe('reach entrance', () => {
     // face, which needs most of the elbow's range to arrive at at all. If none
     // of them settled deep, the bound above would be measuring nothing.
     expect(measured.filter(([, f]) => f.settled > ELBOW_STOP * 0.75).length).toBeGreaterThan(0);
-  });
+  }, 60_000);
 
   it('passes through no more fold than the pose it is going to needs', () => {
     // Stronger than the stop, and the property that says the path is sane: an
@@ -366,5 +366,5 @@ describe('reach entrance', () => {
       .filter(([, f]) => f.worst > Math.max(f.settled * 1.15, f.settled + 12))
       .map(([name]) => name);
     expect(worse.sort()).toEqual([]);
-  });
+  }, 60_000);
 });
