@@ -477,21 +477,21 @@ function observeHierarchy(solver: ArmStepSolver, output: { iterations: number })
   }[] = [];
   const qpCalls = new Map<number, number>();
   const candidates = new Map<number, number>();
-  if (typeof internal.retractElbow === 'function') {
-    const retract = internal.retractElbow.bind(internal);
-    vi.spyOn(internal, 'retractElbow').mockImplementation((primary, hierarchical, ...args) => {
-      const accepted = retract(primary, hierarchical, ...args);
-      retractions.push({
-        accepted,
-        primaryChange: internal.candidate.primaryError - primary.primaryError,
-        elbowImprovement: primary.secondaryError - internal.candidate.secondaryError,
-        wristMovement: internal.candidate.forward.wrist.distanceTo(primary.forward.wrist),
-        handMovement: internal.candidate.forward.h.distanceTo(primary.forward.h),
-        palmMovement: internal.candidate.forward.palm.distanceTo(primary.forward.palm),
-      });
-      return accepted;
+  // Asserted rather than skipped: a renamed method must fail here, not leave the spy out of the path.
+  expect(internal.retractElbow).toBeTypeOf('function');
+  const retract = internal.retractElbow.bind(internal);
+  vi.spyOn(internal, 'retractElbow').mockImplementation((primary, hierarchical, ...args) => {
+    const accepted = retract(primary, hierarchical, ...args);
+    retractions.push({
+      accepted,
+      primaryChange: internal.candidate.primaryError - primary.primaryError,
+      elbowImprovement: primary.secondaryError - internal.candidate.secondaryError,
+      wristMovement: internal.candidate.forward.wrist.distanceTo(primary.forward.wrist),
+      handMovement: internal.candidate.forward.h.distanceTo(primary.forward.h),
+      palmMovement: internal.candidate.forward.palm.distanceTo(primary.forward.palm),
     });
-  }
+    return accepted;
+  });
   for (const [method, counts] of [
     ['makeConstrainedStep', qpCalls],
     ['evaluatePlanCandidate', candidates],
