@@ -50,13 +50,14 @@ The character's half has two fields beyond the rectangle:
 
 ### Structured BGM patches
 
-`[@bgm set {JSON}]` carries one JSON object with the same input fields as a BGM command. The patch is applied atomically at the cue's mouth position. Omitted fields retain their current values, and changed settings remain in force for later lines. The fixed libsonare chain is reused; a cue does not add a processor or create an interpolation ramp.
+`[@bgm set {JSON}]` carries one JSON object with the same input fields as a BGM command. The patch is applied atomically at the cue's mouth position. Omitted fields retain their current values, and changed settings remain in force for later lines. The fixed libsonare chain is reused and a cue adds no processor. Everything lands at once except the volume, which glides over `rampSeconds` when one is given.
 
 | Field | Allowed value |
 |---|---|
 | `action` | Optional `play`, `pause`, or `stop`. |
 | `track` | Optional `.mp3` or `.flac` filename, or `null`. A filename selects that track stopped at the beginning unless `action` is `play`; `null` unloads the track and wins over any action. |
 | `volume` | Number from 0 to 1. |
+| `rampSeconds` | Number from 0 to 30. The volume in the same patch glides there over this many seconds from wherever it is; absent or 0 changes it at once. It applies to that one change and is not kept, and it needs a `volume` beside it. |
 | `loop` | Boolean. |
 | `fade.inSeconds`, `fade.outSeconds` | Numbers from 0 to 10. |
 | `dsp.toneDb` | Number from −6 to 6 dB. |
@@ -74,6 +75,7 @@ For example, one cue selects and starts a track with its mix and effects, anothe
 ```text
 The opening starts here. [@bgm set {"action":"play","track":"opening.mp3","volume":0.16,"fade":{"inSeconds":1.25,"outSeconds":0.75},"dsp":{"toneDb":1,"compression":0.25,"reverb":{"mix":0.08,"decay":0.45},"pitch":{"semitones":7,"mix":0.35},"presence":{"amount":0.25,"drive":3,"frequencyHz":3200}}}]
 The music gets louder here. [@bgm set {"volume":0.24,"fade":{"outSeconds":0.5}}]
+It eases back down under the next slide. [@bgm set {"volume":0.08,"rampSeconds":6}]
 The segment ends here. [@bgm set {"action":"stop"}]
 ```
 

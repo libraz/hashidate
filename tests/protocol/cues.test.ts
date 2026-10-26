@@ -88,6 +88,9 @@ describe('structured BGM cues', () => {
     '[]',
     '{"volume":0.2,"dsp":{"reverb":{}}}',
     '{"volume":0.2,"dsp":{"pitch":{}}}',
+    '{"rampSeconds":3}',
+    '{"volume":0.2,"rampSeconds":31}',
+    '{"volume":0.2,"rampSeconds":-1}',
     '',
   ])('rejects malformed or ineffective patch %s at both boundaries', (json) => {
     const cue = `@bgm set ${json}`;

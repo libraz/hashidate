@@ -1,5 +1,5 @@
 import { parseArgs } from 'node:util';
-import { bgmCommandSchema } from '../../protocol';
+import { BGM_RAMP_LIMITS, bgmCommandSchema } from '../../protocol';
 import { build, type Handler, toNumber } from '../args';
 import { fail } from '../client';
 import { show } from '../output';
@@ -22,7 +22,7 @@ export const bgm: Handler = async (client, args) => {
   const action = args[0];
   if (action === undefined)
     fail(
-      'bgm list|play <filename>|pause|resume|stop|volume <0..1>|loop on|off|fade <inSeconds> <outSeconds>',
+      'bgm list|play <filename>|pause|resume|stop|volume <0..1> [seconds]|loop on|off|fade <inSeconds> <outSeconds>',
     );
 
   if (action === 'list') {
@@ -101,9 +101,19 @@ export const bgm: Handler = async (client, args) => {
   }
 
   if (action === 'volume') {
-    if (args.length !== 2) fail('bgm volume needs a value from 0..1');
+    if (args.length !== 2 && args.length !== 3)
+      fail('bgm volume needs a value from 0..1, then optionally the seconds to glide over');
     const volume = bgmVolume(args[1]);
-    show(await client.command(build(bgmCommandSchema, { cmd: 'bgm', volume })));
+    const rampSeconds = args.length === 3 ? bgmRampSeconds(args[2]) : undefined;
+    show(
+      await client.command(
+        build(bgmCommandSchema, {
+          cmd: 'bgm',
+          volume,
+          ...(rampSeconds === undefined ? {} : { rampSeconds }),
+        }),
+      ),
+    );
     return;
   }
 
@@ -130,7 +140,7 @@ export const bgm: Handler = async (client, args) => {
   }
 
   fail(
-    `bgm list|play <filename>|pause|resume|stop|volume <0..1>|loop on|off|fade <inSeconds> <outSeconds>: ${action}`,
+    `bgm list|play <filename>|pause|resume|stop|volume <0..1> [seconds]|loop on|off|fade <inSeconds> <outSeconds>: ${action}`,
   );
 };
 
@@ -138,6 +148,13 @@ export function bgmVolume(raw: string | undefined): number {
   const volume = toNumber(raw, 0, 'bgm volume');
   if (volume < 0 || volume > 1) fail(`bgm volume takes 0..1: ${raw}`);
   return volume;
+}
+
+export function bgmRampSeconds(raw: string | undefined): number {
+  const seconds = toNumber(raw, 0, 'bgm volume seconds');
+  if (seconds < BGM_RAMP_LIMITS.min || seconds > BGM_RAMP_LIMITS.max)
+    fail(`bgm volume glides over ${BGM_RAMP_LIMITS.min}..${BGM_RAMP_LIMITS.max} seconds: ${raw}`);
+  return seconds;
 }
 
 export function bgmLoop(raw: string | undefined): boolean {

@@ -48,6 +48,17 @@ export const BGM_FADE_DEFAULTS = { inSeconds: 1, outSeconds: 1 } as const;
 export const BGM_FADE_DEFAULT_IN_SECONDS = BGM_FADE_DEFAULTS.inSeconds;
 export const BGM_FADE_DEFAULT_OUT_SECONDS = BGM_FADE_DEFAULTS.outSeconds;
 
+/**
+ * How long one volume change may glide. Longer than a fade because a level
+ * eased under a stretch of talk is measured in sentences, not in a transition.
+ */
+export const BGM_RAMP_LIMITS = { min: 0, max: 30 } as const;
+export const bgmRampSecondsSchema = z
+  .number()
+  .finite()
+  .min(BGM_RAMP_LIMITS.min)
+  .max(BGM_RAMP_LIMITS.max);
+
 const fadeInSecondsSchema = z
   .number()
   .finite()
@@ -194,6 +205,12 @@ export const bgmControlFieldsSchema = z.object({
   action: bgmActionSchema.optional(),
   track: bgmTrackIdSchema.nullable().optional(),
   volume: bgmVolumeSchema.optional(),
+  /**
+   * Seconds this command's `volume` glides over, from wherever the level is.
+   * Absent or 0 is immediate. It belongs to this one change and is not kept,
+   * unlike `fade`, which is a policy every later transition reuses.
+   */
+  rampSeconds: bgmRampSecondsSchema.optional(),
   loop: bgmLoopSchema.optional(),
   /** A partial libsonare Mixer DSP patch; omitted leaves the active chain unchanged. */
   dsp: bgmDspPatchSchema.optional(),
@@ -213,6 +230,9 @@ export const bgmCueSettingsSchema = bgmControlFieldsSchema
     dsp: bgmCueDspSchema.optional(),
   })
   .strict()
-  .refine(hasBgmSetting, { error: 'BGM settings may not be empty' });
+  .refine(hasBgmSetting, { error: 'BGM settings may not be empty' })
+  .refine((settings) => settings.rampSeconds === undefined || settings.volume !== undefined, {
+    error: 'BGM rampSeconds needs a volume to glide to',
+  });
 
 export type BgmCueSettings = z.infer<typeof bgmCueSettingsSchema>;

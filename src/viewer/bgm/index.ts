@@ -12,10 +12,12 @@ import { BgmDspChain } from './dsp-chain';
 import type { BrowserBgmOptions, LegacyBrowserBgmOptions } from './options';
 import {
   cleanupAudio,
+  type EnvelopeState,
   finiteDuration,
   holdEnvelope,
   isBlockedPlayError,
   mediaError,
+  rampParamAt,
   releaseRoute,
   safeDisconnect,
   scheduleEnvelopeAt,
@@ -78,6 +80,8 @@ export class BrowserBgm {
 
   private track: string | null = null;
   private volume: number = BGM_DEFAULT_VOLUME;
+  /** Where the bus level's last glide is headed, so the next one starts from where it got to. */
+  private volumeState: EnvelopeState = { from: 0, to: 0, start: 0, duration: 0 };
   private loop: boolean = BGM_DEFAULT_LOOP;
   private dsp: BgmDsp = cloneDsp(BGM_DSP_DEFAULTS);
   private fade: BgmFade = { ...BGM_FADE_DEFAULTS };
@@ -139,9 +143,11 @@ export class BrowserBgm {
     const previousTransport = this.transport;
     const previousTrack = this.track;
 
-    if (command.volume !== undefined) {
+    // Every server command restates the level, so only a change moves the bus;
+    // restating it mid-glide would otherwise snap the glide to its end.
+    if (command.volume !== undefined && command.volume !== this.volume) {
       this.volume = command.volume;
-      this.setBusVolume();
+      this.setBusVolume(command.rampSeconds ?? 0);
     }
     if (command.loop !== undefined) {
       this.loop = command.loop;
@@ -631,8 +637,14 @@ export class BrowserBgm {
     }
   }
 
-  private setBusVolume(): void {
-    this.output.bgmBus.gain.value = this.volume;
+  private setBusVolume(seconds = 0): void {
+    this.volumeState = rampParamAt(
+      this.output.bgmBus.gain,
+      this.volumeState,
+      this.volume,
+      seconds,
+      this.output.context.currentTime,
+    );
   }
 
   private emitReport(): void {

@@ -539,6 +539,7 @@ export function createServer(control: Control): Server {
         return {
           cmd: 'bgm',
           ...(call.volume === undefined ? {} : { volume: call.volume }),
+          ...(call.rampSeconds === undefined ? {} : { rampSeconds: call.rampSeconds }),
           ...(call.loop === undefined ? {} : { loop: call.loop }),
           ...(call.dsp === undefined ? {} : { dsp: call.dsp }),
           ...(call.fade === undefined ? {} : { fade: call.fade }),

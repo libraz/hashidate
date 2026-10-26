@@ -262,6 +262,35 @@ describe('BrowserBgm', () => {
     h.bgm.dispose();
   });
 
+  it('glides the bus to a new level and lets a restated level leave the glide running', () => {
+    const h = harness();
+    h.bgm.apply({ cmd: 'bgm', id: 'a', revision: 1, volume: 0.4 });
+    h.bgmBus.gain.calls.length = 0;
+
+    h.bgm.apply({ cmd: 'bgm', id: 'b', revision: 2, volume: 0.1, rampSeconds: 4 });
+    expect(h.bgmBus.gain.calls).toEqual([
+      { method: 'cancelScheduledValues', value: 0.4, at: 10 },
+      { method: 'setValueAtTime', value: 0.4, at: 10 },
+      { method: 'linearRampToValueAtTime', value: 0.1, at: 14 },
+    ]);
+
+    // Every server command restates the level; one that does not change it must not touch the bus.
+    h.bgmBus.gain.calls.length = 0;
+    h.bgm.apply({ cmd: 'bgm', id: 'c', revision: 3, volume: 0.1, loop: false });
+    expect(h.bgmBus.gain.calls).toEqual([]);
+
+    // A new level mid-glide starts from where the glide had got to.
+    h.context.currentTime = 12;
+    h.bgm.apply({ cmd: 'bgm', id: 'd', revision: 4, volume: 0.4, rampSeconds: 2 });
+    expect(h.bgmBus.gain.calls[1]).toEqual({ method: 'setValueAtTime', value: 0.25, at: 12 });
+    expect(h.bgmBus.gain.calls[2]).toEqual({
+      method: 'linearRampToValueAtTime',
+      value: 0.4,
+      at: 14,
+    });
+    h.bgm.dispose();
+  });
+
   it('routes media through per-track envelopes and one shared DSP on a track switch', async () => {
     const h = harness();
     h.bgm.apply({ cmd: 'bgm', id: 'a', revision: 1, track: 'one.mp3', action: 'play' });

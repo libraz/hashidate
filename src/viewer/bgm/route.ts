@@ -104,6 +104,26 @@ export function holdEnvelope(route: TrackRoute, at: number): void {
   route.envelopeState = { from: current, to: current, start: at, duration: 0 };
 }
 
+/**
+ * Ramp `param` to `target` over `duration`, starting from wherever `state` says
+ * the last ramp got to, and return the state of the new one.
+ */
+export function rampParamAt(
+  param: AudioParam,
+  state: EnvelopeState,
+  target: number,
+  duration: number,
+  at: number,
+): EnvelopeState {
+  const from = envelopeValue(state, at);
+  const boundedDuration = Math.max(0, duration);
+  cancelParam(param, at);
+  param.setValueAtTime(from, at);
+  if (boundedDuration === 0) param.setValueAtTime(target, at);
+  else param.linearRampToValueAtTime(target, at + boundedDuration);
+  return { from, to: target, start: at, duration: boundedDuration };
+}
+
 /** Ramp to `target` over `duration`, starting from wherever the last ramp got to. */
 export function scheduleEnvelopeAt(
   route: TrackRoute,
@@ -111,18 +131,7 @@ export function scheduleEnvelopeAt(
   duration: number,
   at: number,
 ): void {
-  const from = envelopeValue(route.envelopeState, at);
-  const boundedDuration = Math.max(0, duration);
-  cancelParam(route.envelope.gain, at);
-  route.envelope.gain.setValueAtTime(from, at);
-  if (boundedDuration === 0) route.envelope.gain.setValueAtTime(target, at);
-  else route.envelope.gain.linearRampToValueAtTime(target, at + boundedDuration);
-  route.envelopeState = {
-    from,
-    to: target,
-    start: at,
-    duration: boundedDuration,
-  };
+  route.envelopeState = rampParamAt(route.envelope.gain, route.envelopeState, target, duration, at);
 }
 
 /**

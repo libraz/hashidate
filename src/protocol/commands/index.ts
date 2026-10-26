@@ -83,6 +83,7 @@ export {
   BGM_FADE_DEFAULT_OUT_SECONDS,
   BGM_FADE_DEFAULTS,
   BGM_FADE_LIMITS,
+  BGM_RAMP_LIMITS,
   type BgmAction,
   type BgmCommand,
   type BgmDsp,
@@ -95,6 +96,7 @@ export {
   bgmDspSchema,
   bgmFadePatchSchema,
   bgmFadeSchema,
+  bgmRampSecondsSchema,
   bgmTransportSchema,
   hasBgmSetting,
 } from './bgm';

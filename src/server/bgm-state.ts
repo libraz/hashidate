@@ -149,7 +149,12 @@ export class BgmCoordinator {
     this.advanceRevision();
     this.stateValue.at = at;
     this.commanded = true;
-    return this.commandAt(at, command.action, command.id);
+    const out = this.commandAt(at, command.action, command.id);
+    // Carried on this broadcast only: a renderer joining later takes the level as it now stands.
+    if (command.volume !== undefined && command.rampSeconds !== undefined) {
+      out.rampSeconds = command.rampSeconds;
+    }
+    return out;
   }
 
   /** The current state, with playing position advanced to the injected clock. */

@@ -200,6 +200,20 @@ describe('BGM roster route', () => {
 });
 
 describe('BgmCoordinator', () => {
+  it('carries a volume glide on its own broadcast and never into the standing command', () => {
+    const coordinator = new BgmCoordinator(() => 100);
+    expect(coordinator.apply({ cmd: 'bgm', volume: 0.05, rampSeconds: 8 })).toMatchObject({
+      volume: 0.05,
+      rampSeconds: 8,
+    });
+    expect(coordinator.command()).not.toHaveProperty('rampSeconds');
+    expect(coordinator.state().volume).toBe(0.05);
+    // A glide with no level to reach moves nothing, so it is not passed on.
+    expect(coordinator.apply({ cmd: 'bgm', loop: false, rampSeconds: 8 })).not.toHaveProperty(
+      'rampSeconds',
+    );
+  });
+
   it('owns transport semantics, position and the independent DSP patch', () => {
     let at = 100;
     const coordinator = new BgmCoordinator(() => at);
