@@ -94,26 +94,28 @@ def load_refs_module():
         "repair": repair,
         "vet": vet,
     }
+    # Only while refs.py imports: it binds every name at load, and a stub left in
+    # sys.modules would be what the next test module's real imports resolve to.
     original = {name: sys.modules.get(name) for name in modules}
     sys.modules.update(modules)
-    source = Path(__file__).with_name("refs.py")
-    spec = importlib.util.spec_from_file_location("hashidate_test_refs_module", source)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("could not load refs.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    def restore():
+    try:
+        source = Path(__file__).with_name("refs.py")
+        spec = importlib.util.spec_from_file_location("hashidate_test_refs_module", source)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("could not load refs.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    finally:
         for name, previous in original.items():
             if previous is None:
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = previous
 
-    return module, fake_torch, restore
+    return module, fake_torch
 
 
-REFS, TORCH, RESTORE = load_refs_module()
+REFS, TORCH = load_refs_module()
 
 
 class ReferencePublishTests(unittest.TestCase):
@@ -198,10 +200,6 @@ class ReferencePublishTests(unittest.TestCase):
         self.assertEqual((self.latents / "keep.pt").read_bytes(), b"old keep")
         self.assertEqual(sorted(path.name for path in self.latents.iterdir()), ["keep.pt", "old.pt"])
         self.assertEqual(list(self.latents.parent.glob(".latents.backup-*")), [])
-
-
-def tearDownModule():
-    RESTORE()
 
 
 if __name__ == "__main__":
