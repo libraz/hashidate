@@ -35,6 +35,12 @@ yarn ctl hold                  # hold it again
 
 The line being spoken when a hold arrives finishes normally. Nothing is discarded: cutting a line off is `interrupt`, and dropping the rest is `clear`.
 
+## Room either side
+
+**Before the first line** and **After the last line**, on the Recording tab, are seconds of picture around the script, for a take that should open on the character standing ready rather than on the first word, or leave room for a fade.
+
+The first is counted from the first chunk written, the same evidence that releases the hold, so a slow encoder does not eat into it. It only means something when the record button is releasing a held queue, and is greyed out otherwise. The second replaces the default moment the take runs on after the last line, 1.2 seconds, and does nothing with **Stop at the end of the script** off. Both go up to 10 seconds, and both are `lead` and `tail` on `POST /api/record/start` for a caller that starts takes itself.
+
 ## Output size
 
 The frame is composed a second time, into a canvas of the size the take was started at. A recording is 1920×1080 whether the stage window is fullscreen or a strip down one side of a desk.
@@ -77,7 +83,7 @@ show/recordings/opening-20260829-142530.mp4
 
 ## Stopping
 
-The take ends a moment after the last line, long enough for the mouth to close and the character to come back to rest, because a cut on the same frame as the last syllable reads as a dropped connection. A line queued inside that moment carries the recording on rather than ending it.
+The take ends a moment after the last line, 1.2 seconds unless **After the last line** says otherwise, long enough for the mouth to close and the character to come back to rest, because a cut on the same frame as the last syllable reads as a dropped connection. A line queued inside that moment carries the recording on rather than ending it.
 
 Turning **Stop at the end of the script** off leaves it running until the Stop button. A stop names the take it ends, so a late stop for an earlier take leaves a newer one running.
 

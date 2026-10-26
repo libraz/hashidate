@@ -15,6 +15,7 @@ interface Props {
   /** Where the control changes nothing, when that is not zero or the bottom. */
   rest?: number;
   title?: string;
+  disabled?: boolean;
 }
 
 /**
@@ -36,6 +37,7 @@ export function Slider({
   unit = '',
   rest,
   title,
+  disabled = false,
 }: Props) {
   const id = useId();
   const span = fill(value, min, max, rest);
@@ -53,6 +55,7 @@ export function Slider({
         max={max}
         step={step}
         value={value}
+        disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))}
       />
       <output className={styles.value} htmlFor={id}>

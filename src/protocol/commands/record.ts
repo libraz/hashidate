@@ -19,6 +19,9 @@ export const RECORD_LIMITS = {
   width: { min: 16, max: 7680 },
   height: { min: 16, max: 7680 },
   fps: { min: 1, max: 60 },
+  /** Seconds of picture either side of the script. See `RECORD_DEFAULTS`. */
+  lead: { min: 0, max: 10 },
+  tail: { min: 0, max: 10 },
 } as const;
 
 /**
@@ -29,7 +32,26 @@ export const RECORD_LIMITS = {
  * composes at them, and a default that lived on one side would be a recording
  * whose reported size and actual size disagreed.
  */
-export const RECORD_DEFAULTS = { width: 1920, height: 1080, fps: 30 } as const;
+export const RECORD_DEFAULTS = {
+  width: 1920,
+  height: 1080,
+  fps: 30,
+  /** Seconds between the take rolling and a held queue being let go. */
+  lead: 0,
+  /**
+   * Seconds a take keeps rolling after the last line of a script.
+   *
+   * A take that cuts on the same frame the last syllable ends reads as a
+   * dropped connection rather than as an ending — the mouth is still closing and
+   * the character is still coming back to rest. This is long enough for both and
+   * short enough that nobody trims it.
+   *
+   * It is a delay rather than a fixed tail because the queue can refill inside
+   * it: a line queued while this is counting down cancels the stop, and the
+   * recording carries straight on.
+   */
+  tail: 1.2,
+} as const;
 
 /**
  * Start or stop recording the composed frame.

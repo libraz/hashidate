@@ -27,7 +27,14 @@ for (const phase of ['write', 'final'] as const) {
       },
     });
     const recordings = new Recordings(root, () => sink);
-    const take = recordings.open({ width: 1920, height: 1080, fps: 30, autoStop: true });
+    const take = recordings.open({
+      width: 1920,
+      height: 1080,
+      fps: 30,
+      autoStop: true,
+      lead: 0,
+      tail: 1.2,
+    });
     if (take === null) throw new Error('the take did not open');
 
     const appended = await recordings.append(
@@ -42,7 +49,9 @@ for (const phase of ['write', 'final'] as const) {
     const closed = await recordings.close(take.session);
     expect(closed?.error).toBeTruthy();
     expect(recordings.current).toBeNull();
-    expect(recordings.open({ width: 1920, height: 1080, fps: 30, autoStop: true })).not.toBeNull();
+    expect(
+      recordings.open({ width: 1920, height: 1080, fps: 30, autoStop: true, lead: 0, tail: 1.2 }),
+    ).not.toBeNull();
     await recordings.close();
   }, 1000);
 }

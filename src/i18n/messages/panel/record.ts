@@ -15,6 +15,12 @@ export const recordEn = {
   'panel.record.take.autoStop': 'Stop at the end of the script',
   'panel.record.take.autoStop.title':
     'End the take a moment after the last line. A line queued in that moment carries it on.',
+  'panel.record.take.lead': 'Before the first line',
+  'panel.record.take.lead.title':
+    'How long the take rolls before a held queue is let go, counted from the first frames written',
+  'panel.record.take.tail': 'After the last line',
+  'panel.record.take.tail.title':
+    'How long the take keeps rolling after the last line when it stops at the end of the script',
   'panel.record.take.start': 'Record',
   'panel.record.take.start.title': 'Start recording, and let a held queue go once it is rolling',
   'panel.record.take.releases': 'and lets the held queue go once it is rolling',
@@ -42,6 +48,11 @@ export const recordJa: Record<keyof typeof recordEn, string> = {
   'panel.record.take.autoStop': '台本の終わりで停止',
   'panel.record.take.autoStop.title':
     '最終行の少しあとで録画を終える。そのあいだに行が入れば録画は続く。',
+  'panel.record.take.lead': '最初の行の前',
+  'panel.record.take.lead.title':
+    '録れ始めてから一時停止を解除するまでの秒数。最初のフレームが書き込まれた時点から数える',
+  'panel.record.take.tail': '最後の行の後',
+  'panel.record.take.tail.title': '台本の終わりで停止するとき、最終行のあと録り続ける秒数',
   'panel.record.take.start': '録画開始',
   'panel.record.take.start.title': '録画を始め、録れ始めた時点で一時停止を解除する',
   'panel.record.take.releases': '録れ始めた時点で一時停止も解除される',

@@ -17,7 +17,7 @@ let root: string;
 let recordings: Recordings;
 
 const AT = new Date(2026, 7, 29, 14, 25, 30);
-const OPEN = { width: 1920, height: 1080, fps: 30, autoStop: true };
+const OPEN = { width: 1920, height: 1080, fps: 30, autoStop: true, lead: 0, tail: 1.2 };
 const MP4 = 'video/mp4;codecs=avc1.42E01E,mp4a.40.2';
 
 beforeEach(async () => {

@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useT } from '@/i18n';
-import type { Snapshot } from '@/protocol';
+import { RECORD_DEFAULTS, RECORD_LIMITS, type Snapshot } from '@/protocol';
 import { Field } from '@/ui/Field';
 import { Section } from '@/ui/Section';
 import { Segmented } from '@/ui/Segmented';
+import { Slider } from '@/ui/Slider';
 import { Toggle } from '@/ui/Toggle';
 import { isFailure, readScripts, recordStart, recordStop } from '../api';
 import { loadedScript } from '../script/ScriptPicker';
@@ -140,6 +141,8 @@ export function RecordTab({ snapshot, refresh }: Props) {
   const [frame, setFrame] = useState<(typeof SIZES)[number]['value']>('1920x1080');
   const [fps, setFps] = useState<(typeof RATES)[number]['value']>('30');
   const [autoStop, setAutoStop] = useState(true);
+  const [lead, setLead] = useState<number>(RECORD_DEFAULTS.lead);
+  const [tail, setTail] = useState<number>(RECORD_DEFAULTS.tail);
 
   const recording = snapshot.recording;
   const paused = snapshot.paused;
@@ -173,6 +176,8 @@ export function RecordTab({ snapshot, refresh }: Props) {
       height,
       fps: Number(fps),
       autoStop,
+      lead,
+      tail,
       // The record button is also the play button, and only when there is
       // something being held for it to release. See `recordStartSchema`.
       release: paused,
@@ -230,6 +235,33 @@ export function RecordTab({ snapshot, refresh }: Props) {
         checked={autoStop}
         onChange={setAutoStop}
         title={t('panel.record.take.autoStop.title')}
+      />
+      {/* Read back off the take once one is open, as the size and rate are. Each
+          is disabled where it would change nothing: the lead without a held
+          queue to release, the tail without a stop at the end of the script. */}
+      <Slider
+        label={t('panel.record.take.lead')}
+        title={t('panel.record.take.lead.title')}
+        value={recording?.lead ?? lead}
+        onChange={setLead}
+        min={RECORD_LIMITS.lead.min}
+        max={RECORD_LIMITS.lead.max}
+        step={0.1}
+        precision={1}
+        unit="s"
+        disabled={recording !== null || !paused}
+      />
+      <Slider
+        label={t('panel.record.take.tail')}
+        title={t('panel.record.take.tail.title')}
+        value={recording?.tail ?? tail}
+        onChange={setTail}
+        min={RECORD_LIMITS.tail.min}
+        max={RECORD_LIMITS.tail.max}
+        step={0.1}
+        precision={1}
+        unit="s"
+        disabled={recording !== null || !autoStop}
       />
 
       <div className={styles.transport}>

@@ -11,20 +11,6 @@ import type { AppendResult, OpenOptions, RecordingStore } from './recordings';
  */
 
 /**
- * How long a recording keeps rolling after the last line of a script.
- *
- * A take that cuts on the same frame the last syllable ends reads as a
- * dropped connection rather than as an ending — the mouth is still closing and
- * the character is still coming back to rest. This is long enough for both and
- * short enough that nobody trims it.
- *
- * It is a delay rather than a fixed tail because the queue can refill inside
- * it: a line queued while this is counting down cancels the stop, and the
- * recording carries straight on.
- */
-export const RECORD_TAIL_SECONDS = 1.2;
-
-/**
  * How long a stopped recording waits for the renderer's last chunk.
  *
  * `stop` goes down the same one-way channel every command does, so the file
@@ -43,9 +29,12 @@ export const RECORD_ORPHAN_SECONDS = 6.0;
 export class TakeControl {
   /**
    * The stop scheduled for the end of the script, if one is counting down.
-   * See `RECORD_TAIL_SECONDS`.
+   * The take's own `tail`; see `RECORD_DEFAULTS`.
    */
   private tailTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** The release counting down the take's `lead` after its first chunk. */
+  private leadTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** The watchdog on a stopped recording's last chunk. See `RECORD_FLUSH_SECONDS`. */
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -66,7 +55,8 @@ export class TakeControl {
    * arrives. Releasing on a timer instead would be releasing on a guess about
    * how long an encoder takes to produce its first second — and a guess that is
    * short by anything at all clips the front of the first line, which is
-   * exactly the frame the take opens on.
+   * exactly the frame the take opens on. A `lead` is counted from that chunk,
+   * never from the request, for the same reason.
    */
   private releaseOn: string | null = null;
 
@@ -192,6 +182,7 @@ export class TakeControl {
     if (live === null) return null;
     if (session !== undefined && session !== live.session) return null;
     this.clearTail();
+    this.clearLead();
     this.releaseOn = null;
     this.clearOrphan();
     if (this.flushTimer === null) {
@@ -246,6 +237,7 @@ export class TakeControl {
       // recording that is not happening. Stale and conflict responses must never
       // close a live take they do not own.
       const held = this.releaseOn === session;
+      this.clearLead();
       if (!final) this.stopRecording(session);
       this.releaseOn = null;
       this.clearFlush();
@@ -255,16 +247,35 @@ export class TakeControl {
       return result;
     }
     if (result.status !== 'accepted') return result;
-    if (result.first && this.releaseOn === session) {
-      this.releaseOn = null;
-      this.send({ type: 'command', commands: [{ cmd: 'pause', on: false }] });
-    }
+    if (result.first && this.releaseOn === session) this.release(session, current.lead);
     if (final) {
       this.clearFlush();
       await this.recordings.close(session);
       this.clearFinishedRecording(session);
     }
     return result;
+  }
+
+  /**
+   * Let the held queue go, now or `lead` seconds from now.
+   *
+   * `releaseOn` stays set while the lead counts down, so a stop or a failed
+   * sink inside it is handled exactly as one before the first chunk.
+   */
+  private release(session: string, lead: number): void {
+    const go = (): void => {
+      this.leadTimer = null;
+      if (this.releaseOn !== session) return;
+      this.releaseOn = null;
+      this.send({ type: 'command', commands: [{ cmd: 'pause', on: false }] });
+    };
+    if (lead <= 0) {
+      go();
+      return;
+    }
+    this.clearLead();
+    this.leadTimer = setTimeout(go, lead * 1000);
+    this.leadTimer.unref?.();
   }
 
   /** The take in flight, as the snapshot reports it. */
@@ -302,10 +313,10 @@ export class TakeControl {
    * Arm the end-of-script stop, or stand it down.
    *
    * Called from `report` whenever the queue has just changed length. The stop
-   * is scheduled rather than immediate — see `RECORD_TAIL_SECONDS` — and the
-   * schedule is dropped the moment there is another line to say, which is what
-   * makes a comment queued during the tail extend the take instead of ending
-   * it early.
+   * is scheduled rather than immediate — the take's `tail`, see
+   * `RECORD_DEFAULTS` — and the schedule is dropped the moment there is another
+   * line to say, which is what makes a comment queued during the tail extend
+   * the take instead of ending it early.
    */
   private considerTail(): void {
     const live = this.recordings?.current ?? null;
@@ -323,7 +334,7 @@ export class TakeControl {
       if (still === null || !still.autoStop) return;
       if (this.queue.hasWork || this.speaking() || !this.recordingQueueSeen) return;
       this.stopRecording(still.session);
-    }, RECORD_TAIL_SECONDS * 1000);
+    }, live.tail * 1000);
     this.tailTimer.unref?.();
   }
 
@@ -331,6 +342,12 @@ export class TakeControl {
     if (this.tailTimer === null) return;
     clearTimeout(this.tailTimer);
     this.tailTimer = null;
+  }
+
+  private clearLead(): void {
+    if (this.leadTimer === null) return;
+    clearTimeout(this.leadTimer);
+    this.leadTimer = null;
   }
 
   private clearFlush(): void {
@@ -341,6 +358,7 @@ export class TakeControl {
 
   private clearTimers(): void {
     this.clearTail();
+    this.clearLead();
     this.clearFlush();
   }
 

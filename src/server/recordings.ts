@@ -138,6 +138,10 @@ export interface OpenOptions {
   fps: number;
   /** Whether the end of the queue ends the recording. */
   autoStop: boolean;
+  /** Seconds between the first chunk and releasing a held queue. */
+  lead: number;
+  /** Seconds kept after the last line when `autoStop` ends the take. */
+  tail: number;
 }
 
 /** A recording in flight, as this module holds it. */
@@ -151,6 +155,8 @@ interface Live {
   since: number;
   bytes: number;
   autoStop: boolean;
+  lead: number;
+  tail: number;
   width: number;
   height: number;
   fps: number;
@@ -211,6 +217,8 @@ export class Recordings implements RecordingStore {
       since: now(),
       bytes: 0,
       autoStop: options.autoStop,
+      lead: options.lead,
+      tail: options.tail,
       width: options.width,
       height: options.height,
       fps: options.fps,
@@ -408,6 +416,8 @@ function report(live: Live): Recording {
     since: live.since,
     bytes: live.bytes,
     autoStop: live.autoStop,
+    lead: live.lead,
+    tail: live.tail,
     width: live.width,
     height: live.height,
     fps: live.fps,

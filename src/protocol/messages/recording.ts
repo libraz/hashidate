@@ -36,6 +36,10 @@ export const recordingSchema = z.object({
   bytes: z.number(),
   /** Whether the end of the queue ends the recording. See `Recordings`. */
   autoStop: z.boolean(),
+  /** Seconds between rolling and releasing a held queue. See `RECORD_DEFAULTS`. */
+  lead: z.number().default(RECORD_DEFAULTS.lead),
+  /** Seconds kept after the last line when `autoStop` ends the take. */
+  tail: z.number().default(RECORD_DEFAULTS.tail),
   /** The output frame, as the renderer was asked for it. */
   width: z.number(),
   height: z.number(),
@@ -75,8 +79,23 @@ export const recordStartSchema = z.object({
     .min(RECORD_LIMITS.fps.min)
     .max(RECORD_LIMITS.fps.max)
     .default(RECORD_DEFAULTS.fps),
-  /** End the take when the queue runs out. See `RECORD_TAIL_SECONDS`. */
+  /** End the take when the queue runs out, `tail` seconds later. */
   autoStop: z.boolean().default(true),
+  /**
+   * Seconds of picture before the first line: how long a released hold waits
+   * after the first chunk has landed. Means nothing without `release`.
+   */
+  lead: z
+    .number()
+    .min(RECORD_LIMITS.lead.min)
+    .max(RECORD_LIMITS.lead.max)
+    .default(RECORD_DEFAULTS.lead),
+  /** Seconds of picture after the last line, when `autoStop` ends the take. */
+  tail: z
+    .number()
+    .min(RECORD_LIMITS.tail.min)
+    .max(RECORD_LIMITS.tail.max)
+    .default(RECORD_DEFAULTS.tail),
   /**
    * Let a held queue go once the recording is actually rolling, rather than
    * when this request is answered. The whole reason the two are one call.

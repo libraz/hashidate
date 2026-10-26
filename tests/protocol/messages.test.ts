@@ -21,7 +21,10 @@ import {
   placementReportSchema,
   queueResponseSchema,
   queueRewindSchema,
+  RECORD_DEFAULTS,
+  RECORD_LIMITS,
   recordingSchema,
+  recordStartSchema,
   rendererIdSchema,
   reportBodySchema,
   sessionEventSchema,
@@ -341,7 +344,7 @@ describe('reportBodySchema', () => {
 });
 
 describe('recordingSchema', () => {
-  it('adds a nullable failure field when reading an older recording report', () => {
+  it('adds the failure field and the default margins when reading an older report', () => {
     const oldReport = {
       session: 'r1',
       file: '/tmp/take.webm',
@@ -353,7 +356,12 @@ describe('recordingSchema', () => {
       height: 1080,
       fps: 30,
     };
-    expect(recordingSchema.parse(oldReport)).toEqual({ ...oldReport, error: null });
+    expect(recordingSchema.parse(oldReport)).toEqual({
+      ...oldReport,
+      lead: RECORD_DEFAULTS.lead,
+      tail: RECORD_DEFAULTS.tail,
+      error: null,
+    });
   });
 
   it('carries a write/open failure without pretending bytes were written', () => {
@@ -372,6 +380,20 @@ describe('recordingSchema', () => {
     expect(report.error).toBe('EEXIST: file already exists');
     expect(report.bytes).toBe(0);
     expect(report.mime).toBeNull();
+  });
+});
+
+describe('recordStartSchema', () => {
+  it('keeps the margins the take had before they could be set', () => {
+    expect(recordStartSchema.parse({})).toMatchObject({ lead: 0, tail: RECORD_DEFAULTS.tail });
+  });
+
+  it('takes fractional margins inside the limits and refuses those outside', () => {
+    const ok = (body: object) => recordStartSchema.safeParse(body).success;
+    expect(ok({ lead: 2.5, tail: 0 })).toBe(true);
+    expect(ok({ lead: RECORD_LIMITS.lead.max, tail: RECORD_LIMITS.tail.max })).toBe(true);
+    expect(ok({ lead: -0.1 })).toBe(false);
+    expect(ok({ tail: RECORD_LIMITS.tail.max + 0.1 })).toBe(false);
   });
 });
 

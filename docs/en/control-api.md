@@ -56,7 +56,7 @@ An axis left out of `stage` keeps what it had; `null` empties it — dry for a r
 | `GET /bgm/<id>` | One BGM file for a renderer, with byte-range requests. `HEAD` is accepted too. |
 | `GET /api/scripts` | The scripts in `show/scripts/`, summarised — title, how many lines, when it was saved — with any file that would not parse listed beside them. Re-read rather than cached, because a script is edited in a text editor beside the panel. |
 | `POST /api/scripts/run` | Setup, then queue: the steps a script needs, done here because the panel cannot read a file. The pending list is cleared first only with `replace: true`. Holds the queue by default; `pause: false` runs it live. `from` starts at that line, 0 based, with what the earlier lines set folded into it so it looks as it would have from the top; `GET /api/scripts` lists, as `pages`, the line each page of a document starts on. |
-| `POST /api/record/start` | Open a take and tell the renderers to roll. `release: true` releases a held queue once bytes are actually being written. |
+| `POST /api/record/start` | Open a take and tell the renderers to roll. `release: true` releases a held queue once bytes are actually being written, `lead` seconds later. `tail` is how long the take runs on after the last line when `autoStop` ends it. |
 | `POST /api/record/stop` | End it. The file stays open for a moment afterwards while the encoder flushes what it is holding. |
 | `POST /api/record/chunk` | The renderer's encoded video, a second at a time. Not for callers, and the one route here whose body is not JSON. |
 | `GET /api/stream` | The viewer's SSE down-channel. |

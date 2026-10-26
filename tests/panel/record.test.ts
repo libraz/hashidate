@@ -20,6 +20,8 @@ function recording(over: Partial<NonNullable<Snapshot['recording']>> = {}) {
     since: 1,
     bytes: 1024,
     autoStop: true,
+    lead: 0,
+    tail: 1.2,
     width: 1920,
     height: 1080,
     fps: 30,

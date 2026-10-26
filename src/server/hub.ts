@@ -34,7 +34,7 @@ import { Standing } from './standing';
 import { TakeControl } from './take';
 
 export { ECHO_SECONDS, EVENT_LOG_MAX } from './event-log';
-export { RECORD_FLUSH_SECONDS, RECORD_ORPHAN_SECONDS, RECORD_TAIL_SECONDS } from './take';
+export { RECORD_FLUSH_SECONDS, RECORD_ORPHAN_SECONDS } from './take';
 
 /**
  * Fan-out to connected viewers, plus the last state they reported.

@@ -1,11 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Command, Recording } from '@/protocol';
-import {
-  Hub,
-  RECORD_FLUSH_SECONDS,
-  RECORD_ORPHAN_SECONDS,
-  RECORD_TAIL_SECONDS,
-} from '@/server/hub';
+import { type Command, RECORD_DEFAULTS, type Recording } from '@/protocol';
+import { Hub, RECORD_FLUSH_SECONDS, RECORD_ORPHAN_SECONDS } from '@/server/hub';
 import type { AppendResult, OpenOptions } from '@/server/recordings';
 import { EPOCH_MS, state } from './fixtures';
 
@@ -46,6 +41,8 @@ describe('recording', () => {
           since: now(),
           bytes: 0,
           autoStop: options.autoStop,
+          lead: options.lead,
+          tail: options.tail,
           width: options.width,
           height: options.height,
           fps: options.fps,
@@ -84,7 +81,8 @@ describe('recording', () => {
     };
   }
 
-  const OPEN = { width: 1920, height: 1080, fps: 30, autoStop: true };
+  const TAIL = RECORD_DEFAULTS.tail;
+  const OPEN = { width: 1920, height: 1080, fps: 30, autoStop: true, lead: 0, tail: TAIL };
   const now = (): number => Date.now() / 1000;
 
   /** Every command that reached a renderer, flattened. */
@@ -136,6 +134,40 @@ describe('recording', () => {
     await h.recordChunk(opened.session, 'renderer-a', 'video/mp4', Buffer.from('one'));
     expect(seen.at(-1)).toEqual({ cmd: 'pause', on: false });
     expect(h.snapshot().paused).toBe(false);
+  });
+
+  it('counts a lead from the first chunk before letting a held queue go', async () => {
+    const takes = store();
+    const h = new Hub(null, null, null, takes);
+    h.send({ type: 'command', commands: [{ cmd: 'pause', on: true }] });
+    const seen = watch(h);
+    const opened = h.startRecording({ ...OPEN, lead: 2, release: true });
+    if (opened === null) throw new Error('the take did not open');
+
+    // Time spent waiting for the encoder is not part of the lead.
+    await vi.advanceTimersByTimeAsync(5_000);
+    await h.recordChunk(opened.session, 'renderer-a', 'video/mp4', Buffer.from('one'));
+    await vi.advanceTimersByTimeAsync(1_900);
+    expect(seen.some((c) => c.cmd === 'pause' && c.on === false)).toBe(false);
+    expect(h.snapshot().paused).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(seen.filter((c) => c.cmd === 'pause' && c.on === false)).toHaveLength(1);
+    expect(h.snapshot().paused).toBe(false);
+  });
+
+  it('keeps the hold when a take is stopped inside its lead', async () => {
+    const h = new Hub(null, null, null, store());
+    h.send({ type: 'command', commands: [{ cmd: 'pause', on: true }] });
+    const seen = watch(h);
+    const opened = h.startRecording({ ...OPEN, lead: 2, release: true });
+    if (opened === null) throw new Error('the take did not open');
+    await h.recordChunk(opened.session, 'renderer-a', 'video/mp4', Buffer.from('one'));
+    h.stopRecording(opened.session);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(seen.some((c) => c.cmd === 'pause' && c.on === false)).toBe(false);
+    expect(h.snapshot().paused).toBe(true);
   });
 
   it('releases the hold once and not again on the second chunk', async () => {
@@ -279,7 +311,21 @@ describe('recording', () => {
     h.report({ events: [{ type: 'turn.end', turn: entry.id }] });
     expect(seen.some((c) => c.cmd === 'record' && c.on === false)).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(RECORD_TAIL_SECONDS * 1000);
+    await vi.advanceTimersByTimeAsync(TAIL * 1000);
+    expect(seen.at(-1)).toEqual({ cmd: 'record', on: false, session: 'r1' });
+  });
+
+  it('holds the end of a script for the tail the take was started with', async () => {
+    const h = new Hub(null, null, null, store());
+    const seen = watch(h);
+    h.queue.add([{ text: 'あ' }]);
+    h.startRecording({ ...OPEN, tail: 3 });
+    const [entry] = h.queue.list();
+    h.report({ events: [{ type: 'turn.end', turn: entry.id }] });
+
+    await vi.advanceTimersByTimeAsync(2_900);
+    expect(seen.some((c) => c.cmd === 'record' && c.on === false)).toBe(false);
+    await vi.advanceTimersByTimeAsync(100);
     expect(seen.at(-1)).toEqual({ cmd: 'record', on: false, session: 'r1' });
   });
 
@@ -290,12 +336,12 @@ describe('recording', () => {
     h.startRecording(OPEN);
 
     h.report({ state: state({ speaking: false }) });
-    await vi.advanceTimersByTimeAsync(RECORD_TAIL_SECONDS * 2_000);
+    await vi.advanceTimersByTimeAsync(TAIL * 2_000);
     expect(seen.some((command) => command.cmd === 'record' && command.on === false)).toBe(false);
 
     const [entry] = h.queue.add([{ text: 'later' }]);
     h.report({ events: [{ type: 'turn.end', turn: entry.id }] });
-    await vi.advanceTimersByTimeAsync(RECORD_TAIL_SECONDS * 1_000);
+    await vi.advanceTimersByTimeAsync(TAIL * 1_000);
     expect(seen.some((command) => command.cmd === 'record' && command.on === false)).toBe(true);
   });
 
@@ -307,11 +353,11 @@ describe('recording', () => {
     h.startRecording(OPEN);
     h.report({ events: [{ type: 'turn.start', turn: entry.id }] });
 
-    await vi.advanceTimersByTimeAsync(RECORD_TAIL_SECONDS * 1_000);
+    await vi.advanceTimersByTimeAsync(TAIL * 1_000);
     expect(seen.some((command) => command.cmd === 'record' && command.on === false)).toBe(false);
 
     h.report({ events: [{ type: 'turn.end', turn: entry.id }] });
-    await vi.advanceTimersByTimeAsync(RECORD_TAIL_SECONDS * 1_000);
+    await vi.advanceTimersByTimeAsync(TAIL * 1_000);
     expect(seen.some((command) => command.cmd === 'record' && command.on === false)).toBe(true);
   });
 
@@ -324,7 +370,7 @@ describe('recording', () => {
     h.queue.clear();
     h.publishQueue();
 
-    await vi.advanceTimersByTimeAsync(RECORD_TAIL_SECONDS * 1_000);
+    await vi.advanceTimersByTimeAsync(TAIL * 1_000);
     expect(seen.some((command) => command.cmd === 'record' && command.on === false)).toBe(true);
   });
 
@@ -340,7 +386,7 @@ describe('recording', () => {
     // A comment arrives while the tail is counting down.
     h.queue.add([{ text: 'い' }]);
     h.report({ state: state({ speaking: false }) });
-    await vi.advanceTimersByTimeAsync(RECORD_TAIL_SECONDS * 2000);
+    await vi.advanceTimersByTimeAsync(TAIL * 2000);
     expect(seen.some((c) => c.cmd === 'record' && c.on === false)).toBe(false);
   });
 
@@ -352,7 +398,7 @@ describe('recording', () => {
     h.startRecording({ ...OPEN, autoStop: false });
     const [entry] = h.queue.list();
     h.report({ events: [{ type: 'turn.end', turn: entry.id }] });
-    await vi.advanceTimersByTimeAsync(RECORD_TAIL_SECONDS * 2000);
+    await vi.advanceTimersByTimeAsync(TAIL * 2000);
     expect(seen.some((c) => c.cmd === 'record' && c.on === false)).toBe(false);
   });
 
@@ -364,11 +410,11 @@ describe('recording', () => {
     h.startRecording(OPEN);
     const [entry] = h.queue.list();
     h.report({ state: state({ speaking: true }), events: [{ type: 'turn.end', turn: entry.id }] });
-    await vi.advanceTimersByTimeAsync(RECORD_TAIL_SECONDS * 1000);
+    await vi.advanceTimersByTimeAsync(TAIL * 1000);
     expect(seen.some((c) => c.cmd === 'record' && c.on === false)).toBe(false);
 
     h.report({ state: state({ speaking: false }) });
-    await vi.advanceTimersByTimeAsync(RECORD_TAIL_SECONDS * 1000);
+    await vi.advanceTimersByTimeAsync(TAIL * 1000);
     expect(seen.some((c) => c.cmd === 'record' && c.on === false)).toBe(true);
   });
 
@@ -390,10 +436,10 @@ describe('recording', () => {
     await h.recordChunk(opened.session, 'renderer-a', 'video/mp4', Buffer.from('x'));
     detach();
 
-    vi.advanceTimersByTime(RECORD_TAIL_SECONDS * 1_000);
+    vi.advanceTimersByTime(TAIL * 1_000);
     expect(h.recording).not.toBeNull();
     const reconnect = h.subscribe(() => {}, 'renderer-a');
-    await vi.advanceTimersByTimeAsync(RECORD_TAIL_SECONDS * 1_000);
+    await vi.advanceTimersByTimeAsync(TAIL * 1_000);
     expect(h.recording).not.toBeNull();
     reconnect();
     await vi.advanceTimersByTimeAsync(6_000);

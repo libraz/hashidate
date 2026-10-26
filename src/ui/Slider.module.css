@@ -103,6 +103,11 @@
   background: var(--accent);
 }
 
+.input:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* Held, the cap takes a halo, so the fader in hand is the one lit on the desk
    even after the pointer has slid off its row. Size stays put: a wider thumb
    would move where the value sits under it. */
