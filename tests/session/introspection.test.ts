@@ -91,6 +91,7 @@ describe('Session.vocabulary', () => {
         'expressions',
         'gestures',
         'hops',
+        'idleActs',
         'overlays',
         'performances',
         'pointing',

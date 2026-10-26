@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { chooseAutoAct } from '@/engine/autopilot';
+import { AUTO_ACTS, Autopilot, chooseAutoAct, idlePool } from '@/engine/autopilot';
 import { clearMotions, GESTURES, HOPS, loadMotions, planJump } from '@/engine/motion';
 import { CROUCH_T, RECOVER_T } from '@/engine/motion/jump';
-import { PERFORMANCE_TABLE, type PerformanceId, performanceDef } from '@/engine/performance';
+import {
+  PERFORMANCE_IDS,
+  PERFORMANCE_TABLE,
+  type PerformanceId,
+  performanceDef,
+} from '@/engine/performance';
 import { build, DT, IDLE_AFTER } from './harness';
 
 afterEach(() => {
@@ -407,7 +412,8 @@ describe('the autopilot choosing in context', () => {
     let recent: string[] = [];
     for (let i = 0; i < 400; i++) {
       const id = chooseAutoAct(pool, recent, false, random);
-      const gesture = performanceDef(id)?.gesture;
+      expect(id).not.toBeNull();
+      const gesture = performanceDef(id ?? '')?.gesture;
       if (gesture) {
         expect(recent).not.toContain(gesture);
         recent = [gesture, ...recent].slice(0, 2);
@@ -418,8 +424,69 @@ describe('the autopilot choosing in context', () => {
   it('draws only rows with no gesture while settling', () => {
     const random = lcg(11);
     for (let i = 0; i < 400; i++) {
-      expect(performanceDef(chooseAutoAct(pool, ['nod'], true, random))?.gesture).toBeUndefined();
+      const id = chooseAutoAct(pool, ['nod'], true, random);
+      expect(id).not.toBeNull();
+      expect(performanceDef(id ?? '')?.gesture).toBeUndefined();
     }
+  });
+
+  it('lets the settle rule give way when the pool has no standing row', () => {
+    expect(chooseAutoAct(['agree'], [], true, lcg(3))).toBe('agree');
+  });
+
+  it('lets the repeat rule give way when one gesture is all the pool has', () => {
+    const gesture = performanceDef('agree')?.gesture ?? '';
+    expect(chooseAutoAct(['agree'], [gesture], false, lcg(5))).toBe('agree');
+  });
+
+  it('draws nothing from an empty pool, and the autopilot sends no act', () => {
+    expect(chooseAutoAct([], [], false, lcg(1))).toBeNull();
+    const pilot = new Autopilot(lcg(9));
+    const acts = Array.from({ length: 600 }, () => pilot.advance(0.1, true, []))
+      .flat()
+      .filter((choice) => 'act' in choice);
+    expect(acts).toEqual([]);
+  });
+
+  it('draws only from the pool it is handed', () => {
+    const pilot = new Autopilot(lcg(13));
+    const acts = Array.from({ length: 2000 }, () => pilot.advance(0.1, true, ['shy', 'blank']))
+      .flat()
+      .flatMap((choice) => ('act' in choice ? [choice.act] : []));
+    expect(new Set(acts)).toEqual(new Set(['shy', 'blank']));
+  });
+});
+
+describe("an avatar's own idle pool", () => {
+  const rows = (id: string, pool: readonly string[]) => pool.filter((row) => row === id).length;
+
+  it('is the built-in pool when the avatar edits nothing', () => {
+    expect(idlePool(undefined)).toEqual({ pool: [...AUTO_ACTS], unknown: [] });
+  });
+
+  it('drops every row of an excluded id and leaves the rest weighted as they were', () => {
+    const { pool } = idlePool({ exclude: ['blank', 'catPaw'] });
+    expect(rows('blank', pool)).toBe(0);
+    expect(rows('catPaw', pool)).toBe(0);
+    expect(rows('wonder', pool)).toBe(rows('wonder', AUTO_ACTS));
+  });
+
+  it('adds an included id once, and leaves one already drawn as it was', () => {
+    const outside = PERFORMANCE_IDS.find((id) => !AUTO_ACTS.includes(id)) as PerformanceId;
+    const { pool } = idlePool({ include: [outside, outside, 'wonder'] });
+    expect(rows(outside, pool)).toBe(1);
+    expect(rows('wonder', pool)).toBe(rows('wonder', AUTO_ACTS));
+  });
+
+  it('reports ids that name no performance and never draws them', () => {
+    const { pool, unknown } = idlePool({ exclude: ['noSuchAct'], include: ['wave', 'noSuchAct'] });
+    expect(unknown).toEqual(['noSuchAct', 'wave']);
+    expect(pool).toEqual([...AUTO_ACTS]);
+  });
+
+  it('is what the vocabulary advertises', () => {
+    const { session } = build({});
+    expect(session.vocabulary().idleActs).toEqual([...AUTO_ACTS]);
   });
 
   it("holds a standing row's attitude for the act and puts it back when the next act starts", () => {

@@ -87,6 +87,7 @@ export const vocabulary = (over: Partial<Vocabulary> = {}): Vocabulary => ({
     { id: 'hop', label: same('ぴょん') },
     { id: 'double', label: same('二連') },
   ],
+  idleActs: ['blank'],
   cue: { syntax: '[performance]', note: same('') },
   cameras: ['bust', 'upper', 'face', 'full'],
   pointing: {

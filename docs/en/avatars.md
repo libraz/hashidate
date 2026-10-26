@@ -97,7 +97,7 @@ Every object in a file is strict: an unknown key is an error naming its path, an
 | `shapes` | Names for blink (`blink.both`, `blink.L`, `blink.R`) and viseme slots that the engine's own candidate lists do not resolve. |
 | `bones` | Bone names per slot (`hips`, `spine`, `chest`, `neck`, `head`, `eye.L`, `upperArm.R`, `toe.L` and so on), each a list. For a rig whose names no generic candidate list reaches. See [Bone names](#bone-names). |
 | `fingers` | Finger chains by key (`thumb.L`, `index.R`, …), each a list of bone names with the proximal segment first. |
-| `presets` | Finished whole-face drawings: `group` names the shape group, `exclude` lists fitting shapes that are not expressions, `emotion` maps canonical emotions to a drawing, `composition` says how a drawing shares the face with blink and speech, `hideGroup` names the group of parking shapes, `idleExclude` keeps faces away from the idle autopilot, and `label` is a [label rule](#labels). |
+| `presets` | Finished whole-face drawings: `group` names the shape group, `exclude` lists fitting shapes that are not expressions, `emotion` maps canonical emotions to a drawing, `composition` says how a drawing shares the face with blink and speech, `hideGroup` names the group of parking shapes, and `label` is a [label rule](#labels). |
 | `emotionShapes` | Emotion composition in the avatar's own shape names, for a model without ARKit shapes. |
 | `mouthShapePattern` | A pattern for the shapes the mouth layer owns while speaking. |
 | `overlays` | A drawn-shape group of effects over the face, with the same `group`, `exclude` and `label` as `presets`. |
@@ -106,6 +106,7 @@ Every object in a file is strict: an unknown key is an error naming its path, an
 | `sway` | Secondary motion: `groups` with their figures and roots, and `colliders` sets that groups refer to by name. See [Sway tuning](#sway-tuning). |
 | `drive` | `tail`: which sway group is posed rather than only simulated, with `swing`, `lift` and `rest`. |
 | `script` | Demo turns, played by the viewer's script button. Each is a turn as the control API takes it. |
+| `idle` | What the idle autopilot may reach for on its own. `faces.exclude` lists drawings it must not put up unasked; they stay reachable by name. `acts.exclude` takes performances out of the built-in pool and `acts.include` adds ones it leaves out, once each; both name built-in performances, and loaded motions are never drawn. Faces have no `include`, because the only faces left out otherwise are the ones an emotion maps to. One act on both sides is rejected, and an id that names no face or performance is listed among the renderer's problems. |
 | `anatomy` | Joint table for an avatar that is deliberately not human. |
 | `armRest` | Resting arm directions in character space, for a garment such as a full skirt that needs the arms held clear of the body. Slots left out keep the standing pose, and gestures blend from the declared one. |
 | `extras` | Data a tool keeps in the file for itself, keyed by the tool's name, as glTF `extras` is used. The runtime does not read it; an authoring tool that merges into the file can record there which entries it wrote. |

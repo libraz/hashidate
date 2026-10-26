@@ -90,6 +90,12 @@ export interface Vocabulary {
     }
   >;
   gestures: Array<LabelledId & { group: GestureGroup; sustain: boolean }>;
+  /**
+   * The performances the idle autopilot draws from for this avatar, repetition
+   * being the weighting. Reported because the server runs the autopilot and
+   * learns the avatar only from its renderer.
+   */
+  idleActs: string[];
   hops: LabelledId[];
   /**
    * How to put a performance inside a line rather than at the start of one.

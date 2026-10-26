@@ -3,7 +3,7 @@ import { IDLE_AFTER } from '@/engine/autopilot';
 import { performanceDef } from '@/engine/performance';
 import type { Command, StreamMessage } from '@/protocol';
 import { Hub, IDLE_TICK_MS } from '@/server/hub';
-import { EPOCH_MS } from './fixtures';
+import { EPOCH_MS, vocabulary } from './fixtures';
 
 /**
  * The idle autopilot, run once on the server: every renderer is sent the same
@@ -118,6 +118,17 @@ describe('the idle autopilot on the server', () => {
     hub.send({ type: 'command', commands: [{ cmd: 'idle', on: false }] });
     seconds(30);
     expect(viewer.frames.length).toBe(heard);
+  });
+
+  it("draws from the pool the loaded avatar's renderer reported", () => {
+    const viewer = attach();
+    hub.report({ vocabulary: { ...vocabulary(), idleActs: ['shy', 'blank', 'noSuchAct'] } });
+    hub.send({ type: 'command', commands: [{ cmd: 'idle', on: true }] });
+    seconds(120);
+    const acts = viewer.frames
+      .flatMap((f) => f.commands)
+      .flatMap((c) => (c.cmd === 'idleAct' ? [c.act] : []));
+    expect(new Set(acts)).toEqual(new Set(['shy', 'blank']));
   });
 
   it('never replays a choice to a renderer that joins late; it gets the next one', () => {

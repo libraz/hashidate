@@ -159,6 +159,7 @@ export const vocabularySchema = z.object({
   ),
   gestures: z.array(labelledIdSchema.extend({ group: gestureGroupSchema, sustain: z.boolean() })),
   hops: z.array(labelledIdSchema),
+  idleActs: z.array(z.string()),
   /** How to write a performance into a line. Stated, not discovered. */
   cue: z.object({ syntax: z.string(), note: localizedSchema }),
   cameras: z.array(cameraFrameSchema),

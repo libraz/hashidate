@@ -77,6 +77,7 @@ export const vocabulary = (): Vocabulary => ({
   ],
   gestures: [{ id: 'wave', label: same('手を振る'), group: 'greeting', sustain: false }],
   hops: [{ id: 'hop', label: same('ぴょん') }],
+  idleActs: ['blank'],
   cue: { syntax: '[performance]', note: same('') },
   cameras: ['bust', 'upper', 'face', 'full'],
   pointing: {

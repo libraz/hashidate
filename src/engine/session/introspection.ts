@@ -1,4 +1,5 @@
 import { cameraFrameSchema } from '../../protocol/cues';
+import { idlePool } from '../autopilot';
 import type { Director } from '../director';
 import { EMOTION_LABELS, EMOTIONS } from '../face';
 import { gestureEntries, HOP_IDS, HOPS } from '../motion';
@@ -77,6 +78,7 @@ export function describe(d: Director, { wardrobe, voice, scenery }: VocabularyCo
       sustain: !!g.sustain,
     })),
     hops: HOP_IDS.map((id) => ({ id, label: HOPS[id].label })),
+    idleActs: idlePool(d.a.idle?.acts).pool,
     cue: {
       syntax:
         '[performanceId] or [@perform id], [@expression id], [@gesture id], [@hop id], [@camera frame], [@slide N], [@place {JSON}], [@bgm play] or [@bgm play track.mp3], [@bgm pause], [@bgm stop], [@bgm set {JSON}]',

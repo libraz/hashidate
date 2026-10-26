@@ -248,14 +248,13 @@ export function buildPresets(profile: Profile, avatar?: AvatarDescriptor): Expre
  * while feeling nothing in particular. What is left is the bulk of the set: the
  * drawings no emotion names, which nothing else in the runtime can reach.
  *
- * `idleExclude` then removes the ones that are reachable but must not arrive
+ * `idle.faces.exclude` then removes the ones that are reachable but must not arrive
  * unasked — a face is a wardrobe item the character puts on for a moment, and
  * some of them say something the idle should never say by accident.
  */
 export function buildIdleFaces(presets: ExpressionPreset[], avatar?: AvatarDescriptor): string[] {
-  const spec = avatar?.presets;
-  const mapped = new Set(Object.values(spec?.emotion ?? {}));
-  const barred = new Set(spec?.idleExclude ?? []);
+  const mapped = new Set(Object.values(avatar?.presets?.emotion ?? {}));
+  const barred = new Set(avatar?.idle?.faces?.exclude ?? []);
   return presets.map((x) => x.id).filter((id) => !(mapped.has(id) || barred.has(id)));
 }
 

@@ -25,13 +25,6 @@
     "exclude": [
       "F_PAH"
     ],
-    "idleExclude": [
-      "F_HOWAWA",
-      "F_SUYASUYA",
-      "F_MUNYAMUNYA",
-      "F_GUTTARI",
-      "F_POYAYAN"
-    ],
     "emotion": {
       "joy": "F_NIKO",
       "anger": "F_PUNPUN",
@@ -42,6 +35,17 @@
     "label": {
       "stripPrefix": "F_",
       "underscoresToSpaces": true
+    }
+  },
+  "idle": {
+    "faces": {
+      "exclude": [
+        "F_HOWAWA",
+        "F_SUYASUYA",
+        "F_MUNYAMUNYA",
+        "F_GUTTARI",
+        "F_POYAYAN"
+      ]
     }
   },
   "emotionShapes": null,

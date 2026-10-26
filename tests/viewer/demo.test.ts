@@ -47,6 +47,7 @@ const vocabulary = (over: Partial<Vocabulary> = {}): Vocabulary => ({
   ],
   gestures: [{ id: 'wave', label: same('手を振る'), group: 'greeting', sustain: false }],
   hops: [{ id: 'single', label: same('ひとつ') }],
+  idleActs: ['blank'],
   cue: { syntax: '[performance]', note: same('') },
   cameras: ['bust', 'face'],
   pointing: {

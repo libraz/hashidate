@@ -1,4 +1,5 @@
-import { Autopilot, IDLE_AFTER } from '../engine/autopilot';
+import { AUTO_ACTS, Autopilot, IDLE_AFTER } from '../engine/autopilot';
+import { type PerformanceId, performanceDef } from '../engine/performance';
 import type {
   AvatarStatus,
   BloomReport,
@@ -580,7 +581,7 @@ export class Hub {
     const working =
       this.queue.airing().length > 0 || (this.queue.length > 0 && !this.standing.paused);
     this.idleQuiet = working ? 0 : this.idleQuiet + dt;
-    const choices = this.autopilot.advance(dt, this.idleQuiet > IDLE_AFTER);
+    const choices = this.autopilot.advance(dt, this.idleQuiet > IDLE_AFTER, this.idlePool());
     if (choices.length === 0) return;
     const commands = choices.map(
       (choice): Command =>
@@ -590,6 +591,17 @@ export class Hub {
     );
     // Not through `dispatch`: a choice is a moment, never part of the setup.
     this.broadcast({ type: 'command', commands });
+  }
+
+  /**
+   * The loaded avatar's pool, off its renderer's vocabulary; the built-in one
+   * until a renderer has reported. An id this build has no performance for is
+   * dropped rather than sent back down to be ignored.
+   */
+  private idlePool(): readonly PerformanceId[] {
+    const reported = this.vocabulary.idleActs;
+    if (reported === undefined) return AUTO_ACTS;
+    return reported.filter((id): id is PerformanceId => performanceDef(id) !== null);
   }
 
   // --- recording ------------------------------------------------------------

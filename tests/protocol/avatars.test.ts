@@ -41,6 +41,25 @@ describe('parseAvatar', () => {
     expect(reject({ ...minimal, extras: [] })).toContain('extras');
   });
 
+  it('takes idle faces to exclude and acts to exclude and include, but not one act on both sides', () => {
+    const idle = {
+      faces: { exclude: ['F_SUYASUYA'] },
+      acts: { exclude: ['catPaw'], include: ['twirl'] },
+    };
+    expect(accept({ ...minimal, idle }).idle).toEqual(idle);
+    expect(
+      reject({ ...minimal, idle: { acts: { exclude: ['a'], include: ['b', 'a'] } } }),
+    ).toContain('excluded and included at once: a');
+    expect(reject({ ...minimal, idle: { faces: { include: ['a'] } } })).toContain('"include"');
+    expect(reject({ ...minimal, idle: { only: ['a'] } })).toContain('"only"');
+  });
+
+  it('no longer takes a face bar under presets', () => {
+    expect(reject({ ...minimal, presets: { group: 'Face', idleExclude: ['a'] } })).toContain(
+      '"idleExclude"',
+    );
+  });
+
   it('checks a wardrobe item pose', () => {
     const item = (pose: unknown) => ({
       ...minimal,

@@ -1,4 +1,5 @@
 import { type PerformanceId, performanceDef } from './performance';
+import type { IdleActSpec } from './types';
 
 /**
  * The idle autopilot's choices: what to perform next, which of the avatar's own
@@ -50,7 +51,8 @@ export const IDLE_AFTER = 1.6;
  *
  * This is also the idle movement pool. It names built-in performances only;
  * motions loaded from `show/motions/` are absent here and can run only when a
- * caller names them through the gesture command.
+ * caller names them through the gesture command. An avatar edits it through
+ * `idle.acts`; see `idlePool`.
  */
 // biome-ignore format: the repetition is the weighting, and the rows show it
 export const AUTO_ACTS: readonly PerformanceId[] = [
@@ -64,24 +66,55 @@ export const AUTO_ACTS: readonly PerformanceId[] = [
 ];
 
 /**
- * One autopilot draw from the pool, weighted by its repetition.
+ * `AUTO_ACTS` as one avatar edits it: every row of an excluded id removed, and
+ * each included id not already drawn added as a single row. Ids that name no
+ * performance are returned apart, for the renderer to report, and never drawn.
+ */
+export function idlePool(spec: IdleActSpec | undefined): {
+  pool: PerformanceId[];
+  unknown: string[];
+} {
+  const named = [...(spec?.exclude ?? []), ...(spec?.include ?? [])];
+  const unknown = [...new Set(named.filter((id) => performanceDef(id) === null))];
+  const barred = new Set(spec?.exclude ?? []);
+  const pool = AUTO_ACTS.filter((id) => !barred.has(id));
+  for (const id of spec?.include ?? []) {
+    if (performanceDef(id) !== null && !pool.includes(id as PerformanceId)) {
+      pool.push(id as PerformanceId);
+    }
+  }
+  return { pool, unknown };
+}
+
+/**
+ * One autopilot draw from the pool, weighted by its repetition, or null from
+ * an empty pool.
  *
  * A gesture shared by two rows (`sparkle`) is one gesture, so repeats are
  * judged by gesture rather than by row. Rows with no gesture are never excluded.
  * After something has just ended (`settle`) the character stands in a mood
  * before moving again, so only rows with no gesture are eligible.
+ *
+ * An avatar's own pool can leave either rule with nothing to draw — no standing
+ * row at all, or one gesture alone — and then the rule gives way rather than
+ * the idle stopping.
  */
 export function chooseAutoAct(
   pool: readonly PerformanceId[],
   recentGestures: readonly string[],
   settle: boolean,
   random: () => number,
-): PerformanceId {
-  const rows = pool.filter((id) => {
-    const gesture = performanceDef(id)?.gesture;
-    if (!gesture) return true;
-    return !(settle || recentGestures.includes(gesture));
-  });
+): PerformanceId | null {
+  const eligible = (strict: boolean) =>
+    pool.filter((id) => {
+      const gesture = performanceDef(id)?.gesture;
+      if (!gesture) return true;
+      return !((strict && settle) || recentGestures.includes(gesture));
+    });
+  let rows = eligible(true);
+  if (rows.length === 0) rows = eligible(false);
+  if (rows.length === 0) rows = [...pool];
+  if (rows.length === 0) return null;
   return rows[Math.floor(random() * rows.length)];
 }
 
@@ -109,8 +142,11 @@ export class Autopilot {
     this.#random = random;
   }
 
-  /** Advance by `dt` seconds; answers the choices that fell due, in order. */
-  advance(dt: number, engaged: boolean): IdleChoice[] {
+  /**
+   * Advance by `dt` seconds; answers the choices that fell due, in order.
+   * `pool` is the loaded avatar's, as its renderer reported it.
+   */
+  advance(dt: number, engaged: boolean, pool: readonly PerformanceId[] = AUTO_ACTS): IdleChoice[] {
     if (!engaged) {
       this.#engaged = false;
       return [];
@@ -124,11 +160,13 @@ export class Autopilot {
     if (this.#actTimer <= 0) {
       // One channel, one pick: a performance decides face and body at once, so
       // whatever the character does, they are plausibly feeling it.
-      const act = chooseAutoAct(AUTO_ACTS, this.#recentGestures, this.#settle, this.#random);
+      const act = chooseAutoAct(pool, this.#recentGestures, this.#settle, this.#random);
       this.#settle = false;
-      const gesture = performanceDef(act)?.gesture;
-      if (gesture) this.#recentGestures = [gesture, ...this.#recentGestures].slice(0, 2);
-      out.push({ act });
+      if (act !== null) {
+        const gesture = performanceDef(act)?.gesture;
+        if (gesture) this.#recentGestures = [gesture, ...this.#recentGestures].slice(0, 2);
+        out.push({ act });
+      }
       // Long enough that a pose is a pose rather than a flicker, uneven enough
       // that the rotation does not become a beat the viewer can count along with.
       this.#actTimer = 5.5 + this.#random() * 7;

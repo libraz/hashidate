@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { GLTFParser } from 'three/addons/loaders/GLTFLoader.js';
+import { idlePool } from '@/engine/autopilot';
 import { Director } from '@/engine/director';
 import { buildProfile, loadedNodeNames, readVrmHumanoid, type VrmHumanoid } from '@/engine/profile';
 import {
@@ -136,6 +137,11 @@ export function mountAvatar(
   if (director.tail.missing.length) {
     say('console.problem.tail', director.tail.missing, ' / ');
   }
+  const faceIds = new Set(director.presets.map((p) => p.id));
+  const idleFaces = (avatar.idle?.faces?.exclude ?? []).filter((id) => !faceIds.has(id));
+  if (idleFaces.length) say('console.problem.idleFaces', idleFaces, ', ');
+  const { unknown: idleActs } = idlePool(avatar.idle?.acts);
+  if (idleActs.length) say('console.problem.idleActs', idleActs, ', ');
 
   return { root, profile, director, wardrobe, materials, problems };
 }

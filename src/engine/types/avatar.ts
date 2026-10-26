@@ -71,20 +71,39 @@ export interface PresetSpec extends DrawnShapeSpec {
    * only that a drawing already contains the travel.
    */
   hideGroup?: string;
+}
+
+/**
+ * Which performances the idle autopilot draws for this avatar, as edits to the
+ * built-in pool (`AUTO_ACTS`). `exclude` takes an id out entirely, for one this
+ * model plays badly unattended; `include` adds one the pool leaves out, as a
+ * single row. Both name built-in performances, never a loaded motion: what the
+ * idle may reach for has to mean the same thing on every machine.
+ */
+export interface IdleActSpec {
+  exclude?: string[];
+  include?: string[];
+}
+
+/** What the idle autopilot may reach for on its own, faces and performances alike. */
+export interface IdleSpec {
   /**
    * Faces the idle autopilot may not reach for on its own.
    *
-   * Distinct from `exclude`, and the difference is the whole point: an excluded
-   * shape is not an expression at all and leaves the vocabulary entirely, while
-   * these are perfectly good drawings that simply must not arrive unasked. A
-   * sleeping face is the clearest case — it is worth having for the moment
-   * somebody asks for it by name, and it is not something the character should
-   * drift into while waiting for the next turn.
+   * Distinct from `presets.exclude`, and the difference is the whole point: an
+   * excluded shape is not an expression at all and leaves the vocabulary
+   * entirely, while these are perfectly good drawings that simply must not
+   * arrive unasked. A sleeping face is the clearest case — it is worth having
+   * for the moment somebody asks for it by name, and it is not something the
+   * character should drift into while waiting for the next turn.
    *
    * So they stay in the list, stay reachable by `setExpression` and by a script
-   * cue, and are only kept out of the pool the autopilot picks from.
+   * cue, and are only kept out of the pool the autopilot picks from. There is no
+   * `include`: the faces left out otherwise are the ones an emotion maps to, and
+   * those are left out so the face never disagrees with the mood under it.
    */
-  idleExclude?: string[];
+  faces?: { exclude?: string[] };
+  acts?: IdleActSpec;
 }
 
 /** Metalness and roughness to use for one preserved imported PBR material. */
@@ -404,6 +423,7 @@ export interface AvatarDescriptor {
   drive?: { tail?: TailDrive };
   /** Demo turns, played by the viewer's script button. */
   script?: TurnRequest[];
+  idle?: IdleSpec;
   /** For an avatar that is deliberately not human. */
   anatomy?: JointTable;
   /**

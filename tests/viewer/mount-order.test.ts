@@ -23,6 +23,7 @@ const seen = vi.hoisted(() => {
 
 vi.mock('@/engine/director', () => ({
   Director: class {
+    presets = [];
     spring = { missing: [] };
     tail = { missing: [] };
     constructor() {

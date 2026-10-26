@@ -181,10 +181,13 @@ describe('buildPresets / authored composition', () => {
 
 describe('buildIdleFaces', () => {
   /** The pool the autopilot draws from, and the vocabulary it was drawn out of. */
-  function pool(presets: PresetSpec): { idle: string[]; all: string[] } {
+  function pool(presets: PresetSpec, idleExclude?: string[]): { idle: string[]; all: string[] } {
     const { profile, descriptor } = setup({ presets });
     const built = buildPresets(profile, descriptor);
-    return { idle: buildIdleFaces(built, descriptor), all: built.map((p) => p.id) };
+    const avatar = idleExclude
+      ? { ...descriptor, idle: { faces: { exclude: idleExclude } } }
+      : descriptor;
+    return { idle: buildIdleFaces(built, avatar), all: built.map((p) => p.id) };
   }
 
   it('offers the whole set when no emotion claims one and nothing is barred', () => {
@@ -200,26 +203,22 @@ describe('buildIdleFaces', () => {
   });
 
   it('bars a face from the idle without taking it out of the vocabulary', () => {
-    // The distinction `idleExclude` exists for: the sleeping face is worth
+    // The distinction `idle.faces.exclude` exists for: the sleeping face is worth
     // having for the moment somebody asks for it and is not something to drift
     // into between turns, so it has to be missing from one list and present in
     // the other.
-    const { idle, all } = pool({ group: FACE_GROUP, idleExclude: ['F_SUYASUYA'] });
+    const { idle, all } = pool({ group: FACE_GROUP }, ['F_SUYASUYA']);
     expect(idle).not.toContain('F_SUYASUYA');
     expect(all).toContain('F_SUYASUYA');
   });
 
   it('applies both subtractions at once', () => {
-    const { idle } = pool({
-      group: FACE_GROUP,
-      emotion: { joy: 'F_NIKO' },
-      idleExclude: ['F_SUYASUYA'],
-    });
+    const { idle } = pool({ group: FACE_GROUP, emotion: { joy: 'F_NIKO' } }, ['F_SUYASUYA']);
     expect(idle).toEqual(['F_DOYA', 'F_JITO']);
   });
 
   it('ignores a bar for an id this avatar does not have', () => {
-    expect(pool({ group: FACE_GROUP, idleExclude: ['F_NOT_HERE'] }).idle).toEqual(FACE_IDS);
+    expect(pool({ group: FACE_GROUP }, ['F_NOT_HERE']).idle).toEqual(FACE_IDS);
   });
 
   it('never offers a face the avatar excluded outright', () => {

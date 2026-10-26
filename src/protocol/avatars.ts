@@ -8,6 +8,7 @@ import type {
   EmotionName,
   FingerOverrides,
   GazeLimits,
+  IdleSpec,
   JointDof,
   JointSpec,
   JointTable,
@@ -233,10 +234,36 @@ const presetSchema = z.strictObject({
   emotion: z.partialRecord(emotionNameSchema, z.string()).optional(),
   composition: z.record(z.string(), presetCompositionSchema).optional(),
   hideGroup: z.string().optional(),
-  idleExclude: names.optional(),
 });
 
 const overlaysSchema = z.strictObject(drawnShapeFields);
+
+/**
+ * Whether each id names a face or a performance is the renderer's to say,
+ * beside the shapes the GLB lacks: both tables are the loaded avatar's or the
+ * engine's, and the wire layer stays clear of them. Naming one act on both sides
+ * is a contradiction, and refused here.
+ */
+const idleActsSchema = z
+  .strictObject({ exclude: names.optional(), include: names.optional() })
+  .superRefine((value, ctx) => {
+    const barred = new Set(value.exclude ?? []);
+    const both = (value.include ?? []).filter((id) => barred.has(id));
+    if (both.length) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['include'],
+        message: `excluded and included at once: ${both.join(', ')}`,
+      });
+    }
+  });
+
+const idleSchema = z.strictObject({
+  faces: z.strictObject({ exclude: names.optional() }).optional(),
+  acts: idleActsSchema.optional(),
+});
+
+type _IdleMatchesEngine = Expect<Equals<z.output<typeof idleSchema>, IdleSpec>>;
 
 type _DrawnShapeKeysMatchEngine = Expect<
   Equals<keyof z.output<typeof overlaysSchema>, keyof DrawnShapeSpec>
@@ -596,6 +623,7 @@ export const avatarFileSchema = z.strictObject({
   sway: swaySchema.optional(),
   drive: z.strictObject({ tail: tailDriveSchema.optional() }).optional(),
   script: z.array(turnSchema).optional(),
+  idle: idleSchema.optional(),
   anatomy: jointTableSchema.optional(),
   armRest: armRestSchema.optional(),
   extras: z.record(z.string(), z.unknown()).optional(),

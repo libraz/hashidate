@@ -42,6 +42,8 @@ export type {
   ColliderSpec,
   DrawnShapeSpec,
   FingerOverrides,
+  IdleActSpec,
+  IdleSpec,
   MaterialRules,
   PbrScalarOverride,
   PresetCompositionSpec,

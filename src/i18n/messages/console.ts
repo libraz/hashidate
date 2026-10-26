@@ -49,6 +49,8 @@ export const consoleEn = {
   'console.problem.wardrobe': 'Wardrobe unresolved: {names}',
   'console.problem.sway': 'Sway chains unresolved: {names}',
   'console.problem.tail': 'Tail drive unresolved: {names}',
+  'console.problem.idleFaces': 'Idle faces naming no expression: {names}',
+  'console.problem.idleActs': 'Idle acts naming no performance: {names}',
   'console.problem.toonTexture': 'Toon textures missing, drawn without them: {names}',
 
   // The document layer answers with a reason rather than throwing, so these are
@@ -339,6 +341,8 @@ export const consoleJa: Record<keyof typeof consoleEn, string> = {
   'console.problem.wardrobe': '衣装未解決: {names}',
   'console.problem.sway': '揺れもの未解決: {names}',
   'console.problem.tail': '尻尾の駆動未解決: {names}',
+  'console.problem.idleFaces': 'アイドル指定に該当する表情がない: {names}',
+  'console.problem.idleActs': 'アイドル指定に該当する演技がない: {names}',
   'console.problem.toonTexture': 'トゥーン用テクスチャを読めず、無しで描画: {names}',
 
   'console.slides.empty': 'ページがありません',
