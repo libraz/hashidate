@@ -331,11 +331,8 @@ export class Rig {
   private readonly _applyParentQ = new THREE.Quaternion();
   private readonly _applyLocalQ = new THREE.Quaternion();
   private readonly _applyTargetQ = new THREE.Quaternion();
-  private readonly _applySwingQ = new THREE.Quaternion();
   private readonly _measureQ = new THREE.Quaternion();
   private readonly _measureA = new THREE.Vector3();
-  private readonly _measureB = new THREE.Vector3();
-  private readonly _measureC = new THREE.Vector3();
   private readonly _staticUpper = new THREE.Vector3();
   private readonly _staticLower = new THREE.Vector3();
   private readonly _staticHand = new THREE.Vector3();
