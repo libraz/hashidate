@@ -251,6 +251,7 @@ export class SlideStage implements Slides {
     const gen = this.invalidate();
     this.source?.dispose();
     this.source = null;
+    this.discard();
     this.deckId = id;
     this.error = null;
     this.pages = 0;
@@ -319,6 +320,7 @@ export class SlideStage implements Slides {
     this.invalidate();
     this.source?.dispose();
     this.source = null;
+    this.discard();
     this.deckId = null;
     this.error = null;
     this.pages = 0;
@@ -371,6 +373,21 @@ export class SlideStage implements Slides {
   }
 
   // --- drawing --------------------------------------------------------------
+
+  /**
+   * Empty both canvases, so the next document starts from black rather than
+   * from the last page of the one before — which would otherwise stay up for
+   * as long as the new file takes to open, and show through a transparent room.
+   */
+  private discard(): void {
+    for (const canvas of this.canvases) {
+      // Assigning a size clears the canvas and releases its backing store.
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+    this.drawn = { width: 0, height: 0 };
+    this.revision += 1;
+  }
 
   /** Get the page that is wanted onto the screen, and warm the one after it. */
   private async settle(): Promise<void> {

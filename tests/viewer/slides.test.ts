@@ -127,6 +127,21 @@ describe('putting a document up', () => {
     expect(second.state.rendered).toEqual([2]);
   });
 
+  it('blanks the last page the moment another document is asked for', async () => {
+    const first = fakeDeck(3);
+    const { stage, host } = build(async (url) => {
+      if (url.includes('first')) return first.source;
+      return new Promise<DeckSource>(() => {});
+    });
+    const canvases = () => [...host.querySelectorAll('canvas')];
+    stage.setDeck('first');
+    await settled();
+    expect(canvases().some((canvas) => canvas.width > 0)).toBe(true);
+    // Still opening: nothing of the earlier document is left to show meanwhile.
+    stage.setDeck('second');
+    expect(canvases().every((canvas) => canvas.width === 0)).toBe(true);
+  });
+
   it('repaints a cached nonsquare page when fit changes without rasterising it again', async () => {
     const drawImage = vi.fn();
     const context = {
