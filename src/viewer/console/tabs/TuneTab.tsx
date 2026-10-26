@@ -64,6 +64,8 @@ export function TuneTab({
 
   const [jumpHeight, setJumpHeight] = useState(body.jumpHeight * 100);
   const [gravity, setGravity] = useState(body.gravity);
+  const [nodRate, setNodRate] = useState(director.nodRate);
+  const [nodDepth, setNodDepth] = useState(director.nodDepth);
   const [tailAmount, setTailAmount] = useState(tail.amount);
 
   const [toon, setToon] = useState(runtime?.toonEnabled ?? true);
@@ -274,6 +276,25 @@ export function TuneTab({
             title={t('console.tune.hop.once.title')}
           />
         </ChipRow>
+      </Section>
+
+      <Section title={t('console.tune.speech')} note={[t('console.tune.speech.note')]}>
+        <Slider
+          label={t('console.tune.speech.nodRate')}
+          value={nodRate}
+          {...R.speech.nodRate}
+          onChange={set(setNodRate, (v) => {
+            director.nodRate = v;
+          })}
+        />
+        <Slider
+          label={t('console.tune.speech.nodDepth')}
+          value={nodDepth}
+          {...R.speech.nodDepth}
+          onChange={set(setNodDepth, (v) => {
+            director.nodDepth = v;
+          })}
+        />
       </Section>
 
       {tail.active ? (

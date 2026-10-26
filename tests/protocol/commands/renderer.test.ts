@@ -30,6 +30,8 @@ describe('tune', () => {
     ['sway', 'inertia', TUNING_RANGES.sway.inertia],
     ['hop', 'height', TUNING_RANGES.hop.height],
     ['hop', 'gravity', TUNING_RANGES.hop.gravity],
+    ['speech', 'nodRate', TUNING_RANGES.speech.nodRate],
+    ['speech', 'nodDepth', TUNING_RANGES.speech.nodDepth],
     ['tail', 'amount', TUNING_RANGES.tail.amount],
   ])('accepts both ends of %s.%s and refuses either side of them', (group, field, range) => {
     // The bounds a panel sweeps and the bounds the wire accepts are the same

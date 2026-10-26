@@ -237,6 +237,21 @@ export function TuneTab({ snapshot }: Props) {
         />
       </Section>
 
+      <Section title={t('panel.tune.speech')} note={[t('panel.tune.speech.note')]}>
+        <Fader
+          label={t('panel.tune.nodRate')}
+          range={R.speech.nodRate}
+          value={draft.speech.nodRate}
+          onChange={(nodRate) => set({ speech: { nodRate } })}
+        />
+        <Fader
+          label={t('panel.tune.nodDepth')}
+          range={R.speech.nodDepth}
+          value={draft.speech.nodDepth}
+          onChange={(nodDepth) => set({ speech: { nodDepth } })}
+        />
+      </Section>
+
       {draft.has.tail ? (
         <Section title={t('panel.tune.tail')} note={[t('panel.tune.tail.note')]}>
           <Fader
@@ -371,6 +386,7 @@ function merge(base: Tuning, patch: TuningPatch): Tuning {
     idle: { ...base.idle, ...patch.idle },
     sway: { ...base.sway, ...patch.sway },
     hop: { ...base.hop, ...patch.hop },
+    speech: { ...base.speech, ...patch.speech },
     tail: { ...base.tail, ...patch.tail },
     render: { ...base.render, ...patch.render },
     has: base.has,

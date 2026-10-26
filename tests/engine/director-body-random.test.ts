@@ -34,6 +34,8 @@ it('plans head beats from the Director random source', () => {
     const built = buildRig();
     const profile = buildProfile(built.root, built.descriptor);
     const director = new Director(profile, profile.avatar, { random });
+    // At the measured rates, so this seed's line is sure to nod at all.
+    director.nodRate = 1;
     director.speak('はい、そうです、ね、それで、まあ、いい、でしょう、うん、はい、そう。');
     const nods: number[] = [];
     for (let i = 0; i < 400; i++) {

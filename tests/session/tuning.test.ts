@@ -172,6 +172,7 @@ describe('Session.tune', () => {
       },
       sway: { enabled: false, stiffness: 2.5, inertia: 1.2, gravity: 3 },
       hop: { height: 0.25, gravity: 12 },
+      speech: { nodRate: 0.4, nodDepth: 1.5 },
       tail: { amount: 3.5 },
       render: { toon: false, arkit: false },
     };

@@ -161,6 +161,7 @@ export const SWITCH_CASES: Record<CommandName, Command[]> = {
       },
       sway: { enabled: true, stiffness: 1.5, inertia: 0.9, gravity: 1 },
       hop: { height: 0.12, gravity: 9.8 },
+      speech: { nodRate: 0.6, nodDepth: 1.2 },
       tail: { amount: 2 },
       render: { toon: true, arkit: false },
       settle: false,
@@ -187,6 +188,7 @@ export const SWITCH_CASES: Record<CommandName, Command[]> = {
       at: 1_700_000_000,
     },
     { cmd: 'bgm', track: null },
+    { cmd: 'bgm', volume: 0.05, rampSeconds: 8 },
   ],
 };
 

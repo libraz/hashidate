@@ -132,6 +132,13 @@ export class Director {
   speechOpens = true;
   /** Nothing is queued behind the line, so the run ends with it. Written by the turn queue. */
   speechCloses = true;
+  /**
+   * Multiplier on how often a phrase boundary nods. Takes effect from the next line.
+   * Halved by eye: at the measured rates the nods between lines read as excessive.
+   */
+  nodRate = 0.5;
+  /** Multiplier on how far a phrase-final nod pitches. Takes effect from the next line. */
+  nodDepth = 1;
 
   readonly presets: ExpressionPreset[];
   readonly presetById: Map<string, ExpressionPreset>;
@@ -462,6 +469,8 @@ export class Director {
       planHeadBeats(scheduled, {
         level: opts.level,
         closes: this.speechCloses,
+        rate: this.nodRate,
+        depth: this.nodDepth,
         random: this.#random,
       }),
     );

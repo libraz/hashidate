@@ -225,6 +225,12 @@ export const consoleEn = {
   'console.tune.hop.once': 'At this height',
   'console.tune.hop.once.title': 'One hop at the height set above',
 
+  'console.tune.speech': 'Speech',
+  'console.tune.speech.note':
+    'The head nods at the end of a strong phrase, on a share of boundaries rather than every one. Rate scales that share, depth how far the head drops; both take effect from the next line.',
+  'console.tune.speech.nodRate': 'Nod frequency',
+  'console.tune.speech.nodDepth': 'Nod depth',
+
   'console.tune.tail': 'Tail',
   'console.tune.tail.note.drive':
     'A tail only hangs off the hips, so left to the sway layer it has no input and looks stopped. The speed, width and height of the swing come from the emotion vector and drive the root; everything past it trails behind on the sway layer.',
@@ -510,6 +516,12 @@ export const consoleJa: Record<keyof typeof consoleEn, string> = {
   'console.tune.hop.gravity': '重力',
   'console.tune.hop.once': 'この高さで',
   'console.tune.hop.once.title': '上のスライダーの高さで 1 回',
+
+  'console.tune.speech': '発話',
+  'console.tune.speech.note':
+    '強い句の切れ目で頭がうなずく。毎回ではなく一定の割合で、頻度はその割合を、深さは頭の下がり幅を倍率で変える。どちらも次の台詞から効く。',
+  'console.tune.speech.nodRate': 'うなずきの頻度',
+  'console.tune.speech.nodDepth': 'うなずきの深さ',
 
   'console.tune.tail': '尻尾',
   'console.tune.tail.note.drive':

@@ -256,6 +256,7 @@ export const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
     },
     sway: { enabled: true, stiffness: 1, inertia: 1, gravity: 1 },
     hop: { height: 0.1, gravity: 9.8 },
+    speech: { nodRate: 1, nodDepth: 1 },
     tail: { amount: 1 },
     render: { toon: true, arkit: false },
     has: { sway: true, tail: false, arkit: false },

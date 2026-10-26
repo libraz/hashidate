@@ -212,6 +212,22 @@ describe('planHeadBeats', () => {
       }
     }
   });
+
+  it('scales every boundary rate by `rate` and spends no draw where it is zero', () => {
+    const track = line([{ t: 1, kind: 'major' }]);
+    expect(rate(track, 1, { rate: 0.5 })).toBeCloseTo(rate(track, 1) * 0.5, 1);
+
+    const c = counting(constant(0));
+    expect(planHeadBeats(track, { rate: 0, random: c.random })).toEqual([]);
+    expect(c.n).toBe(0);
+  });
+
+  it('scales every amplitude by `depth`', () => {
+    const track = line([{ t: 1, kind: 'major' }]);
+    const beats = planHeadBeats(track, { depth: 0.5, random: constant(0) });
+    expect(beats.length).toBeGreaterThan(0);
+    for (const b of beats) expect(b.amp).toBeCloseTo(NOD_PITCH * 0.8 * 0.5);
+  });
 });
 
 /** Peak speed of the segment of the nod shape that `u` falls in; zero outside the window. */

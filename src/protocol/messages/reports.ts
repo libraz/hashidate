@@ -113,6 +113,7 @@ export const tuningSchema = z.object({
   }),
   /** `height` is metres here, as it is in the command. */
   hop: z.object({ height: z.number(), gravity: z.number() }),
+  speech: z.object({ nodRate: z.number(), nodDepth: z.number() }),
   tail: z.object({ amount: z.number() }),
   render: z.object({ toon: z.boolean(), arkit: z.boolean() }),
   has: z.object({ sway: z.boolean(), tail: z.boolean(), arkit: z.boolean() }),

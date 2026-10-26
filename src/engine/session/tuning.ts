@@ -3,7 +3,7 @@ import type { Tuning, TuningPatch } from '../tuning';
 import type { GazeLimits, Shading } from '../types';
 
 /**
- * The set-once layer: breath, sway, hop, tail, shading.
+ * The set-once layer: breath, sway, hop, nods, tail, shading.
  *
  * Two directions, and they are not symmetrical. A patch names the faders that
  * moved and leaves everything else alone; a report is the whole layer, read
@@ -44,7 +44,7 @@ export class TuningControl {
    */
   apply(patch: TuningPatch): void {
     const d = this.d;
-    const { idle, sway, hop, tail, render, settle } = patch;
+    const { idle, sway, hop, speech, tail, render, settle } = patch;
 
     if (idle) {
       if (idle.breathDepth !== undefined) d.body.breathDepth = idle.breathDepth;
@@ -72,6 +72,11 @@ export class TuningControl {
     if (hop) {
       if (hop.height !== undefined) d.body.jumpHeight = hop.height;
       if (hop.gravity !== undefined) d.body.gravity = hop.gravity;
+    }
+
+    if (speech) {
+      if (speech.nodRate !== undefined) d.nodRate = speech.nodRate;
+      if (speech.nodDepth !== undefined) d.nodDepth = speech.nodDepth;
     }
 
     if (tail?.amount !== undefined) d.tail.amount = tail.amount;
@@ -116,6 +121,7 @@ export class TuningControl {
         gravity: d.spring.gravityScale,
       },
       hop: { height: d.body.jumpHeight, gravity: d.body.gravity },
+      speech: { nodRate: d.nodRate, nodDepth: d.nodDepth },
       tail: { amount: d.tail.amount },
       render: { toon: this.shading?.toon ?? true, arkit: d.useArkit },
       has: { sway: d.spring.active, tail: d.tail.active, arkit: d.p.arkit.supported },

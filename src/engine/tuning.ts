@@ -66,6 +66,13 @@ export interface TuningHop {
   gravity: number;
 }
 
+/** Speech motion: the phrase-final nods laid over a line. */
+export interface TuningSpeech {
+  /** Multipliers over the measured nod rates and the nominal pitch. */
+  nodRate: number;
+  nodDepth: number;
+}
+
 export interface TuningTail {
   amount: number;
 }
@@ -88,6 +95,7 @@ export interface TuningPatch {
   idle?: Partial<TuningIdle>;
   sway?: Partial<TuningSway>;
   hop?: Partial<TuningHop>;
+  speech?: Partial<TuningSpeech>;
   tail?: Partial<TuningTail>;
   render?: Partial<TuningRender>;
   /**
@@ -116,6 +124,7 @@ export interface Tuning {
   idle: TuningIdle;
   sway: TuningSway;
   hop: TuningHop;
+  speech: TuningSpeech;
   tail: TuningTail;
   render: TuningRender;
   has: {
@@ -155,6 +164,10 @@ export const TUNING_RANGES = {
     // them: a jump is stated in centimetres and stored in metres.
     height: { min: 0.01, max: 0.3, step: 0.01, precision: 2, unit: 'm' },
     gravity: { min: 1.5, max: 20, step: 0.1, precision: 1, unit: 'm/s²' },
+  },
+  speech: {
+    nodRate: { min: 0, max: 1.5, step: 0.05, precision: 2, unit: '', rest: 1 },
+    nodDepth: { min: 0, max: 2, step: 0.05, precision: 2, unit: '', rest: 1 },
   },
   tail: {
     amount: { min: 0, max: 4, step: 0.05, precision: 2, unit: '' },

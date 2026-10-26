@@ -79,7 +79,7 @@ export const avatarCommandSchema = z.object({
  *
  * The same trade `voiceDspSchema` makes, for the same reason: there is nothing
  * to translate *to*. A spring stiffness scale is a spring stiffness scale, and
- * a second set of names for these fourteen numbers would only produce a mapping
+ * a second set of names for these sixteen numbers would only produce a mapping
  * table for the two ends to drift across. The one place the wire does insist on
  * its own unit is `hop.height`, which is metres here because metres is what the
  * body layer holds — both panels state it in centimetres, and that is theirs.
@@ -130,6 +130,13 @@ export const tuneCommandSchema = z
         /** Metres. */
         height: within(TUNING_RANGES.hop.height).optional(),
         gravity: within(TUNING_RANGES.hop.gravity).optional(),
+      })
+      .strict()
+      .optional(),
+    speech: z
+      .object({
+        nodRate: within(TUNING_RANGES.speech.nodRate).optional(),
+        nodDepth: within(TUNING_RANGES.speech.nodDepth).optional(),
       })
       .strict()
       .optional(),

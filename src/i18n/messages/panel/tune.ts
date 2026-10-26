@@ -1,5 +1,5 @@
 /**
- * The tune tab — the set-once layer: breath, sway, hop, tail, shading.
+ * The tune tab — the set-once layer: breath, sway, hop, nods, tail, shading.
  */
 
 export const tuneEn = {
@@ -36,6 +36,11 @@ export const tuneEn = {
   'panel.tune.hop.note3':
     'The legs are not in the rig, so watch this framed at the bust or the upper body.',
   'panel.tune.hopHeight': 'Hop height',
+  'panel.tune.speech': 'Speech',
+  'panel.tune.speech.note':
+    'The head nods at the end of a strong phrase, on a share of boundaries rather than every one. Rate scales that share, depth how far the head drops; both take effect from the next line.',
+  'panel.tune.nodRate': 'Nod frequency',
+  'panel.tune.nodDepth': 'Nod depth',
   'panel.tune.tail': 'Tail',
   'panel.tune.tail.note':
     'A tail only hangs from the hips, so left to the sway layer it looks dead. The swing is taken from the emotion and driven at the root; everything past it follows on the sway layer.',
@@ -87,6 +92,11 @@ export const tuneJa: Record<keyof typeof tuneEn, string> = {
   'panel.tune.hop.note2': '高さと重力だけで弧が決まる。重力を下げると同じ高さのまま頂点で浮く。',
   'panel.tune.hop.note3': '脚はリグに含まれないので、バストアップか上半身の画角で見ること。',
   'panel.tune.hopHeight': '跳ぶ高さ',
+  'panel.tune.speech': '発話',
+  'panel.tune.speech.note':
+    '強い句の切れ目で頭がうなずく。毎回ではなく一定の割合で、頻度はその割合を、深さは頭の下がり幅を倍率で変える。どちらも次の台詞から効く。',
+  'panel.tune.nodRate': 'うなずきの頻度',
+  'panel.tune.nodDepth': 'うなずきの深さ',
   'panel.tune.tail': '尻尾',
   'panel.tune.tail.note':
     '尻尾は腰にぶら下がっているだけなので、揺れもの層に任せると止まって見える。感情から振りを決めて根元を能動的に振り、その先は揺れもの層が追う。',

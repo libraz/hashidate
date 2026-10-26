@@ -28,6 +28,10 @@ export interface BeatPlanOptions {
   level?: (seconds: number) => number;
   /** Nothing is queued behind the line, so its end hands the turn over. Defaults to true. */
   closes?: boolean;
+  /** Multiplier on every boundary's nod rate. Defaults to 1, the measured rates. */
+  rate?: number;
+  /** Multiplier on every nod's pitch. Defaults to 1. */
+  depth?: number;
   /** Injectable only so a test can draw the plan deterministically. */
   random?: () => number;
 }
@@ -113,7 +117,7 @@ function pauseAt(level: (seconds: number) => number, t: number, duration: number
  * upstream of the roll changes.
  */
 export function planHeadBeats(track: VisemeTrack, opts: BeatPlanOptions = {}): HeadBeat[] {
-  const { level, closes = true, random = Math.random } = opts;
+  const { level, closes = true, rate = 1, depth = 1, random = Math.random } = opts;
   const { events } = track;
   if (!events.length) return [];
   const endsLine = (t: number): boolean => !events.some((ev) => ev.t >= t);
@@ -136,11 +140,12 @@ export function planHeadBeats(track: VisemeTrack, opts: BeatPlanOptions = {}): H
     else if (endsLine(b.t)) p = closes ? P_GIVE : P_KEEP;
     else if (b.kind === 'major') p = P_KEEP;
     else p = level && pauseAt(level, b.t, track.duration) ? P_KEEP : 0;
+    p *= rate;
     if (p === 0) continue;
 
     if (random() >= p) continue;
     // ±20% around the nominal pitch, so consecutive nods are not copies of each other.
-    beats.push({ t: b.t, amp: NOD_PITCH * (0.8 + 0.4 * random()) });
+    beats.push({ t: b.t, amp: depth * NOD_PITCH * (0.8 + 0.4 * random()) });
     lastPeak = b.t;
   }
   return beats;
