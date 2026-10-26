@@ -67,7 +67,7 @@ yarn ctl idle on
 yarn ctl watch                                  # follow the turn events
 ```
 
-A whole segment can also be sent at once. `show/scripts/demo.yaml` is the runtime introducing itself, in about two minutes, and it is the quickest way to see what a turn looks like:
+A whole segment can also be sent at once. `show/scripts/demo.yaml` is the runtime introducing itself, in about three and a half minutes, and it is the quickest way to see what a turn looks like:
 
 ```sh
 yarn ctl play demo --check      # read it, no server needed

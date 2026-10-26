@@ -1,7 +1,7 @@
 title: hashidate はこういうものです
 note: |
   The one script that belongs to the project rather than to a broadcast: the
-  runtime introducing itself, in about two minutes.
+  runtime introducing itself, in about three and a half minutes.
 
   It is also a worked example. Every feature it talks about it also uses — the
   cue markup is demonstrated mid-sentence, the shot changes on the line that
@@ -41,7 +41,7 @@ lines:
   - text: "[hello]こんばんは。今日は、わたしが動いている仕組みそのものの話をします。"
 
   - text: "[explain]この土台は hashidate といいます。ブラウザの中にわたしを描いて、外から一手ずつ指示を受け取る。やっていることはそれだけです。"
-    reading: "この土台は、はしだてといいます。ブラウザの中にわたしを描いて、外からひとてずつ指示を受け取る。やっていることはそれだけです。"
+    reading: "この土台は、はしだてといいます。ブラウザの中にわたしを描いて、外からいってずつ指示を受け取る。やっていることはそれだけです。"
 
   - text: "[wonder]それだけ、という顔をしましたね。"
 
@@ -58,18 +58,52 @@ lines:
       neutral: 0.6
       joy: 0.3
 
-  - text: "[present]動きには名前がついていて、たとえば今のこれは「こちらです」。"
+  - text: "[bouncy]動きには名前がついていて、たとえば今のこれは「ごきげん」。"
 
   # The vocabulary showing its range, one performance per clause. Spaced a
   # clause apart so each is seen before the next one replaces it.
-  - text: "[countOne]数えてみたら、八十を超えていました。[peace]ピースも、[heartHands]ハートも、[cuteSalute]敬礼もできます。"
+  - text: "[ponder]数えてみたら、八十を超えていました。[peace]ピースも、[heartHands]ハートも、[catPaw]猫の手もできます。"
 
   - text: "[shy]……全部やると日が暮れるので、このくらいにしておきます。"
+
+  # Counting on the fingers, one per clause. Each number is given a few words of
+  # its own so the hand has settled before the next one replaces it.
+  - text: "[curious]指で数えることもできます。"
+
+  - text: "[countOne]まず、ひとつ。[countTwo]それから、ふたつ。[countThree]みっつ。"
+
+  - text: "[countFour]よっつ、[countFive]いつつ。[giggle]片手だと、ここまでです。"
+
+  # Close in for the face: the mid-sentence demonstration below reads better at
+  # this distance, and the two lines after it talk about what is on screen.
+  - text: "[interested]今度は、顔に寄ってみます。"
+    stage:
+      camera: face
 
   # The cue markup demonstrating itself. Three performances inside one sentence,
   # each starting where it is written — which is the only place a caller can put
   # one, since a second turn would break the clause in half.
   - text: "[explain]名前はセリフの途中にも書けます。[happy]ここで嬉しくなって、[gloomy]ここでしょんぼりして、[calm]また戻ってくる。全部ひとつのセリフです。"
+
+  - text: "[blank]まばたきや目線の小さな揺れは、言われなくても勝手に動きます。"
+
+  - text: "[explain]口の形は、セリフの音から母音を拾って作っています。"
+
+  - text: "[shy]……ちょっと近すぎますね。戻ります。"
+    stage:
+      camera: bust
+
+  # Under the hood, from the rigging side: what is actually true of the engine.
+  # Gestures are directions in character space, arms are a constrained solve
+  # every frame, hair is springs, nods follow phrase boundaries measured in the
+  # audio, and the small variations are random — so no two takes match.
+  - text: "[ponder]ここで少し、中の話を。わたしの動きは、モーションキャプチャを流しているのではなく、毎フレーム、その場で計算しています。"
+
+  - text: "[explain]ジェスチャは関節の角度ではなく、手をどちらへ向けるかで書いてあるので、左右を入れ替えても、骨格の違うモデルでも、同じ動きになります。"
+
+  - text: "[explain]腕は七つの自由度を、可動域に収まるように毎フレーム解いていて、[nope]手が顔にめり込む答えは、ちゃんと捨てています。"
+
+  - text: "[explain]髪の揺れはばねの計算で、うなずきは文の切れ目に合わせて。[giggle]だから同じセリフでも、毎回すこしずつ違う動きになります。"
 
   - text: "[explain]絵と音の置き場所も、セリフに付けて渡せます。"
 
@@ -83,6 +117,15 @@ lines:
   - text: "[listening]声が響く場所も別に選べます。今いるのは、ホールということになっています。"
     stage:
       room: hall
+
+  # Said while the hall is still on, so the claim is heard as it is made. Rooms
+  # are impulse responses libsonare synthesises from a box, its absorption and
+  # where speaker and listener stand; the voice chain and the BGM run on it too.
+  - text: "[explain]この響きは、部屋の大きさと壁の吸音から、libsonare で計算しています。"
+    reading: "この響きは、部屋の大きさと壁の吸音から、リブソナーレで計算しています。"
+
+  - text: "[explain]声の音作りも同じ libsonare です。合成したままの素の声を、イコライザーやコンプレッサーで、配信向けに整えてから鳴らしています。BGM も同じ仕組みで流れています。"
+    reading: "声の音作りも同じリブソナーレです。合成したままの素の声を、イコライザーやコンプレッサーで、配信向けに整えてから鳴らしています。ビージーエムも同じ仕組みで流れています。"
 
   - text: "[giggle]ちょっと大げさでしたね。戻します。"
     stage:
@@ -99,24 +142,23 @@ lines:
   # The deck is `show/slides/hashidate.pdf`, which ships with this repository.
   # Without it these lines still run: an id the renderer cannot open is reported
   # and the stream carries on, so what is lost is the picture, not the segment.
-  - text: "[present]資料を出すこともできます。PDF を置いておくと、後ろに映ります。"
+  - text: "[sparkle]資料を出すこともできます。PDF を置いておくと、後ろに映ります。"
     reading: "資料を出すこともできます。ピーディーエフを置いておくと、後ろに映ります。"
     stage:
       camera: upper
       deck: hashidate
       slide: 1
       place:
-        # Measured against this deck rather than picked: wider or taller than
-        # this and she covers the last column of the page on slide 3.
-        avatar: { anchor: bottom-right, width: 0.26, height: 0.54, margin: 0.015 }
+        # Measured against this deck rather than picked. Height sets her size;
+        # the shift keeps her clear of slide 2's diagram as the box widens.
+        # Slide 3 is the author's page and may be covered.
+        avatar: { anchor: bottom-right, width: 0.32, height: 0.68, margin: 0.015, shift: 0.08 }
 
   - text: "[explain]さっきの境界の話も、こうして図にしておけます。"
     stage: { slide: 2 }
 
   - text: "[bashful]最後の一枚は、わたしを書いた人の紹介です。"
     stage: { slide: 3 }
-
-  - text: "[interested]しかも中の文章は読めるので、資料を見て台本を書くところまで、外側の誰かに任せられます。"
 
   # Down and back to the middle in one line, for the same reason as going up.
   # The one-finger count on "one line" is the point of picking it.
@@ -126,7 +168,7 @@ lines:
       camera: bust
       deck: null
       place:
-        avatar: { anchor: center, width: 1, height: 1, margin: 0 }
+        avatar: { anchor: center, width: 1, height: 1, margin: 0, shift: 0 }
 
   - text: "[secret]それから、ここだけの話。"
 
@@ -149,3 +191,9 @@ lines:
 
   - text: "見てくれてありがとう。また。"
     perform: thanks
+
+# Applied once the last line has been said, undoing the setup's idle switch so
+# the character is left standing rather than frozen on the closing pose.
+teardown:
+  - cmd: idle
+    on: true
