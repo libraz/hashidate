@@ -134,7 +134,7 @@ describe('arm commit budget', () => {
       }
     }
     vi.restoreAllMocks();
-  }, 60_000);
+  });
 
   it('carries a fast cross-body travel without holding an arm or the chest', () => {
     const h = harness();
@@ -177,5 +177,5 @@ describe('arm commit budget', () => {
     vi.restoreAllMocks();
     expect(over).toEqual([]);
     expect(holds).toEqual([]);
-  }, 60_000);
+  });
 });

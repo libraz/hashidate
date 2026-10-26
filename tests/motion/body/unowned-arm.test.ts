@@ -48,9 +48,6 @@ const CASES = Object.entries(GESTURES as Record<string, GestureDef>).flatMap(([i
   unowned(def, 'R').map((free) => ({ id, free })),
 );
 
-/** A long gesture runs several seconds of simulated body; a loaded machine needs past the default five. */
-const SLOW = 30_000;
-
 describe('an arm the gesture does not own', () => {
   it('is found for the head-only reactions', () => {
     const ids = CASES.map((c) => c.id);
@@ -58,33 +55,29 @@ describe('an arm the gesture does not own', () => {
     expect(ids).toContain('tilt');
   });
 
-  it.each(CASES)(
-    'stays still through $id ($free)',
-    ({ id, free }) => {
-      const h = harness(0, { random: () => 0.5 });
-      for (let i = 0; i < 120; i++) frame(h);
-      let prev = links(h, free);
+  it.each(CASES)('stays still through $id ($free)', ({ id, free }) => {
+    const h = harness(0, { random: () => 0.5 });
+    for (let i = 0; i < 120; i++) frame(h);
+    let prev = links(h, free);
 
-      const def = (GESTURES as Record<string, GestureDef>)[id];
-      h.body.play(id, 'R');
-      const holdFrames = Math.ceil(((def.lead ?? 0) + def.hold) / DT);
-      let worst = 0;
-      let at = 0;
-      for (let i = 0; i < holdFrames + 150; i++) {
-        if (def.sustain && i === holdFrames) h.body.stopGesture();
-        frame(h);
-        const now = links(h, free);
-        for (let k = 0; k < now.length; k++) {
-          const w = prev[k].angleTo(now[k]) / DT;
-          if (w > worst) {
-            worst = w;
-            at = i * DT;
-          }
+    const def = (GESTURES as Record<string, GestureDef>)[id];
+    h.body.play(id, 'R');
+    const holdFrames = Math.ceil(((def.lead ?? 0) + def.hold) / DT);
+    let worst = 0;
+    let at = 0;
+    for (let i = 0; i < holdFrames + 150; i++) {
+      if (def.sustain && i === holdFrames) h.body.stopGesture();
+      frame(h);
+      const now = links(h, free);
+      for (let k = 0; k < now.length; k++) {
+        const w = prev[k].angleTo(now[k]) / DT;
+        if (w > worst) {
+          worst = w;
+          at = i * DT;
         }
-        prev = now;
       }
-      expect(worst, `peak at ${at.toFixed(3)} s`).toBeLessThan(STILL);
-    },
-    SLOW,
-  );
+      prev = now;
+    }
+    expect(worst, `peak at ${at.toFixed(3)} s`).toBeLessThan(STILL);
+  });
 });

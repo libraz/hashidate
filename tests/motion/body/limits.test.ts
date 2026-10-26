@@ -107,33 +107,18 @@ function switchSpeed(from: string | null, to: string): number {
   return worst;
 }
 
-/**
- * Long enough for a hundred switches on a shared runner under coverage.
- *
- * Every ordered pair below is five seconds of simulated body, and the layer it
- * exercises is the one the coverage provider instruments — three seconds here,
- * half a minute on a cold CI machine, against a default of five. The number is
- * not a budget for the suite: it is only what keeps a slow machine from
- * reporting a timeout where the property under test is what it always was.
- */
-const SLOW = 120_000;
-
 describe('the anatomical limiter', () => {
-  it(
-    'never carries a wrist faster than a body can, on any switch between poses',
-    () => {
-      const over: string[] = [];
-      for (const from of [null, ...AGAINST_A_STOP] as Array<string | null>) {
-        for (const to of AGAINST_A_STOP) {
-          if (from === to) continue;
-          const speed = switchSpeed(from, to);
-          if (speed > TELEPORT) over.push(`${from ?? 'rest'} -> ${to}: ${speed.toFixed(1)} m/s`);
-        }
+  it('never carries a wrist faster than a body can, on any switch between poses', () => {
+    const over: string[] = [];
+    for (const from of [null, ...AGAINST_A_STOP] as Array<string | null>) {
+      for (const to of AGAINST_A_STOP) {
+        if (from === to) continue;
+        const speed = switchSpeed(from, to);
+        if (speed > TELEPORT) over.push(`${from ?? 'rest'} -> ${to}: ${speed.toFixed(1)} m/s`);
       }
-      expect(over).toEqual([]);
-    },
-    SLOW,
-  );
+    }
+    expect(over).toEqual([]);
+  });
 
   it.each<Side>(['L', 'R'])(
     'raises an elbow past straight forward without the limiter swinging the forearm (%s)',
@@ -166,38 +151,32 @@ describe('the anatomical limiter', () => {
     },
   );
 
-  it(
-    'still lets every held pose arrive inside its own entrance',
-    () => {
-      // The other half of the bargain, and the one a cap set too low would break:
-      // slowing the limiter must not slow the movement. Every sustained pose has
-      // to be where it is going by the time its entrance is over, which is the
-      // property `entrance.test.ts` states for one pose and this one states for
-      // all of them — a link the cap was riding would arrive after its lead
-      // instead of during it.
-      const late: string[] = [];
-      for (const side of ['L', 'R'] as const) {
-        for (const [id, def] of gestureEntries()) {
-          if (!def.sustain) continue;
-          const thrown = THROWN_AFTER_BEATS.includes(id);
-          const run = settleTime(id, side, true, thrown ? NOMINAL : {});
-          // A pose this hand does not move for has nothing to arrive at.
-          if (run === null) continue;
-          const { settled, lead } = run;
-          // These author their arrival after their entrance, so the deadline is
-          // when the same pose arrives with the limiter off.
-          const deadline = thrown
-            ? (settleTime(id, side, false, NOMINAL)?.settled ?? 0) + DT
-            : lead;
-          if (!(settled > 0 && settled < deadline)) {
-            late.push(`${id} ${side}: ${settled.toFixed(2)}s`);
-          }
+  it('still lets every held pose arrive inside its own entrance', () => {
+    // The other half of the bargain, and the one a cap set too low would break:
+    // slowing the limiter must not slow the movement. Every sustained pose has
+    // to be where it is going by the time its entrance is over, which is the
+    // property `entrance.test.ts` states for one pose and this one states for
+    // all of them — a link the cap was riding would arrive after its lead
+    // instead of during it.
+    const late: string[] = [];
+    for (const side of ['L', 'R'] as const) {
+      for (const [id, def] of gestureEntries()) {
+        if (!def.sustain) continue;
+        const thrown = THROWN_AFTER_BEATS.includes(id);
+        const run = settleTime(id, side, true, thrown ? NOMINAL : {});
+        // A pose this hand does not move for has nothing to arrive at.
+        if (run === null) continue;
+        const { settled, lead } = run;
+        // These author their arrival after their entrance, so the deadline is
+        // when the same pose arrives with the limiter off.
+        const deadline = thrown ? (settleTime(id, side, false, NOMINAL)?.settled ?? 0) + DT : lead;
+        if (!(settled > 0 && settled < deadline)) {
+          late.push(`${id} ${side}: ${settled.toFixed(2)}s`);
         }
       }
-      expect(late).toEqual([]);
-    },
-    SLOW,
-  );
+    }
+    expect(late).toEqual([]);
+  });
 
   describe.each(THROWN_AFTER_BEATS)('%s through the real rig', (id) => {
     const frames = 150;

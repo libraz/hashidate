@@ -60,6 +60,9 @@ jobs:
       # machine that had bought it, which is no machine here.
       - run: yarn test:coverage
 
+      # Outside the coverage pass, which slows them fivefold; see vitest.config.ts.
+      - run: yarn test:sweep
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         with:
