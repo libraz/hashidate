@@ -38,7 +38,7 @@ export const slidesEn = {
   'panel.slides.layout.note1':
     'The camera does not move. What moves is where the character’s picture sits in the frame and how large it is; the framing and the performance come out as they were shot.',
   'panel.slides.layout.note2':
-    'Choosing a position away from centre while the picture fills the frame automatically scales it to the standard broadcast scale of 0.32, so the anchor has room to work.',
+    'Choosing a position never changes the size. While the picture fills the frame there is little room to move it, so bring the size down first.',
   'panel.slides.show': 'Character',
   'panel.slides.show.aria': 'Whether the character is drawn',
   'panel.slides.show.shown': 'Shown',
@@ -129,7 +129,7 @@ export const slidesJa: Record<keyof typeof slidesEn, string> = {
   'panel.slides.layout.note1':
     'カメラは動きません。動かしているのは画面の中でキャラクターの絵が占める場所と大きさで、画角も演技も撮られたときのまま出ます。',
   'panel.slides.layout.note2':
-    '絵が画面いっぱいのとき中央以外を選ぶと、立ち位置を効かせるため、配信の標準倍率である 0.32 に自動で縮めます。',
+    '立ち位置を選んでも大きさは変わりません。絵が画面いっぱいのままだと動かす余地がないので、先に大きさを縮めてください。',
   'panel.slides.show': 'キャラクター',
   'panel.slides.show.aria': 'キャラクターを描くかどうか',
   'panel.slides.show.shown': '表示',

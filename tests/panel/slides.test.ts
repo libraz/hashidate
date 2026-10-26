@@ -84,21 +84,13 @@ describe('avatarPlacement', () => {
     shift: 0,
   };
 
-  it('shrinks a full-frame avatar when moving away from centre', () => {
-    // A top-only anchor is the regression: horizontal anchors appeared to work
-    // at full size because the renderer hugs the silhouette to the side.
-    expect(avatarPlacement(full, { anchor: 'top' })).toEqual({
-      anchor: 'top',
-      width: 0.32,
-      height: 0.32,
-      margin: 0.04,
-      visible: true,
-      shift: 0,
-    });
+  it('keeps a full-frame avatar full when moving away from centre', () => {
+    expect(avatarPlacement(full, { anchor: 'top' })).toEqual({ ...full, anchor: 'top' });
   });
 
-  it('keeps a full-frame avatar when centre is selected', () => {
-    expect(avatarPlacement(full, { anchor: 'center' })).toEqual(full);
+  it('comes back to centre at the size it left', () => {
+    const away = avatarPlacement(full, { anchor: 'bottom-right' });
+    expect(avatarPlacement(away, { anchor: 'center' })).toEqual(full);
   });
 
   it('uses the renderer effective size from a non-square report', () => {

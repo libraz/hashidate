@@ -93,16 +93,6 @@ interface DocControls {
 }
 
 /**
- * The effective size of the standard broadcast corner placement.
- *
- * README.md, `src/panel/stage/source.ts`, and the use-case docs all use
- * `bottom-{left,right}:0.32x0.6`; the renderer's effective multiplier is the
- * tighter 0.32 axis. A full-frame avatar needs this size before a non-centre
- * anchor has room to move it.
- */
-const STANDARD_BROADCAST_SIZE = 0.32;
-
-/**
  * Whether a change this panel sent has come back: the renderer reporting the
  * rectangle it was asked for.
  *
@@ -150,35 +140,26 @@ export function fitAspect(size: number): { width: number; height: number } {
  * Resolve one avatar control change into the complete placement on the wire.
  *
  * The character's effective scale is the tighter of the reported fractions —
- * the renderer draws the same frame inside both axes. A full-frame character
- * has no room for a non-centre anchor, so selecting one uses the standard
- * broadcast effective scale in this same placement command. Other changes,
- * including selecting centre or moving an already smaller character, retain
- * the current effective scale.
+ * the renderer draws the same frame inside both axes. Only the size control
+ * changes it: an anchor that resized the character could not be undone by
+ * choosing centre again.
  */
 export function avatarPlacement(
   avatar: Required<AvatarPlacement>,
   next: Partial<AvatarControls>,
 ): Required<AvatarPlacement> {
-  const currentSize = Math.min(avatar.width, avatar.height);
   const merged: AvatarControls = {
     anchor: avatar.anchor,
-    size: currentSize,
+    size: Math.min(avatar.width, avatar.height),
     margin: avatar.margin,
     visible: avatar.visible,
     shift: avatar.shift,
     ...next,
   };
-  const size =
-    next.anchor !== undefined &&
-    merged.anchor !== 'center' &&
-    currentSize === PLACEMENT_LIMITS.width.max
-      ? STANDARD_BROADCAST_SIZE
-      : merged.size;
   return {
     anchor: merged.anchor,
     margin: merged.margin,
-    ...fitAspect(size),
+    ...fitAspect(merged.size),
     visible: merged.visible,
     shift: clamp(merged.shift, PLACEMENT_LIMITS.shift),
   };
@@ -569,6 +550,10 @@ export function SlidePeek({ deck, onAir, pages, open = openDeck }: PeekProps) {
     setPeek(onAirNow.current);
     setSource(null);
     setFailed(null);
+    // The last document's page is not a page of this one; blank until it draws.
+    // Its size is kept so the panel below does not jump.
+    const target = canvas.current;
+    target?.getContext('2d')?.clearRect(0, 0, target.width, target.height);
     let opened: DeckSource | null = null;
     let live = true;
     open(`/slides/${encodeURIComponent(deck)}.pdf`).then(
