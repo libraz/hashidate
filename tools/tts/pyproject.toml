@@ -16,13 +16,13 @@ requires-python = ">=3.11"
 # is hold torch to the 2.10 series the voice was tuned against, while the plain
 # PyPI wheel supplies the MPS backend that actually runs it.
 dependencies = [
-    "irodori-tts[cpu] @ git+https://github.com/Aratako/Irodori-TTS.git@89f9d8fbd4d51ea019867ee1197725ede1df13c5",
+    "irodori-tts[cpu] @ git+https://github.com/Aratako/Irodori-TTS.git@59be938c99d48b5653ca5aa3fdd0cddaa56940e5",
     # Noise removal, on the references and on every take. Chosen over a SciPy or
     # torch filter because the model stack is already 3 GB and this is a 4 MB
     # wheel with no runtime dependency beyond NumPy — and because the same
     # library builds the viewer's room, so both ends of the audio path are
     # described by one set of numbers.
-    "libsonare>=1.7",
+    "libsonare>=1.9",
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "soundfile>=0.12",

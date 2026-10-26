@@ -126,4 +126,7 @@ def runtime_key() -> RuntimeKey:
         codec_deterministic_decode=True,
         compile_model=False,
         compile_dynamic=False,
+        # Splits rare long tokens of the Small tokenizer, which the model misreads;
+        # Large uses another tokenizer and is unaffected.
+        split_rare_tokens=True,
     )

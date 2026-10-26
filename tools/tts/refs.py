@@ -40,7 +40,8 @@ def _encode_one(clip: Path, runtime: InferenceRuntime):
     # The room comes off here rather than on disk. What the model conditions
     # on is this tensor, so cleaning it is enough to keep the recorded room
     # out of every generated line, and the clip stays the recording it was.
-    wav = torch.from_numpy(clean_reference(wav.numpy(), int(sr))).to(wav.dtype)
+    # The denoiser takes one mono buffer; the first channel is the one `vet` measured.
+    wav = torch.from_numpy(clean_reference(wav[0].numpy(), int(sr))).to(wav.dtype)
     # The same loudness normalisation the waveform path would have applied,
     # so a precomputed latent is not quietly a different reference from the
     # clip it was made from.

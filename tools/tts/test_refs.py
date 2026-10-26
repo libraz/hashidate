@@ -13,12 +13,17 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
+
 
 class FakeTensor:
     shape = (1, 2)
     dtype = object()
 
     def numpy(self):
+        return self
+
+    def __getitem__(self, _index):
         return self
 
     def to(self, _dtype):
@@ -200,6 +205,39 @@ class ReferencePublishTests(unittest.TestCase):
         self.assertEqual((self.latents / "keep.pt").read_bytes(), b"old keep")
         self.assertEqual(sorted(path.name for path in self.latents.iterdir()), ["keep.pt", "old.pt"])
         self.assertEqual(list(self.latents.parent.glob(".latents.backup-*")), [])
+
+
+class ChannelTensor(FakeTensor):
+    """A loaded clip shaped (channels, samples), as `_load_audio` returns it."""
+
+    def __init__(self, rows):
+        self.rows = np.asarray(rows, dtype=np.float32)
+
+    def __getitem__(self, index):
+        return ChannelTensor(self.rows[index])
+
+    def numpy(self):
+        return self.rows
+
+
+class ReferenceCleaningTests(unittest.TestCase):
+    def test_the_denoiser_is_handed_one_mono_buffer(self):
+        seen = []
+
+        def clean(samples, _sample_rate):
+            seen.append(np.asarray(samples))
+            return samples
+
+        clip = ChannelTensor([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
+        with (
+            patch.object(REFS, "_load_audio", lambda _path: (clip, 48_000)),
+            patch.object(REFS, "clean_reference", clean),
+        ):
+            REFS._encode_one(Path("/synthetic/clip.wav"), FakeRuntime())
+
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0].ndim, 1)
+        np.testing.assert_array_equal(seen[0], clip.rows[0])
 
 
 if __name__ == "__main__":
