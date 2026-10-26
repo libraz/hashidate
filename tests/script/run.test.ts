@@ -34,10 +34,12 @@ function control(
     calls.push('batch' in command ? 'batch' : 'single');
     return setupResponse;
   });
-  const queueAddCall = vi.fn(async (_turns: TurnRequest[], _options?: { source?: string }) => {
-    calls.push('queue');
-    return added;
-  });
+  const queueAddCall = vi.fn(
+    async (_turns: TurnRequest[], _options?: { source?: string; after?: unknown[] }) => {
+      calls.push('queue');
+      return added;
+    },
+  );
   return {
     queueClear: clear,
     command: commandCall,
@@ -50,6 +52,17 @@ function control(
 }
 
 describe('runScript', () => {
+  it("hands the script's teardown to the server with its lines", async () => {
+    const client = control();
+    const script = loaded();
+    script.script.teardown = [{ cmd: 'idle', on: true }];
+    await runScript(client, script);
+    expect(client.queueAddCall).toHaveBeenCalledWith(script.script.lines, {
+      source: 'opening',
+      after: [{ cmd: 'idle', on: true }],
+    });
+  });
+
   it('sends setup and the hold as one batch, then clears, then queues', async () => {
     const client = control();
     const script = loaded([{ cmd: 'camera', frame: 'bust' }]);
@@ -61,7 +74,10 @@ describe('runScript', () => {
     expect(client.commandCall).toHaveBeenCalledWith({
       batch: [...(script.script.setup ?? []), { cmd: 'pause', on: false }],
     });
-    expect(client.queueAddCall).toHaveBeenCalledWith(script.script.lines, { source: 'opening' });
+    expect(client.queueAddCall).toHaveBeenCalledWith(script.script.lines, {
+      source: 'opening',
+      after: [],
+    });
     expect(result).toEqual({
       setup: { ok: true, viewers: 1, ids: ['setup'], fates: ['delivered'] },
       queue,

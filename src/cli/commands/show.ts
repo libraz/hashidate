@@ -53,6 +53,9 @@ export const play: Handler = async (client, args) => {
     if (script.setup?.length) console.log(`setup   ${script.setup.map((c) => c.cmd).join(', ')}`);
     console.log(`lines   ${script.lines.length}`);
     for (const line of outline(script)) console.log(line);
+    if (script.teardown?.length) {
+      console.log(`teardown ${script.teardown.map((c) => c.cmd).join(', ')}`);
+    }
     return;
   }
 

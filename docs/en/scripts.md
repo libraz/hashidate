@@ -51,9 +51,15 @@ lines:
   - text: "This side."
     gesture: pointUp
     side: L
+
+teardown:
+  - cmd: idle
+    on: true
 ```
 
 The two halves have two lifetimes. `setup` is applied once, before anything is said: which avatar, what it is wearing, where the picture sits in the frame. `lines` are the turns, and each carries the shot it is delivered in.
+
+`teardown` is applied by the server once the last line has been said and nothing else is waiting, however the script was started. A setup usually switches the idle autopilot off so a take does not open on a held pose, and `idle on` here is what keeps the character from standing frozen afterwards. A stop counts as the end; a script replaced mid-run leaves its teardown to the one that replaced it. Neither half takes `say`, `queue`, `interrupt` or `clear`.
 
 `side` on the last line pins the hand a movement uses, which is otherwise drawn afresh on every playback. Write it when the document is on one half of the frame and the arm should not cross it. See [Which hand](commands.md#which-hand).
 

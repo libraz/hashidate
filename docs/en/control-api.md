@@ -36,7 +36,7 @@ An axis left out of `stage` keeps what it had; `null` empties it — dry for a r
 | `GET /api/events` | The event tail alone. `?wait=1` long-polls it. |
 | `GET /api/queue` | The pending turns in order. The server owns this list; a turn being said is not included. |
 | `GET /api/history` | The bounded history of turns that finished or were interrupted, oldest first. |
-| `POST /api/queue` | Add one `turn` or a `turns` batch. `at` chooses `push` or `unshift`; the default is `push`. |
+| `POST /api/queue` | Add one `turn` or a `turns` batch. `at` chooses `push` or `unshift`; the default is `push`. `after` is a list of commands applied once the batch's last line has been said and nothing else is waiting — a script's `teardown`; only the latest batch carrying one is remembered, and an empty list clears it. |
 | `POST /api/queue/push` | Add one `turn` or a `turns` batch at the end of the pending list. |
 | `POST /api/queue/unshift` | Add one `turn` or a `turns` batch at the front of the pending list. |
 | `POST /api/queue/update` | Update the pending turn named by `id`, keeping its queue position and id. |

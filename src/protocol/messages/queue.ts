@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { turnSchema } from '../commands';
+import { stateCommandSchema, turnSchema } from '../commands';
 
 /**
  * The editable queue, and the history behind it.
@@ -75,6 +75,13 @@ export const queueAddSchema = z.object({
   source: z.string().optional(),
   /** The operator's note. Never spoken. */
   note: z.string().optional(),
+  /**
+   * Commands applied once this batch's last line has been said and nothing else
+   * is waiting — a script's `teardown`. Only the latest batch that carries one
+   * is remembered, so a run replaced mid-way leaves it to its replacement; an
+   * empty list is how a run with nothing to undo says so.
+   */
+  after: z.array(stateCommandSchema).optional(),
 });
 
 export type QueueAdd = z.infer<typeof queueAddSchema>;

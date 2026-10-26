@@ -36,7 +36,7 @@ yarn ctl say "これが、ホール。" --camera full --room hall
 | `GET /api/events` | イベントだけ。`?wait=1` でロングポーリングになります。 |
 | `GET /api/queue` | 待機中の発話を順番どおりに返します。リストの所有者はサーバで、発話中の行は含みません。 |
 | `GET /api/history` | 終了または中断した発話の履歴を、古い順に返します。件数には上限があります。 |
-| `POST /api/queue` | `turn` 1 つ、または `turns` の配列を追加します。`at` は `push` か `unshift` で、省略時は `push` です。 |
+| `POST /api/queue` | `turn` 1 つ、または `turns` の配列を追加します。`at` は `push` か `unshift` で、省略時は `push` です。`after` にコマンドの配列を渡すと、その一群の最後の行を言い終えてほかに待つ行がないときに実行します（台本の `teardown`）。覚えておくのは最後に渡された一群だけで、空の配列はそれを取り消します。 |
 | `POST /api/queue/push` | `turn` 1 つ、または `turns` の配列を待機リストの末尾へ追加します。 |
 | `POST /api/queue/unshift` | `turn` 1 つ、または `turns` の配列を待機リストの先頭へ追加します。 |
 | `POST /api/queue/update` | `id` で指定した待機中の発話を、その位置と id を保ったまま更新します。 |

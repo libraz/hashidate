@@ -7,6 +7,7 @@ import {
   type Command,
   commandSchema,
   type InlineCueAction,
+  RUN_VERBS,
   type TurnRequest,
   turnSchema,
 } from '../protocol';
@@ -56,22 +57,19 @@ const EXTENSIONS = ['.yaml', '.yml', '.json'];
 const MAX_BYTES = 1024 * 1024;
 
 /**
- * The verbs that may not appear in `setup`.
- *
- * All four are about the run itself rather than about the state it assumes, and
- * every one of them would race the queue this script is about to fill: a `say`
- * in setup is a line delivered ahead of line one and outside the list, and a
- * `clear` is the script deleting the lines that were queued before it.
- *
- * Stated as a refusal rather than by building a narrower union, so that a
- * command added to the wire is available here the day it exists and nobody has
- * to remember this file.
+ * Setup and teardown refuse the run verbs (`RUN_VERBS`): a `say` in setup is a
+ * line outside the list, a `clear` in teardown deletes whatever was queued after
+ * the script. Stated as a refusal rather than a narrower union, so a command
+ * added to the wire is available here the day it exists.
  */
-const RUN_VERBS = new Set<Command['cmd']>(['say', 'queue', 'interrupt', 'clear']);
-
 export const setupCommandSchema = commandSchema.refine((command) => !RUN_VERBS.has(command.cmd), {
   error: 'setup takes the state a script assumes, not its lines — put those under `lines`',
 });
+
+export const teardownCommandSchema = commandSchema.refine(
+  (command) => !RUN_VERBS.has(command.cmd),
+  { error: 'teardown takes the state a script leaves behind, not more lines' },
+);
 
 export const scriptSchema = z.object({
   /**
@@ -87,6 +85,11 @@ export const scriptSchema = z.object({
   note: z.string().optional(),
   setup: z.array(setupCommandSchema).optional(),
   lines: z.array(turnSchema).min(1),
+  /**
+   * Applied by the server once the last line has been said and nothing else is
+   * waiting — typically `idle on`, undoing the setup that switched it off.
+   */
+  teardown: z.array(teardownCommandSchema).optional(),
 });
 
 export type Script = z.infer<typeof scriptSchema>;

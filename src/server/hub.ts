@@ -164,6 +164,8 @@ export class Hub {
   private idleClock: ReturnType<typeof setInterval> | null = null;
   /** Seconds with nothing to say and no direct face or body command. */
   private idleQuiet = 0;
+  /** The latest batch queued with commands for its end; see `afterBatch`. */
+  private batchEnd: { ids: ReadonlySet<string>; commands: Command[] } | null = null;
 
   /**
    * The documents on disk, or nothing when the server was started without any.
@@ -306,9 +308,11 @@ export class Hub {
     // The end this files stands for every renderer's, should one still arrive.
     this.log.markFiled(`turn.end:${turnId}`);
     this.queue.complete(turnId, { interrupted: true });
+    const after = this.endsBatch(turnId);
     this.log.trim();
     this.take.observeQueue();
     this.releaseHeld();
+    if (after) this.command(after);
     this.wake();
   }
 
@@ -547,6 +551,31 @@ export class Hub {
 
   // --- idle -----------------------------------------------------------------
 
+  /**
+   * Apply `commands` once one of these lines is the last thing said — a
+   * script's teardown, typically turning idle back on after a setup turned it
+   * off. Only the latest batch counts, so a script replaced mid-run hands the
+   * decision to the one that replaced it, and an empty list clears it.
+   */
+  afterBatch(entries: readonly QueueEntry[], commands: readonly Command[]): void {
+    this.batchEnd =
+      commands.length === 0
+        ? null
+        : { ids: new Set(entries.map((entry) => entry.id)), commands: [...commands] };
+  }
+
+  /**
+   * The batch's commands when a line just filed was its last word: one of its
+   * lines, with nothing pending or on air behind it. Clears the batch when it
+   * was, so three renderers reporting one ending apply them once.
+   */
+  private endsBatch(turnId: string): Command[] | null {
+    const end = this.batchEnd;
+    if (end === null || !end.ids.has(turnId) || this.queue.hasWork) return null;
+    this.batchEnd = null;
+    return end.commands;
+  }
+
   /** Restart the quiet for a direct command, and run the clock while idle is on. */
   private observeIdle(commands: readonly Command[]): void {
     for (const command of commands) {
@@ -676,6 +705,7 @@ export class Hub {
     // report that carries one, since a renderer refetches it on every stream
     // open; not cleared by a report that omits it.
     if (body.avatars) this.avatars = body.avatars;
+    let after: Command[] | null = null;
     const bgmTransition = body.bgm === undefined ? null : this.bgmCoordinator.report(body.bgm);
     if (bgmTransition !== null) {
       // The coordinator has already advanced the revision. Bypass `send`,
@@ -719,6 +749,7 @@ export class Hub {
       if (event.type === 'turn.end' && event.turn) {
         this.queue.complete(event.turn, { interrupted: event.interrupted });
         this.owners.clearTurnOwners(event.turn);
+        after ??= this.endsBatch(event.turn);
       }
       // The line that was cut off is filed rather than dropped — it was said, if
       // only partly, and it is the one most likely to be wanted back. The
@@ -729,6 +760,7 @@ export class Hub {
       if (event.type === 'turn.interrupted' && event.turn) {
         this.queue.complete(event.turn, { interrupted: true });
         this.owners.clearTurnOwners(event.turn);
+        after ??= this.endsBatch(event.turn);
       }
     }
     this.log.trim();
@@ -737,6 +769,7 @@ export class Hub {
     this.take.observeQueue(previousWork);
     this.releaseHeld();
     this.wake();
+    if (after) this.command(after);
     return this.log.seq;
   }
 

@@ -501,7 +501,7 @@ async function runScript(
   if (refused !== null) return json(res, { error: refused }, 409);
 
   if (parsed.data.replace) hub.queue.clear();
-  hub.queue.add(lines, { source: loaded.id });
+  hub.afterBatch(hub.queue.add(lines, { source: loaded.id }), loaded.script.teardown ?? []);
   // One frame, in the order `Hub.subscribe` uses and for the same reason: a
   // script whose setup swaps the avatar makes the renderer hold everything
   // behind the load, and a queue sent as a second frame would arrive after that
@@ -684,11 +684,12 @@ function queue(res: ServerResponse, hub: Hub, pathname: string, body: unknown): 
         json(res, { queue: hub.queue.list(), viewers: hub.viewers, error: refused }, 409);
         return;
       }
-      hub.queue.add(turns, {
+      const added = hub.queue.add(turns, {
         at: pathname === '/api/queue/unshift' ? 'unshift' : (parsed.data.at ?? 'push'),
         source: parsed.data.source,
         note: parsed.data.note,
       });
+      if (parsed.data.after) hub.afterBatch(added, parsed.data.after);
       done(true);
       return;
     }

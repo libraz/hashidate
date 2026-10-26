@@ -219,6 +219,20 @@ export type Command = z.infer<typeof commandSchema>;
 /** The `cmd` tag on its own, for a caller that only needs the verb. */
 export type CommandName = Command['cmd'];
 
+/**
+ * The verbs that act on the run rather than on the state around it.
+ *
+ * Refused wherever commands travel beside lines — a script's setup and
+ * teardown, a batch's `after` — because each would race the queue those lines
+ * are in: a `say` is a line outside the list, a `clear` deletes the list.
+ */
+export const RUN_VERBS: ReadonlySet<CommandName> = new Set(['say', 'queue', 'interrupt', 'clear']);
+
+/** A command that sets state, never one of `RUN_VERBS`. */
+export const stateCommandSchema = commandSchema.refine((command) => !RUN_VERBS.has(command.cmd), {
+  error: 'say, queue, interrupt and clear act on the run and cannot be carried beside lines',
+});
+
 /** Commands whose `id` belongs to the payload rather than to correlation. */
 export const PAYLOAD_ID_COMMAND_NAMES = [
   'expression',

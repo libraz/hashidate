@@ -5,6 +5,7 @@ import {
   type BgmResponse,
   type BgmTrack,
   bgmResponseSchema,
+  type Command,
   type CommandRequest,
   type DecksResponse,
   type DeckTextResponse,
@@ -169,9 +170,14 @@ export class ControlClient {
    */
   async queueAdd(
     turns: TurnRequest[],
-    { at, source, note }: { at?: 'push' | 'unshift'; source?: string; note?: string } = {},
+    {
+      at,
+      source,
+      note,
+      after,
+    }: { at?: 'push' | 'unshift'; source?: string; note?: string; after?: Command[] } = {},
   ): Promise<QueueOutcome> {
-    const body = await this.request('/queue', { turns, at, source, note });
+    const body = await this.request('/queue', { turns, at, source, note, after });
     return expect(queueOutcomeSchema, body);
   }
 

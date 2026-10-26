@@ -129,6 +129,20 @@ lines:
   });
 });
 
+describe('teardown', () => {
+  it('takes commands exactly as they go on the wire', () => {
+    const parsed = script('lines:\n  - text: x\nteardown:\n  - { cmd: idle, on: true }');
+    expect(parsed.teardown).toEqual([{ cmd: 'idle', on: true }]);
+  });
+
+  /** A `clear` in teardown would delete whatever was queued after the script. */
+  it.each(['say', 'queue', 'interrupt', 'clear'])('refuses %s', (cmd) => {
+    expect(() =>
+      script(`lines:\n  - text: x\nteardown:\n  - { cmd: ${cmd}, text: "x", turns: [] }`),
+    ).toThrow(ScriptError);
+  });
+});
+
 describe('error positions', () => {
   const message = (source: string): string => {
     try {

@@ -1,5 +1,6 @@
 import { ControlError, type QueueOutcome } from '../control/client';
 import {
+  type Command,
   type CommandRequest,
   commandResponseSchema,
   type QueueResponse,
@@ -11,7 +12,10 @@ import type { LoadedScript } from './index';
 export interface ScriptControl {
   queueClear(): Promise<unknown>;
   command(command: CommandRequest): Promise<unknown>;
-  queueAdd(turns: TurnRequest[], options?: { source?: string }): Promise<QueueOutcome>;
+  queueAdd(
+    turns: TurnRequest[],
+    options?: { source?: string; after?: Command[] },
+  ): Promise<QueueOutcome>;
 }
 
 /** The two responses from a script run, kept separate because they have different fates. */
@@ -53,7 +57,12 @@ export async function runScript(
   if (isRefusal(batch)) throw new ControlError(batch.error);
 
   if (replace) await control.queueClear();
-  const queue = await control.queueAdd(loaded.script.lines, { source: loaded.id });
+  // Always stated, empty included, so a run replacing another clears what the
+  // replaced one would have applied at its end.
+  const queue = await control.queueAdd(loaded.script.lines, {
+    source: loaded.id,
+    after: loaded.script.teardown ?? [],
+  });
   if (queue.error !== undefined) throw new ControlError(queue.error);
 
   return { setup: setupCommands.length > 0 ? batch : undefined, queue };
