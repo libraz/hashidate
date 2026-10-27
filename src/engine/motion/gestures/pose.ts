@@ -38,9 +38,9 @@ const count = (n: 1 | 2 | 3 | 4 | 5, label: GestureDef['label']): GestureDef => 
       out,
       v,
       {
-        upperArm: V(0.44, -0.52, 0.34),
-        lowerArm: V(0.18, 0.9, 0.36),
-        hand: V(0.12, 0.96, 0.2),
+        upperArm: V(0.26, -0.9, 0.34),
+        lowerArm: V(0.08, 0.86, 0.5),
+        hand: V(0.06, 0.96, 0.26),
         palm: PEACE_PALM,
       },
       countHand(n),
