@@ -16,7 +16,7 @@ yarn ctl play show/scripts/opening.yaml
 
 The panel has the same list, at the top of its Queue tab, above the queue a script fills, so the lines appear underneath the moment one is pressed. There it holds by default, and the toggle beside the list is what decides that; see [Recording](recording.md). Under the list, **From a page** loads a script from a chosen page of its document to the end, with the camera, document and layout the earlier lines would have left, which is how a segment is resumed part-way. Their BGM cues are carried the same way: the music is playing, paused or stopped with the settings those lines left, though the track itself starts from its beginning, since how far it would have run depends on how long the skipped lines took to say.
 
-The native shell has `File → Run Script…` (`⌘⇧O` / `Ctrl+Shift+O`), which is the same operation from a file dialog and is the way to run a script that lives outside the directory the panel lists. See [The native shell](shell.md).
+The native shell has `File → Run Script…` (`⌘⇧O` / `Ctrl+Shift+O`), which runs a script from a file dialog the way `yarn ctl play` does: it starts at once and is appended behind whatever is pending. Use it for a script that lives outside the directory the panel lists; to load one without starting it, or to replace the queue, use the panel list. See [The native shell](shell.md).
 
 A name is looked for in `show/scripts/`, under `.yaml`, `.yml` and `.json` in that order when it carries no extension of its own. Anything with a separator in it, or an absolute path, is read exactly where it says, so a script in the working directory is `./opening.yaml`, spelled out.
 
@@ -130,16 +130,16 @@ A script is run against a live stream, so validating at the moment each line is 
 ```
 $ yarn ctl play demo --check
 hashidate はこういうものです  —  /…/show/scripts/demo.yaml
-setup   reset, idle, look
-lines   25
+setup   reset, idle, look, backdrop, camera, room
+lines   39
   1  [hello]こんばんは。今日は、わたしが動いている仕組みそのものの話をします。
-      stage camera=bust backdrop=dusk room=room
+  2  [explain]この土台は hashidate といいます。ブラウザの中にわたしを描いて、外から一手ずつ指示を受け取る。やっていることはそれだけです。
   …
 ```
 
 ## The demo
 
-`show/scripts/demo.yaml` is the runtime introducing itself, in about two minutes. It is also a worked example: every feature it talks about it also uses, so the cue markup is demonstrated mid-sentence, the shot changes on the line that mentions shots, and the acoustic changes on the line that mentions acoustics.
+`show/scripts/demo.yaml` is the runtime introducing itself, in about three and a half minutes. It is also a worked example: every feature it talks about it also uses, so the cue markup is demonstrated mid-sentence, the shot changes on the line that mentions shots, and the acoustic changes on the line that mentions acoustics.
 
 It names no avatar, no drawn expression and no overlay. Those are one model's data, and a fresh checkout has no model in it, so a demo that used them would run on one machine only.
 

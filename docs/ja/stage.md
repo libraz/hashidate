@@ -6,7 +6,7 @@
 
 `dusk` / `night` / `morning` / `rain` の 4 つですが、4 つの部屋ではなく 1 つの部屋を 4 通りに照らしたものです。躯体も窓も家具の大半も共有していて、違うのは光がどこから来るか、その色温度、そして画面のどこに最も明るい値と最も暗い値が落ちるかだけです。背景は顔の後ろで 2 時間もたなければならないので、配色ではなく明度の構造で組んでいます。
 
-部屋の躯体、照明、表面（漆喰、フローリング、織りの布、窓の外）は、起動時にコードから手続き的に生成します。ビューアはローカルにある家具の GLB も読み込めます。対象は `gothic-bed.glb`、`gothic-commode.glb`、`sofa.glb`、`pillows.glb` の 4 つです。これらは git の管理対象外で、新しいチェックアウトには存在しないため、家具は実行時に任意で用意するデータです。
+部屋の躯体と照明は、起動時にコードから手続き的に生成します。表面（漆喰、フローリング、織りの布）と窓の外は `public/textures/` に置いた git 管理の JPG で、README で ambientCG と Poly Haven のクレジットを示しています。ビューアは `src/viewer/scene/backdrop/assets/` にあるローカルの家具 GLB も 12 個読み込めます。対象は `gothic-bed.glb`、`gothic-commode.glb`、`sofa.glb`、`pillows.glb`、`potted-plant.glb`、`round-table.glb`、`tea-set.glb`、`vase-tall.glb`、`vase-jug.glb`、`photo-frame.glb`、`wall-clock.glb`、`wicker-basket.glb` です。これらは git の管理対象外で、新しいチェックアウトには存在しないため、家具は実行時に任意で用意するデータです。
 
 指定は URL です。OBS のブラウザソースに渡すのはこのアドレスそのものです。
 

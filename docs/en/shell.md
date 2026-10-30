@@ -39,7 +39,7 @@ with HASHIDATE_CONTROL_PORT.
 
 That check exists because two checkouts answer `/api/state` identically, so adopting the wrong one would give an operator two windows loaded from another build and a menu that opens *this* checkout's show directories while driving another, with no error anywhere. The failure would present as a renderer that will not come up.
 
-A second `yarn shell` does not start a second application. It raises the windows of the one already running, stage first and panel last, so the panel is the one with focus.
+A second `yarn shell` does not start a second application. It raises the windows of the one already running in the same checkout, stage first and panel last, so the panel is the one with focus.
 
 ## Closing and crashing
 
@@ -93,8 +93,8 @@ It costs a reload: the mute is on the URL — `/monitor/?mute=1` — rather than
 
 | What | Where | Notes |
 |---|---|---|
-| Window placement and the stage mute | `shell-state.json`, beside the Electron profile | macOS: `~/Library/Application Support/hashidate/`. A rectangle that no longer lands on any current display is discarded rather than restored |
-| The control server's output | `control.log`, in Electron's log directory | macOS: `~/Library/Logs/hashidate/`. Appended, so a crash loop keeps its whole history |
+| Window placement and the stage mute | `shell-state.json`, beside the Electron profile | macOS: `~/Library/Application Support/hashidate/<checkout id>/`, where the id is a short hash of the checkout's path, so two checkouts neither share state nor raise each other's windows. A rectangle that no longer lands on any current display is discarded rather than restored |
+| The control server's output | `control.log`, in Electron's log directory | macOS: `~/Library/Logs/hashidate/<checkout id>/`. Appended, so a crash loop keeps its whole history |
 | The sidecar's output | `speech.log`, beside it | Where a model that failed to load reports it |
 
 Those two log files are where to look for "there is no sound" and "the renderer never came up".

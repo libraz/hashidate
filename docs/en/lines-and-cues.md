@@ -81,7 +81,7 @@ The segment ends here. [@bgm set {"action":"stop"}]
 
 Unknown fields, including unknown nested fields, are rejected. Empty patches at any level are rejected, as are command-envelope and server-stamped fields such as `cmd`, `id`, `revision`, `transport`, `position`, and `at`. Invalid JSON or an out-of-range value rejects the line before it is queued. The square brackets remain reserved delimiters and are not spoken.
 
-A cue carries no `side`, so a movement started mid-sentence draws its hand as it always has. A line that needs a particular hand names the movement in the line's own `gesture` or `perform` and pins it there — see [Which hand](commands.md#which-hand).
+A cue carries no `side` of its own; a gesture or performance started mid-sentence plays under the line's `side`. A line that needs a particular hand pins `side` on the line, and its cues follow it. When the line leaves it absent, the server draws one for the line, so every renderer plays the same hand — see [Which hand](commands.md#which-hand).
 
 Camera, slide, layout, and structured BGM cues act at the point in the line where they occur. `room`, `backdrop`, and `deck` remain line-start `stage` setup because they describe the state for the line rather than a point inside it; `place` can be written either way. The short BGM transport cues use the current fade settings; use a structured patch when the cue itself must change volume, looping, fade durations, or libsonare DSP. Relative slides are not inline cues; use an absolute page.
 

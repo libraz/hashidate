@@ -41,6 +41,7 @@ Everything a source is configured *as* rides on the address, because a browser s
 | `size` | `1920x1080` | fill the window | The render size in pixels. Match the source size configured in OBS, or the picture is resampled twice |
 | `backdrop` | a set id | flat background | Which room the character is seen in. See [The stage](stage.md#the-set) |
 | `transparent` | `1` | off | Draw nothing behind the character, so OBS composites over a game capture. A set still wins over it |
+| `avatar` | an avatar id | the remembered choice | Pins the avatar the source shows. It wins over the remembered choice, so a link can pin one and a reload cannot drift off it |
 | `deck` | a document id | none | Which document the source opens on. See [Slides](slides.md) |
 | `place` | `bottom-right:0.32x0.6` | full frame | Where the character stands in the frame, as an anchor and two fractions of it. See [The stage](stage.md#where-the-character-stands-in-the-frame) |
 | `mute` | `1` | off | Whether this renderer makes a sound. See below |
@@ -50,7 +51,7 @@ Everything a source is configured *as* rides on the address, because a browser s
 
 Anything unparseable degrades rather than failing: an unknown set is the flat background, a bad `place` is the full frame, an oversized `size` fills the window. A renderer has nowhere to report an error to, because the URL was typed into a field inside OBS, so a typo has to leave something that still streams.
 
-Three of these are the panel's business too: the address behind the bar's OBS source button is composed from `size`, `backdrop`, `deck`, `place` and `transparent`, which is why the panel is where a browser source gets set up rather than a document to copy from.
+Five of these are the panel's business too: the address behind the bar's OBS source button is composed from `size`, `backdrop`, `deck`, `place` and `transparent`, which is why the panel is where a browser source gets set up rather than a document to copy from.
 
 `/monitor/` passes its own query string straight through to the viewer it holds, so all of these work there as well.
 

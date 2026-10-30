@@ -6,7 +6,7 @@ The room the character is *seen* in, which is a separate axis from the room the 
 
 There are four — `dusk`, `night`, `morning`, `rain` — and they use one room lit four ways rather than four rooms: the shell, the window and most of the furniture are shared, and what differs is where the light comes from, its colour temperature, and where the brightest and darkest values fall in the frame. A backdrop has to hold up behind a face for two hours, so each is built to a value structure rather than to a colour scheme.
 
-The room shell, lighting and surface textures — plaster, floorboards, woven cloth and what is outside the window — are generated procedurally at startup. The viewer can also load four local furniture GLBs: `gothic-bed.glb`, `gothic-commode.glb`, `sofa.glb` and `pillows.glb`. Those files are ignored by git and absent in a fresh clone, so the furniture is optional runtime data.
+The room shell and lighting are generated procedurally at startup. The surface textures — plaster, floorboards, woven cloth — and the views through the window are tracked JPGs in `public/textures/`, credited to ambientCG and Poly Haven in the README. The viewer can also load twelve local furniture GLBs from `src/viewer/scene/backdrop/assets/`: `gothic-bed.glb`, `gothic-commode.glb`, `sofa.glb`, `pillows.glb`, `potted-plant.glb`, `round-table.glb`, `tea-set.glb`, `vase-tall.glb`, `vase-jug.glb`, `photo-frame.glb`, `wall-clock.glb` and `wicker-basket.glb`. Those files are ignored by git and absent in a fresh clone, so the furniture is optional runtime data.
 
 Set it on the URL, which is what a browser source in OBS is given:
 

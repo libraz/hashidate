@@ -99,14 +99,15 @@ The control server takes eight flags, all of them paths except the first:
 | `--bgm` | `show/bgm` | The music library. See [Background music](bgm.md) |
 | `--recordings` | `show/recordings` | Where a take is written. See [Recording](recording.md) |
 
-Six environment variables, read by whichever process needs them:
+Seven environment variables, read by whichever process needs them:
 
 | Variable | Read by | What it does |
 |---|---|---|
-| `HASHIDATE_CONTROL_PORT` | the native shell, `make dev`, `make stop` | The control port, where `--port` is not available |
+| `HASHIDATE_CONTROL_PORT` | the control server, the vite proxy, the native shell, `make dev`, `make stop` | The control port. The control server's own `--port` takes precedence |
 | `HASHIDATE_VOICE_DIR` | `make voice`, the sidecar | Moves the reference clips and their encoded latents, including out of the repository |
 | `HASHIDATE_TTS_SOCKET` | the control server, the native shell, the sidecar | Where the voice answers. `make` makes a relative path absolute against the repository root; outside `make`, give an absolute path, because each process resolves a relative one from its own working directory |
 | `HASHIDATE_TTS_MODEL` | the sidecar | Which checkpoint the voice runs: `small` (default), `large` or `mf`. See [Speech](speech.md) |
+| `HASHIDATE_TTS_SPEAKER` | the sidecar | What the voice is conditioned on: `latents` (default), the encoded reference clips, or `embedding`, a `voice.speaker.safetensors` placed beside them. See [Speech](speech.md) |
 | `HASHIDATE_TTS_PORT` | the control server, the native shell | Points the proxy at `127.0.0.1` on a port instead of a socket, for a stand-in written as an ordinary HTTP service. See [Speech](speech.md#using-a-different-voice) |
 | `HASHIDATE_LOCALE` | Node processes, including the CLI and control server | Selects `en` or `ja`. Browser pages use their saved language selection or browser language instead |
 

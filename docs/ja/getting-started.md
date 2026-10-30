@@ -99,14 +99,15 @@ BGM は任意で、取り込み作業は要りません。`.mp3` または `.fla
 | `--bgm` | `show/bgm` | BGM ライブラリ。[BGM](bgm.md)を参照してください |
 | `--recordings` | `show/recordings` | 録画の書き出し先。[録画](recording.md)を参照してください |
 
-環境変数は 6 つで、それぞれ必要とするプロセスが読みます。
+環境変数は 7 つで、それぞれ必要とするプロセスが読みます。
 
 | 変数 | 読む側 | 何をするか |
 |---|---|---|
-| `HASHIDATE_CONTROL_PORT` | ネイティブシェル、`make dev`、`make stop` | 制御ポート。`--port` を渡せない立場のものが使います |
+| `HASHIDATE_CONTROL_PORT` | 制御サーバ、vite のプロキシ、ネイティブシェル、`make dev`、`make stop` | 制御ポート。制御サーバ自身の `--port` が指定されていればそちらが優先されます |
 | `HASHIDATE_VOICE_DIR` | `make voice`、サイドカー | 参照クリップと、そこから作った潜在表現の置き場所ごと移します。リポジトリの外へも移せます |
 | `HASHIDATE_TTS_SOCKET` | 制御サーバ、ネイティブシェル、サイドカー | 声が応答する場所。`make` 経由なら、相対パスはリポジトリのルート基準の絶対パスにされます。`make` を通さない場合は絶対パスで渡してください。各プロセスが相対パスを自分の作業ディレクトリから解決するためです |
 | `HASHIDATE_TTS_MODEL` | サイドカー | 声が使うチェックポイント。`small`（既定）、`large`、`mf` のいずれかです。[音声](speech.md)を参照してください |
+| `HASHIDATE_TTS_SPEAKER` | サイドカー | 声を何で条件付けるか。`latents`（既定、エンコード済みの参照クリップ）か、隣に置いた `voice.speaker.safetensors` を使う `embedding` のどちらかです。[音声](speech.md)を参照してください |
 | `HASHIDATE_TTS_PORT` | 制御サーバ、ネイティブシェル | 中継先をソケットではなく `127.0.0.1` の指定ポートにします。ふつうの HTTP サービスとして書かれた代役のためのものです。[音声](speech.md#別の声を使う)を参照してください |
 | `HASHIDATE_LOCALE` | CLI・制御サーバなどの Node プロセス | `en` か `ja` を選びます。ブラウザ画面では保存済みの言語選択、またはブラウザの言語を使います |
 

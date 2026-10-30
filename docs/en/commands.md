@@ -34,15 +34,16 @@ Every command goes to `POST /api/command`, one at a time or several under `batch
 
 ## What `ctl` adds
 
-`yarn ctl` is a thin client for the table above, so `yarn ctl camera bust` is a `camera` command and nothing else. Eight of its verbs are not commands: they read the API, or they do something in the terminal that no renderer needs to hear about.
+`yarn ctl` is a thin client for the table above, so `yarn ctl camera bust` is a `camera` command and nothing else. Nine of its verbs are not commands: they read the API, or they do something in the terminal that no renderer needs to hear about. `bgm list`, the read-only sub-verb of `bgm`, is the same kind.
 
 | `yarn ctl …` | What it is |
 |---|---|
 | `vocab` | `GET /api/vocabulary` — what this avatar can be asked for, including backdrops, voice presets and wear presets. The object to paste into a system prompt |
-| `state` | `GET /api/state` — the snapshot, printed. Reports when no renderer is attached |
+| `state` | `GET /api/state` — the renderer's state beside the server's own: `paused`, `recording`, `speech`, `bgm`, `bloom`, `slides` and the queue length. Reports when no renderer is attached |
 | `watch` | The event tail, followed until Ctrl-C. Shows the order turns actually happen in |
 | `decks` | The documents on disk, with their page counts. See [Slides](slides.md) |
-| `motions` | The gestures in `show/motions/`, with any file that would not parse and why. See [Motions](motions.md) |
+| `motions` | The gestures in the motions directory (`show/motions/` unless `--motions` moved it), with any file that would not parse and why. See [Motions](motions.md) |
+| `avatars` | The avatars the server found in `avatars/`, the files it rejected, and what the renderer loaded. See [Avatars](avatars.md) |
 | `play` | Run a script. `--check` validates it with no server running. See [Scripts](scripts.md) |
 | `hold` / `resume` | The two halves of the `pause` command, spelled apart. See [Recording](recording.md) |
 
@@ -81,7 +82,7 @@ yarn ctl say "こっちだよ" --gesture pointUp --side L
 
 It is one field per line rather than one per field, because a turn plays one movement — `gesture`'s, or the one `perform` names — and a hand written twice could only disagree with itself. On a two-handed gesture there is no hand to choose, and `side` fixes which way the head turns instead. A [motion loaded from a file](motions.md) states `L` or `R` itself and ignores it.
 
-Inline cues do not carry it. `[@gesture peace]` mid-sentence draws its hand as before; a line that needs a particular one names the movement on the line rather than inside it.
+Inline cues do not carry it of their own: a `[@gesture peace]` or `[@perform nice]` mid-sentence plays under the line's `side`. A line that pins `side` pins those hands too; a line that leaves it absent has one drawn by the server, once for every renderer, whenever its movement or any of its cues would consult it.
 
 ## What is not in the vocabulary
 
