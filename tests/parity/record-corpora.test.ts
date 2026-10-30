@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { HAND_CONTACT, JOINTS } from '@/engine/anatomy';
+import { FINGER_WIDTH, HAND_CONTACT, JOINTS } from '@/engine/anatomy';
 import { ArmAnatomy } from '@/engine/anatomy/arm';
 import * as armFrame from '@/engine/anatomy/arm-frame';
 import * as strain from '@/engine/anatomy/strain';
@@ -13,7 +13,20 @@ import * as armPath from '@/engine/rig/arm-path';
 import * as armQp from '@/engine/rig/arm-qp';
 import * as armRoute from '@/engine/rig/arm-route';
 import { ElbowSearch } from '@/engine/rig/elbow';
+import { type FingerAxes, solveFingerAxes } from '@/engine/rig/finger-axes';
+import { FingerClearance, handFrame } from '@/engine/rig/finger-clearance';
 import { ShoulderGirdle } from '@/engine/rig/girdle';
+import {
+  captureHandContactGeometry,
+  captureHandGeometry,
+  type HandContactCalibration,
+  type HandGeometryCalibration,
+  type HandGeometrySample,
+  makeHandGeometrySample,
+  sampleHandContact,
+  sampleHandGeometry,
+} from '@/engine/rig/hand-geometry';
+import { Hands } from '@/engine/rig/hands';
 import { GroundedLegs } from '@/engine/rig/legs';
 import { type PointRequest, PointSolver } from '@/engine/rig/point';
 import {
@@ -27,7 +40,15 @@ import {
 } from '@/engine/rig/reach';
 import { SkeletonRefresh } from '@/engine/rig/skeleton';
 import { type OffsetSlot, SpineOffsets } from '@/engine/rig/spine';
-import { type BoneSlot, FINGER_NAMES, type Side, type Vec3Tuple } from '@/engine/types';
+import {
+  type BoneSlot,
+  FINGER_NAMES,
+  type FingerSpec,
+  type HandContact,
+  type JointTable,
+  type Side,
+  type Vec3Tuple,
+} from '@/engine/types';
 import { makeFnv64 } from '../../tools/parity/hash';
 import { withCoreMath } from '../helpers/core-math';
 import {
@@ -73,6 +94,15 @@ import { must } from '../helpers/must';
  * `hash`, a 64-bit FNV-1a over every node's position, quaternion, scale, matrix, matrixWorld and
  * matrixWorldNeedsUpdate (high and low 32 bits), and a step that writes bones lists their state
  * as `touched`. `slot` names one of four `ArmSolution`s the elbow and point steps carry.
+ *
+ * `rig-b-battery` runs the finger axes, `Hands`, the hand geometry and contact landmarks,
+ * `FingerClearance` and the arm-configuration functions the same way, with the same `set`,
+ * `update` and `hash`. Its inputs are worked out on a second copy of the avatar, so the recorded
+ * tree sees only the steps. A structure too large to list (the axes, a captured calibration) is
+ * a `digest`, FNV-1a over its numbers in a fixed order; lists of points, rotations and numbers
+ * share `vecs`, `quats` and `nums`, and `touched` gives only quaternions, which keeps the stride
+ * inside the size limit. A clearance step places a hand at the mouth with its fingers aimed in,
+ * and the recording checks that one turned the hand and one curled a finger.
  *
  * Without `HASHIDATE_RECORD_CORPORA=1` this checks the files against a fresh recording;
  * with it, it writes them.
@@ -1596,6 +1626,823 @@ function recordRigBattery(): Recorded {
   return { json: `${JSON.stringify(index, null, 1)}\n`, bin: f64Bytes(values) };
 }
 
+// --- the rig-b battery --------------------------------------------------------------------
+
+const RIG_B_KINDS = [
+  'axes.solve',
+  'hands.build',
+  'hands.curlHand',
+  'hands.curlFinger',
+  'update',
+  'geometry.capture',
+  'geometry.sample',
+  'contact.capture',
+  'contact.sample',
+  'clearance.build',
+  'clearance.note',
+  'clearance.curl',
+  'arm.calibrate',
+  'arm.forward',
+  'arm.bound',
+  'arm.inverse',
+  'hand.frame',
+] as const;
+type RigBKind = (typeof RIG_B_KINDS)[number];
+const RIG_B_KIND = oneOf(RIG_B_KINDS);
+const fingerSpec = obj(FINGER_NAMES.map((f) => [f, opt(num)] as const));
+const contactSurface = oneOf(['center', 'pad', 'back']);
+const calibrationInputFlat = obj([
+  [
+    'upper',
+    obj([
+      ['axis', vec3],
+      ['rest', quat],
+      ['front', vec3],
+    ]),
+  ],
+  [
+    'lower',
+    obj([
+      ['axis', vec3],
+      ['rest', quat],
+    ]),
+  ],
+  [
+    'hand',
+    obj([
+      ['axis', vec3],
+      ['rest', quat],
+      ['palm', vec3],
+    ]),
+  ],
+  ['radialSign', num],
+]);
+const nodeQuaternion = obj([
+  ['node', num],
+  ['quaternion', quat],
+]);
+/** The joint tables `arm.calibrate` captures with, by index. */
+const ARM_JOINTS: readonly JointTable[] = [
+  JOINTS,
+  {
+    ...JOINTS,
+    wrist: {
+      ...JOINTS.wrist,
+      dofs: {
+        ...JOINTS.wrist.dofs,
+        flexion: { ...JOINTS.wrist.dofs.flexion, max: [-Math.PI / 2, Math.PI / 2] },
+        deviation: { ...JOINTS.wrist.dofs.deviation, max: [0, 0] },
+      },
+    },
+  },
+  {
+    ...JOINTS,
+    elbow: {
+      ...JOINTS.elbow,
+      dofs: {
+        ...JOINTS.elbow.dofs,
+        rotation: { ...JOINTS.elbow.dofs.rotation, max: [-7, 7] },
+      },
+    },
+  },
+];
+const CALIBRATION_REFUSALS = [
+  'arm calibration axis must be nonzero',
+  'upper humeral front must not parallel its axis',
+  'hand palm normal must not parallel its axis',
+  'wrist hard ranges must stay inside a 90 degree combined bend',
+] as const;
+
+/** A value that may be absent, for a digest: 0 alone, or 1 and its components. */
+function present(into: number[], v: THREE.Vector3 | number | null | undefined): void {
+  if (v === null || v === undefined) into.push(0);
+  else if (typeof v === 'number') into.push(1, v);
+  else into.push(1, v.x, v.y, v.z);
+}
+
+function digest(values: readonly number[], out: Field[]): void {
+  const h = makeFnv64();
+  h.f64s(values);
+  const d = h.digest();
+  tuple2([Number.parseInt(d.slice(0, 8), 16), Number.parseInt(d.slice(8), 16)], 'digest', out);
+}
+
+/**
+ * The base avatar's finger and arm-configuration modules through a fixed run of their calls;
+ * see the file comment.
+ */
+function recordRigBBattery(): Recorded {
+  const fixture = must(
+    DIRECTOR_FIXTURES.find((f) => f.variant === BASE_VARIANT),
+    'a base-variant fixture',
+  );
+  const { root, profile } = prepareFixture(fixture);
+  root.updateMatrixWorld(true);
+  // Inputs are worked out on a second copy: a world read updates the matrices on its way, so
+  // reading the recorded tree between steps would change what the next step's hash sees.
+  const twin = prepareFixture(fixture);
+  twin.root.updateMatrixWorld(true);
+  const nodes: THREE.Object3D[] = [];
+  root.traverse((o) => {
+    nodes.push(o);
+  });
+  const twinNodes: THREE.Object3D[] = [];
+  twin.root.traverse((o) => {
+    twinNodes.push(o);
+  });
+  const at = (o: THREE.Object3D) => {
+    const i = nodes.indexOf(o);
+    if (i < 0) throw new Error(`${o.name} is not under the root`);
+    return i;
+  };
+  const p = twin.profile;
+  const twinBone = (slot: BoneSlot) => must(p.bones[slot], slot);
+  const cases: Array<{ input: Field[]; output: Field[] }> = [];
+
+  const hash = (out: Field[]) => {
+    const h = makeFnv64();
+    for (const o of nodes) {
+      h.f64s(o.position.toArray());
+      h.f64s(o.quaternion.toArray());
+      h.f64s(o.scale.toArray());
+      h.f64s(o.matrix.elements);
+      h.f64s(o.matrixWorld.elements);
+      h.bool(o.matrixWorldNeedsUpdate);
+    }
+    const d = h.digest();
+    tuple2([Number.parseInt(d.slice(0, 8), 16), Number.parseInt(d.slice(8), 16)], 'hash', out);
+  };
+  const handBone = (s: Side) => must(profile.bones[`hand.${s}`], `hand.${s}`);
+  const fingerBones = (s: Side) =>
+    FINGER_NAMES.flatMap((f) => profile.fingerBones[`${f}.${s}`] ?? []);
+  const touched = (bones: THREE.Object3D[], out: Field[]) =>
+    arr(nodeQuaternion)(
+      bones.map((b) => ({ node: at(b), quaternion: b.quaternion })),
+      'touched',
+      out,
+    );
+  /** Write `set` (a node of the twin, by index) and run the full pass when asked, then the call. */
+  const step = (
+    kind: RigBKind,
+    setup: { set?: [number, THREE.Vector3, THREE.Quaternion]; update?: boolean },
+    input: Field[],
+    call: (output: Field[]) => void,
+  ) => {
+    const head: Field[] = [];
+    RIG_B_KIND(kind, 'kind', head);
+    const set = setup.set;
+    opt(nodeWrite)(
+      set ? { node: set[0], position: set[1], quaternion: set[2] } : null,
+      'set',
+      head,
+    );
+    bool(setup.update ?? false, 'update', head);
+    if (set) {
+      nodes[set[0]].position.copy(set[1]);
+      nodes[set[0]].quaternion.copy(set[2]);
+    }
+    if (setup.update) root.updateMatrixWorld(true);
+    const output: Field[] = [];
+    call(output);
+    hash(output);
+    cases.push({ input: [...head, ...input], output });
+  };
+
+  // --- inputs, from the twin ---
+  const twinAxes = solveFingerAxes(p);
+  const twinAnat = new ArmAnatomy(p);
+  expect(twinAnat.update()).toBe(true);
+  const contextOf = (s: Side): armConfiguration.ArmForwardContext => {
+    const upper = twinBone(`upperArm.${s}`);
+    upper.updateWorldMatrix(true, false);
+    return {
+      side: s,
+      shoulder: upper.getWorldPosition(new THREE.Vector3()),
+      upperLength: p.limb[`upper.${s}`],
+      lowerLength: p.limb[`lower.${s}`],
+      up: twinAnat.up.clone(),
+      right: twinAnat.right.clone(),
+      forward: twinAnat.fwd.clone(),
+      upperParentWorld: must(upper.parent, 'upper parent').getWorldQuaternion(
+        new THREE.Quaternion(),
+      ),
+    };
+  };
+  const contexts = { L: contextOf('L'), R: contextOf('R') };
+  /** What `ArmDriver.create` hands `captureArmCalibration`, with the front `Rig` derives. */
+  const calibrationInputOf = (s: Side) => {
+    const upper = twinBone(`upperArm.${s}`);
+    const lower = twinBone(`lowerArm.${s}`);
+    const hand = twinBone(`hand.${s}`);
+    const chest = twinBone('chest');
+    const parentWorld = must(upper.parent, 'upper parent').getWorldQuaternion(
+      new THREE.Quaternion(),
+    );
+    const upperWorld = upper.getWorldQuaternion(new THREE.Quaternion());
+    const lowerWorld = lower.getWorldQuaternion(new THREE.Quaternion());
+    const handWorld = hand.getWorldQuaternion(new THREE.Quaternion());
+    const along = p.restDir[`upperArm.${s}`].clone().applyQuaternion(upperWorld);
+    const front = must(p.body, 'body frame')
+      .forward.clone()
+      .applyQuaternion(chest.getWorldQuaternion(new THREE.Quaternion()));
+    front.addScaledVector(along, -front.dot(along));
+    front.normalize().applyQuaternion(upperWorld.clone().invert());
+    return {
+      upper: {
+        axis: p.restDir[`upperArm.${s}`].clone(),
+        rest: parentWorld.clone().invert().multiply(upperWorld),
+        front,
+      },
+      lower: {
+        axis: p.restDir[`lowerArm.${s}`].clone(),
+        rest: upperWorld.clone().invert().multiply(lowerWorld),
+      },
+      hand: {
+        axis: p.restDir[`hand.${s}`].clone(),
+        rest: lowerWorld.clone().invert().multiply(handWorld),
+        palm: must(twinAxes.palmLocal[s], `palm ${s}`).clone(),
+      },
+      radialSign: twinAnat.radialSign[s],
+    };
+  };
+  /** The hand set `depth` hand lengths in front of the mouth, its fingers aimed into the face. */
+  const handAtFace = (
+    s: Side,
+    depth: number,
+    across: number,
+  ): [number, THREE.Vector3, THREE.Quaternion] => {
+    const head = twinBone('head');
+    const lower = twinBone(`lowerArm.${s}`);
+    const hand = twinBone(`hand.${s}`);
+    const face = must(p.face, 'face frame');
+    head.updateWorldMatrix(true, false);
+    const mouth = (face.mouth ?? face.origin).clone().applyMatrix4(head.matrixWorld);
+    const fwd = face.forward.clone().transformDirection(head.matrixWorld);
+    const right = face.right.clone().transformDirection(head.matrixWorld);
+    const length = p.limb[`tip.${s}.middle`];
+    const target = mouth.addScaledVector(fwd, depth * length).addScaledVector(right, across);
+    const aim = fwd
+      .clone()
+      .negate()
+      .addScaledVector(right, -across * 4)
+      .normalize();
+    const handWorld = hand.getWorldQuaternion(new THREE.Quaternion());
+    const axis = p.restDir[`hand.${s}`].clone().applyQuaternion(handWorld).normalize();
+    const world = new THREE.Quaternion().setFromUnitVectors(axis, aim).multiply(handWorld);
+    lower.updateWorldMatrix(true, false);
+    const local = lower.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(world);
+    return [twinNodes.indexOf(hand), lower.worldToLocal(target.clone()), local];
+  };
+
+  withCoreMath(() => {
+    const rest = new Map<THREE.Object3D, THREE.Quaternion>();
+    for (const o of nodes) rest.set(o, o.quaternion.clone());
+    const restOf = (b: THREE.Bone) => must(rest.get(b), b.name);
+    const joints = profile.anatomy ?? JOINTS;
+    const clearanceOf = (s: Side) => 0.5 * FINGER_WIDTH * (profile.limb?.[`pitch.${s}`] ?? 0);
+
+    // --- finger axes and curls ---
+    let solved: FingerAxes | null = null;
+    step('axes.solve', {}, [], (out) => {
+      solved = solveFingerAxes(profile);
+      const v: number[] = [];
+      for (const s of ['L', 'R'] as const) {
+        for (const f of FINGER_NAMES) {
+          for (const b of profile.fingerBones[`${f}.${s}`] ?? []) {
+            present(v, (solved as FingerAxes).axes.get(b));
+            present(v, (solved as FingerAxes).splayAxes.get(b));
+            present(v, (solved as FingerAxes).oppositionSign.get(b));
+          }
+        }
+      }
+      for (const s of ['L', 'R'] as const) present(v, (solved as FingerAxes).palmLocal[s]);
+      digest(v, out);
+    });
+    const axes = must<FingerAxes>(solved, 'finger axes');
+    let built: Hands | null = null;
+    step('hands.build', {}, [], () => {
+      built = new Hands(profile, joints, restOf);
+    });
+    const hands = must<Hands>(built, 'hands');
+
+    const curlHand = (s: Side, spec: FingerSpec, spread: FingerSpec) => {
+      const input: Field[] = [];
+      side(s, 'side', input);
+      fingerSpec(spec, 'spec', input);
+      fingerSpec(spread, 'spread', input);
+      step('hands.curlHand', {}, input, (out) => {
+        hands.curlHand(s, spec, spread);
+        touched(fingerBones(s), out);
+      });
+    };
+    curlHand('R', { index: 0.6, middle: 0.3 }, {});
+    // Past the opposition ramp, with every knuckle splayed.
+    curlHand(
+      'R',
+      { thumb: 0.8, index: 1, middle: 1, ring: 1, little: 1 },
+      { thumb: 0.2, index: 0.12, middle: -0.08 },
+    );
+    curlHand('L', { thumb: 1, index: 0.2, ring: 1.4, little: -0.5 }, { thumb: -0.1, little: 0.3 });
+    curlHand('L', { thumb: 0.3 }, { index: 0.4, little: 0.4 });
+    step('update', {}, [], () => {
+      root.updateMatrixWorld(true);
+    });
+    for (const [f, s, amount, spread] of [
+      ['thumb', 'R', 0.5, 0.1],
+      ['thumb', 'L', 1, 0],
+      ['index', 'L', -5, 0.2],
+      ['little', 'R', 5, -0.3],
+      ['ring', 'R', 0.4, 0],
+    ] as const) {
+      const input: Field[] = [];
+      finger(f, 'finger', input);
+      side(s, 'side', input);
+      num(amount, 'amount', input);
+      num(spread, 'spreadAmount', input);
+      step('hands.curlFinger', {}, input, (out) => {
+        hands.curlFinger(f, s, amount, spread);
+        touched(fingerBones(s), out);
+      });
+    }
+    step('update', {}, [], () => {
+      root.updateMatrixWorld(true);
+    });
+
+    // --- hand geometry and contact landmarks ---
+    const geometry: Partial<Record<Side, HandGeometryCalibration>> = {};
+    const samples: Partial<Record<Side, HandGeometrySample>> = {};
+    for (const s of ['L', 'R'] as const) {
+      const metricScale = twinBone(`hand.${s}`).getWorldScale(new THREE.Vector3()).x;
+      const input: Field[] = [];
+      side(s, 'side', input);
+      num(metricScale, 'metricScale', input);
+      step('geometry.capture', {}, input, (out) => {
+        const g = captureHandGeometry(profile, s, rest, axes, joints, metricScale);
+        geometry[s] = g;
+        samples[s] = makeHandGeometrySample(g);
+        const v: number[] = [];
+        present(v, g.handPresent === undefined ? null : g.handPresent ? 1 : 0);
+        v.push(g.metricScale, g.points.length);
+        for (const point of g.points) {
+          v.push(FINGER_NAMES.indexOf(point.finger), point.jointIndex, point.tip ? 1 : 0);
+          if (point.nodes) {
+            v.push(1, point.nodes.length);
+            for (const node of point.nodes) {
+              v.push(...node.position.toArray(), ...node.rest.toArray(), ...node.scale.toArray());
+              present(v, node.curlAxis);
+              present(v, node.splayAxis);
+              present(v, node.jointIndex);
+            }
+          } else v.push(0);
+          present(v, point.previousPoint);
+          present(v, point.lastPoint);
+        }
+        digest(v, out);
+      });
+    }
+    for (const [s, curls, spread] of [
+      ['R', {}, {}],
+      ['R', { thumb: 0.8, index: 1, middle: 1, ring: 1, little: 1 }, {}],
+      ['L', { thumb: 0.3, index: 0, middle: 0, ring: 0.85, little: 0.85 }, { index: 0.12 }],
+      // A closed thumb: the sample leaves its distal turn out, where `Hands` puts it in.
+      ['L', { thumb: 1 }, { thumb: 0.2 }],
+      ['R', { index: -0.5, middle: 1.3 }, { middle: 0.2, ring: -0.1 }],
+    ] as const) {
+      const input: Field[] = [];
+      side(s, 'side', input);
+      fingerSpec(curls, 'spec', input);
+      fingerSpec(spread, 'spread', input);
+      step('geometry.sample', {}, input, (out) => {
+        const sample = sampleHandGeometry(must(geometry[s], s), curls, spread, must(samples[s], s));
+        arr(vec3)(
+          sample.points.map((point) => point.position),
+          'vecs',
+          out,
+        );
+      });
+    }
+    const contacts: HandContactCalibration[] = [];
+    for (const [slot, s, palm] of [
+      [0, 'L', must(twinAxes.palmLocal.L, 'palm L')],
+      [1, 'R', must(twinAxes.palmLocal.R, 'palm R')],
+      [2, 'R', new THREE.Vector3()],
+    ] as const) {
+      const input: Field[] = [];
+      num(slot, 'slot', input);
+      side(s, 'side', input);
+      opt(vec3)(palm, 'palm', input);
+      step('contact.capture', {}, input, (out) => {
+        const g = must(geometry[s], s);
+        const c = captureHandContactGeometry(g, palm);
+        contacts[slot] = c;
+        const v: number[] = [];
+        present(v, c.palmNormal);
+        present(v, c.palmCenter);
+        v.push(c.segments.length);
+        for (const segment of c.segments) {
+          v.push(
+            FINGER_NAMES.indexOf(segment.finger),
+            segment.segment,
+            g.points.indexOf(segment.start),
+            g.points.indexOf(segment.end),
+          );
+          present(v, segment.normal);
+        }
+        digest(v, out);
+      });
+    }
+    const fist = { thumb: 0.8, index: 1, middle: 1, ring: 1, little: 1 };
+    const clear = clearanceOf('R');
+    for (const [slot, curls, spread, selector, clearance] of [
+      [1, {}, {}, { kind: 'palm', region: 'heel' }, clear],
+      [
+        1,
+        { middle: 0.8 },
+        { middle: 0.1 },
+        { kind: 'palm', region: 'center', surface: 'pad' },
+        clear,
+      ],
+      [0, {}, {}, { kind: 'palm', region: 'center', surface: 'back' }, clear],
+      [
+        1,
+        { middle: 0.8 },
+        {},
+        { kind: 'finger', finger: 'middle', segment: 1, fraction: 0.6, surface: 'pad' },
+        clear,
+      ],
+      [
+        0,
+        fist,
+        { index: 0.12 },
+        { kind: 'finger', finger: 'index', segment: 0, fraction: 0.37, surface: 'back' },
+        clear,
+      ],
+      [1, { thumb: 0.9 }, {}, { kind: 'finger', finger: 'thumb', segment: 1, fraction: 1 }, 0],
+      [1, {}, {}, { kind: 'finger', finger: 'ring', segment: 0, fraction: 1.1 }, 0],
+      [1, {}, {}, { kind: 'finger', finger: 'index', segment: 2, fraction: 0.5 }, 0],
+      [2, {}, {}, { kind: 'palm', region: 'center', surface: 'pad' }, clear],
+      [
+        1,
+        {},
+        {},
+        { kind: 'finger', finger: 'little', segment: 0, fraction: 0.5, surface: 'pad' },
+        -1,
+      ],
+      [1, {}, {}, { kind: 'finger', finger: 'middle', segment: 0, fraction: Number.NaN }, 0],
+    ] as ReadonlyArray<readonly [number, FingerSpec, FingerSpec, HandContact, number]>) {
+      const sentinel = new THREE.Vector3(9, 8, 7);
+      const input: Field[] = [];
+      num(slot, 'slot', input);
+      fingerSpec(curls, 'spec', input);
+      fingerSpec(spread, 'spread', input);
+      num(selector.kind === 'palm' ? 0 : 1, 'selector.kind', input);
+      num(
+        selector.kind === 'palm' ? ['heel', 'center'].indexOf(selector.region) : 0,
+        'selector.region',
+        input,
+      );
+      num(
+        selector.kind === 'finger' ? FINGER_NAMES.indexOf(selector.finger) : 0,
+        'selector.finger',
+        input,
+      );
+      num(selector.kind === 'finger' ? selector.segment : 0, 'selector.segment', input);
+      num(selector.kind === 'finger' ? selector.fraction : 0, 'selector.fraction', input);
+      opt(contactSurface)(selector.surface, 'selector.surface', input);
+      num(clearance, 'clearance', input);
+      vec3(sentinel, 'outVec', input);
+      step('contact.sample', {}, input, (out) => {
+        const o = sentinel.clone();
+        bool(sampleHandContact(contacts[slot], curls, spread, selector, clearance, o), 'ok', out);
+        vec3(o, 'outVec', out);
+      });
+    }
+
+    // --- finger clearance ---
+    let built2: FingerClearance | null = null;
+    let anat: ArmAnatomy | null = null;
+    step('clearance.build', {}, [], (out) => {
+      anat = new ArmAnatomy(profile);
+      bool(anat.update(), 'ok', out);
+      built2 = new FingerClearance(profile, hands, anat, clearanceOf);
+      num((built2 as FingerClearance).turnMax, 'value', out);
+    });
+    const fingers = must<FingerClearance>(built2, 'finger clearance');
+    const note = (s: Side) => {
+      const input: Field[] = [];
+      side(s, 'side', input);
+      step('clearance.note', {}, input, (out) => {
+        fingers.noteFingers(s);
+        arr(vec3)([...fingers.fingerShape(s)], 'vecs', out);
+        arr(num)([...fingers.fingerFrame(s).elements], 'nums', out);
+      });
+    };
+    note('R');
+    note('L');
+    let turnedOnce = false;
+    let curledOnce = false;
+    for (const [s, depth, across, spec, spread, update] of [
+      ['R', 0.35, 0, {}, {}, false],
+      ['R', 0.6, 0.01, { index: 0.2, middle: 0.4 }, { index: 0.1 }, true],
+      ['L', 0.3, -0.015, fist, {}, false],
+      ['R', 3, 0, {}, {}, false],
+    ] as const) {
+      const set = handAtFace(s, depth, across);
+      const input: Field[] = [];
+      side(s, 'side', input);
+      fingerSpec(spec, 'spec', input);
+      fingerSpec(spread, 'spread', input);
+      step('clearance.curl', { set, update }, input, (out) => {
+        const posed = fingers.curlClearOfFace(s, spec, spread);
+        if (!handBone(s).quaternion.equals(set[2])) turnedOnce = true;
+        if (FINGER_NAMES.some((f) => posed[f] !== ((spec as FingerSpec)[f] ?? 0)))
+          curledOnce = true;
+        arr(num)(
+          FINGER_NAMES.map((f) => must(posed[f], f)),
+          'nums',
+          out,
+        );
+        touched([handBone(s), ...fingerBones(s)], out);
+      });
+      note(s);
+    }
+    // The battery is only worth its bytes if the clearance turned a hand and curled a finger.
+    expect(turnedOnce, 'a clearance turn').toBe(true);
+    expect(curledOnce, 'a clearance curl').toBe(true);
+
+    // --- arm configuration ---
+    const calibrations: armConfiguration.ArmCalibration[] = [];
+    const calibrate = (
+      slot: number,
+      jointsIndex: number,
+      input: ReturnType<typeof calibrationInputOf>,
+    ) => {
+      const fields: Field[] = [];
+      num(slot, 'slot', fields);
+      num(jointsIndex, 'joints', fields);
+      calibrationInputFlat(input, 'calibration', fields);
+      step('arm.calibrate', {}, fields, (out) => {
+        let refusal = -1;
+        try {
+          const c = armConfiguration.captureArmCalibration({
+            ...input,
+            joints: ARM_JOINTS[jointsIndex],
+          });
+          calibrations[slot] = c;
+          const v = [
+            ...c.upper.axis.toArray(),
+            ...c.upper.rest.toArray(),
+            ...c.upper.front.toArray(),
+            ...c.lower.axis.toArray(),
+            ...c.lower.rest.toArray(),
+            ...c.hand.axis.toArray(),
+            ...c.hand.rest.toArray(),
+            ...c.hand.palm.toArray(),
+            c.radialSign,
+          ];
+          digest(v, out);
+        } catch (error) {
+          refusal = CALIBRATION_REFUSALS.indexOf(
+            (error as Error).message as (typeof CALIBRATION_REFUSALS)[number],
+          );
+          expect(refusal, (error as Error).message).toBeGreaterThanOrEqual(0);
+        }
+        bool(refusal < 0, 'ok', out);
+        num(refusal, 'refusal', out);
+      });
+    };
+    calibrate(0, 0, calibrationInputOf('L'));
+    calibrate(1, 0, calibrationInputOf('R'));
+    calibrate(2, 2, calibrationInputOf('R'));
+    calibrate(3, 1, calibrationInputOf('R'));
+    const zeroAxis = calibrationInputOf('R');
+    zeroAxis.upper.axis.set(0, 0, 0);
+    calibrate(3, 0, zeroAxis);
+    const frontAlong = calibrationInputOf('R');
+    frontAlong.upper.front.copy(frontAlong.upper.axis).multiplyScalar(2);
+    calibrate(3, 0, frontAlong);
+    const palmAlong = calibrationInputOf('L');
+    palmAlong.hand.palm.copy(palmAlong.hand.axis);
+    calibrate(3, 0, palmAlong);
+
+    const pose: armConfiguration.ArmConfiguration = {
+      shoulderPlane: 0.41,
+      shoulderLift: 0.72,
+      humeralRotation: 0.38,
+      elbowFlex: 1.1,
+      forearmRoll: 0.52,
+      wristFlex: 0.31,
+      wristDev: -0.19,
+    };
+    const sideOfSlot = (slot: number): Side => (slot === 0 ? 'L' : 'R');
+    const forwardOf = (slot: number, c: armConfiguration.ArmConfiguration) =>
+      armConfiguration.forwardArm(
+        c,
+        calibrations[slot],
+        contexts[sideOfSlot(slot)],
+        armConfiguration.makeArmForwardResult(),
+      );
+    for (const [slot, c] of [
+      [0, pose],
+      [1, pose],
+      [1, { ...pose, wristFlex: 0, wristDev: 0 }],
+      [0, { ...pose, shoulderPlane: Math.PI + 0.01, humeralRotation: 0.35 }],
+      [1, { ...pose, shoulderLift: 1.1, humeralRotation: 2, elbowFlex: 2.8, forearmRoll: 0 }],
+      [2, { ...pose, forearmRoll: 0.3 }],
+      [1, { ...pose, wristFlex: 1.7, wristDev: 0.5 }],
+    ] as const) {
+      const input: Field[] = [];
+      num(slot, 'slot', input);
+      armConfigurationFlat(c, 'configuration', input);
+      forwardContext(contexts[sideOfSlot(slot)], 'context', input);
+      step('arm.forward', {}, input, (out) => {
+        const r = forwardOf(slot, c);
+        arr(vec3)([r.u, r.l, r.h, r.palm, r.elbow, r.wrist], 'vecs', out);
+        arr(quat)(
+          [r.upperWorld, r.lowerWorld, r.handWorld, r.upperLocal, r.lowerLocal, r.handLocal],
+          'quats',
+          out,
+        );
+      });
+    }
+    for (const [slot, c] of [
+      [
+        1,
+        {
+          shoulderPlane: 0,
+          shoulderLift: 1,
+          humeralRotation: Math.PI,
+          elbowFlex: Math.PI,
+          forearmRoll: -Math.PI,
+          wristFlex: Math.PI,
+          wristDev: -Math.PI,
+        },
+      ],
+      [0, { ...pose, shoulderLift: -0.2, humeralRotation: 2, elbowFlex: 2.8 }],
+    ] as const) {
+      const input: Field[] = [];
+      num(slot, 'slot', input);
+      armConfigurationFlat(c, 'configuration', input);
+      step('arm.bound', {}, input, (out) => {
+        const o = { ...pose };
+        armConfiguration.boundArmConfiguration(c, calibrations[slot], o);
+        arr(num)(
+          [
+            o.shoulderPlane,
+            o.shoulderLift,
+            o.humeralRotation,
+            o.elbowFlex,
+            o.forearmRoll,
+            o.wristFlex,
+            o.wristDev,
+          ],
+          'nums',
+          out,
+        );
+      });
+    }
+    const inverse = (
+      slot: number,
+      directions: armConfiguration.ArmDirections,
+      palm: THREE.Vector3 | null,
+      previous: armConfiguration.ArmConfiguration | null,
+      context = contexts[sideOfSlot(slot)],
+    ) => {
+      const start = { ...pose, shoulderPlane: -1 };
+      const input: Field[] = [];
+      num(slot, 'slot', input);
+      armDirections(directions, 'directions', input);
+      opt(vec3)(palm, 'palm', input);
+      forwardContext(context, 'context', input);
+      opt(armConfigurationFlat)(previous, 'previous', input);
+      armConfigurationFlat(start, 'outConf', input);
+      step('arm.inverse', {}, input, (out) => {
+        const o = { ...start };
+        bool(
+          armConfiguration.configurationOfDirections(
+            directions,
+            palm,
+            calibrations[slot],
+            context,
+            previous,
+            o,
+          ),
+          'ok',
+          out,
+        );
+        arr(num)(
+          [
+            o.shoulderPlane,
+            o.shoulderLift,
+            o.humeralRotation,
+            o.elbowFlex,
+            o.forearmRoll,
+            o.wristFlex,
+            o.wristDev,
+          ],
+          'nums',
+          out,
+        );
+      });
+    };
+    const dirs = (r: armConfiguration.ArmForwardResult) => ({
+      upperArm: r.u.clone(),
+      lowerArm: r.l.clone(),
+      hand: r.h.clone(),
+    });
+    const fR = forwardOf(1, pose);
+    inverse(1, dirs(fR), fR.palm.clone(), null);
+    const seam = forwardOf(0, { ...pose, shoulderPlane: -Math.PI + 0.01 });
+    inverse(0, dirs(seam), seam.palm.clone(), { ...pose, shoulderPlane: Math.PI - 0.01 });
+    inverse(1, dirs(fR), null, { ...pose, forearmRoll: 0.73 });
+    const roll = forwardOf(2, { ...pose, forearmRoll: 0.3 });
+    inverse(2, dirs(roll), roll.palm.clone(), { ...pose, forearmRoll: Math.PI * 2 + 0.3 });
+    inverse(1, dirs(roll), roll.palm.clone(), { ...pose, forearmRoll: Math.PI * 2 + 0.3 });
+    const fL = forwardOf(0, pose);
+    inverse(0, { ...dirs(fL), upperArm: new THREE.Vector3() }, fL.palm.clone(), null);
+    inverse(0, dirs(fL), fL.l.clone(), null);
+    inverse(0, { ...dirs(fL), hand: fL.l.clone().negate() }, fL.palm.clone(), null);
+    inverse(0, dirs(fL), fL.palm.clone(), null, { ...contexts.L, up: new THREE.Vector3() });
+    // Past the elevation ceiling and the humeral stop, as an unbounded request may be.
+    {
+      const ctx = contexts.R;
+      const plane = Math.PI / 2;
+      const elevation = 3.1;
+      const upperArm = ctx.up
+        .clone()
+        .multiplyScalar(-Math.cos(elevation))
+        .addScaledVector(ctx.right, Math.sin(elevation) * Math.cos(plane))
+        .addScaledVector(ctx.forward, Math.sin(elevation) * Math.sin(plane))
+        .normalize();
+      const ref = new THREE.Vector3();
+      const perp = new THREE.Vector3();
+      armFrame.humeralReference(upperArm, ctx.up, ctx.forward, ref);
+      armFrame.lateralReference(upperArm, ref, ctx.up, ctx.forward, ctx.right, perp);
+      const bend = ref.clone().multiplyScalar(Math.cos(2)).addScaledVector(perp, Math.sin(2));
+      const lowerArm = upperArm
+        .clone()
+        .multiplyScalar(Math.cos(2.8))
+        .addScaledVector(bend.normalize(), Math.sin(2.8))
+        .normalize();
+      const palm = ctx.forward.clone().addScaledVector(lowerArm, -ctx.forward.dot(lowerArm));
+      inverse(1, { upperArm, lowerArm, hand: lowerArm.clone() }, palm.normalize(), null);
+    }
+    // A wrist bent past both hard stops.
+    {
+      const base = forwardOf(1, { ...pose, wristFlex: 0, wristDev: 0 });
+      const flex = 1.7;
+      const deviation = 0.5;
+      const angle = Math.hypot(flex, deviation);
+      const radial = new THREE.Vector3()
+        .crossVectors(base.palm, base.l)
+        .multiplyScalar(calibrations[1].radialSign)
+        .normalize();
+      const swing = base.palm
+        .clone()
+        .multiplyScalar(flex / angle)
+        .addScaledVector(radial, deviation / angle);
+      const hand = base.l
+        .clone()
+        .multiplyScalar(Math.cos(angle))
+        .addScaledVector(swing, Math.sin(angle))
+        .normalize();
+      const palm = base.palm
+        .clone()
+        .multiplyScalar(Math.cos(angle))
+        .addScaledVector(base.l, (-Math.sin(angle) * flex) / angle)
+        .normalize();
+      inverse(1, { upperArm: base.u.clone(), lowerArm: base.l.clone(), hand }, palm, pose);
+    }
+
+    // --- hand frames ---
+    for (const [point, palm] of [
+      [new THREE.Vector3(0.3, -2, 0.1), new THREE.Vector3(0, 0.2, 1)],
+      [new THREE.Vector3(1e-7, 0, 0), new THREE.Vector3(0, 0, 1)],
+      [new THREE.Vector3(0, 2, 0), new THREE.Vector3(0, -1, 1e-5)],
+    ] as const) {
+      const input: Field[] = [];
+      vec3(point, 'point', input);
+      opt(vec3)(palm, 'palm', input);
+      step('hand.frame', {}, input, (out) => {
+        const x = point.clone();
+        const m = new THREE.Matrix3();
+        bool(handFrame(x, palm, m) !== null, 'ok', out);
+        arr(vec3)([x], 'vecs', out);
+        arr(num)([...m.elements], 'nums', out);
+      });
+    }
+  });
+  const input = layout(cases.map((c) => c.input));
+  const output = layout(cases.map((c) => c.output));
+  const values: number[] = [];
+  for (const c of cases) {
+    fill(values, c.input, input);
+    fill(values, c.output, output);
+  }
+  const index = { fn: 'rig-b-battery', cases: cases.length, in: input, out: output };
+  return { json: `${JSON.stringify(index, null, 1)}\n`, bin: f64Bytes(values) };
+}
+
 // --- the files ----------------------------------------------------------------------------
 
 function settle(name: string, recorded: Recorded): void {
@@ -1632,5 +2479,9 @@ describe('the recorded corpora', () => {
 
   it('match a fresh recording of the rig battery', () => {
     settle('rig-a-battery', recordRigBattery());
+  });
+
+  it('match a fresh recording of the finger and arm-configuration battery', () => {
+    settle('rig-b-battery', recordRigBBattery());
   });
 });

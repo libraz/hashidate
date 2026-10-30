@@ -1,0 +1,664 @@
+{
+ "fn": "rig-b-battery",
+ "cases": 75,
+ "in": [
+  {
+   "name": "kind",
+   "len": 1
+  },
+  {
+   "name": "set.present",
+   "len": 1
+  },
+  {
+   "name": "set.node",
+   "len": 1
+  },
+  {
+   "name": "set.position",
+   "len": 3
+  },
+  {
+   "name": "set.quaternion",
+   "len": 4
+  },
+  {
+   "name": "update",
+   "len": 1
+  },
+  {
+   "name": "point",
+   "len": 3
+  },
+  {
+   "name": "slot",
+   "len": 1
+  },
+  {
+   "name": "directions.upperArm",
+   "len": 3
+  },
+  {
+   "name": "directions.lowerArm",
+   "len": 3
+  },
+  {
+   "name": "directions.hand",
+   "len": 3
+  },
+  {
+   "name": "configuration.shoulderPlane",
+   "len": 1
+  },
+  {
+   "name": "configuration.shoulderLift",
+   "len": 1
+  },
+  {
+   "name": "configuration.humeralRotation",
+   "len": 1
+  },
+  {
+   "name": "configuration.elbowFlex",
+   "len": 1
+  },
+  {
+   "name": "configuration.forearmRoll",
+   "len": 1
+  },
+  {
+   "name": "configuration.wristFlex",
+   "len": 1
+  },
+  {
+   "name": "configuration.wristDev",
+   "len": 1
+  },
+  {
+   "name": "context.side",
+   "len": 1
+  },
+  {
+   "name": "context.shoulder",
+   "len": 3
+  },
+  {
+   "name": "context.upperLength",
+   "len": 1
+  },
+  {
+   "name": "context.lowerLength",
+   "len": 1
+  },
+  {
+   "name": "context.up",
+   "len": 3
+  },
+  {
+   "name": "context.right",
+   "len": 3
+  },
+  {
+   "name": "context.forward",
+   "len": 3
+  },
+  {
+   "name": "context.upperParentWorld",
+   "len": 4
+  },
+  {
+   "name": "previous.present",
+   "len": 1
+  },
+  {
+   "name": "previous.shoulderPlane",
+   "len": 1
+  },
+  {
+   "name": "previous.shoulderLift",
+   "len": 1
+  },
+  {
+   "name": "previous.humeralRotation",
+   "len": 1
+  },
+  {
+   "name": "previous.elbowFlex",
+   "len": 1
+  },
+  {
+   "name": "previous.forearmRoll",
+   "len": 1
+  },
+  {
+   "name": "previous.wristFlex",
+   "len": 1
+  },
+  {
+   "name": "previous.wristDev",
+   "len": 1
+  },
+  {
+   "name": "outConf.shoulderPlane",
+   "len": 1
+  },
+  {
+   "name": "outConf.shoulderLift",
+   "len": 1
+  },
+  {
+   "name": "outConf.humeralRotation",
+   "len": 1
+  },
+  {
+   "name": "outConf.elbowFlex",
+   "len": 1
+  },
+  {
+   "name": "outConf.forearmRoll",
+   "len": 1
+  },
+  {
+   "name": "outConf.wristFlex",
+   "len": 1
+  },
+  {
+   "name": "outConf.wristDev",
+   "len": 1
+  },
+  {
+   "name": "joints",
+   "len": 1
+  },
+  {
+   "name": "calibration.upper.axis",
+   "len": 3
+  },
+  {
+   "name": "calibration.upper.rest",
+   "len": 4
+  },
+  {
+   "name": "calibration.upper.front",
+   "len": 3
+  },
+  {
+   "name": "calibration.lower.axis",
+   "len": 3
+  },
+  {
+   "name": "calibration.lower.rest",
+   "len": 4
+  },
+  {
+   "name": "calibration.hand.axis",
+   "len": 3
+  },
+  {
+   "name": "calibration.hand.rest",
+   "len": 4
+  },
+  {
+   "name": "calibration.hand.palm",
+   "len": 3
+  },
+  {
+   "name": "calibration.radialSign",
+   "len": 1
+  },
+  {
+   "name": "finger",
+   "len": 1
+  },
+  {
+   "name": "side",
+   "len": 1
+  },
+  {
+   "name": "palm.present",
+   "len": 1
+  },
+  {
+   "name": "palm",
+   "len": 3
+  },
+  {
+   "name": "metricScale",
+   "len": 1
+  },
+  {
+   "name": "amount",
+   "len": 1
+  },
+  {
+   "name": "spreadAmount",
+   "len": 1
+  },
+  {
+   "name": "spec.thumb.present",
+   "len": 1
+  },
+  {
+   "name": "spec.thumb",
+   "len": 1
+  },
+  {
+   "name": "spec.index.present",
+   "len": 1
+  },
+  {
+   "name": "spec.index",
+   "len": 1
+  },
+  {
+   "name": "spec.middle.present",
+   "len": 1
+  },
+  {
+   "name": "spec.middle",
+   "len": 1
+  },
+  {
+   "name": "spec.ring.present",
+   "len": 1
+  },
+  {
+   "name": "spec.ring",
+   "len": 1
+  },
+  {
+   "name": "spec.little.present",
+   "len": 1
+  },
+  {
+   "name": "spec.little",
+   "len": 1
+  },
+  {
+   "name": "spread.thumb.present",
+   "len": 1
+  },
+  {
+   "name": "spread.thumb",
+   "len": 1
+  },
+  {
+   "name": "spread.index.present",
+   "len": 1
+  },
+  {
+   "name": "spread.index",
+   "len": 1
+  },
+  {
+   "name": "spread.middle.present",
+   "len": 1
+  },
+  {
+   "name": "spread.middle",
+   "len": 1
+  },
+  {
+   "name": "spread.ring.present",
+   "len": 1
+  },
+  {
+   "name": "spread.ring",
+   "len": 1
+  },
+  {
+   "name": "spread.little.present",
+   "len": 1
+  },
+  {
+   "name": "selector.kind",
+   "len": 1
+  },
+  {
+   "name": "selector.region",
+   "len": 1
+  },
+  {
+   "name": "selector.finger",
+   "len": 1
+  },
+  {
+   "name": "selector.segment",
+   "len": 1
+  },
+  {
+   "name": "selector.fraction",
+   "len": 1
+  },
+  {
+   "name": "selector.surface.present",
+   "len": 1
+  },
+  {
+   "name": "selector.surface",
+   "len": 1
+  },
+  {
+   "name": "clearance",
+   "len": 1
+  },
+  {
+   "name": "outVec",
+   "len": 3
+  },
+  {
+   "name": "spread.little",
+   "len": 1
+  }
+ ],
+ "out": [
+  {
+   "name": "ok",
+   "len": 1
+  },
+  {
+   "name": "refusal",
+   "len": 1
+  },
+  {
+   "name": "value",
+   "len": 1
+  },
+  {
+   "name": "outVec",
+   "len": 3
+  },
+  {
+   "name": "vecs.len",
+   "len": 1
+  },
+  {
+   "name": "vecs[0]",
+   "len": 3
+  },
+  {
+   "name": "vecs[1]",
+   "len": 3
+  },
+  {
+   "name": "vecs[2]",
+   "len": 3
+  },
+  {
+   "name": "vecs[3]",
+   "len": 3
+  },
+  {
+   "name": "vecs[4]",
+   "len": 3
+  },
+  {
+   "name": "vecs[5]",
+   "len": 3
+  },
+  {
+   "name": "quats.len",
+   "len": 1
+  },
+  {
+   "name": "quats[0]",
+   "len": 4
+  },
+  {
+   "name": "quats[1]",
+   "len": 4
+  },
+  {
+   "name": "quats[2]",
+   "len": 4
+  },
+  {
+   "name": "quats[3]",
+   "len": 4
+  },
+  {
+   "name": "quats[4]",
+   "len": 4
+  },
+  {
+   "name": "quats[5]",
+   "len": 4
+  },
+  {
+   "name": "vecs[6]",
+   "len": 3
+  },
+  {
+   "name": "vecs[7]",
+   "len": 3
+  },
+  {
+   "name": "vecs[8]",
+   "len": 3
+  },
+  {
+   "name": "vecs[9]",
+   "len": 3
+  },
+  {
+   "name": "vecs[10]",
+   "len": 3
+  },
+  {
+   "name": "vecs[11]",
+   "len": 3
+  },
+  {
+   "name": "vecs[12]",
+   "len": 3
+  },
+  {
+   "name": "vecs[13]",
+   "len": 3
+  },
+  {
+   "name": "vecs[14]",
+   "len": 3
+  },
+  {
+   "name": "vecs[15]",
+   "len": 3
+  },
+  {
+   "name": "vecs[16]",
+   "len": 3
+  },
+  {
+   "name": "vecs[17]",
+   "len": 3
+  },
+  {
+   "name": "vecs[18]",
+   "len": 3
+  },
+  {
+   "name": "vecs[19]",
+   "len": 3
+  },
+  {
+   "name": "nums.len",
+   "len": 1
+  },
+  {
+   "name": "nums[0]",
+   "len": 1
+  },
+  {
+   "name": "nums[1]",
+   "len": 1
+  },
+  {
+   "name": "nums[2]",
+   "len": 1
+  },
+  {
+   "name": "nums[3]",
+   "len": 1
+  },
+  {
+   "name": "nums[4]",
+   "len": 1
+  },
+  {
+   "name": "nums[5]",
+   "len": 1
+  },
+  {
+   "name": "nums[6]",
+   "len": 1
+  },
+  {
+   "name": "nums[7]",
+   "len": 1
+  },
+  {
+   "name": "nums[8]",
+   "len": 1
+  },
+  {
+   "name": "touched.len",
+   "len": 1
+  },
+  {
+   "name": "touched[0].node",
+   "len": 1
+  },
+  {
+   "name": "touched[0].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[1].node",
+   "len": 1
+  },
+  {
+   "name": "touched[1].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[2].node",
+   "len": 1
+  },
+  {
+   "name": "touched[2].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[3].node",
+   "len": 1
+  },
+  {
+   "name": "touched[3].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[4].node",
+   "len": 1
+  },
+  {
+   "name": "touched[4].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[5].node",
+   "len": 1
+  },
+  {
+   "name": "touched[5].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[6].node",
+   "len": 1
+  },
+  {
+   "name": "touched[6].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[7].node",
+   "len": 1
+  },
+  {
+   "name": "touched[7].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[8].node",
+   "len": 1
+  },
+  {
+   "name": "touched[8].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[9].node",
+   "len": 1
+  },
+  {
+   "name": "touched[9].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[10].node",
+   "len": 1
+  },
+  {
+   "name": "touched[10].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[11].node",
+   "len": 1
+  },
+  {
+   "name": "touched[11].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[12].node",
+   "len": 1
+  },
+  {
+   "name": "touched[12].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[13].node",
+   "len": 1
+  },
+  {
+   "name": "touched[13].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[14].node",
+   "len": 1
+  },
+  {
+   "name": "touched[14].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[15].node",
+   "len": 1
+  },
+  {
+   "name": "touched[15].quaternion",
+   "len": 4
+  },
+  {
+   "name": "digest",
+   "len": 2
+  },
+  {
+   "name": "hash",
+   "len": 2
+  }
+ ]
+}

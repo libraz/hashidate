@@ -150,6 +150,94 @@ pub(crate) mod testkit {
         (g, p, h)
     }
 
+    /// `parent.add(helper); helper.add(child)` before the profile is built: a plain node with
+    /// the given transform inserted above `child`, which keeps its own. The table stays in
+    /// traverse order with the helper just before `child`; the profile is renumbered to match.
+    /// Returns the helper's node.
+    pub fn with_helper_above(
+        src: &Graph,
+        p: &Profile,
+        child: u32,
+        position: &Vec3,
+        quaternion: &Quat,
+        scale: &Vec3,
+    ) -> (Graph, Profile, u32) {
+        let mut p = p.clone();
+        let remap = |i: u32| {
+            if i == NO_NODE || i < child { i } else { i + 1 }
+        };
+        let n = src.len();
+        let mut g = Graph::new(Shape {
+            nodes: n + 1,
+            meshes: src.mesh_nodes.len(),
+            skeletons: src.skeleton_offsets.len() - 1,
+            bones: src.bone_nodes.len(),
+        });
+        let identity = Mat4::default();
+        for i in 0..n {
+            if i == child as usize {
+                let mut r = [0.0; RECORD];
+                r[0..3].copy_from_slice(&[position.x, position.y, position.z]);
+                r[3..7].copy_from_slice(&[quaternion.x, quaternion.y, quaternion.z, quaternion.w]);
+                r[7..10].copy_from_slice(&[scale.x, scale.y, scale.z]);
+                r[13..29].copy_from_slice(&identity.elements);
+                r[29..45].copy_from_slice(&identity.elements);
+                g.push_node(
+                    src.parent[i],
+                    flag::MATRIX_AUTO_UPDATE | flag::MATRIX_WORLD_AUTO_UPDATE,
+                    &r,
+                );
+            }
+            let mut r = [0.0; RECORD];
+            r[0..3].copy_from_slice(&src.position[3 * i..3 * i + 3]);
+            r[3..7].copy_from_slice(&src.quaternion[4 * i..4 * i + 4]);
+            r[7..10].copy_from_slice(&src.scale[3 * i..3 * i + 3]);
+            r[10..13].copy_from_slice(&src.pivot[3 * i..3 * i + 3]);
+            r[13..29].copy_from_slice(&src.matrix[16 * i..16 * i + 16]);
+            r[29..45].copy_from_slice(&src.matrix_world[16 * i..16 * i + 16]);
+            let parent = if i == child as usize {
+                child
+            } else {
+                remap(src.parent[i])
+            };
+            g.push_node(parent, src.flags[i], &r);
+        }
+        let mat = |s: &[f64], k: usize| {
+            let mut e = [0.0; 16];
+            e.copy_from_slice(&s[16 * k..16 * k + 16]);
+            Mat4::from_elements(e)
+        };
+        for (m, &node) in src.mesh_nodes.iter().enumerate() {
+            g.push_mesh(
+                remap(node),
+                &mat(&src.bind_matrix, m),
+                &mat(&src.bind_matrix_inverse, m),
+            );
+        }
+        for s in 0..src.skeleton_offsets.len() - 1 {
+            g.push_skeleton();
+            for b in src.skeleton_offsets[s] as usize..src.skeleton_offsets[s + 1] as usize {
+                g.push_bone(remap(src.bone_nodes[b]), &mat(&src.bone_inverses, b));
+            }
+        }
+        g.build();
+        for b in &mut p.bones {
+            *b = remap(*b);
+        }
+        for chain in &mut p.finger_bones {
+            for b in chain {
+                *b = remap(*b);
+            }
+        }
+        for t in p.arm_twists.iter_mut().flatten() {
+            t.primary = remap(t.primary);
+            t.next = remap(t.next);
+            t.helper = remap(t.helper);
+        }
+        g.update_matrix_world(0, true);
+        (g, p, child)
+    }
+
     /// 64-bit FNV-1a over every node's position, quaternion, scale, matrix, matrixWorld and
     /// matrixWorldNeedsUpdate, in node order: f64 little-endian with NaN as one pattern, the
     /// flag as a byte. `record-corpora.test.ts` hashes the TS tree the same way.
@@ -178,6 +266,23 @@ pub(crate) mod testkit {
             f64s(&g.matrix[16 * i..16 * i + 16], &mut byte);
             f64s(&g.matrix_world[16 * i..16 * i + 16], &mut byte);
             byte(u8::from(g.flags[i] & flag::MATRIX_WORLD_NEEDS_UPDATE != 0));
+        }
+        h
+    }
+
+    /// 64-bit FNV-1a over f64s, little-endian with NaN as one pattern: `makeFnv64().f64s(values)`.
+    pub fn fnv_f64s(values: &[f64]) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for &v in values {
+            let bits = if v.is_nan() {
+                0x7ff8_0000_0000_0000
+            } else {
+                v.to_bits()
+            };
+            for b in bits.to_le_bytes() {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
         }
         h
     }
