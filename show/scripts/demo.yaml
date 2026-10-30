@@ -41,7 +41,7 @@ lines:
   - text: "[hello]こんばんは。今日は、わたしが動いている仕組みそのものの話をします。"
 
   - text: "[explain]この土台は hashidate といいます。ブラウザの中にわたしを描いて、外から一手ずつ指示を受け取る。やっていることはそれだけです。"
-    reading: "この土台は、はしだてといいます。ブラウザの中にわたしを描いて、外からいってずつ指示を受け取る。やっていることはそれだけです。"
+    reading: "この土台は、はしだてといいます。ブラウザの中にわたしをえがいて、外からいってずつ指示を受け取る。やっていることはそれだけです。"
 
   - text: "[wonder]それだけ、という顔をしましたね。"
 
@@ -70,9 +70,9 @@ lines:
   # its own so the hand has settled before the next one replaces it.
   - text: "[curious]指で数えることもできます。"
 
-  - text: "[countOne]まず、ひとつ。[countTwo]それから、ふたつ。[countThree]みっつ。"
+  - text: "[countOne]まず、ひとつ。[countTwo]それから、ふたつ。"
 
-  - text: "[countFour]よっつ、[countFive]いつつ。[giggle]片手だと、ここまでです。"
+  - text: "[countThree]みっつ。[countFour]そして、よっつ。"
 
   # Close in for the face: the mid-sentence demonstration below reads better at
   # this distance, and the two lines after it talk about what is on screen.
