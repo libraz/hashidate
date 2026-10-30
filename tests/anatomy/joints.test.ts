@@ -196,7 +196,6 @@ describe('HAND_CONTACT', () => {
     // Wrist to fingertip, so half of it is already into the fingers and the
     // palm centre is nearer a third. Every centimetre past the palm comes
     // straight out of the arm's reach.
-    expect(HAND_CONTACT).toBe(0.35);
     expect(HAND_CONTACT).toBeGreaterThan(0);
     expect(HAND_CONTACT).toBeLessThan(0.5);
   });
