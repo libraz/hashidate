@@ -8,8 +8,7 @@
 
 import * as THREE from 'three';
 import type { ArmAnatomy } from '../anatomy';
-import { JOINTS } from '../anatomy';
-import type { FingerSpec, Profile, Side } from '../types';
+import type { FingerSpec, JointTable, Profile, Side } from '../types';
 import { FINGER_NAMES } from '../types';
 import { FINGER_TIP_EXTENSION } from './hand-geometry';
 import type { Hands } from './hands';
@@ -43,7 +42,9 @@ const FINGER_DAMP = 0.01;
  * narrowest comfortable range. A correction, not a pose — a hand set inside the
  * face needs its arm moved, and turned further it only folded the wrist.
  */
-const FINGER_TURN_MAX = JOINTS.wrist.dofs.deviation.free[1] - JOINTS.wrist.dofs.deviation.free[0];
+function fingerTurnMax(joints: JointTable): number {
+  return joints.wrist.dofs.deviation.free[1] - joints.wrist.dofs.deviation.free[0];
+}
 const _fW = new THREE.Vector3();
 const _fP = new THREE.Vector3();
 const _fT = new THREE.Vector3();
@@ -77,6 +78,8 @@ export class FingerClearance {
   };
 
   private readonly palmLocal: Hands['palmLocal'];
+  /** The per-frame turn cap, from the joint table the avatar's anatomy uses. */
+  readonly turnMax: number;
 
   constructor(
     private readonly p: Profile,
@@ -85,6 +88,7 @@ export class FingerClearance {
     private readonly fingerClearance: (side: Side) => number,
   ) {
     this.palmLocal = hands.palmLocal;
+    this.turnMax = fingerTurnMax(anat.limits);
   }
 
   /** The fingers as last posed, in the frame the hand reached. See `Rig.fingerShape`. */
@@ -178,7 +182,7 @@ export class FingerClearance {
     hand.updateWorldMatrix(true, true);
     const W = hand.getWorldPosition(_fW);
     let turned = 0;
-    for (let pass = 0; pass < FINGER_PASSES && turned < FINGER_TURN_MAX; pass++) {
+    for (let pass = 0; pass < FINGER_PASSES && turned < this.turnMax; pass++) {
       // One small turn for every finger that is in, solved together. Pushing
       // the worst one alone pressed the next one in: fingers kissed to the lips
       // touch skin that faces several ways, and the hand rocked between them.
@@ -217,7 +221,7 @@ export class FingerClearance {
       const w = _fB.applyMatrix3(_fA.invert());
       const angle = w.length();
       if (!(angle > 1e-6)) break;
-      const turn = Math.min(angle, FINGER_TURN_MAX - turned);
+      const turn = Math.min(angle, this.turnMax - turned);
       turned += turn;
       _fTurn.setFromAxisAngle(w.divideScalar(angle), turn);
       // A world turn about the wrist, put into the hand's own parent space.

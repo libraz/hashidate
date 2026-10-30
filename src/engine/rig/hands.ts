@@ -88,8 +88,10 @@ export class Hands {
    * Above 1 is the strained band: available, and nothing reaches it by
    * accident. Below 0 is hyperextension, which the knuckles have and the middle
    * joints do not — also from the table, rather than a blanket floor of zero.
+   *
+   * `spread` is the knuckle's splay, kept as `curlHand` would apply it.
    */
-  curlFinger(name: FingerName, side: Side, amount: number): void {
+  curlFinger(name: FingerName, side: Side, amount: number, spread = 0): void {
     const chain = this.p.fingerBones[`${name}.${side}`];
     if (!chain) return;
     const joints = this.joints[name === 'thumb' ? 'thumb' : 'finger'];
@@ -102,8 +104,8 @@ export class Hands {
         this.restOf(bone),
         axis,
         fingerCurl(joints, i, amount),
-        undefined,
-        0,
+        i === 0 ? this.splayAxis.get(bone) : undefined,
+        i === 0 ? spread : 0,
         ...this.opposition(name, side, bone, i, amount),
         _q,
       );

@@ -300,8 +300,8 @@ export class ArmDriver {
     this.rollHeld = snapshot.rollHistory;
   }
 
-  /** Return null for rigs the calibrated rotational model cannot represent. */
-  static create(input: DriverInput): ArmDriver | null {
+  /** A driver, or why the calibrated rotational model cannot represent this rig. */
+  static create(input: DriverInput): ArmDriver | { refused: string } {
     const { profile, side } = input;
     const upper = profile.bones[`upperArm.${side}`];
     const lower = profile.bones[`lowerArm.${side}`];
@@ -322,7 +322,7 @@ export class ArmDriver {
         input.fingerClearance > 0
       )
     ) {
-      return null;
+      return { refused: 'arm bones, limb lengths, palm or finger clearance unresolved' };
     }
 
     profile.root.updateWorldMatrix(true, true);
@@ -330,9 +330,9 @@ export class ArmDriver {
     lower.updateWorldMatrix(true, false);
     hand.updateWorldMatrix(true, false);
     if (![upper, lower, hand].every((bone) => positiveConformalScale(bone.matrixWorld) !== null))
-      return null;
+      return { refused: 'arm bones not conformally scaled' };
     const parent = upper.parent;
-    if (!parent) return null;
+    if (!parent) return { refused: 'upper arm has no parent' };
     parent.updateWorldMatrix(true, false);
     const parentWorld = parent.getWorldQuaternion(new THREE.Quaternion());
     const upperWorld = upper.getWorldQuaternion(new THREE.Quaternion());
@@ -368,8 +368,8 @@ export class ArmDriver {
         hand.getWorldScale(new THREE.Vector3()).x,
       );
       return new ArmDriver(input, calibration, geometry);
-    } catch {
-      return null;
+    } catch (error) {
+      return { refused: error instanceof Error ? error.message : String(error) };
     }
   }
 

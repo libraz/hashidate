@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { fingerCurl, JOINTS } from '@/engine/anatomy';
+import { ArmAnatomy, fingerCurl, JOINTS } from '@/engine/anatomy';
 import { THUMB_OPPOSITION, THUMB_OPPOSITION_CURL } from '@/engine/anatomy/joints';
 import { restPalmNormals } from '@/engine/anatomy/palm-frame';
 import { buildProfile } from '@/engine/profile';
 import { Rig, solveFingerAxes } from '@/engine/rig';
 import { type ArmConfiguration, forwardArm } from '@/engine/rig/arm-configuration';
+import { FingerClearance } from '@/engine/rig/finger-clearance';
+import { Hands } from '@/engine/rig/hands';
 import type { FingerName, Profile, Side } from '@/engine/types';
 import { buildRig } from '../helpers/scene';
 
@@ -605,6 +607,48 @@ describe('curlFinger', () => {
     const { profile, rig } = buildHands();
     delete profile.fingerBones['ring.R'];
     expect(() => rig.curlFinger('ring', 'R', 1)).not.toThrow();
+  });
+
+  it('keeps the splay it records on the legacy path, so a re-seed does not move the finger', () => {
+    const { profile, rig } = buildHands();
+    const knuckle = need(profile.fingerBones['index.R'], 'index.R')[0];
+    rig.limitsEnabled = false;
+
+    rig.curlHand('R', { index: 0.8 });
+    const unsplayed = knuckle.quaternion.clone();
+    rig.curlHand('R', { index: 0.8 }, { index: 0.3 });
+    const splayed = knuckle.quaternion.clone();
+    // Positive control: the splay is visible on this knuckle.
+    expect(splayed.angleTo(unsplayed)).toBeGreaterThan(1e-3);
+
+    rig.curlHand('R', { index: 0.4 }, { index: 0.3 });
+    rig.curlFinger('index', 'R', 0.8);
+    expect(knuckle.quaternion.angleTo(splayed)).toBeLessThan(EXACT);
+    const recorded = rig.armStateForBodyInitialization('R');
+    expect(recorded.curls.index).toBe(0.8);
+    expect(recorded.spread.index).toBe(0.3);
+
+    // Re-enabling re-seeds the constrained arm from the record.
+    rig.limitsEnabled = true;
+    expect(knuckle.quaternion.angleTo(splayed)).toBeLessThan(1e-6);
+  });
+});
+
+describe('FingerClearance', () => {
+  function clearanceFor(profile: Profile): FingerClearance {
+    const hands = new Hands(profile, profile.anatomy ?? JOINTS, (bone) => bone.quaternion.clone());
+    return new FingerClearance(profile, hands, new ArmAnatomy(profile), () => 0);
+  }
+
+  it("caps a frame's turn at the span of the avatar's own wrist deviation range", () => {
+    const { profile } = buildHands();
+    const [lo, hi] = JOINTS.wrist.dofs.deviation.free;
+    expect(clearanceFor(profile).turnMax).toBe(hi - lo);
+
+    const anatomy = structuredClone(JOINTS);
+    anatomy.wrist.dofs.deviation.free = [lo / 2, hi / 2];
+    profile.anatomy = anatomy;
+    expect(clearanceFor(profile).turnMax).toBe((hi - lo) / 2);
   });
 });
 

@@ -269,6 +269,12 @@ export class Rig {
       }
     >
   > = {};
+  /**
+   * Why the constrained arm solver is off, one line per side whose arm bones
+   * resolved but built no driver. It needs both sides, so any line here means
+   * both arms run the legacy chain.
+   */
+  readonly armSolverOff: string[] = [];
   private readonly _armDrivers: Record<Side, ArmDriver | null> = { L: null, R: null };
   private readonly _armFrameSnapshots: Record<Side, ArmFrameSnapshot> = {
     L: makeArmFrameSnapshot(),
@@ -440,9 +446,14 @@ export class Rig {
     this.captureBodyPose(this._acceptedBodyPose, 0, 0);
     this.captureBodyPose(this._proposedBodyPose, 0, 0);
     for (const side of ['L', 'R'] as Side[]) {
+      if (!profile.bones[`upperArm.${side}`]) continue;
+      const off = (reason: string) => this.armSolverOff.push(`${side}: ${reason}`);
       const palmLocal = this.palmLocal[side];
       const humeralFront = this._humeralFront[side];
-      if (!(palmLocal && humeralFront)) continue;
+      if (!(palmLocal && humeralFront)) {
+        off('no palm frame (fingers unresolved)');
+        continue;
+      }
       const driver = ArmDriver.create({
         profile,
         side,
@@ -456,9 +467,15 @@ export class Rig {
         anatomy: this.anat,
         fingerClearance: this.fingerClearance(side),
       });
-      if (!driver) continue;
+      if (!(driver instanceof ArmDriver)) {
+        off(driver.refused);
+        continue;
+      }
       const context = this.armForwardContext(side);
-      if (!(context && this.readActualArmPose(side))) continue;
+      if (!(context && this.readActualArmPose(side))) {
+        off('rest arm pose unreadable');
+        continue;
+      }
       if (
         !driver.seedFromPose(
           context,
@@ -467,8 +484,10 @@ export class Rig {
           this._actualHand,
           this._actualPalm,
         )
-      )
+      ) {
+        off('rest arm pose outside the calibrated model');
         continue;
+      }
       this._armDrivers[side] = driver;
       const bindFrame = handFrame(
         driver.calibration.hand.axis.clone(),
@@ -1834,7 +1853,8 @@ export class Rig {
 
   /** Legacy direct finger write, used by Body only for an explicit limiter opt-out. */
   curlFingerLegacy(name: FingerName, side: Side, amount: number): void {
-    this.hands.curlFinger(name, side, amount);
+    // Keep the splay the record holds, as the constrained path does.
+    this.hands.curlFinger(name, side, amount, this._posedSpread[side][name]);
   }
 
   /** Legacy direct hand write, used by Body only for an explicit limiter opt-out. */
