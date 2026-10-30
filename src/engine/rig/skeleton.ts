@@ -33,10 +33,12 @@ export class SkeletonRefresh {
   private collect(node: THREE.Object3D): boolean {
     // A node with its own matrix-world step (a skinned mesh, a camera) is taken
     // whole, so its extra state is refreshed exactly as the full pass does it.
+    // The class decides, not the instance: a core-backed node replaces both methods.
+    const proto = Object.getPrototypeOf(node) as THREE.Object3D;
     if (
       (node as THREE.Bone).isBone ||
-      node.updateMatrixWorld !== BASE_UPDATE_MATRIX_WORLD ||
-      node.updateWorldMatrix !== BASE_UPDATE_WORLD_MATRIX
+      proto.updateMatrixWorld !== BASE_UPDATE_MATRIX_WORLD ||
+      proto.updateWorldMatrix !== BASE_UPDATE_WORLD_MATRIX
     ) {
       if (!this.holdsBone(node)) return false;
       this.subtrees.push(node);
