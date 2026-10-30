@@ -23,11 +23,20 @@ pub mod spine;
 /// and the arm wiring `Rig` gives the reach, elbow and point solvers.
 #[cfg(test)]
 pub(crate) mod testkit {
+    use super::arm_chain::{ArmChain, ArmChainPort};
+    use super::arm_configuration::{
+        ArmCalibration, ArmConfiguration, ArmForwardContext, ArmForwardResult,
+    };
+    use super::arm_driver::{ArmDriver, DriverInput};
+    use super::arm_twists::ArmTwists;
     use super::elbow::{ElbowContext, ElbowSearch};
+    use super::hand_geometry::HandGeometryCalibration;
+    use super::hands::FingerSpec;
+    use super::hands::Hands;
     use super::point::{PointRequest, PointSolver};
     use super::reach::{ArmSolution, ReachLinks, length, solve_reach};
     use crate::anatomy::arm::ArmAnatomy;
-    use crate::anatomy::joints::{HAND_CONTACT, JointTable};
+    use crate::anatomy::joints::{FINGER_WIDTH, HAND_CONTACT, JointTable};
     use crate::anatomy::testkit as anatomy;
     use crate::math::{Mat4, Quat, Vec3};
     use crate::profile::{ArmSlot, BoneSlot, Finger, Profile, Side, base};
@@ -477,6 +486,516 @@ pub(crate) mod testkit {
     /// vitest's `toBeCloseTo(b, digits)`.
     pub fn close(a: f64, b: f64, digits: i32) {
         anatomy::close(a, b, digits);
+    }
+
+    /// `Rig`'s rest map, per node: every profile bone and finger bone as it stands, `None`
+    /// elsewhere.
+    pub fn rig_rest(g: &Graph, p: &Profile) -> Vec<Option<Quat>> {
+        let mut table = vec![None; g.len()];
+        for &b in p.bones.iter().chain(p.finger_bones.iter().flatten()) {
+            if b != NO_NODE {
+                table[b as usize] = Some(g.local_quaternion(b));
+            }
+        }
+        table
+    }
+
+    /// `Rig.fingerClearance`.
+    pub fn finger_clearance(p: &Profile, side: Side) -> f64 {
+        0.5 * FINGER_WIDTH * p.limb[side as usize].pitch.unwrap_or(0.0)
+    }
+
+    /// The humeral front the `Rig` constructor derives from the body frame, in upper-arm space.
+    pub fn humeral_front(p: &Profile, g: &mut Graph, side: Side) -> Option<Vec3> {
+        let upper = p.bone(BoneSlot::arm(ArmSlot::UpperArm, side))?;
+        let chest = p.chest()?;
+        let body = p.body?;
+        g.update_world_matrix(upper, true, false, false);
+        let mut q = g.world_quaternion(upper);
+        let mut along = p.rest_dir[BoneSlot::arm(ArmSlot::UpperArm, side) as usize]?;
+        along.apply_quaternion(&q);
+        let mut front = body.forward;
+        front.apply_quaternion(&g.world_quaternion(chest));
+        let d = -front.dot(&along);
+        front.add_scaled_vector(&along, d);
+        if front.length_sq() <= 1e-8 {
+            return None;
+        }
+        q.invert();
+        Some(*front.normalize().apply_quaternion(&q))
+    }
+
+    /// `Rig.readArmForwardContext(side, true)`.
+    pub fn forward_context(
+        p: &Profile,
+        g: &mut Graph,
+        anat: &mut ArmAnatomy,
+        side: Side,
+    ) -> Option<ArmForwardContext> {
+        let upper = p.bone(BoneSlot::arm(ArmSlot::UpperArm, side))?;
+        let parent = g.parent_of(upper)?;
+        let limb = &p.limb[side as usize];
+        let upper_length = limb.upper.unwrap_or(0.0);
+        let lower_length = limb.lower.unwrap_or(0.0);
+        if !(upper_length > 0.0 && lower_length > 0.0 && anat.update(g)) {
+            return None;
+        }
+        g.update_matrix_world(0, true);
+        if !arm_context(p, g, anat, side) {
+            return None;
+        }
+        g.update_world_matrix(upper, true, false, false);
+        g.update_world_matrix(parent, true, false, false);
+        let shoulder = g.world_position(upper);
+        Some(ArmForwardContext {
+            side,
+            shoulder,
+            upper_length,
+            lower_length,
+            up: *anat.up(),
+            right: *anat.right(),
+            forward: *anat.fwd(),
+            upper_parent_world: g.world_quaternion(parent),
+        })
+    }
+
+    /// `Rig.readActualArmPose`: the posed upper arm, forearm, hand and palm directions.
+    pub fn actual_arm_pose(p: &Profile, g: &mut Graph, palm: &Vec3, side: Side) -> [Vec3; 4] {
+        g.update_matrix_world(0, true);
+        let dir = |g: &mut Graph, slot: ArmSlot| {
+            let b = bone(p, BoneSlot::arm(slot, side));
+            let mut v = p.rest_dir[BoneSlot::arm(slot, side) as usize].unwrap();
+            v.apply_quaternion(&g.world_quaternion(b)).normalize();
+            v
+        };
+        let u = dir(g, ArmSlot::UpperArm);
+        let l = dir(g, ArmSlot::LowerArm);
+        let h = dir(g, ArmSlot::Hand);
+        let mut n = *palm;
+        n.apply_quaternion(&g.world_quaternion(bone(p, BoneSlot::arm(ArmSlot::Hand, side))))
+            .normalize();
+        [u, l, h, n]
+    }
+
+    /// A battery's records, read front to back, with what each one wrote checked as it is read.
+    pub struct Stream<'a> {
+        values: &'a [f64],
+        at: usize,
+        pub what: String,
+    }
+
+    impl<'a> Stream<'a> {
+        pub fn new(values: &'a [f64]) -> Stream<'a> {
+            Stream {
+                values,
+                at: 0,
+                what: String::new(),
+            }
+        }
+
+        pub fn done(&self) -> bool {
+            self.at == self.values.len()
+        }
+
+        pub fn f64(&mut self) -> f64 {
+            let v = self.values[self.at];
+            self.at += 1;
+            v
+        }
+
+        pub fn take(&mut self, n: usize) -> &'a [f64] {
+            let v = &self.values[self.at..self.at + n];
+            self.at += n;
+            v
+        }
+
+        pub fn index(&mut self) -> usize {
+            let v = self.f64();
+            assert!(
+                v >= 0.0 && v.fract() == 0.0,
+                "{}: {v} is not an index",
+                self.what
+            );
+            v as usize
+        }
+
+        pub fn flag(&mut self) -> bool {
+            self.f64() == 1.0
+        }
+
+        pub fn vec3(&mut self) -> Vec3 {
+            let v = self.take(3);
+            Vec3::new(v[0], v[1], v[2])
+        }
+
+        pub fn quat(&mut self) -> Quat {
+            let v = self.take(4);
+            Quat::new(v[0], v[1], v[2], v[3])
+        }
+
+        pub fn q(&mut self) -> [f64; 7] {
+            self.take(7).try_into().unwrap()
+        }
+
+        pub fn opt_vec3(&mut self) -> Option<Vec3> {
+            self.flag().then(|| self.vec3())
+        }
+
+        pub fn spec(&mut self) -> FingerSpec {
+            std::array::from_fn(|_| self.flag().then(|| self.f64()))
+        }
+
+        pub fn side(&mut self) -> Side {
+            Side::BOTH[self.index()]
+        }
+
+        /// The next values are what the TS wrote; they must be `got`, bit for bit.
+        pub fn same(&mut self, got: &[f64], name: &str) {
+            let want = self.take(got.len());
+            let g: Vec<u64> = got.iter().map(|v| v.to_bits()).collect();
+            let w: Vec<u64> = want.iter().map(|v| v.to_bits()).collect();
+            assert_eq!(g, w, "{}: {name}: {got:?} against {want:?}", self.what);
+        }
+
+        pub fn same_flag(&mut self, b: bool, name: &str) {
+            self.same(&[f64::from(u8::from(b))], name);
+        }
+
+        pub fn same_opt_vec3(&mut self, v: Option<&Vec3>, name: &str) {
+            match v {
+                Some(v) => self.same(&[1.0, v.x, v.y, v.z], name),
+                None => self.same(&[0.0], name),
+            }
+        }
+
+        pub fn same_spec(&mut self, spec: &FingerSpec, name: &str) {
+            for v in spec {
+                match v {
+                    Some(v) => self.same(&[1.0, *v], name),
+                    None => self.same(&[0.0], name),
+                }
+            }
+        }
+    }
+
+    pub fn halves(h: u64) -> [f64; 2] {
+        [(h >> 32) as f64, (h & 0xffff_ffff) as f64]
+    }
+
+    pub fn hash_halves(values: &[f64]) -> [f64; 2] {
+        halves(fnv_f64s(values))
+    }
+
+    pub fn present(into: &mut Vec<f64>, v: Option<f64>) {
+        match v {
+            Some(v) => into.extend([1.0, v]),
+            None => into.push(0.0),
+        }
+    }
+
+    pub fn present_vec(into: &mut Vec<f64>, v: Option<&Vec3>) {
+        match v {
+            Some(v) => into.extend([1.0, v.x, v.y, v.z]),
+            None => into.push(0.0),
+        }
+    }
+
+    pub fn v3(v: &Vec3) -> [f64; 3] {
+        [v.x, v.y, v.z]
+    }
+
+    pub fn q4(q: &Quat) -> [f64; 4] {
+        [q.x, q.y, q.z, q.w]
+    }
+
+    /// `definitionValues`: a calibration and hand geometry in the solver battery's order.
+    pub fn definition_values(c: &ArmCalibration, g: &HandGeometryCalibration) -> Vec<f64> {
+        let mut v = Vec::new();
+        v.extend(v3(&c.upper.axis));
+        v.extend(q4(&c.upper.rest));
+        v.extend(v3(&c.upper.front));
+        v.extend(v3(&c.lower.axis));
+        v.extend(q4(&c.lower.rest));
+        v.extend(v3(&c.hand.axis));
+        v.extend(q4(&c.hand.rest));
+        v.extend(v3(&c.hand.palm));
+        v.push(c.radial_sign);
+        present(&mut v, g.hand_present.map(|p| f64::from(u8::from(p))));
+        v.extend([g.metric_scale, g.points.len() as f64]);
+        for point in &g.points {
+            v.extend([
+                point.finger as usize as f64,
+                point.joint_index as f64,
+                f64::from(u8::from(point.tip)),
+            ]);
+            match &point.nodes {
+                Some(nodes) => {
+                    v.extend([1.0, nodes.len() as f64]);
+                    for node in nodes {
+                        v.extend(v3(&node.position));
+                        v.extend(q4(&node.rest));
+                        v.extend(v3(&node.scale));
+                        present_vec(&mut v, node.curl_axis.as_ref());
+                        present_vec(&mut v, node.splay_axis.as_ref());
+                        present(&mut v, node.joint_index.map(|i| i as f64));
+                    }
+                }
+                None => v.push(0.0),
+            }
+            present(&mut v, point.previous_point.map(|i| i as f64));
+            present(&mut v, point.last_point.map(|i| i as f64));
+        }
+        v
+    }
+
+    pub fn configuration_values(c: &ArmConfiguration) -> [f64; 7] {
+        [
+            c.shoulder_plane,
+            c.shoulder_lift,
+            c.humeral_rotation,
+            c.elbow_flex,
+            c.forearm_roll,
+            c.wrist_flex,
+            c.wrist_dev,
+        ]
+    }
+
+    pub fn configuration_of(v: &[f64]) -> ArmConfiguration {
+        ArmConfiguration {
+            shoulder_plane: v[0],
+            shoulder_lift: v[1],
+            humeral_rotation: v[2],
+            elbow_flex: v[3],
+            forearm_roll: v[4],
+            wrist_flex: v[5],
+            wrist_dev: v[6],
+        }
+    }
+
+    pub fn forward_values(r: &ArmForwardResult) -> Vec<f64> {
+        let mut out = Vec::with_capacity(42);
+        for v in [r.u, r.l, r.h, r.palm, r.elbow, r.wrist] {
+            out.extend(v3(&v));
+        }
+        for q in [
+            r.upper_world,
+            r.lower_world,
+            r.hand_world,
+            r.upper_local,
+            r.lower_local,
+            r.hand_local,
+        ] {
+            out.extend(q4(&q));
+        }
+        out
+    }
+
+    pub fn context_values(c: &ArmForwardContext) -> Vec<f64> {
+        let mut out = vec![c.side as usize as f64];
+        out.extend(v3(&c.shoulder));
+        out.extend([c.upper_length, c.lower_length]);
+        out.extend(v3(&c.up));
+        out.extend(v3(&c.right));
+        out.extend(v3(&c.forward));
+        out.extend(q4(&c.upper_parent_world));
+        out
+    }
+
+    pub fn context_of(s: &mut Stream) -> ArmForwardContext {
+        ArmForwardContext {
+            side: s.side(),
+            shoulder: s.vec3(),
+            upper_length: s.f64(),
+            lower_length: s.f64(),
+            up: s.vec3(),
+            right: s.vec3(),
+            forward: s.vec3(),
+            upper_parent_world: s.quat(),
+        }
+    }
+
+    /// `Rig`'s side of `ArmChain`: its clock, limiter switch, rest map, roll tables and helpers.
+    pub struct ChainPort<'a> {
+        pub p: &'a Profile,
+        pub rest: &'a [Option<Quat>],
+        pub dt: f64,
+        pub limits: bool,
+        pub fore_roll: &'a mut [f64; 2],
+        pub upper_roll: &'a mut [f64; 2],
+        pub twists: Option<&'a mut ArmTwists>,
+    }
+
+    impl ArmChainPort for ChainPort<'_> {
+        fn dt(&self) -> f64 {
+            self.dt
+        }
+
+        fn limits_enabled(&self) -> bool {
+            self.limits
+        }
+
+        fn arm_context(&mut self, graph: &mut Graph, anat: &mut ArmAnatomy, side: Side) -> bool {
+            arm_context(self.p, graph, anat, side)
+        }
+
+        fn rest_of(&self, bone: u32) -> Quat {
+            self.rest[bone as usize].unwrap_or_default()
+        }
+
+        fn record_rolls(&mut self, side: Side, fore: f64, humeral: f64) {
+            self.fore_roll[side as usize] = fore;
+            self.upper_roll[side as usize] = humeral;
+        }
+
+        fn stage_twists(&mut self, graph: &mut Graph, side: Side) {
+            if let Some(twists) = self.twists.as_mut() {
+                twists.stage(graph, side);
+            }
+        }
+    }
+
+    /// The constrained arms of a `Rig`, wired and seeded as its constructor does: the base avatar's
+    /// anatomy, finger axes, humeral fronts and one `ArmDriver` per side.
+    pub struct Driven {
+        pub graph: Graph,
+        pub profile: Profile,
+        pub anat: ArmAnatomy,
+        pub joints: JointTable,
+        pub rest: Vec<Option<Quat>>,
+        pub twists: Option<ArmTwists>,
+        pub hands: Hands,
+        pub humeral_front: [Option<Vec3>; 2],
+        pub chain: ArmChain,
+        pub drivers: [Option<ArmDriver>; 2],
+        /// The context each driver was seeded in.
+        pub seeded: [Option<ArmForwardContext>; 2],
+        /// `Rig.dt`.
+        pub dt: f64,
+        pub limits: bool,
+        /// `Rig.foreRoll` and `Rig.upperRoll`.
+        pub fore_roll: [f64; 2],
+        pub upper_roll: [f64; 2],
+    }
+
+    impl Driven {
+        pub fn new() -> Driven {
+            let (graph, profile) = avatar();
+            Driven::of(graph, profile)
+        }
+
+        pub fn of(mut graph: Graph, profile: Profile) -> Driven {
+            graph.update_world_matrix(0, true, true, false);
+            let rest = rig_rest(&graph, &profile);
+            let twists = ArmTwists::create(&profile, &mut graph);
+            let joints = profile.anatomy.clone().unwrap_or_else(JointTable::human);
+            let hands = Hands::new(&profile, &mut graph);
+            let mut anat = ArmAnatomy::new(&profile, &mut graph);
+            let humeral_front = Side::BOTH.map(|s| humeral_front(&profile, &mut graph, s));
+            let chain = ArmChain::new(*hands.palm_local(), humeral_front);
+            let mut drivers = [None, None];
+            let mut seeded = [None, None];
+            for side in Side::BOTH {
+                let (Some(palm), Some(front)) = (
+                    hands.palm_local()[side as usize],
+                    humeral_front[side as usize],
+                ) else {
+                    continue;
+                };
+                let input = DriverInput {
+                    profile: &profile,
+                    side,
+                    joints: &joints,
+                    rest: &|i| rest[i as usize],
+                    finger_axes: &hands.fingers,
+                    palm_local: palm,
+                    radial_sign: anat.radial_sign[side as usize],
+                    humeral_front: front,
+                    finger_clearance: finger_clearance(&profile, side),
+                };
+                let Ok(mut driver) = ArmDriver::create(&input, &mut graph) else {
+                    continue;
+                };
+                let Some(context) = forward_context(&profile, &mut graph, &mut anat, side) else {
+                    continue;
+                };
+                let [u, l, h, n] = actual_arm_pose(&profile, &mut graph, &palm, side);
+                if driver.seed_from_pose(&context, &u, &l, &h, &n) {
+                    drivers[side as usize] = Some(driver);
+                    seeded[side as usize] = Some(context);
+                }
+            }
+            Driven {
+                graph,
+                profile,
+                anat,
+                joints,
+                rest,
+                twists,
+                hands,
+                humeral_front,
+                chain,
+                drivers,
+                seeded,
+                dt: 1.0 / 60.0,
+                limits: true,
+                fore_roll: [0.0; 2],
+                upper_roll: [0.0; 2],
+            }
+        }
+
+        /// `rig.aimArmLegacy(side, dirs, twist, palmTarget, palmWeight)`.
+        pub fn aim_arm_legacy(
+            &mut self,
+            side: Side,
+            dirs: &[Option<Vec3>; 4],
+            twist: f64,
+            palm_target: Option<&Vec3>,
+            palm_weight: f64,
+        ) {
+            let mut port = ChainPort {
+                p: &self.profile,
+                rest: &self.rest,
+                dt: self.dt,
+                limits: self.limits,
+                fore_roll: &mut self.fore_roll,
+                upper_roll: &mut self.upper_roll,
+                twists: self.twists.as_mut(),
+            };
+            self.chain.aim_arm_legacy(
+                &self.profile,
+                &self.joints,
+                &mut self.graph,
+                &mut self.anat,
+                &mut port,
+                side,
+                dirs,
+                twist,
+                palm_target,
+                palm_weight,
+            );
+        }
+
+        /// `rig.armForwardContext(side)`.
+        pub fn context(&mut self, side: Side) -> ArmForwardContext {
+            forward_context(&self.profile, &mut self.graph, &mut self.anat, side)
+                .expect("the base avatar has an arm context")
+        }
+
+        /// One side's driver and the anatomy it samples, borrowed together.
+        pub fn driver(&mut self, side: Side) -> (&mut ArmDriver, &mut ArmAnatomy) {
+            (
+                self.drivers[side as usize]
+                    .as_mut()
+                    .expect("the base avatar has a constrained arm"),
+                &mut self.anat,
+            )
+        }
+
+        /// `driver.captureVolumeFrame()`.
+        pub fn capture_volume_frame(&mut self, side: Side) {
+            let driver = self.drivers[side as usize].as_mut().unwrap();
+            driver.capture_volume_frame(&mut self.graph, &mut self.anat);
+        }
     }
 }
 

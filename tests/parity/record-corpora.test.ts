@@ -9,13 +9,16 @@ import * as strain from '@/engine/anatomy/strain';
 import * as volume from '@/engine/anatomy/volume';
 import { type BodyClearance, makeBodyVolumeFrame } from '@/engine/anatomy/volumes';
 import { Director } from '@/engine/director';
+import { Body } from '@/engine/motion/body';
 import { buildProfile } from '@/engine/profile';
 import { Rig } from '@/engine/rig';
+import { ArmChain } from '@/engine/rig/arm-chain';
 import * as armConfiguration from '@/engine/rig/arm-configuration';
 import { ArmDriver } from '@/engine/rig/arm-driver';
 import * as armPath from '@/engine/rig/arm-path';
 import * as armQp from '@/engine/rig/arm-qp';
 import * as armRoute from '@/engine/rig/arm-route';
+import { ArmTwists } from '@/engine/rig/arm-twists';
 import { ElbowSearch } from '@/engine/rig/elbow';
 import { type FingerAxes, solveFingerAxes } from '@/engine/rig/finger-axes';
 import { FingerClearance, handFrame } from '@/engine/rig/finger-clearance';
@@ -129,6 +132,18 @@ import { DT, harness } from '../motion/body/harness';
  * `-a` and `-b` repeat the scenarios of `tests/rig/arm-path.test.ts`; `-c` puts the base
  * avatar's arm-driver requests to solvers of their own with no environment and one plane; `-d`
  * and `-e` are the drivers' own calls, chosen to reach every step the fixtures take.
+ *
+ * `rig-d-battery-{a,b,c}` are one stream cut into files at record boundaries: the base avatar's
+ * `ArmDriver`s, `ArmRoute`s, `ArmTwists` and `ArmChain`, wired as `Rig` wires them, through a
+ * fixed run of their calls. A record is its tag's index, its inputs, what the call wrote and
+ * the tree's hash as `rig-a-battery` takes it. A plan output is summarised by its q, status,
+ * errors and counts and the FNV-1a of its forward result, points and rows; a call's samples by
+ * their count and the FNV-1a of each one's points and rows, a row's key being its cursor in the
+ * driver's own key order. Route records end with the FNV-1a of the route's jets and carry and
+ * its three flags. `planHook` sets what the TS route tests make of `planFrom` by replacing it,
+ * which reaches the recoveries a real plan on this avatar does not. `rig-d-battery-box` is
+ * `arm-path.test.ts`'s box-optimum scenario on the base avatar: the captured plan, the
+ * environment it ran in, every plan to the box minimum and every probe around it.
  *
  * Without `HASHIDATE_RECORD_CORPORA=1` this checks the files against a fresh recording;
  * with it, it writes them.
@@ -3949,6 +3964,1228 @@ function recordArmPathSolverBattery(): Map<string, Recorded> {
   return files;
 }
 
+// --- the arm driver, route, twists and chain battery -----------------------------------------
+
+const RIG_D_TAGS = [
+  'setup',
+  'context',
+  'volume',
+  'compose',
+  'forConfig',
+  'fromPose',
+  'bound',
+  'fillBounds',
+  'plan',
+  'restore',
+  'validate',
+  'accept',
+  'refresh',
+  'capture',
+  'restoreState',
+  'sample',
+  'routeReset',
+  'routeRetime',
+  'routeTrack',
+  'routeCommand',
+  'routeLimit',
+  'routeAbsorb',
+  'routeStop',
+  'routeTail',
+  'routeAccept',
+  'twistStage',
+  'twistAccept',
+  'twistReset',
+  'aimShoulder',
+  'aimArm',
+  'releaseSlew',
+  'releaseContinuity',
+  'set',
+  'update',
+  'planHook',
+] as const;
+type RigDTag = (typeof RIG_D_TAGS)[number];
+const ARM_SLOTS = ['shoulder', 'upperArm', 'lowerArm', 'hand'] as const;
+const CONFIGURATION_KEYS = [
+  'shoulderPlane',
+  'shoulderLift',
+  'humeralRotation',
+  'elbowFlex',
+  'forearmRoll',
+  'wristFlex',
+  'wristDev',
+] as const;
+
+function configurationValues(c: armConfiguration.ArmConfiguration): number[] {
+  return CONFIGURATION_KEYS.map((k) => c[k]);
+}
+
+function configurationOf(values: readonly number[]): armConfiguration.ArmConfiguration {
+  const c: armConfiguration.ArmConfiguration = {
+    shoulderPlane: 0,
+    shoulderLift: 0,
+    humeralRotation: 0,
+    elbowFlex: 0,
+    forearmRoll: 0,
+    wristFlex: 0,
+    wristDev: 0,
+  };
+  CONFIGURATION_KEYS.forEach((k, i) => {
+    c[k] = values[i];
+  });
+  return c;
+}
+
+function forwardValues(f: armConfiguration.ArmForwardResult): number[] {
+  const out: number[] = [];
+  for (const k of ['u', 'l', 'h', 'palm', 'elbow', 'wrist'] as const) out.push(...f[k].toArray());
+  for (const k of [
+    'upperWorld',
+    'lowerWorld',
+    'handWorld',
+    'upperLocal',
+    'lowerLocal',
+    'handLocal',
+  ] as const) {
+    out.push(...f[k].toArray());
+  }
+  return out;
+}
+
+function contextValues(c: armConfiguration.ArmForwardContext): number[] {
+  return [
+    c.side === 'L' ? 0 : 1,
+    ...c.shoulder.toArray(),
+    c.upperLength,
+    c.lowerLength,
+    ...c.up.toArray(),
+    ...c.right.toArray(),
+    ...c.forward.toArray(),
+    ...c.upperParentWorld.toArray(),
+  ];
+}
+
+function specValues(into: number[], spec: FingerSpec): void {
+  for (const f of FINGER_NAMES) presentNumber(into, spec[f]);
+}
+
+/** A calibration and hand geometry, in the order `arm-path-solver-battery` defines a solver. */
+function definitionValues(
+  c: armConfiguration.ArmCalibration,
+  g: HandGeometryCalibration,
+): number[] {
+  const v: number[] = [];
+  for (const x of [
+    c.upper.axis,
+    c.upper.rest,
+    c.upper.front,
+    c.lower.axis,
+    c.lower.rest,
+    c.hand.axis,
+    c.hand.rest,
+    c.hand.palm,
+  ]) {
+    v.push(...x.toArray());
+  }
+  v.push(c.radialSign);
+  presentNumber(v, g.handPresent === undefined ? undefined : g.handPresent ? 1 : 0);
+  v.push(g.metricScale, g.points.length);
+  for (const point of g.points) {
+    v.push(FINGER_NAMES.indexOf(point.finger), point.jointIndex, point.tip ? 1 : 0);
+    if (point.nodes) {
+      v.push(1, point.nodes.length);
+      for (const node of point.nodes) {
+        v.push(...node.position.toArray(), ...node.rest.toArray(), ...node.scale.toArray());
+        presentVector(v, node.curlAxis);
+        presentVector(v, node.splayAxis);
+        presentNumber(v, node.jointIndex);
+      }
+    } else v.push(0);
+    presentNumber(v, point.previousPoint);
+    presentNumber(v, point.lastPoint);
+  }
+  return v;
+}
+
+/** One battery's records, cut into files a little under the size limit at record boundaries. */
+class RecordStream {
+  readonly files: Recorded[] = [];
+  #values: number[] = [];
+  #records = 0;
+
+  constructor(readonly name: string) {}
+
+  push(record: readonly number[]): void {
+    if ((this.#values.length + record.length + 1) * 8 > MAX_BYTES) this.#flush();
+    this.#values.push(...record);
+    this.#records++;
+  }
+
+  #flush(): void {
+    const name = `${this.name}-${'abcdefgh'[this.files.length]}`;
+    const index = {
+      fn: name,
+      cases: 1,
+      in: [{ name: 'records', len: 1 }],
+      out: [{ name: 'stream', len: this.#values.length }],
+    };
+    this.files.push({
+      json: `${JSON.stringify(index, null, 1)}\n`,
+      bin: f64Bytes([this.#records, ...this.#values]),
+    });
+    this.#values = [];
+    this.#records = 0;
+  }
+
+  finish(): Map<string, Recorded> {
+    if (this.#records > 0) this.#flush();
+    return new Map(this.files.map((f, i) => [`${this.name}-${'abcdefgh'[i]}`, f]));
+  }
+}
+
+/**
+ * The grid pose that buries the right arm deepest in the body, found on a copy of the base
+ * avatar's right driver so the recorded one sees none of the search.
+ */
+function buriedPose(): Float64Array {
+  const fixture = must(
+    DIRECTOR_FIXTURES.find((f) => f.variant === BASE_VARIANT),
+    'a base-variant fixture',
+  );
+  const { profile } = prepareFixture(fixture);
+  const rig = new Rig(profile);
+  const driver = must(rig.armDriver('R'), 'a right arm driver');
+  const context = must(rig.armForwardContext('R'), 'a right arm context');
+  driver.captureVolumeFrame();
+  let sampled: armPath.ArmPathClearance[] = [];
+  const sample = driver.sampleEnvironment.bind(driver);
+  driver.sampleEnvironment = (points, rows) => {
+    sample(points, rows);
+    sampled = rows;
+  };
+  const [rotLo, rotHi] = driver.calibration.joints.shoulder.dofs.rotation.max;
+  const [flexLo, flexHi] = driver.calibration.joints.elbow.dofs.flexion.max;
+  let best = new Float64Array(7);
+  let depth = 0;
+  for (let plane = 60; plane <= 150; plane += 15) {
+    for (let lift = 0.3; lift <= 0.95; lift += 0.08) {
+      for (let r = 0; r <= 4; r++) {
+        for (let f = 0; f <= 6; f++) {
+          const q = Float64Array.from([
+            THREE.MathUtils.degToRad(plane),
+            lift * Math.PI,
+            rotLo + ((rotHi - rotLo) * r) / 4,
+            flexLo + ((flexHi - flexLo) * f) / 6,
+            0,
+            0,
+            0,
+          ]);
+          const c = armPath.configurationFromQ(q, configurationOf([0, 0, 0, 0, 0, 0, 0]));
+          driver.requestForConfiguration(c, context, {}, {});
+          sampled = [];
+          if (driver.validateLockedPose(q, context, {}, {})) continue;
+          for (const row of sampled) {
+            if (row.valid && -row.distance > depth) {
+              depth = -row.distance;
+              best = q;
+            }
+          }
+        }
+      }
+    }
+  }
+  expect(depth, 'a grid pose inside the body').toBeGreaterThan(0.002);
+  return best;
+}
+
+/**
+ * The base avatar's `ArmDriver`s, `ArmRoute`s, `ArmTwists` and `ArmChain` through a fixed run of
+ * their calls, wired as `Rig` wires them; see the file comment.
+ */
+function recordRigDBattery(): Map<string, Recorded> {
+  const fixture = must(
+    DIRECTOR_FIXTURES.find((f) => f.variant === BASE_VARIANT),
+    'a base-variant fixture',
+  );
+  const { root, profile } = prepareFixture(fixture);
+  root.updateMatrixWorld(true);
+  const nodes: THREE.Object3D[] = [];
+  root.traverse((o) => {
+    nodes.push(o);
+  });
+  const stream = new RecordStream('rig-d-battery');
+  // Searched outside the core's math: the pose is an input, and building a profile is too.
+  const deep = buriedPose();
+  const graphHash = (): [number, number] => {
+    const v: number[] = [];
+    const h = makeFnv64();
+    for (const o of nodes) {
+      h.f64s(o.position.toArray());
+      h.f64s(o.quaternion.toArray());
+      h.f64s(o.scale.toArray());
+      h.f64s(o.matrix.elements);
+      h.f64s(o.matrixWorld.elements);
+      h.bool(o.matrixWorldNeedsUpdate);
+    }
+    const d = h.digest();
+    v.push(Number.parseInt(d.slice(0, 8), 16), Number.parseInt(d.slice(8), 16));
+    return v as [number, number];
+  };
+  const coverage = new Map<string, number>();
+  const count = (what: string) => coverage.set(what, (coverage.get(what) ?? 0) + 1);
+  /** One record: the tag, what `call` writes into `input` and `output`, then the tree's hash. */
+  const step = (tag: RigDTag, call: (input: number[], output: number[]) => void) => {
+    const input: number[] = [];
+    const output: number[] = [];
+    call(input, output);
+    stream.push([RIG_D_TAGS.indexOf(tag), ...input, ...output, ...graphHash()]);
+    count(tag);
+  };
+
+  withCoreMath(() => {
+    // --- `Rig`'s constructor, as far as the arm needs it ---
+    root.updateWorldMatrix(true, true);
+    const rest = new Map<THREE.Bone, THREE.Quaternion>();
+    for (const b of [...Object.values(profile.bones), ...Object.values(profile.fingerBones).flat()])
+      rest.set(b, b.quaternion.clone());
+    const identity = new THREE.Quaternion();
+    const restOf = (b: THREE.Bone) => rest.get(b) ?? identity;
+    const twists = ArmTwists.create(profile);
+    const joints = profile.anatomy ?? JOINTS;
+    const hands = new Hands(profile, joints, restOf);
+    const anat = new ArmAnatomy(profile);
+    const chest = must(profile.bones.chest ?? profile.bones.spine ?? profile.bones.hips, 'chest');
+    const humeralFront: Partial<Record<Side, THREE.Vector3>> = {};
+    for (const side of ['L', 'R'] as const) {
+      const upper = profile.bones[`upperArm.${side}`];
+      if (!(upper && profile.body)) continue;
+      upper.updateWorldMatrix(true, false);
+      const q = upper.getWorldQuaternion(new THREE.Quaternion());
+      const along = profile.restDir[`upperArm.${side}`].clone().applyQuaternion(q);
+      const front = profile.body.forward
+        .clone()
+        .applyQuaternion(chest.getWorldQuaternion(new THREE.Quaternion()));
+      front.addScaledVector(along, -front.dot(along));
+      if (front.lengthSq() > 1e-8)
+        humeralFront[side] = front.normalize().applyQuaternion(q.invert());
+    }
+    let dt = 1 / 60;
+    let limits = true;
+    const foreRoll: Record<Side, number> = { L: 0, R: 0 };
+    const upperRoll: Record<Side, number> = { L: 0, R: 0 };
+    const armContext = (side: Side): boolean => {
+      const upper = profile.bones[`upperArm.${side}`];
+      const la = profile.limb?.[`upper.${side}`];
+      if (!(upper && la)) {
+        anat.clearArm();
+        return false;
+      }
+      upper.updateWorldMatrix(true, false);
+      anat.setArm(
+        upper.getWorldPosition(new THREE.Vector3()),
+        la,
+        profile.limb?.[`lower.${side}`] ?? 0,
+        (profile.limb?.[`tip.${side}.middle`] ?? 0) * HAND_CONTACT,
+      );
+      return true;
+    };
+    const chain = new ArmChain(
+      profile,
+      joints,
+      anat,
+      hands.palmLocal,
+      humeralFront,
+      foreRoll,
+      upperRoll,
+      twists,
+      restOf,
+      { dt: () => dt, limitsEnabled: () => limits, armContext },
+    );
+    const forwardContext = (side: Side): armConfiguration.ArmForwardContext | null => {
+      const upper = profile.bones[`upperArm.${side}`];
+      const parent = upper?.parent;
+      const upperLength = profile.limb?.[`upper.${side}`] ?? 0;
+      const lowerLength = profile.limb?.[`lower.${side}`] ?? 0;
+      if (!(upper && parent && upperLength > 0 && lowerLength > 0 && anat.update())) return null;
+      root.updateMatrixWorld(true);
+      if (!armContext(side)) return null;
+      upper.updateWorldMatrix(true, false);
+      parent.updateWorldMatrix(true, false);
+      return {
+        side,
+        shoulder: upper.getWorldPosition(new THREE.Vector3()),
+        upperLength,
+        lowerLength,
+        up: anat.up.clone(),
+        right: anat.right.clone(),
+        forward: anat.fwd.clone(),
+        upperParentWorld: parent.getWorldQuaternion(new THREE.Quaternion()),
+      };
+    };
+    const traces: Record<Side, number[][]> = { L: [], R: [] };
+    // What the TS route tests make of `planFrom` by replacing it: `1` every plan stuck at its
+    // start with `status`, `2` the first one blocked 5 cm off at its start and the rest
+    // `status` `error` off, `3` every plan `status` where it went.
+    const hook = {
+      kind: 0,
+      status: 'progress' as (typeof SOLVER_STATUSES)[number],
+      error: 0,
+      calls: 0,
+    };
+    const drivers: Partial<Record<Side, ArmDriver>> = {};
+    const contexts: Partial<Record<Side, armConfiguration.ArmForwardContext>> = {};
+    const codes: Partial<Record<Side, Map<string, number>>> = {};
+    const code = (side: Side, key: string) =>
+      key === '' ? -1 : must(codes[side]?.get(key), `a key ${key}`);
+    const rowsHash = (side: Side, rows: readonly armPath.ArmPathClearance[]) =>
+      hashHalves(
+        rows.flatMap((r) => [
+          code(side, r.key),
+          r.pointIndex,
+          r.valid ? 1 : 0,
+          r.distance,
+          ...r.normal.toArray(),
+        ]),
+      );
+    step('setup', (_, out) => {
+      out.push(twists ? 1 : 0);
+      for (const side of ['L', 'R'] as const) {
+        presentVector(out, hands.palmLocal[side]);
+        presentVector(out, humeralFront[side]);
+        out.push(
+          anat.radialSign[side],
+          0.5 * FINGER_WIDTH * (profile.limb?.[`pitch.${side}`] ?? 0),
+        );
+      }
+      for (const side of ['L', 'R'] as const) {
+        const palmLocal = hands.palmLocal[side];
+        const front = humeralFront[side];
+        if (!(palmLocal && front)) {
+          out.push(0);
+          continue;
+        }
+        const created = ArmDriver.create({
+          profile,
+          side,
+          joints,
+          rest,
+          fingerAxes: hands.axis,
+          fingerSplayAxes: hands.splayAxis,
+          palmLocal,
+          radialSign: anat.radialSign[side],
+          humeralFront: front,
+          anatomy: anat,
+          fingerClearance: 0.5 * FINGER_WIDTH * (profile.limb?.[`pitch.${side}`] ?? 0),
+        });
+        if (!(created instanceof ArmDriver)) {
+          out.push(0);
+          continue;
+        }
+        const context = must(forwardContext(side), 'an arm context');
+        const upper = must(profile.bones[`upperArm.${side}`], 'upper');
+        const lower = must(profile.bones[`lowerArm.${side}`], 'lower');
+        const hand = must(profile.bones[`hand.${side}`], 'hand');
+        root.updateMatrixWorld(true);
+        const world = (b: THREE.Bone, local: THREE.Vector3) =>
+          local.clone().applyQuaternion(b.getWorldQuaternion(new THREE.Quaternion())).normalize();
+        const u = world(upper, profile.restDir[`upperArm.${side}`]);
+        const l = world(lower, profile.restDir[`lowerArm.${side}`]);
+        const h = world(hand, profile.restDir[`hand.${side}`]);
+        const n = world(hand, palmLocal);
+        const seeded = created.seedFromPose(context, u, l, h, n);
+        out.push(1, ...hashHalves(definitionValues(created.calibration, created.handGeometry)));
+        out.push(created.environment.rowCount, created.sweepResolution, ...contextValues(context));
+        out.push(seeded ? 1 : 0, ...created.acceptedQ, created.requestRollHistory);
+        if (!seeded) continue;
+        drivers[side] = created;
+        const plan = created.planFrom.bind(created);
+        created.planFrom = (start, ...rest) => {
+          const out = plan(start, ...rest);
+          if (hook.kind === 1) {
+            out.status = hook.status;
+            out.q.set(start);
+          } else if (hook.kind === 2) {
+            if (hook.calls++ === 0) {
+              out.status = 'blocked';
+              out.positionError = 0.05;
+              out.q.set(start);
+            } else {
+              out.status = hook.status;
+              out.positionError = hook.error;
+            }
+          } else if (hook.kind === 3) out.status = hook.status;
+          return out;
+        };
+        contexts[side] = context;
+        const keys = (created as unknown as { clearanceKeys: string[] }).clearanceKeys;
+        codes[side] = new Map(keys.map((k, i) => [k, i]));
+        const original = created.sampleEnvironment.bind(created);
+        created.sampleEnvironment = (points, rows) => {
+          original(points, rows);
+          traces[side].push([
+            ...hashHalves(points.flatMap((p) => p.position.toArray())),
+            ...rowsHash(side, rows),
+          ]);
+        };
+      }
+    });
+    const driver = (side: Side) => must(drivers[side], `a ${side} driver`);
+    const context = (side: Side) => must(contexts[side], `a ${side} context`);
+    const sampled = (side: Side, from: number, out: number[]) => {
+      const taken = traces[side].slice(from);
+      out.push(taken.length, ...hashHalves(taken.flat()));
+    };
+    const summary = (side: Side, o: armPath.ArmPathPlanOutput, out: number[]) => {
+      out.push(...o.q, SOLVER_STATUSES.indexOf(o.status), o.positionError, o.orientationError);
+      out.push(o.secondaryError, o.maxViolation, o.iterations, o.environmentBatches);
+      out.push(...hashHalves(forwardValues(o.forward)));
+      out.push(...hashHalves(o.points.flatMap((p) => p.position.toArray())));
+      out.push(...rowsHash(side, o.clearances));
+      count(`status.${o.status}`);
+    };
+    const acceptedState = (d: ArmDriver, out: number[]) => {
+      out.push(...d.acceptedQ, ...configurationValues(d.acceptedConfiguration));
+      out.push(...FINGER_NAMES.map((f) => d.acceptedCurls[f]));
+      out.push(...FINGER_NAMES.map((f) => d.acceptedSpread[f]));
+      out.push(...hashHalves(forwardValues(d.acceptedForward)), d.requestRollHistory);
+    };
+    const requestValues = (r: armPath.ArmPathRequest, out: number[]) => {
+      out.push(...r.wrist.toArray(), ...r.hand.toArray());
+      presentVector(out, r.palm);
+      presentVector(out, r.elbow);
+      specValues(out, r.curls);
+      specValues(out, r.spread);
+    };
+    const sideIndex = (side: Side) => (side === 'L' ? 0 : 1);
+
+    // --- the driver's own calls ---
+    const doContext = (side: Side) =>
+      step('context', (input, out) => {
+        input.push(sideIndex(side));
+        const c = forwardContext(side);
+        if (c) contexts[side] = c;
+        out.push(c ? 1 : 0, ...contextValues(c ?? context(side)));
+      });
+    const doVolume = (side: Side) =>
+      step('volume', (input, out) => {
+        input.push(sideIndex(side));
+        driver(side).captureVolumeFrame();
+        for (const pose of [driver(side).volumeFrame.torso, driver(side).volumeFrame.head]) {
+          if (!pose) out.push(0);
+          else out.push(1, ...[pose.O, pose.up, pose.right, pose.fwd].flatMap((v) => v.toArray()));
+        }
+      });
+    const doCompose = (
+      side: Side,
+      dirs: [THREE.Vector3, THREE.Vector3, THREE.Vector3],
+      palm: THREE.Vector3 | null,
+      weight: number,
+      twist: number,
+      curls: FingerSpec,
+      spread: FingerSpec,
+      advance: boolean,
+    ) =>
+      step('compose', (input, out) => {
+        input.push(sideIndex(side), ...dirs.flatMap((v) => v.toArray()));
+        presentVector(input, palm);
+        input.push(weight, twist);
+        specValues(input, curls);
+        specValues(input, spread);
+        input.push(advance ? 1 : 0);
+        const d = driver(side);
+        const [u, l, h] = dirs;
+        requestValues(
+          d.composeRequest(context(side), u, l, h, palm, weight, twist, curls, spread, advance),
+          out,
+        );
+        out.push(d.requestRollHistory);
+      });
+    const doForConfig = (side: Side, q: Float64Array, curls: FingerSpec, spread: FingerSpec) =>
+      step('forConfig', (input, out) => {
+        input.push(sideIndex(side), ...q);
+        specValues(input, curls);
+        specValues(input, spread);
+        const c = armPath.configurationFromQ(q, configurationOf([0, 0, 0, 0, 0, 0, 0]));
+        requestValues(driver(side).requestForConfiguration(c, context(side), curls, spread), out);
+      });
+    const doValidate = (
+      side: Side,
+      q: Float64Array,
+      curls: FingerSpec,
+      spread: FingerSpec,
+      bridge = true,
+    ) =>
+      step('validate', (input, out) => {
+        input.push(sideIndex(side), ...q);
+        specValues(input, curls);
+        specValues(input, spread);
+        input.push(bridge ? 1 : 0);
+        const d = driver(side);
+        const from = traces[side].length;
+        const o = bridge ? d.bridgeOutput : d.output;
+        out.push(d.validateLockedPose(q, context(side), curls, spread, o) ? 1 : 0);
+        summary(side, o, out);
+        sampled(side, from, out);
+      });
+    const doPlan = (side: Side, start: Float64Array, stepDt: number, temporal: boolean) =>
+      step('plan', (input, out) => {
+        input.push(sideIndex(side), ...start, stepDt, temporal ? 1 : 0);
+        const from = traces[side].length;
+        summary(side, driver(side).planFrom(start, context(side), stepDt, temporal), out);
+        sampled(side, from, out);
+      });
+    const doRestore = (side: Side, start: Float64Array, stepDt: number, temporal: boolean) =>
+      step('restore', (input, out) => {
+        input.push(sideIndex(side), ...start, stepDt, temporal ? 1 : 0);
+        const d = driver(side);
+        const from = traces[side].length;
+        out.push(d.restoreEndpointFrom(start, context(side), stepDt, temporal) ? 1 : 0);
+        summary(side, d.output, out);
+        sampled(side, from, out);
+      });
+    const doAccept = (side: Side, q: Float64Array, curls: FingerSpec, spread: FingerSpec) =>
+      step('accept', (input, out) => {
+        input.push(sideIndex(side), ...q);
+        specValues(input, curls);
+        specValues(input, spread);
+        driver(side).accept(q, context(side), curls, spread);
+        acceptedState(driver(side), out);
+      });
+
+    const NONE: FingerSpec = {};
+    const SOME_CURLS: FingerSpec = { index: 0.3, middle: 0.5, little: 0.2 };
+    const SOME_SPREAD: FingerSpec = { index: 0.1, ring: -0.1 };
+    const snapshots: Partial<Record<Side, ReturnType<ArmDriver['captureAcceptedState']>>> = {};
+    for (const side of ['R', 'L'] as const) {
+      doContext(side);
+      doVolume(side);
+      const d = driver(side);
+      const f = armConfiguration.makeArmForwardResult();
+      armConfiguration.forwardArm(
+        { ...d.acceptedConfiguration, elbowFlex: 0.9, wristFlex: 0.3, wristDev: -0.1 },
+        d.calibration,
+        context(side),
+        f,
+      );
+      const dirs: [THREE.Vector3, THREE.Vector3, THREE.Vector3] = [f.u, f.l, f.h];
+      const scaled: [THREE.Vector3, THREE.Vector3, THREE.Vector3] = [
+        f.u.clone().multiplyScalar(1.7),
+        f.l.clone().multiplyScalar(0.6),
+        f.h.clone().multiplyScalar(2.3),
+      ];
+      doCompose(side, dirs, f.palm, 1, 0, NONE, NONE, true);
+      doCompose(
+        side,
+        scaled,
+        f.palm.clone().applyAxisAngle(f.h, 2.5),
+        0.5,
+        0,
+        SOME_CURLS,
+        SOME_SPREAD,
+        true,
+      );
+      doCompose(side, dirs, f.palm.clone().applyAxisAngle(f.h, -2.9), 1, 0, NONE, NONE, true);
+      doCompose(side, dirs, null, 0, 0.4, NONE, NONE, false);
+      doCompose(side, dirs, f.palm, 0.0005, 0.2, NONE, NONE, true);
+      doCompose(side, dirs, f.h.clone(), 1, 0, NONE, NONE, true);
+      doCompose(side, [f.u, f.l, f.l.clone().negate()], null, 0, 0.4, NONE, NONE, true);
+      doCompose(side, dirs, null, 0, 0, SOME_CURLS, NONE, true);
+      step('fromPose', (input, out) => {
+        input.push(sideIndex(side), ...dirs.flatMap((v) => v.toArray()));
+        presentVector(input, f.palm);
+        out.push(d.configurationFromPose(context(side), f.u, f.l, f.h, f.palm) ? 1 : 0);
+        out.push(...configurationValues(d.targetConfiguration), ...d.targetQ);
+      });
+      step('fromPose', (input, out) => {
+        input.push(sideIndex(side), ...dirs.flatMap((v) => v.toArray()));
+        presentVector(input, null);
+        out.push(d.configurationFromPose(context(side), f.u, f.l, f.h, null) ? 1 : 0);
+        out.push(...configurationValues(d.targetConfiguration), ...d.targetQ);
+      });
+      step('fromPose', (input, out) => {
+        const zero = new THREE.Vector3();
+        input.push(sideIndex(side), ...f.u.toArray(), ...zero.toArray(), ...f.h.toArray());
+        presentVector(input, f.palm);
+        out.push(d.configurationFromPose(context(side), f.u, zero, f.h, f.palm) ? 1 : 0);
+        out.push(...configurationValues(d.targetConfiguration), ...d.targetQ);
+      });
+      step('bound', (input, out) => {
+        const wild = [0.3, 1.4, 3, -0.4, 4, -2, 1];
+        input.push(sideIndex(side), ...wild);
+        out.push(
+          ...configurationValues(
+            d.boundConfiguration(configurationOf(wild), configurationOf(wild)),
+          ),
+        );
+      });
+      const q0 = d.acceptedQ.slice();
+      const nearFloor = q0.slice();
+      nearFloor[1] = 0.01;
+      for (const [start, stepDt, temporal] of [
+        [q0, 1 / 60, true],
+        [q0, 0, false],
+        [q0, -0.1, true],
+        [nearFloor, 0.05, true],
+      ] as const) {
+        step('fillBounds', (input, out) => {
+          input.push(sideIndex(side), ...start, stepDt, temporal ? 1 : 0);
+          const b = d.fillBounds(start, stepDt, temporal);
+          out.push(...b.lower, ...b.upper);
+        });
+      }
+      doForConfig(side, q0, NONE, NONE);
+      doValidate(side, q0, NONE, NONE);
+      doValidate(side, q0, SOME_CURLS, SOME_SPREAD, false);
+      const inChest = Float64Array.from([1.556, 0.299, -0.181, 2.4, 0.5, 0.3, 0]);
+      doValidate(side, inChest, NONE, NONE);
+      doCompose(side, dirs, f.palm, 1, 0, SOME_CURLS, NONE, true);
+      doPlan(side, q0, 1 / 60, true);
+      doPlan(side, q0, 0.05, false);
+      doRestore(side, q0, 0, false);
+      doForConfig(side, inChest, NONE, NONE);
+      doRestore(side, inChest, 1 / 60, true);
+      doPlan(side, inChest, 1 / 60, true);
+      // A request past the forearm and wrist stops, planned without a temporal box until the
+      // chain stops at the box's own minimum.
+      const beyond = q0.slice();
+      beyond[4] = d.calibration.joints.elbow.dofs.rotation.max[1] + 0.4;
+      beyond[5] = d.calibration.joints.wrist.dofs.flexion.max[1] + 0.3;
+      doForConfig(side, beyond, NONE, NONE);
+      let at = q0.slice();
+      for (let i = 0; i < 12 && d.output.status !== 'stationary'; i++) {
+        doPlan(side, at, 0, false);
+        at = d.output.q.slice();
+      }
+      doAccept(side, d.output.q.slice(), SOME_CURLS, SOME_SPREAD);
+      step('refresh', (input, out) => {
+        input.push(sideIndex(side));
+        out.push(...forwardValues(d.refreshAcceptedForward(context(side))));
+      });
+      step('capture', (input, out) => {
+        input.push(sideIndex(side));
+        snapshots[side] = d.captureAcceptedState();
+        acceptedState(d, out);
+      });
+      doAccept(side, q0, NONE, NONE);
+      step('restoreState', (input, out) => {
+        input.push(sideIndex(side));
+        d.restoreAcceptedState(must(snapshots[side], 'a snapshot'));
+        acceptedState(d, out);
+      });
+      step('sample', (input, out) => {
+        input.push(sideIndex(side));
+        const points = [...d.bridgeOutput.points].reverse();
+        const rows = d.bridgeOutput.clearances.map((r) => ({ ...r, normal: r.normal.clone() }));
+        const from = traces[side].length;
+        d.sampleEnvironment(points, rows);
+        sampled(side, from, out);
+        out.push(...rowsHash(side, rows));
+      });
+    }
+
+    // --- routes over many frames, at two dt sequences ---
+    const joint = driver('R').calibration.joints;
+    const sideways = [0, 0.5 * Math.PI, 0, 0.4, 0, 0, 0];
+    const overRolled = [...sideways];
+    overRolled[4] = joint.elbow.dofs.rotation.max[1] + 0.2;
+    const pinned = [
+      1.556,
+      0.299,
+      -0.181,
+      1.655,
+      joint.elbow.dofs.rotation.max[1],
+      joint.wrist.dofs.flexion.max[0],
+      joint.wrist.dofs.deviation.max[0],
+    ];
+    const heart = [0.436, 0.336, -0.841, 0.177, 0.512, 0.049, -0.001];
+    const nearFace = [1.4, 0.75 * Math.PI, -0.3, 2.0, 0.3, 0.2, 0.1];
+    const routes: Record<Side, armRoute.ArmRoute> = {
+      L: new armRoute.ArmRoute(0.25),
+      R: new armRoute.ArmRoute(0.25),
+    };
+    const routeState = (r: armRoute.ArmRoute, out: number[]) => {
+      out.push(
+        ...hashHalves([
+          ...r.goalQ,
+          ...r.qAcc,
+          ...r.vAcc,
+          ...r.aAcc,
+          ...r.tail0,
+          ...r.tailV,
+          ...r.tailA,
+          ...r.carryFrom,
+          ...r.carryRate,
+        ]),
+        r.projected ? 1 : 0,
+        r.solved ? 1 : 0,
+        r.stopping ? 1 : 0,
+      );
+    };
+    const routeStep = (tag: RigDTag, side: Side, call: (input: number[], out: number[]) => void) =>
+      step(tag, (input, out) => {
+        input.push(sideIndex(side));
+        call(input, out);
+        routeState(routes[side], out);
+      });
+    const chestRest = chest.quaternion.clone();
+    const sway = (k: number) =>
+      step('set', (input) => {
+        const q = chestRest
+          .clone()
+          .multiply(
+            new THREE.Quaternion().setFromEuler(
+              new THREE.Euler(0.03 * Math.sin(k), 0.05 * Math.cos(0.7 * k), 0),
+            ),
+          );
+        input.push(nodes.indexOf(chest), ...chest.position.toArray(), ...q.toArray());
+        chest.quaternion.copy(q);
+      });
+    const frames = (side: Side, path: number[][], dts: number[], from = path[0]) => {
+      const route = routes[side];
+      routeStep('routeReset', side, (input) => {
+        const q = Float64Array.from(from);
+        input.push(...q);
+        route.reset(q);
+      });
+      dts.forEach((stepDt, k) => {
+        const segment = Math.min(path.length - 2, Math.floor(k / 15));
+        const t = (k % 15) / 14;
+        const raw = Float64Array.from(path[segment], (a, i) => a + (path[segment + 1][i] - a) * t);
+        if (k % 15 === 0)
+          routeStep('routeRetime', side, (input) => {
+            input.push(0.3);
+            route.retime(0.3);
+          });
+        if (k % 7 === 3) {
+          sway(k);
+          step('update', () => root.updateMatrixWorld(true));
+        }
+        doContext(side);
+        doVolume(side);
+        const curls = k % 3 === 0 ? SOME_CURLS : NONE;
+        if (k % 2 === 0) doForConfig(side, raw, curls, NONE);
+        else {
+          const f = armConfiguration.forwardArm(
+            armPath.configurationFromQ(raw, configurationOf([0, 0, 0, 0, 0, 0, 0])),
+            driver(side).calibration,
+            context(side),
+            armConfiguration.makeArmForwardResult(),
+          );
+          doCompose(side, [f.u, f.l, f.h], f.palm, k % 4 === 1 ? 1 : 0.6, 0, curls, NONE, true);
+        }
+        doAccept(side, route.qAcc.slice(), curls, NONE);
+        routeStep('routeTrack', side, (input, out) => {
+          input.push(...raw);
+          specValues(input, curls);
+          specValues(input, NONE);
+          input.push(stepDt);
+          const from = traces[side].length;
+          out.push(route.track(driver(side), context(side), raw, curls, NONE, stepDt));
+          sampled(side, from, out);
+        });
+        const command = new Float64Array(7);
+        routeStep('routeCommand', side, (_, out) => {
+          route.command(driver(side), command);
+          out.push(...command);
+        });
+        routeStep('routeLimit', side, (input, out) => {
+          input.push(...command, stepDt);
+          out.push(
+            route.limitSlew(
+              command,
+              driver(side).acceptedForward,
+              driver(side),
+              context(side),
+              stepDt,
+            )
+              ? 1
+              : 0,
+            ...command,
+          );
+        });
+        let committed = command;
+        if (k % 11 === 5) doValidate(side, command.slice(), curls, NONE);
+        if (k % 13 === 6) {
+          committed = command.map((v, i) => (i === 0 ? v : v - 0.002));
+          routeStep('routeAbsorb', side, (input) => {
+            input.push(...committed);
+            route.absorb(committed);
+          });
+        }
+        if (k % 17 === 9) {
+          routeStep('routeStop', side, (input) => {
+            input.push(stepDt);
+            route.beginStop(stepDt);
+          });
+          const tail = new Float64Array(7);
+          routeStep('routeTail', side, (_, out) => {
+            route.tailSample(tail);
+            out.push(...tail);
+          });
+          committed = tail;
+        }
+        routeStep('routeAccept', side, (input) => {
+          input.push(...committed, stepDt);
+          route.accept(committed, stepDt);
+        });
+      });
+    };
+    const path = [
+      driver('R').acceptedQ.slice(),
+      sideways,
+      nearFace,
+      pinned,
+      heart,
+      overRolled,
+      sideways,
+    ];
+    frames(
+      'R',
+      path.map((q) => [...q]),
+      Array.from({ length: 90 }, () => 1 / 60),
+    );
+    frames(
+      'R',
+      [heart, overRolled, nearFace, sideways].map((q) => [...q]),
+      Array.from({ length: 60 }, (_, k) => (k % 10 === 9 ? 0.05 : 1 / 60)),
+    );
+    const mirror = (q: ArrayLike<number>) => Array.from(q);
+    frames(
+      'L',
+      [driver('L').acceptedQ.slice(), sideways, nearFace].map(mirror),
+      Array.from({ length: 30 }, () => 1 / 60),
+    );
+    doForConfig('R', Float64Array.from(heart), NONE, NONE);
+    doPlan('R', deep, 1 / 60, true);
+    // A start below the shoulder's rotation stop, whose temporal box is empty.
+    const outside = Float64Array.from(heart);
+    outside[2] = joint.shoulder.dofs.rotation.max[0] - 1;
+    doPlan('R', outside, 1 / 60, true);
+    frames(
+      'R',
+      [deep, heart, heart].map(mirror),
+      Array.from({ length: 20 }, () => 1 / 60),
+    );
+
+    // The route tests' recoveries: a plan that leaves the goal where it was, blocked or
+    // stationary, from a pose on its stops to one at rest; a blocked chain reseeded from a
+    // raw past the forearm's stop; a stationary plan whose raw is outside the box.
+    const setHook = (kind: number, status: (typeof SOLVER_STATUSES)[number], error = 0) =>
+      step('planHook', (input) => {
+        input.push(kind, SOLVER_STATUSES.indexOf(status), error);
+        Object.assign(hook, { kind, status, error, calls: 0 });
+      });
+    step('set', (input) => {
+      input.push(nodes.indexOf(chest), ...chest.position.toArray(), ...chestRest.toArray());
+      chest.quaternion.copy(chestRest);
+    });
+    step('update', () => root.updateMatrixWorld(true));
+    for (const status of ['blocked', 'stationary'] as const) {
+      setHook(1, status);
+      frames(
+        'R',
+        [heart, heart],
+        Array.from({ length: 14 }, () => 1 / 60),
+        pinned,
+      );
+    }
+    for (const [status, error] of [
+      ['progress', 0.01],
+      ['progress', 0.09],
+      ['blocked', 0.01],
+    ] as const) {
+      setHook(2, status, error);
+      frames('R', [overRolled, overRolled], [1 / 60], sideways);
+    }
+    setHook(3, 'stationary');
+    frames('R', [overRolled, overRolled], [1 / 60, 1 / 60], sideways);
+    setHook(0, 'progress');
+
+    // --- twists and the chain ---
+    const armBones = (side: Side) => [
+      ...ARM_SLOTS.map((slot) => must(profile.bones[`${slot}.${side}`], slot)),
+      ...(['upperArm', 'lowerArm'] as const).flatMap((slot) => {
+        const binding = profile.armTwists?.[`${slot}.${side}`];
+        return binding ? [binding.helper] : [];
+      }),
+    ];
+    const touched = (side: Side, out: number[]) => {
+      for (const b of armBones(side)) out.push(...b.quaternion.toArray());
+      out.push(foreRoll[side], upperRoll[side]);
+    };
+    const twistStep = (tag: 'twistStage' | 'twistAccept' | 'twistReset', side: Side) =>
+      step(tag, (input, out) => {
+        input.push(sideIndex(side));
+        const t = must(twists, 'arm twists');
+        if (tag === 'twistStage') t.stage(side);
+        else if (tag === 'twistAccept') t.accept(side);
+        else t.reset();
+        touched(side, out);
+      });
+    type Dirs = Partial<Record<(typeof ARM_SLOTS)[number], Vec3Tuple>>;
+    const aimArm = (
+      side: Side,
+      dirs: Dirs,
+      twist: number,
+      palm: Vec3Tuple | null,
+      weight: number,
+      stepDt: number,
+      on: boolean,
+    ) =>
+      step('aimArm', (input, out) => {
+        input.push(sideIndex(side));
+        for (const slot of ARM_SLOTS) {
+          const v = dirs[slot];
+          presentVector(input, v ? new THREE.Vector3(...v) : null);
+        }
+        input.push(twist);
+        presentVector(input, palm ? new THREE.Vector3(...palm) : null);
+        input.push(weight, stepDt, on ? 1 : 0);
+        dt = stepDt;
+        limits = on;
+        chain.aimArmLegacy(
+          side,
+          dirs as Record<(typeof ARM_SLOTS)[number], Vec3Tuple>,
+          twist,
+          palm,
+          weight,
+        );
+        touched(side, out);
+      });
+    const legacy: Dirs = {
+      shoulder: [0.97, 0.18, 0.12],
+      upperArm: [0.62, -0.58, 0.53],
+      lowerArm: [0.08, -0.12, 0.99],
+      hand: [0.2, 0.05, 0.98],
+    };
+    aimArm('R', legacy, 0.3, [0.1, -0.9, 0.4], 0.8, 1 / 60, false);
+    twistStep('twistAccept', 'R');
+    twistStep('twistReset', 'R');
+    for (const [side, dir] of [
+      ['R', [0.97, 0.18, 0.12]],
+      ['L', null],
+      ['L', [-0.9, 0.3, 0.1]],
+    ] as const) {
+      step('aimShoulder', (input, out) => {
+        input.push(sideIndex(side));
+        presentVector(input, dir ? new THREE.Vector3(...dir) : null);
+        chain.aimShoulder(side, dir ? ([...dir] as Vec3Tuple) : null);
+        touched(side, out);
+      });
+    }
+    for (let k = 0; k < 24; k++) {
+      const side: Side = k % 3 === 2 ? 'L' : 'R';
+      const sign = side === 'L' ? -1 : 1;
+      const a = 0.25 * k;
+      const dirs: Dirs = {
+        shoulder: [sign * 0.95, 0.2, 0.1 * Math.sin(a)],
+        upperArm: [sign * 0.5 * Math.cos(a), -0.6, 0.6 + 0.3 * Math.sin(a)],
+        lowerArm: [sign * 0.1, -0.2 + 0.5 * Math.sin(a), 0.95],
+        hand: [sign * 0.2 * Math.cos(2 * a), 0.1, 0.97],
+      };
+      // A palm demand that turns past a half-turn, so the roll budget has a seam to ease.
+      const turn = Math.PI * (k / 8);
+      const palm: Vec3Tuple | null = k % 5 === 4 ? null : [Math.cos(turn), -0.5, Math.sin(turn)];
+      const stepDt = k === 7 ? 0 : k % 6 === 5 ? 0.05 : 1 / 60;
+      if (k === 12) step('releaseSlew', () => chain.releaseSlew());
+      if (k === 18) step('releaseContinuity', () => chain.releaseContinuity());
+      if (k === 20) {
+        const partial: Dirs = {
+          shoulder: dirs.shoulder,
+          upperArm: dirs.upperArm,
+          lowerArm: dirs.lowerArm,
+        };
+        aimArm(side, partial, 0.2, palm, 1, stepDt, true);
+        continue;
+      }
+      aimArm(side, dirs, k % 4 === 0 ? 0.3 : 0, palm, k % 7 === 3 ? 0.4 : 1, stepDt, k % 9 !== 8);
+      if (k % 4 === 1) twistStep('twistAccept', side);
+      if (k % 6 === 2) twistStep('twistStage', side);
+      if (k % 10 === 9) twistStep('twistReset', side);
+    }
+  });
+
+  for (const status of SOLVER_STATUSES) {
+    expect(coverage.get(`status.${status}`) ?? 0, `a ${status} plan`).toBeGreaterThan(0);
+  }
+  return stream.finish();
+}
+
+/**
+ * `tests/rig/arm-path.test.ts`'s box-optimum scenario on the base avatar: the right arm's last
+ * plan after 140 frames of `cover`, what its environment held, and the TS's own run from there.
+ */
+function recordRigDBox(): Recorded {
+  const fixture = must(
+    DIRECTOR_FIXTURES.find((f) => f.variant === BASE_VARIANT),
+    'a base-variant fixture',
+  );
+  const { root, profile } = prepareFixture(fixture);
+  const nodes: THREE.Object3D[] = [];
+  root.traverse((o) => {
+    nodes.push(o);
+  });
+  const values: number[] = [];
+  withCoreMath(() => {
+    const rig = new Rig(profile);
+    const body = new Body(rig, profile, { random: () => 0.5 });
+    body.breathDepth = 0;
+    body.idleAmount = 0;
+    body.weightShift = 0;
+    body.gazeAmount = 0;
+    const driver = must(rig.armDriver('R'), 'a right arm driver');
+    let start: Float64Array | null = null;
+    let context: armConfiguration.ArmForwardContext | null = null;
+    let request: armPath.ArmPathRequest | null = null;
+    const planFrom = driver.planFrom.bind(driver);
+    driver.planFrom = (...args) => {
+      start = Float64Array.from(args[0]);
+      const c = args[1];
+      context = {
+        ...c,
+        shoulder: c.shoulder.clone(),
+        up: c.up.clone(),
+        right: c.right.clone(),
+        forward: c.forward.clone(),
+        upperParentWorld: c.upperParentWorld.clone(),
+      };
+      const r = driver.request;
+      request = {
+        wrist: r.wrist.clone(),
+        hand: r.hand.clone(),
+        palm: r.palm?.clone() ?? null,
+        elbow: r.elbow.clone(),
+        curls: { ...r.curls },
+        spread: { ...r.spread },
+      };
+      return planFrom(...args);
+    };
+    const captured: { locals: number[] | null } = { locals: null };
+    const face = rig.anat.face;
+    if (face) {
+      const refresh = face.refresh.bind(face);
+      face.refresh = () => {
+        refresh();
+        captured.locals = nodes.flatMap((o) => [
+          ...o.position.toArray(),
+          ...o.quaternion.toArray(),
+          ...o.scale.toArray(),
+        ]);
+      };
+    }
+    rig.reset();
+    body.update(DT);
+    body.play('cover', 'R');
+    for (let i = 0; i < 140; i++) {
+      rig.reset();
+      body.update(DT);
+    }
+    const ctx = must<armConfiguration.ArmForwardContext>(context, 'a captured context');
+    const req = must<armPath.ArmPathRequest>(request, 'a captured request');
+    const begin = must<Float64Array>(start, 'a captured start');
+    const r = driver.request;
+    values.push(...hashHalves(definitionValues(driver.calibration, driver.handGeometry)));
+    values.push(...begin, ...contextValues(ctx));
+    for (const q of [req, r]) {
+      values.push(...q.wrist.toArray(), ...q.hand.toArray());
+      presentVector(values, q.palm);
+      presentVector(values, q.elbow);
+      specValues(values, q.curls);
+      specValues(values, q.spread);
+    }
+    for (const pose of [driver.volumeFrame.torso, driver.volumeFrame.head]) {
+      if (!pose) values.push(0);
+      else values.push(1, ...[pose.O, pose.up, pose.right, pose.fwd].flatMap((v) => v.toArray()));
+    }
+    const snapshot = captured.locals;
+    if (snapshot) values.push(1, ...snapshot);
+    else values.push(0);
+
+    let q: Float64Array = begin;
+    let status = '';
+    const plans: number[] = [];
+    let calls = 0;
+    for (let call = 0; call < 30 && status !== 'stationary'; call++) {
+      const out = driver.solver.plan(
+        req,
+        q,
+        ctx,
+        driver.fillBounds(q, 0, false),
+        driver.environment,
+        driver.output,
+      );
+      status = out.status;
+      q = Float64Array.from(out.q);
+      plans.push(...q, SOLVER_STATUSES.indexOf(out.status));
+      calls++;
+    }
+    expect(status, 'the box run settles').toBe('stationary');
+    values.push(calls, ...plans);
+
+    const handLength = profile.limb?.['tip.R.middle'] ?? 0;
+    const span = ctx.upperLength + ctx.lowerLength + handLength;
+    const hand = req.hand.clone().normalize();
+    const palm = req.palm?.clone().addScaledVector(hand, -req.palm.dot(hand)).normalize();
+    const targets = [
+      req.wrist,
+      req.wrist.clone().addScaledVector(hand, handLength),
+      ...(palm ? [req.wrist.clone().addScaledVector(palm, handLength)] : []),
+    ];
+    const primary = (at: Float64Array): number => {
+      const fk = armConfiguration.forwardArm(
+        armPath.configurationFromQ(at, configurationOf([0, 0, 0, 0, 0, 0, 0])),
+        driver.calibration,
+        ctx,
+        armConfiguration.makeArmForwardResult(),
+      );
+      const reached = [
+        fk.wrist,
+        fk.wrist.clone().addScaledVector(fk.h, handLength),
+        fk.wrist.clone().addScaledVector(fk.palm, handLength),
+      ];
+      let sum = 0;
+      for (let i = 0; i < targets.length; i++) {
+        const d = targets[i].distanceTo(reached[i]) / span;
+        sum += d * d;
+      }
+      return sum;
+    };
+    const atEnd = primary(q);
+    const box = driver.fillBounds(q, 0, false);
+    const lower = Float64Array.from(box.lower);
+    const upper = Float64Array.from(box.upper);
+    values.push(atEnd);
+    let better = 0;
+    let probed = 0;
+    for (let dof = 0; dof < 7; dof++) {
+      for (const sign of [-1, 1]) {
+        const moved = Float64Array.from(q);
+        moved[dof] += sign * 1e-3;
+        if (moved[dof] < lower[dof] || moved[dof] > upper[dof]) {
+          values.push(-1, 0);
+          continue;
+        }
+        if (!driver.validateLockedPose(moved, ctx, req.curls, req.spread)) {
+          values.push(0, 0);
+          continue;
+        }
+        probed++;
+        const drop = atEnd - primary(moved);
+        values.push(1, drop);
+        if (drop > Number.EPSILON ** (2 / 3) * Math.max(1, atEnd)) better++;
+      }
+    }
+    expect(probed, 'a probe inside the box').toBeGreaterThan(0);
+    expect(better, 'probes that improve on the box optimum').toBe(0);
+  });
+  const index = {
+    fn: 'rig-d-battery-box',
+    cases: 1,
+    in: [{ name: 'records', len: 1 }],
+    out: [{ name: 'stream', len: values.length }],
+  };
+  return { json: `${JSON.stringify(index, null, 1)}\n`, bin: f64Bytes([1, ...values]) };
+}
+
 // --- the files ----------------------------------------------------------------------------
 
 function settle(name: string, recorded: Recorded): void {
@@ -3997,5 +5234,10 @@ describe('the recorded corpora', () => {
 
   it('match a fresh recording of the arm-path solver battery', () => {
     for (const [name, recorded] of recordArmPathSolverBattery()) settle(name, recorded);
+  });
+
+  it('match a fresh recording of the arm driver, route, twists and chain battery', () => {
+    for (const [name, recorded] of recordRigDBattery()) settle(name, recorded);
+    settle('rig-d-battery-box', recordRigDBox());
   });
 });
