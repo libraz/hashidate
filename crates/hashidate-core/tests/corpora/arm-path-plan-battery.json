@@ -1,0 +1,220 @@
+{
+ "fn": "arm-path-plan-battery",
+ "cases": 64,
+ "in": [
+  {
+   "name": "kind",
+   "len": 1
+  },
+  {
+   "name": "source.u",
+   "len": 3
+  },
+  {
+   "name": "source.l",
+   "len": 3
+  },
+  {
+   "name": "source.h",
+   "len": 3
+  },
+  {
+   "name": "source.palm",
+   "len": 3
+  },
+  {
+   "name": "source.elbow",
+   "len": 3
+  },
+  {
+   "name": "source.wrist",
+   "len": 3
+  },
+  {
+   "name": "source.upperWorld",
+   "len": 4
+  },
+  {
+   "name": "source.lowerWorld",
+   "len": 4
+  },
+  {
+   "name": "source.handWorld",
+   "len": 4
+  },
+  {
+   "name": "source.upperLocal",
+   "len": 4
+  },
+  {
+   "name": "source.lowerLocal",
+   "len": 4
+  },
+  {
+   "name": "source.handLocal",
+   "len": 4
+  },
+  {
+   "name": "target.u",
+   "len": 3
+  },
+  {
+   "name": "target.l",
+   "len": 3
+  },
+  {
+   "name": "target.h",
+   "len": 3
+  },
+  {
+   "name": "target.palm",
+   "len": 3
+  },
+  {
+   "name": "target.elbow",
+   "len": 3
+  },
+  {
+   "name": "target.wrist",
+   "len": 3
+  },
+  {
+   "name": "target.upperWorld",
+   "len": 4
+  },
+  {
+   "name": "target.lowerWorld",
+   "len": 4
+  },
+  {
+   "name": "target.handWorld",
+   "len": 4
+  },
+  {
+   "name": "target.upperLocal",
+   "len": 4
+  },
+  {
+   "name": "target.lowerLocal",
+   "len": 4
+  },
+  {
+   "name": "target.handLocal",
+   "len": 4
+  },
+  {
+   "name": "q",
+   "len": 7
+  },
+  {
+   "name": "outConf.shoulderPlane",
+   "len": 1
+  },
+  {
+   "name": "outConf.shoulderLift",
+   "len": 1
+  },
+  {
+   "name": "outConf.humeralRotation",
+   "len": 1
+  },
+  {
+   "name": "outConf.elbowFlex",
+   "len": 1
+  },
+  {
+   "name": "outConf.forearmRoll",
+   "len": 1
+  },
+  {
+   "name": "outConf.wristFlex",
+   "len": 1
+  },
+  {
+   "name": "outConf.wristDev",
+   "len": 1
+  }
+ ],
+ "out": [
+  {
+   "name": "target.u",
+   "len": 3
+  },
+  {
+   "name": "target.l",
+   "len": 3
+  },
+  {
+   "name": "target.h",
+   "len": 3
+  },
+  {
+   "name": "target.palm",
+   "len": 3
+  },
+  {
+   "name": "target.elbow",
+   "len": 3
+  },
+  {
+   "name": "target.wrist",
+   "len": 3
+  },
+  {
+   "name": "target.upperWorld",
+   "len": 4
+  },
+  {
+   "name": "target.lowerWorld",
+   "len": 4
+  },
+  {
+   "name": "target.handWorld",
+   "len": 4
+  },
+  {
+   "name": "target.upperLocal",
+   "len": 4
+  },
+  {
+   "name": "target.lowerLocal",
+   "len": 4
+  },
+  {
+   "name": "target.handLocal",
+   "len": 4
+  },
+  {
+   "name": "same",
+   "len": 1
+  },
+  {
+   "name": "outConf.shoulderPlane",
+   "len": 1
+  },
+  {
+   "name": "outConf.shoulderLift",
+   "len": 1
+  },
+  {
+   "name": "outConf.humeralRotation",
+   "len": 1
+  },
+  {
+   "name": "outConf.elbowFlex",
+   "len": 1
+  },
+  {
+   "name": "outConf.forearmRoll",
+   "len": 1
+  },
+  {
+   "name": "outConf.wristFlex",
+   "len": 1
+  },
+  {
+   "name": "outConf.wristDev",
+   "len": 1
+  }
+ ]
+}

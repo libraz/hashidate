@@ -104,6 +104,11 @@ import { must } from '../helpers/must';
  * inside the size limit. A clearance step places a hand at the mouth with its fingers aimed in,
  * and the recording checks that one turned the hand and one curled a finger.
  *
+ * `arm-path-plan-battery` calls `configurationFromQ` (`fromQ`) and `copyForward` (`copyForward`)
+ * directly, as every caller of theirs outside the tests is in their own module. The values are
+ * splitmix64 draws over several magnitudes, mixed with signed zeros, infinities, NaN and the
+ * smallest subnormal; `same` says `configurationFromQ` returned its `out`.
+ *
  * Without `HASHIDATE_RECORD_CORPORA=1` this checks the files against a fresh recording;
  * with it, it writes them.
  */
@@ -2443,6 +2448,91 @@ function recordRigBBattery(): Recorded {
   return { json: `${JSON.stringify(index, null, 1)}\n`, bin: f64Bytes(values) };
 }
 
+// --- the arm-path plan battery ------------------------------------------------------------
+
+const ARM_PATH_PLAN_KIND = oneOf(['fromQ', 'copyForward']);
+const SPECIAL_VALUES = [
+  0,
+  -0,
+  Number.NaN,
+  Number.POSITIVE_INFINITY,
+  Number.NEGATIVE_INFINITY,
+  5e-324,
+  -Math.PI,
+  1e308,
+];
+
+/** `configurationFromQ` and `copyForward` on drawn values; see the file comment. */
+function recordArmPathPlanBattery(): Recorded {
+  const random = splitmix64(0x2a2a_0001n);
+  const draw = () => {
+    const r = random();
+    if (r < 0.2) return SPECIAL_VALUES[Math.floor(random() * SPECIAL_VALUES.length)];
+    const scale = [1e-9, 1, Math.PI, 1e6][Math.floor(random() * 4)];
+    return (random() * 2 - 1) * scale;
+  };
+  const vector = () => new THREE.Vector3(draw(), draw(), draw());
+  const quaternion = () => new THREE.Quaternion(draw(), draw(), draw(), draw());
+  const forward = (): armConfiguration.ArmForwardResult => {
+    const r = armConfiguration.makeArmForwardResult();
+    for (const k of ['u', 'l', 'h', 'palm', 'elbow', 'wrist'] as const) r[k].copy(vector());
+    for (const k of [
+      'upperWorld',
+      'lowerWorld',
+      'handWorld',
+      'upperLocal',
+      'lowerLocal',
+      'handLocal',
+    ] as const) {
+      r[k].copy(quaternion());
+    }
+    return r;
+  };
+  const configuration = (): armConfiguration.ArmConfiguration => ({
+    shoulderPlane: draw(),
+    shoulderLift: draw(),
+    humeralRotation: draw(),
+    elbowFlex: draw(),
+    forearmRoll: draw(),
+    wristFlex: draw(),
+    wristDev: draw(),
+  });
+  const cases: Array<{ input: Field[]; output: Field[] }> = [];
+  for (let i = 0; i < 48; i++) {
+    const q = Float64Array.from({ length: 7 }, draw);
+    const o = configuration();
+    const input: Field[] = [];
+    ARM_PATH_PLAN_KIND('fromQ', 'kind', input);
+    typed(q, 'q', input);
+    armConfigurationFlat(o, 'outConf', input);
+    const output: Field[] = [];
+    bool(armPath.configurationFromQ(q, o) === o, 'same', output);
+    armConfigurationFlat(o, 'outConf', output);
+    cases.push({ input, output });
+  }
+  for (let i = 0; i < 16; i++) {
+    const source = forward();
+    const target = forward();
+    const input: Field[] = [];
+    ARM_PATH_PLAN_KIND('copyForward', 'kind', input);
+    forwardResult(source, 'source', input);
+    forwardResult(target, 'target', input);
+    const output: Field[] = [];
+    armPath.copyForward(source, target);
+    forwardResult(target, 'target', output);
+    cases.push({ input, output });
+  }
+  const input = layout(cases.map((c) => c.input));
+  const output = layout(cases.map((c) => c.output));
+  const values: number[] = [];
+  for (const c of cases) {
+    fill(values, c.input, input);
+    fill(values, c.output, output);
+  }
+  const index = { fn: 'arm-path-plan-battery', cases: cases.length, in: input, out: output };
+  return { json: `${JSON.stringify(index, null, 1)}\n`, bin: f64Bytes(values) };
+}
+
 // --- the files ----------------------------------------------------------------------------
 
 function settle(name: string, recorded: Recorded): void {
@@ -2483,5 +2573,9 @@ describe('the recorded corpora', () => {
 
   it('match a fresh recording of the finger and arm-configuration battery', () => {
     settle('rig-b-battery', recordRigBBattery());
+  });
+
+  it('match a fresh recording of the arm-path plan battery', () => {
+    settle('arm-path-plan-battery', recordArmPathPlanBattery());
   });
 });
