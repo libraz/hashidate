@@ -343,6 +343,11 @@ export class Director {
     return !!def && holdsUntilReleased(def);
   }
 
+  /** Free what the director holds in the core. It must run before the scene graph is disposed. */
+  dispose(): void {
+    this.spring.dispose();
+  }
+
   /** The emotion currently used by the face and tail for this frame. */
   get effectiveEmotion(): EmotionVector {
     return this._auto ? this._idleEmotion : this.emotion;

@@ -10,7 +10,7 @@ import {
   Vector3,
   Vector4,
 } from 'three';
-import { allocating, core, views } from '../../core';
+import { allocating, core, handleFinalizer, views } from '../../core';
 import {
   FLAG_MORPH_RELATIVE,
   FLAG_MORPHED,
@@ -31,6 +31,9 @@ import {
   OUTCOME_NON_FINITE_DEPTH,
 } from '../../core/abi/triangles';
 import { NO_NODE, SceneGraph } from '../../core/scene';
+
+/** Frees the core's half of a kernel that was dropped without `dispose()`. */
+const finalizer = handleFinalizer((c, h) => c.hd_tri_free(h));
 
 /** Why an update produced no new order. */
 export type TriangleKernelReason =
@@ -196,7 +199,10 @@ export class TriangleKernel {
 
   #release(): void {
     const h = this.#handle;
-    if (h) allocating(() => core().hd_tri_free(h));
+    if (h) {
+      finalizer.unregister(this);
+      allocating(() => core().hd_tri_free(h));
+    }
     this.#handle = 0;
     this.#skeleton = null;
     this.#faces = 0;
@@ -282,6 +288,7 @@ export class TriangleKernel {
     const [g, n] = [graph.handle, vertices.length];
     const h = allocating(() => c.hd_tri_new(g, node, skeleton, n, faces, morphs, bones, flags));
     this.#handle = h;
+    finalizer.register(this, h);
     this.#skeleton = skinned ? mesh.skeleton : null;
     this.#layout.set(new Uint32Array(c.memory.buffer, c.hd_tri_layout(h), LAYOUT));
     this.#faces = faces;

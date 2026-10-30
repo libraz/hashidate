@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { GLTFParser } from 'three/addons/loaders/GLTFLoader.js';
+import { SceneGraph } from '@/core/scene';
 import { idlePool } from '@/engine/autopilot';
 import { Director } from '@/engine/director';
 import { buildProfile, loadedNodeNames, readVrmHumanoid, type VrmHumanoid } from '@/engine/profile';
@@ -240,12 +241,25 @@ export function disposeRawAvatar(root: THREE.Object3D): void {
   releaseTextureImages(owners);
 }
 
+/**
+ * Free the core's half of a mounted avatar, dependents first: the scene graph
+ * cannot go while the sway solver or a sorting kernel still reads it. A graph
+ * nobody built is not built just to be freed.
+ */
+export function disposeCore(
+  mounted: Pick<Mounted, 'root' | 'director' | 'transparentTriangles'>,
+): void {
+  mounted.director.dispose();
+  mounted.transparentTriangles.dispose();
+  SceneGraph.existing(mounted.root)?.dispose();
+}
+
 /** Release a loaded avatar: every GPU resource it brought. */
 export function disposeAvatar(cur: LoadedAvatar): void {
+  disposeCore(cur);
   // Materials and their textures belong to the material layer, which holds
-  // both the imported set and the toon set; only the geometry is ours.
-  cur.transparentTriangles.dispose();
-  cur.director.spring.dispose();
+  // both the imported set and the toon set; only the geometry is ours. The
+  // outlines leave their parents after the graph has handed those back to three.
   cur.materials.dispose();
   // Geometry, and the skeleton's bone texture, which hangs off a skinned mesh
   // rather than its material and shows up only as a climbing texture count.

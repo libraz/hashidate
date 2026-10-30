@@ -72,3 +72,21 @@ export function allocating<T>(fn: () => T): T {
   }
   return result;
 }
+
+/**
+ * Frees a core handle when its owner is collected without having been disposed. `free` runs from
+ * the collector, in no fixed order relative to the other handles, so it must tolerate a handle
+ * whose scene graph is already gone.
+ */
+export function handleFinalizer(free: (c: Core, handle: number) => void) {
+  const registry = new FinalizationRegistry<number>((h) => allocating(() => free(core(), h)));
+  return {
+    /** Frees `handle` once `target` is collected, unless `unregister(token)` ran first. */
+    register(target: object, handle: number, token: object = target): void {
+      registry.register(target, handle, token);
+    },
+    unregister(token: object): void {
+      registry.unregister(token);
+    },
+  };
+}

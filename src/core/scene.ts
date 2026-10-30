@@ -55,7 +55,7 @@ import {
   RECORD_QUATERNION,
   RECORD_SCALE,
 } from './abi/scene';
-import { allocating, core, onMemoryGrow } from './index';
+import { allocating, core, handleFinalizer, onMemoryGrow } from './index';
 
 export { NO_NODE };
 
@@ -279,9 +279,7 @@ function plainElements(m: THREE.Matrix4): void {
 
 const graphs = new WeakMap<THREE.Object3D, SceneGraph>();
 const live = new Set<WeakRef<SceneGraph>>();
-const finalizer = new FinalizationRegistry<number>((h) => {
-  allocating(() => core().hd_scene_free_orphan(h));
-});
+const finalizer = handleFinalizer((c, h) => c.hd_scene_free_orphan(h));
 
 // Filled by the class's static block, which alone reaches its private members.
 let METHODS: PropertyDescriptorMap = {};
@@ -313,6 +311,11 @@ export class SceneGraph {
       graphs.set(root, graph);
     }
     return graph;
+  }
+
+  /** The graph for `root` if one was created and not yet disposed; never creates one. */
+  static existing(root: THREE.Object3D): SceneGraph | undefined {
+    return graphs.get(root);
   }
 
   private constructor(root: THREE.Object3D) {

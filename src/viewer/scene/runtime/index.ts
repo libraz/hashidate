@@ -44,7 +44,7 @@ import { DefaultRig } from '../rig';
 import { SlideStage } from '../slides';
 import { FOV, ShotCamera } from './camera';
 import { buildHud, HUD_INTERVAL, type Hud } from './hud';
-import { disposeAvatar, disposeRawAvatar, type Mounted, mountAvatar } from './mount';
+import { disposeAvatar, disposeCore, disposeRawAvatar, type Mounted, mountAvatar } from './mount';
 import { bloomPort, sceneryPort, shadingPort } from './ports';
 import { loadToonTextures } from './toon-textures';
 import { createAvatarLoader } from './transparent-triangle-policy';
@@ -825,7 +825,7 @@ export class AvatarRuntime {
       this.scene.remove(root);
       // A mounted material set owns the toon textures; before that, nothing does.
       if (mounted) {
-        mounted.transparentTriangles.dispose();
+        disposeCore(mounted);
         mounted.materials.dispose();
       } else toonTextures.dispose();
       disposeRawAvatar(root);

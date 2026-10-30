@@ -87,7 +87,7 @@ describe('mountAvatar', () => {
     mounted.materials.dispose();
   });
 
-  it('disposes transparent sorting before source materials and geometry', () => {
+  it('disposes the director and transparent sorting before source materials and geometry', () => {
     const order: string[] = [];
     const root = new THREE.Group();
     const geometry = new THREE.BufferGeometry();
@@ -97,13 +97,13 @@ describe('mountAvatar', () => {
     const loaded = {
       root,
       transparentTriangles: { dispose: () => order.push('transparent-triangles') },
-      director: { spring: { dispose: () => undefined } },
+      director: { dispose: () => order.push('director') },
       materials: { dispose: () => order.push('materials') },
     } as unknown as LoadedAvatar;
 
     disposeAvatar(loaded);
 
-    expect(order).toEqual(['transparent-triangles', 'materials', 'geometry']);
+    expect(order).toEqual(['director', 'transparent-triangles', 'materials', 'geometry']);
   });
 });
 

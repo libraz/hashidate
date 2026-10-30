@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { allocating, core, views } from '../../core';
+import { allocating, core, handleFinalizer, views } from '../../core';
 import {
   COLLIDER_OUT,
   CONTROL_HEAD,
@@ -40,6 +40,9 @@ import type {
   SkinPointAnchorSpec,
 } from '../types';
 import { SkinPointAnchor, type SkinPointAnchorDiagnostics } from './skin-point-anchor';
+
+/** Frees the core's half of a solver that was dropped without `dispose()`. */
+const finalizer = handleFinalizer((c, h) => c.hd_spring_free(h));
 
 /**
  * Secondary motion — the parts that swing because the body moved, not because
@@ -497,6 +500,7 @@ export class Spring {
 
     const statuses = graph.run(() => allocating(() => c.hd_spring_build(h)));
     this.#handle = h;
+    finalizer.register(this, h);
     this.#graph = graph;
     this.#nodes = nodes;
     this.#layout.set(new Uint32Array(core().memory.buffer, c.hd_spring_layout(h), LAYOUT));
@@ -686,6 +690,7 @@ export class Spring {
   dispose(): void {
     const h = this.#handle;
     if (!h) return;
+    finalizer.unregister(this);
     allocating(() => core().hd_spring_free(h));
     this.#handle = 0;
     this.#graph = null;
