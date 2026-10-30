@@ -1,177 +1,94 @@
-import type * as THREE from 'three';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { core } from '@/core';
 import { buildProfile } from '@/engine/profile';
 import { Spring } from '@/engine/secondary';
-import { CoreSpring } from '@/engine/secondary/spring-core';
+import { ByteWriter, type HashFile, hashBytes, writeSpringState } from '../../tools/parity/hash';
 import { coreMathCalls, withCoreMath } from '../helpers/core-math';
 import { must } from '../helpers/must';
-import {
-  applyFrame,
-  type FixtureRig,
-  SPRING_FIXTURES,
-  type SpringFixture,
-  type SwaySolver,
-} from '../helpers/spring-fixtures';
+import { applyFrame, SPRING_FIXTURES, type SpringFixture } from '../helpers/spring-fixtures';
 
 /**
- * The core solver against the TS one it ports, bit for bit.
+ * The solver against the per-frame hashes recorded from its reference implementation.
  *
- * Both run on identical trees under `withCoreMath`, so the transcendentals are the core's on both
- * sides and every other operation has to agree exactly. After each update every node's local
- * transform, every manual `matrix`, the joints' state, the accumulator, `missing`, the anchor
- * diagnostics and the group switches are compared with `Object.is`, then every `matrixWorld` after
- * a world update from the root.
+ * Each fixture runs under `withCoreMath`, so the transcendentals are the core's, and after every
+ * update the state of the tree and the solver is hashed (see `tools/parity/hash.ts`). The hashes
+ * must equal `spring-parity.json` exactly.
+ *
+ * Regenerate with `yarn tsx tools/record-spring-parity.ts`, and only for a deliberate change of
+ * behaviour: the file is the definition of what the solver produces.
  */
 
-type Field = readonly [string, unknown];
+const recorded = JSON.parse(
+  readFileSync(new URL('./spring-parity.json', import.meta.url), 'utf8'),
+) as HashFile;
 
-/** Every compared value of one solver over its rig, labelled. */
-function state(spring: SwaySolver, root: THREE.Object3D): Field[] {
-  const out: Field[] = [];
-  const push = (label: string, values: ArrayLike<unknown>) => {
-    for (let i = 0; i < values.length; i++) out.push([`${label}[${i}]`, values[i]]);
-  };
-  root.traverse((o) => {
-    push(`${o.name}.position`, o.position.toArray());
-    push(`${o.name}.quaternion`, o.quaternion.toArray());
-    push(`${o.name}.scale`, o.scale.toArray());
-  });
-  root.traverse((o) => {
-    if (!o.matrixAutoUpdate) push(`${o.name}.matrix`, o.matrix.elements);
-  });
-  spring.groups.forEach((g, gi) => {
-    g.joints.forEach((j, k) => {
-      const at = `group ${gi} joint ${k} (${j.bone.name})`;
-      push(`${at}.cur`, j.cur.toArray());
-      push(`${at}.prev`, j.prev.toArray());
-      push(`${at}.solvedQ`, j.solvedQ.toArray());
-      push(`${at}.prevSolvedQ`, j.prevSolvedQ.toArray());
-      push(`${at}.swing`, j.swing.toArray());
-      push(`${at}.limits`, j.limits);
-      push(`${at}.spans`, j.spans);
-    });
-  });
-  out.push(['_acc', spring._acc]);
-  out.push(['missing.length', spring.missing.length]);
-  push('missing', spring.missing);
-  for (const [k, d] of spring.anchorDiagnostics.entries()) {
-    out.push([`anchorDiagnostics[${k}].groupId`, d.groupId]);
-    push(`anchorDiagnostics[${k}].targetWorld`, d.targetWorld);
-    push(`anchorDiagnostics[${k}].rootWorld`, d.rootWorld);
-    out.push([`anchorDiagnostics[${k}].error`, d.error]);
-  }
-  out.push(['anchorDiagnostics.length', spring.anchorDiagnostics.length]);
-  out.push(['groups.length', spring.groups.length]);
-  spring.groups.forEach((g, gi) => {
-    out.push([`group ${gi}.enabled`, g.enabled]);
-  });
-  return out;
-}
-
-/** Every node's world matrix, labelled. */
-function worlds(root: THREE.Object3D): Field[] {
-  const out: Field[] = [];
-  root.traverse((o) => {
-    o.matrixWorld.elements.forEach((v, i) => {
-      out.push([`${o.name}.matrixWorld[${i}]`, v]);
-    });
-  });
-  return out;
-}
-
-/** The first field the two disagree on, or null. */
-function firstMismatch(expected: readonly Field[], actual: readonly Field[]): string | null {
-  if (expected.length !== actual.length) {
-    return `${expected.length} fields against ${actual.length}`;
-  }
-  for (let i = 0; i < expected.length; i++) {
-    const [label, a] = expected[i];
-    const [other, b] = actual[i];
-    if (label !== other) return `field ${i}: ${label} against ${other}`;
-    if (!Object.is(a, b)) return `${label}: ${String(a)} against ${String(b)}`;
-  }
-  return null;
-}
-
-interface Pair {
-  ts: { tree: FixtureRig; spring: Spring };
-  core: { tree: FixtureRig; spring: CoreSpring };
-}
-
-/** Two identical trees, one solver on each, both built and set up under the core's math. */
-function pair(fixture: SpringFixture): Pair {
-  const a = fixture.build();
-  const b = fixture.build();
-  const pa = buildProfile(a.rig.root, a.descriptor);
-  const pb = buildProfile(b.rig.root, b.descriptor);
-  return withCoreMath(() => {
-    const ts = new Spring(pa, a.descriptor);
-    const cs = new CoreSpring(pb, b.descriptor);
-    fixture.setup?.(ts);
-    fixture.setup?.(cs);
-    return { ts: { tree: a, spring: ts }, core: { tree: b, spring: cs } };
-  });
-}
-
-/** Run a fixture to the end, returning the first disagreement and how many frames agreed. */
+/** The hash of each frame of a fixture, or the hashes up to a `tamper` call's effect. */
 function run(
   fixture: SpringFixture,
-  tamper?: (spring: CoreSpring, frame: number) => void,
-): { frames: number; mismatch: string | null } {
-  const { ts, core: cs } = pair(fixture);
+  tamper?: (spring: Spring, frame: number) => void,
+): { hashes: string[]; spring: Spring } {
+  const tree = fixture.build();
+  const profile = buildProfile(tree.rig.root, tree.descriptor);
+  const spring = withCoreMath(() => {
+    const built = new Spring(profile, tree.descriptor);
+    fixture.setup?.(built);
+    return built;
+  });
+  const hashes: string[] = [];
   try {
-    const built = firstMismatch(
-      state(ts.spring, ts.tree.rig.root),
-      state(cs.spring, cs.tree.rig.root),
-    );
-    if (built) return { frames: 0, mismatch: `${fixture.id} after construction: ${built}` };
     for (const [frame, step] of fixture.script.entries()) {
-      applyFrame(ts.tree.rig, ts.spring, step);
-      applyFrame(cs.tree.rig, cs.spring, step);
-      withCoreMath(() => {
-        ts.spring.update(step.dt);
-        cs.spring.update(step.dt);
-      });
-      tamper?.(cs.spring, frame);
-      const expected = state(ts.spring, ts.tree.rig.root);
-      const actual = state(cs.spring, cs.tree.rig.root);
-      withCoreMath(() => {
-        ts.tree.rig.root.updateMatrixWorld(true);
-        cs.tree.rig.root.updateMatrixWorld(true);
-      });
-      expected.push(...worlds(ts.tree.rig.root));
-      actual.push(...worlds(cs.tree.rig.root));
-      const mismatch = firstMismatch(expected, actual);
-      if (mismatch) return { frames: frame, mismatch: `${fixture.id} frame ${frame}: ${mismatch}` };
+      applyFrame(tree.rig, spring, step);
+      withCoreMath(() => spring.update(step.dt));
+      tamper?.(spring, frame);
+      hashes.push(
+        withCoreMath(() =>
+          hashBytes(writeSpringState(new ByteWriter(), spring, tree.rig.root).bytes()),
+        ),
+      );
     }
-    return { frames: fixture.script.length, mismatch: null };
   } finally {
-    cs.spring.dispose();
+    spring.dispose();
   }
+  return { hashes, spring };
 }
 
-describe('CoreSpring against Spring', () => {
+/** The index of the first frame whose hash differs from the recording, or -1. */
+function firstDifference(fixture: SpringFixture, hashes: readonly string[]): number {
+  const expected = must(recorded.fixtures[fixture.id], fixture.id);
+  return hashes.findIndex((hash, frame) => hash !== expected.hashes[frame]);
+}
+
+describe('Spring against the recorded hashes', () => {
+  it('records every fixture', () => {
+    expect(Object.keys(recorded.fixtures)).toEqual(SPRING_FIXTURES.map((f) => f.id));
+  });
+
   for (const fixture of SPRING_FIXTURES) {
-    it(`matches bit for bit: ${fixture.id}`, () => {
+    it(`matches frame for frame: ${fixture.id}`, () => {
       const calls = coreMathCalls();
-      const result = run(fixture);
-      expect(result.mismatch).toBeNull();
-      expect(result.frames).toBe(600);
+      const { hashes } = run(fixture);
+      const expected = must(recorded.fixtures[fixture.id], fixture.id);
+      expect(hashes).toHaveLength(expected.frames);
+      expect(expected.frames).toBe(600);
+      expect(firstDifference(fixture, hashes)).toBe(-1);
       if (fixture === SPRING_FIXTURES[0]) expect(coreMathCalls()).toBeGreaterThan(calls);
     });
   }
 
   it('reports both anchor failures of F7 and switches their groups off', () => {
     const fixture = must(SPRING_FIXTURES[7], 'F7');
-    const { core: cs } = pair(fixture);
+    const tree = fixture.build();
+    const spring = withCoreMath(
+      () => new Spring(buildProfile(tree.rig.root, tree.descriptor), tree.descriptor),
+    );
     for (const step of fixture.script) {
-      applyFrame(cs.tree.rig, cs.spring, step);
-      withCoreMath(() => cs.spring.update(step.dt));
+      applyFrame(tree.rig, spring, step);
+      withCoreMath(() => spring.update(step.dt));
     }
-    const failed = cs.spring.groups.filter((g) => g.id.startsWith('charm'));
-    cs.spring.dispose();
-    expect(cs.spring.missing).toEqual([
+    const failed = spring.groups.filter((g) => g.id.startsWith('charm'));
+    spring.dispose();
+    expect(spring.missing).toEqual([
       'sway:charm anchor: anchor:ProducerA_1 scale changed after resolution',
       'sway:charmB anchor: anchor:CharmB_1 has a manual matrixWorld override',
     ]);
@@ -181,24 +98,25 @@ describe('CoreSpring against Spring', () => {
     ]);
   });
 
-  it('fails when one bit of a core output is flipped', () => {
+  it('fails when one bit of an output is flipped', () => {
+    const fixture = must(SPRING_FIXTURES[0], 'F1');
     const bits = new Float64Array(1);
     const word = new BigUint64Array(bits.buffer);
-    const result = run(must(SPRING_FIXTURES[0], 'F1'), (spring, frame) => {
+    const { hashes } = run(fixture, (spring, frame) => {
       if (frame !== 300) return;
       const joint = must(spring.groups[0]?.joints[0], 'joint');
       bits[0] = joint.cur.x;
       word[0] ^= 1n;
       joint.cur.x = bits[0];
     });
-    expect(result.mismatch).toMatch(/frame 300: group 0 joint 0 \(ProducerA\)\.cur\[0\]/);
+    expect(firstDifference(fixture, hashes)).toBe(300);
   });
 
   it('does not grow memory over 1,000 frames, and frees it on dispose', () => {
     const fixture = must(SPRING_FIXTURES[1], 'F2');
     const tree = fixture.build();
     const profile = buildProfile(tree.rig.root, tree.descriptor);
-    const spring = new CoreSpring(profile, tree.descriptor);
+    const spring = new Spring(profile, tree.descriptor);
     spring.update(0);
     const before = core().memory.buffer.byteLength;
     for (let frame = 0; frame < 1000; frame++) {
@@ -209,7 +127,7 @@ describe('CoreSpring against Spring', () => {
     spring.dispose();
     for (let k = 0; k < 3; k++) {
       const again = fixture.build();
-      new CoreSpring(buildProfile(again.rig.root, again.descriptor), again.descriptor).dispose();
+      new Spring(buildProfile(again.rig.root, again.descriptor), again.descriptor).dispose();
     }
     const rebuilt = core().memory.buffer.byteLength;
     expect(after).toBe(before);

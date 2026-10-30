@@ -6,8 +6,8 @@ import type { SkinPointAnchorSpec } from '@/engine/types';
  * weighted sum of each influence's bone-local position through that bone's
  * world matrix, after a fresh world update from `root`.
  *
- * Independent of `SkinPointAnchor`, which walks cached local paths of its own,
- * so an anchor that placed itself from a stale producer pose disagrees with it.
+ * Independent of the core's anchor placement, which walks cached local paths of
+ * its own, so an anchor that placed itself from a stale producer pose disagrees with it.
  */
 export function skinnedPoint(
   root: THREE.Object3D,

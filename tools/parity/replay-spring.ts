@@ -1,18 +1,17 @@
 /**
- * Run a recorded avatar session through the TS sway solver and the core one.
+ * Run a recorded avatar session through the sway solver.
  *
  *     yarn tsx tools/parity/replay-spring.ts --avatars manuka,yoka,neru
  *
- * Reads what `record-spring.ts` wrote and rebuilds the avatar's tree twice. The
- * parity pass runs `Spring` and `CoreSpring` side by side under `withCoreMath`
- * (so the transcendentals are the core's on both) and compares every frame in
- * full; it writes the TS side's frame hashes to
- * `backup/parity/<avatar>.spring.expected.json`. It runs once on the recorded
- * `dt` and once with every frame at 1/60 s, since a recording made on software GL
- * is capped at 50 ms per frame. The timing pass runs both without `withCoreMath`,
- * `Spring` on the host's `Math`, and reports the median `update` of each.
+ * Reads what `record-spring.ts` wrote and rebuilds the avatar's tree. The parity pass runs
+ * `Spring` under `withCoreMath` (so the transcendentals are the core's) on the recorded `dt` and
+ * compares the hash of every frame with `backup/parity/<avatar>.spring.expected.json`, which was
+ * written from the reference implementation. Only the recorded-`dt` pass has expected hashes. The
+ * timing pass runs `Spring` on the host's `Math` over the recorded `dt` and over every frame at
+ * 1/60 s, since a recording made on software GL is capped at 50 ms per frame, and reports the
+ * median `update`.
  *
- * Exits 1 on the first mismatch of any avatar; the ratio is reported, not gated.
+ * Exits 1 on the first mismatch of any avatar.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -20,12 +19,11 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import * as THREE from 'three';
 import { Spring } from '../../src/engine/secondary';
-import { CoreSpring } from '../../src/engine/secondary/spring-core';
 import type { AvatarDescriptor, Profile } from '../../src/engine/types';
 import { coreMathCalls, withCoreMath } from '../../tests/helpers/core-math';
 import { loadCoreForNode } from '../rust-core/node';
 import { ROOT } from '../shared/dev-servers';
-import { ByteWriter, firstDifference, hashBytes, writeHashFile, writeSpringState } from './hash';
+import { ByteWriter, type HashFile, hashBytes, writeSpringState } from './hash';
 
 const RECORD_DIR = 'backup/parity';
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -196,14 +194,12 @@ class Tree {
   }
 }
 
-type Solver = Spring | CoreSpring;
-
-/** One solver on one rebuilt tree. */
-class Side<S extends Solver> {
-  spring!: S;
+/** One `Spring` on one rebuilt tree. */
+class Side {
+  spring!: Spring;
   constructor(
     readonly tree: Tree,
-    private readonly build: (profile: Profile) => S,
+    private readonly build: (profile: Profile) => Spring,
   ) {}
 
   construct(): void {
@@ -250,7 +246,7 @@ class Side<S extends Solver> {
 }
 
 /** The solver's group and joint layout, to check against what the page had. */
-function checkLayout(header: Header, side: Side<Solver>, label: string): void {
+function checkLayout(header: Header, side: Side): void {
   const index = new Map<THREE.Object3D, number>();
   side.tree.nodes.forEach((n, i) => {
     index.set(n, i);
@@ -261,32 +257,9 @@ function checkLayout(header: Header, side: Side<Solver>, label: string): void {
   }));
   const want = header.groups.map((g) => ({ id: g.id, joints: g.joints }));
   if (JSON.stringify(got) !== JSON.stringify(want)) {
-    throw new Error(`${header.avatar}: ${label} built groups that differ from the recorded ones`);
+    throw new Error(`${header.avatar}: built groups differ from the recorded ones`);
   }
 }
-
-/** Numbers of an anchor diagnostics list, for an `Object.is` comparison the JSON hash cannot make. */
-function diagnosticNumbers(spring: Solver): number[] {
-  return spring.anchorDiagnostics.flatMap((d) => [...d.targetWorld, ...d.rootWorld, d.error]);
-}
-
-const describe = (a: ByteWriter, b: ByteWriter, label: string): string => {
-  const find = (w: ByteWriter) => w.spans?.find((s) => s.label === label);
-  const [sa, sb] = [find(a), find(b)];
-  if (sa?.length === 8 && sb?.length === 8) {
-    const va = new DataView(a.bytes().buffer, a.bytes().byteOffset + sa.offset, 8).getFloat64(
-      0,
-      true,
-    );
-    const vb = new DataView(b.bytes().buffer, b.bytes().byteOffset + sb.offset, 8).getFloat64(
-      0,
-      true,
-    );
-    const show = (v: number): string => (Object.is(v, -0) ? '-0' : String(v));
-    return `${label}: TS ${show(va)}, core ${show(vb)}`;
-  }
-  return label;
-};
 
 interface ParityResult {
   frames: number;
@@ -294,46 +267,35 @@ interface ParityResult {
   /** Update frames in which `Math.acos` ran, and in which any replaced function did. */
   acosFrames: number;
   transcendentalFrames: number;
-  hashes: string[];
   mismatch: string | null;
 }
 
-/** Both solvers over the recording under `withCoreMath`, compared after every event. */
+/** `Spring` over the recording under `withCoreMath`, each frame's hash against `expected`. */
 function parityPass(
   header: Header,
   events: Event[],
   descriptor: AvatarDescriptor,
-  nominal: boolean,
+  expected: readonly string[],
 ): ParityResult {
-  const ts = new Side(new Tree(header), (profile) =>
+  const side = new Side(new Tree(header), (profile) =>
     withCoreMath(() => new Spring(profile, descriptor)),
-  );
-  const core = new Side(new Tree(header), (profile) =>
-    withCoreMath(() => new CoreSpring(profile, descriptor)),
   );
   const result: ParityResult = {
     frames: 0,
     events: 0,
     acosFrames: 0,
     transcendentalFrames: 0,
-    hashes: [],
     mismatch: null,
   };
   try {
     for (const [n, ev] of events.entries()) {
-      ts.tree.apply(ev);
-      core.tree.apply(ev);
+      side.tree.apply(ev);
       if (n === 0) {
-        ts.construct();
-        core.construct();
-        checkLayout(header, ts, 'Spring');
-        checkLayout(header, core, 'CoreSpring');
+        side.construct();
+        checkLayout(header, side);
       }
-      const where = `${header.avatar} event ${n} (kind ${ev.kind}, frame ${result.frames})`;
       if (ev.kind === KIND_UPDATE) {
-        const frame = nominal ? { ...ev, dt: NOMINAL_DT } : ev;
-        ts.feed(frame);
-        core.feed(frame);
+        side.feed(ev);
         let acos = 0;
         const before = coreMathCalls();
         withCoreMath(() => {
@@ -343,8 +305,7 @@ function parityPass(
             return real(x);
           };
           try {
-            ts.spring.update(frame.dt);
-            core.spring.update(frame.dt);
+            side.spring.update(ev.dt);
           } finally {
             Math.acos = real;
           }
@@ -352,41 +313,25 @@ function parityPass(
         if (acos > 0) result.acosFrames++;
         if (coreMathCalls() > before) result.transcendentalFrames++;
       } else {
-        withCoreMath(() => {
-          ts.call(ev);
-          core.call(ev);
-        });
+        withCoreMath(() => side.call(ev));
       }
-      const [a, b] = withCoreMath(() => [
-        writeSpringState(new ByteWriter(), ts.spring, ts.tree.root).bytes(),
-        writeSpringState(new ByteWriter(), core.spring, core.tree.root).bytes(),
-      ]);
-      const diagnostics = [diagnosticNumbers(ts.spring), diagnosticNumbers(core.spring)];
-      const diagnosticAt = diagnostics[0].findIndex((v, i) => !Object.is(v, diagnostics[1][i]));
-      if (
-        Buffer.compare(a, b) !== 0 ||
-        diagnostics[0].length !== diagnostics[1].length ||
-        diagnosticAt >= 0
-      ) {
-        const [la, lb] = withCoreMath(() => [
-          writeSpringState(new ByteWriter(true), ts.spring, ts.tree.root),
-          writeSpringState(new ByteWriter(true), core.spring, core.tree.root),
-        ]);
-        const label = firstDifference(la, lb);
-        result.mismatch =
-          label !== null
-            ? `${where}: ${describe(la, lb, label)}`
-            : `${where}: anchorDiagnostics numbers ${diagnostics[0][diagnosticAt]} against ${diagnostics[1][diagnosticAt]}`;
-        break;
+      if (ev.kind === KIND_UPDATE) {
+        const hash = withCoreMath(() =>
+          hashBytes(writeSpringState(new ByteWriter(), side.spring, side.tree.root).bytes()),
+        );
+        if (hash !== expected[result.frames]) {
+          result.mismatch = `${header.avatar} event ${n} (frame ${result.frames}): hash ${hash}, expected ${expected[result.frames]}`;
+          break;
+        }
+        result.frames++;
+      } else {
+        // Serialising refreshes the world matrices, as it did when the hashes were recorded.
+        withCoreMath(() => writeSpringState(new ByteWriter(), side.spring, side.tree.root));
       }
       result.events++;
-      if (ev.kind === KIND_UPDATE) {
-        result.frames++;
-        result.hashes.push(hashBytes(a));
-      }
     }
   } finally {
-    core.spring?.dispose();
+    side.spring?.dispose();
   }
   return result;
 }
@@ -396,55 +341,32 @@ const median = (values: number[]): number => {
   return sorted[Math.floor(sorted.length / 2)];
 };
 
-interface TimingResult {
-  ts: number;
-  core: number;
-}
-
-/** Median `update` of each solver on the host's `Math`, alternating which goes first. */
+/** Median `update` on the host's `Math`. */
 function timingPass(
   header: Header,
   events: Event[],
   descriptor: AvatarDescriptor,
   nominal: boolean,
-): TimingResult {
-  const ts = new Side(new Tree(header), (profile) => new Spring(profile, descriptor));
-  const core = new Side(new Tree(header), (profile) => new CoreSpring(profile, descriptor));
-  const tsTimes: number[] = [];
-  const coreTimes: number[] = [];
-  const time = (side: Side<Solver>, dt: number, into: number[]): void => {
-    const start = performance.now();
-    side.spring.update(dt);
-    into.push(performance.now() - start);
-  };
+): number {
+  const side = new Side(new Tree(header), (profile) => new Spring(profile, descriptor));
+  const times: number[] = [];
   try {
     for (const [n, ev] of events.entries()) {
-      ts.tree.apply(ev);
-      core.tree.apply(ev);
-      if (n === 0) {
-        ts.construct();
-        core.construct();
-      }
+      side.tree.apply(ev);
+      if (n === 0) side.construct();
       if (ev.kind !== KIND_UPDATE) {
-        ts.call(ev);
-        core.call(ev);
+        side.call(ev);
         continue;
       }
-      const dt = nominal ? NOMINAL_DT : ev.dt;
-      ts.feed(ev);
-      core.feed(ev);
-      if (tsTimes.length % 2 === 0) {
-        time(ts, dt, tsTimes);
-        time(core, dt, coreTimes);
-      } else {
-        time(core, dt, coreTimes);
-        time(ts, dt, tsTimes);
-      }
+      side.feed(ev);
+      const start = performance.now();
+      side.spring.update(nominal ? NOMINAL_DT : ev.dt);
+      times.push(performance.now() - start);
     }
   } finally {
-    core.spring?.dispose();
+    side.spring?.dispose();
   }
-  return { ts: median(tsTimes), core: median(coreTimes) };
+  return median(times);
 }
 
 function usage(message: string): never {
@@ -470,38 +392,32 @@ async function main(): Promise<number> {
     const descriptor = JSON.parse(
       await readFile(join(ROOT, 'avatars', `${avatar}.json`), 'utf8'),
     ) as AvatarDescriptor;
-    const recorded = parityPass(header, events, descriptor, false);
-    const nominal = parityPass(header, events, descriptor, true);
+    const expectedFile = JSON.parse(
+      await readFile(join(ROOT, RECORD_DIR, `${avatar}.spring.expected.json`), 'utf8'),
+    ) as HashFile;
+    const expected = expectedFile.fixtures[avatar]?.hashes;
+    if (!expected) throw new Error(`${avatar}: no expected hashes in ${expectedFile.generator}`);
+    const parity = parityPass(header, events, descriptor, expected);
     console.log(
-      `${avatar}: parity on recorded dt: ${recorded.frames}/${header.frames} frames, ` +
-        `${recorded.events}/${events.length} events, slerp branch (acos) in ${recorded.acosFrames} frames, ` +
-        `any replaced function in ${recorded.transcendentalFrames}`,
+      `${avatar}: parity on recorded dt: ${parity.frames}/${header.frames} frames, ` +
+        `${parity.events}/${events.length} events, slerp branch (acos) in ${parity.acosFrames} frames, ` +
+        `any replaced function in ${parity.transcendentalFrames}`,
     );
-    console.log(
-      `${avatar}: parity at 1/60 s: ${nominal.frames}/${header.frames} frames, ` +
-        `slerp branch in ${nominal.acosFrames}, any replaced function in ${nominal.transcendentalFrames}`,
-    );
-    for (const [label, r] of [
-      ['recorded dt', recorded],
-      ['1/60 s', nominal],
-    ] as const) {
-      if (r.mismatch !== null) {
-        console.error(`${avatar}: MISMATCH (${label}) ${r.mismatch}`);
-        failed = true;
-      }
+    if (parity.mismatch !== null) {
+      console.error(`${avatar}: MISMATCH ${parity.mismatch}`);
+      failed = true;
+    } else if (parity.frames !== expected.length || parity.frames !== header.frames) {
+      console.error(
+        `${avatar}: MISMATCH ${parity.frames} frames replayed, ${expected.length} expected, ${header.frames} recorded`,
+      );
+      failed = true;
     }
-    await writeHashFile(join(ROOT, RECORD_DIR, `${avatar}.spring.expected.json`), {
-      generator: `tools/parity/replay-spring.ts --avatars ${avatar}`,
-      fixtures: { [avatar]: { frames: recorded.frames, hashes: recorded.hashes } },
-    });
     for (const [label, flag] of [
       ['recorded dt', false],
       ['1/60 s', true],
     ] as const) {
-      const t = timingPass(header, events, descriptor, flag);
       console.log(
-        `${avatar}: update median (${label}): TS ${t.ts.toFixed(3)} ms, core ${t.core.toFixed(3)} ms, ` +
-          `core/TS ${(t.core / t.ts).toFixed(3)}`,
+        `${avatar}: update median (${label}): ${timingPass(header, events, descriptor, flag).toFixed(3)} ms`,
       );
     }
   }

@@ -1,18 +1,15 @@
 import * as THREE from 'three';
 import type { Spring } from '@/engine/secondary';
-import type { CoreSpring } from '@/engine/secondary/spring-core';
 import type { AvatarDescriptor, ColliderSpec } from '@/engine/types';
 import { must } from './must';
 import { addBoneChain, buildRig, type SyntheticRig } from './scene';
 
 /**
- * Deterministic rigs and motion for comparing the TS `Spring` against `CoreSpring`.
+ * Deterministic rigs and motion for recording and checking the sway solver's per-frame hashes.
  *
- * Every number a frame applies is computed here, at module load, with the host's `Math`, so both
- * trees receive the same values and only the solvers run under the fixed transcendentals.
+ * Every number a frame applies is computed here, at module load, with the host's `Math`, so every
+ * run receives the same values and only the solver runs under the fixed transcendentals.
  */
-
-export type SwaySolver = Spring | CoreSpring;
 
 export interface FixtureRig {
   rig: SyntheticRig;
@@ -43,7 +40,7 @@ export interface SpringFixture {
   /** A fresh rig and the descriptor that matches it. */
   build(): FixtureRig;
   /** Calls made right after construction, on each solver. */
-  setup?(spring: SwaySolver): void;
+  setup?(spring: Spring): void;
   script: readonly FrameScript[];
 }
 
@@ -51,7 +48,7 @@ const FRAMES = 600;
 const STEP = 1 / 60;
 
 /** Apply one frame's script to a rig and its solver. */
-export function applyFrame(rig: SyntheticRig, spring: SwaySolver, frame: FrameScript): void {
+export function applyFrame(rig: SyntheticRig, spring: Spring, frame: FrameScript): void {
   const node = (name: string): THREE.Object3D =>
     name === 'root' ? rig.root : must(rig.bones.get(name), name);
   for (const [name, x, y, z] of frame.rotations ?? []) node(name).rotation.set(x, y, z);

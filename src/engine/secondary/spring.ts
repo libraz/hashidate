@@ -1,9 +1,61 @@
 import * as THREE from 'three';
+import { core, views } from '../../core';
+import {
+  COLLIDER_OUT,
+  CONTROL_HEAD,
+  DIAGNOSTICS,
+  DRIVE_ANCHORED,
+  DRIVE_DONE,
+  FLAG_BONE,
+  FLAG_MATRIX_AUTO_UPDATE,
+  FLAG_MATRIX_WORLD_AUTO_UPDATE,
+  FLAG_MATRIX_WORLD_NEEDS_UPDATE,
+  FLAG_PIVOT,
+  FLAG_REPARENTED,
+  JOINT_OUT,
+  LAYOUT,
+  LAYOUT_COLLIDER_STATES,
+  LAYOUT_CONTROL,
+  LAYOUT_DIAGNOSTICS,
+  LAYOUT_DRIVES,
+  LAYOUT_GROUP_COUNT,
+  LAYOUT_GROUP_STATES,
+  LAYOUT_JOINT_STATES,
+  LAYOUT_READ_COUNT,
+  LAYOUT_READ_FLAGS,
+  LAYOUT_READ_NODES,
+  LAYOUT_READ_RECORDS,
+  LAYOUT_STATUSES,
+  LAYOUT_WRITE_COUNT,
+  LAYOUT_WRITE_FLAGS,
+  LAYOUT_WRITE_NODES,
+  LAYOUT_WRITE_RECORDS,
+  NO_NODE,
+  NODE_IN,
+  NODE_OUT,
+  STATUS,
+  STATUS_ANCESTOR_SIMULATED,
+  STATUS_ANCHOR_MODE_CHANGED,
+  STATUS_ANCHOR_NONUNIFORM,
+  STATUS_ANCHOR_NOT_AFFINE,
+  STATUS_ANCHOR_PARENT_SINGULAR,
+  STATUS_ANCHOR_PATH_REPARENTED,
+  STATUS_ANCHOR_PATH_ROOT_REPARENTED,
+  STATUS_ANCHOR_ROOT_REPARENTED,
+  STATUS_ANCHOR_SCALE_CHANGED,
+  STATUS_ANCHOR_SHEAR,
+  STATUS_ANCHOR_SINGULAR,
+  STATUS_ANCHOR_SUBTREE_REPARENTED,
+  STATUS_ANCHOR_WORLD_OVERRIDE,
+  STATUS_SOURCE_DEPENDS,
+  STATUS_SUBTREE_SIMULATED,
+  WRITE_POSITION,
+  WRITE_QUATERNION,
+} from '../../core/abi/spring';
 import { type Localized, same } from '../../i18n/locale';
 import { normaliseBoneName } from '../profile/candidates';
 import type {
   AvatarDescriptor,
-  ColliderSpec,
   Profile,
   SkinPointAnchorMetadataSpec,
   SkinPointAnchorSpec,
@@ -70,32 +122,17 @@ import { SkinPointAnchor, type SkinPointAnchorDiagnostics } from './skin-point-a
  * take no step, and writing the last solved rotation again would hold the hair
  * still while the head keeps moving. Interpolating between the last two steps
  * instead would show the hair a step late on every frame, including at 60 Hz.
- */
-
-/**
- * Simulation step, seconds. Every group's figures assume it stays 1/60: drag is
- * lost per step, and stiffness and gravity move the tail `figure * STEP` per step
- * rather than being integrated, so another step would retune every avatar.
- */
-const STEP = 1 / 60;
-
-/**
- * Steps allowed in one frame.
  *
- * The viewer caps a frame at 50 ms, which runs at most three steps even with a
- * carried remainder, so four is reached only by a caller passing a longer dt.
- * Past the cap the simulation deliberately falls
- * behind rather than spending the frame catching up — hair lagging for a moment
- * after a stall is invisible, and a frame that takes twice as long because the
- * last one did is how a stall becomes permanent.
+ * ## The core
+ *
+ * The solver runs in the wasm core. This side keeps what is about names — bone lookup, descriptor
+ * defaults, the anchor spec's checks and every `missing` message — and hands the core numbers
+ * only: one call per node of the avatar (its ancestors first, then `traverse` order), its
+ * colliders, and each group's roots and anchor. The core picks which nodes a frame reads and
+ * writes; per frame this side copies the read nodes in after its own world update, runs one
+ * `hd_spring_update`, and copies the written nodes back. The layouts are tabled in
+ * `src/core/abi/spring.ts`. `dispose` frees the core's half.
  */
-const MAX_STEPS = 4;
-
-/** Relative slack on `Collider#beyond`; far above rounding, far below a millimetre. */
-const CULL_MARGIN = 1 + 1e-4;
-
-/** Most colliders one `Cluster` holds; a cost trade, with no effect on the result. */
-const CLUSTER_SIZE = 8;
 
 const GROUP_DEFAULTS = {
   stiffness: 1, // restoring force toward the rest direction
@@ -105,141 +142,53 @@ const GROUP_DEFAULTS = {
   radius: 0.02, // the swinging tail's own radius, for collision
 };
 
-// Scratch. This runs a few hundred joints twice a frame for hours at a time, and
-// allocating per joint per step is the kind of steady garbage that surfaces as a
-// dropped frame in the third hour rather than in the first minute.
-const _p = new THREE.Vector3();
-const _bp = new THREE.Vector3();
-const _next = new THREE.Vector3();
-const _vel = new THREE.Vector3();
-const _dir = new THREE.Vector3();
-const _to = new THREE.Vector3();
-const _d = new THREE.Vector3();
-const _q = new THREE.Quaternion();
-const _pq = new THREE.Quaternion();
-const _aim = new THREE.Quaternion();
-const _flip = new THREE.Quaternion();
-// A bone's quaternion resyncs its Euler on every write, so a result is built here
-// and written once.
-const _solved = new THREE.Quaternion();
-const _ax = new THREE.Vector3();
-const _back = new THREE.Vector3();
-const _m = new THREE.Matrix4();
-const _ip = new THREE.Vector3();
-const _iq = new THREE.Quaternion();
-const _is = new THREE.Vector3();
-const _lc = new THREE.Vector3();
-const _lw = new THREE.Vector3();
-const _lu = new THREE.Vector3();
-const _le = new THREE.Vector3();
-const _lr = new THREE.Vector3();
-// Per collider of the joint being tested, whether `Collider#beyond` culls it.
-let _far = new Uint8Array(0);
-
 const boneChildren = (bone: THREE.Object3D): THREE.Bone[] =>
   bone.children.filter((c): c is THREE.Bone => c instanceof THREE.Bone);
 
 /**
- * Origin of `bone` hung from its parent's world matrix `parent`, formed term for
- * term as `updateMatrix` and `multiplyMatrices` would form it. A pivot moves the
- * origin with the rotation, so a bone with one returns false and is left alone.
- */
-function hungOrigin(bone: THREE.Object3D, parent: THREE.Matrix4, out: THREE.Vector3): boolean {
-  if (bone.pivot !== null) return false;
-  const e = parent.elements;
-  const { x, y, z } = bone.position;
-  out.set(
-    e[0] * x + e[4] * y + e[8] * z + e[12],
-    e[1] * x + e[5] * y + e[9] * z + e[13],
-    e[2] * x + e[6] * y + e[10] * z + e[14],
-  );
-  return true;
-}
-
-/** World rotation of a node, with any scale on the hierarchy divided out. */
-function worldQuat(node: THREE.Object3D, out: THREE.Quaternion): THREE.Quaternion {
-  return out.setFromRotationMatrix(_m.extractRotation(node.matrixWorld));
-}
-
-/**
- * One simulated joint.
+ * One simulated joint, mirrored from the core after every update and reset.
  *
- * The tail is stored in world space rather than as an angle. Angles need a
- * reference frame, and the reference frame here is a bone that is itself moving
- * — the whole point of the exercise. A world-space point needs none, and falls
- * out of the constraint that the bone cannot stretch.
+ * The tail is stored in world space rather than as an angle: a bone is itself moving, so an angle
+ * has no frame to be measured in, and a world-space point needs none.
  */
 export class Joint {
   readonly bone: THREE.Bone;
-  /** What the bone hangs from. Fixed at construction; see `Spring`'s chain walk. */
+  /** What the bone hangs from. Fixed at construction. */
   readonly parent: THREE.Object3D;
   readonly rest: THREE.Quaternion;
-  driven: boolean;
-  readonly drive: THREE.Quaternion;
   readonly axis: THREE.Vector3;
   readonly length: number;
-  readonly cur: THREE.Vector3;
-  readonly prev: THREE.Vector3;
-  /** Local rotation solved by the last step, and by the one before it. */
+  driven = false;
+  /** Written by a drive each frame; copied into the core while `driven`. */
+  readonly drive = new THREE.Quaternion();
+  readonly cur = new THREE.Vector3();
+  readonly prev = new THREE.Vector3();
   readonly solvedQ = new THREE.Quaternion();
   readonly prevSolvedQ = new THREE.Quaternion();
-  /** World axis of the last swing toward the tail, zero until there is one. */
   readonly swing = new THREE.Vector3();
-  /** A direction square to `axis`, in this bone's own coordinates. */
-  readonly side: THREE.Vector3;
-  readonly valid: boolean;
-  /** Clearance per collider of this joint's group, filled in by calibration. */
-  limits: Float32Array;
-  /** The same for the whole link, root to tail, against outside colliders. */
-  spans: Float32Array;
-  /** Squared cull distance per collider, from `limits` and `spans`; see `Collider#beyond`. */
-  reach: Float64Array;
-  /** Per cluster of the group's colliders, the widest of its members' cull distances, unsquared. */
-  clusterReach: Float64Array;
-  /** The parent's world rotation, refreshed once per step, if no chain moves the parent. */
-  parentQuat: THREE.Quaternion | null = null;
+  /** Clearance per collider of this joint's group, as calibrated (Float32, as in the core). */
+  readonly limits: Float32Array;
+  readonly spans: Float32Array;
+  /** Position across every group's joints, which the core's joint buffers are indexed by. */
+  readonly slot: number;
 
-  constructor(bone: THREE.Bone, parent: THREE.Object3D, kids: THREE.Bone[]) {
+  constructor(
+    bone: THREE.Bone,
+    parent: THREE.Object3D,
+    rest: THREE.Quaternion,
+    axis: THREE.Vector3,
+    length: number,
+    colliders: number,
+    slot: number,
+  ) {
     this.bone = bone;
     this.parent = parent;
-    this.rest = bone.quaternion.clone();
-    this.limits = new Float32Array(0);
-    this.spans = new Float32Array(0);
-    this.reach = new Float64Array(0);
-    this.clusterReach = new Float64Array(0);
-
-    // An additive rotation an outside layer may put on this joint's rest pose,
-    // in the *parent's* frame. Only the root of a driven group carries one —
-    // see `Spring#enableDrive` — and the flag keeps the extra work off the
-    // several hundred joints that are pure secondary motion.
-    this.driven = false;
-    this.drive = new THREE.Quaternion();
-
-    // Where the chain continues, in this bone's own coordinates. A branch point
-    // aims at the average of its children, which is the only answer that does
-    // not privilege one branch over another.
-    const tail = new THREE.Vector3();
-    for (const k of kids) tail.add(k.position);
-    tail.divideScalar(kids.length);
-    this.axis = tail.clone();
-
-    // Length is measured in world units, not from the local translation. A
-    // local translation is in the parent's units and this project has one avatar
-    // authored in centimetres under a 0.01 armature scale — see the note in
-    // `profile/bones.ts`. The solver works entirely in world space, so this must too.
-    bone.updateWorldMatrix(true, false);
-    this.length = _p
-      .copy(tail)
-      .applyMatrix4(bone.matrixWorld)
-      .distanceTo(_bp.setFromMatrixPosition(bone.matrixWorld));
-
-    this.cur = new THREE.Vector3();
-    this.prev = new THREE.Vector3();
-    this.valid = this.length > 1e-6 && this.axis.lengthSq() > 1e-12;
-    if (this.valid) this.axis.normalize();
-    this.side = new THREE.Vector3()
-      .crossVectors(this.axis, Math.abs(this.axis.x) < 0.9 ? _p.set(1, 0, 0) : _p.set(0, 1, 0))
-      .normalize();
+    this.rest = rest;
+    this.axis = axis;
+    this.length = length;
+    this.limits = new Float32Array(colliders);
+    this.spans = new Float32Array(colliders);
+    this.slot = slot;
   }
 
   /** This joint's local rotation at rest, drive included. */
@@ -253,398 +202,64 @@ export class Joint {
     if (this.driven) out.applyQuaternion(this.drive);
     return out.applyQuaternion(parentQ);
   }
-
-  /** Drop the tail back onto the rest pose, killing all velocity. */
-  seed(): void {
-    this.restQuat(this.bone.quaternion);
-    this.bone.updateMatrix();
-    this.bone.matrixWorld.multiplyMatrices(this.parent.matrixWorld, this.bone.matrix);
-    this.cur
-      .copy(this.axis)
-      .multiplyScalar(this.length)
-      .applyQuaternion(worldQuat(this.bone, _q))
-      .add(_p.setFromMatrixPosition(this.bone.matrixWorld));
-    this.prev.copy(this.cur);
-    this.solvedQ.copy(this.bone.quaternion);
-    this.prevSolvedQ.copy(this.solvedQ);
-    this.swing.set(0, 0, 0);
-  }
-
-  /**
-   * Write the rotation `s` of the way from the previous step's result to the last
-   * one's. Above 1 it continues past the last result along the same arc.
-   */
-  present(s: number): void {
-    this.bone.quaternion.copy(_solved.slerpQuaternions(this.prevSolvedQ, this.solvedQ, s));
-    this.bone.updateMatrix();
-  }
-
-  /** Recompute `reach` and `clusterReach` after calibration has changed `limits` or `spans`. */
-  fitReach(clusters: readonly Cluster[]): void {
-    this.reach = new Float64Array(this.limits.length);
-    for (let i = 0; i < this.limits.length; i++) {
-      const r = (this.length + Math.max(this.limits[i], this.spans[i])) * CULL_MARGIN;
-      this.reach[i] = r * r;
-    }
-    this.clusterReach = new Float64Array(clusters.length);
-    clusters.forEach((cluster, q) => {
-      for (const i of cluster.members) {
-        this.clusterReach[q] = Math.max(this.clusterReach[q], Math.sqrt(this.reach[i]));
-      }
-    });
-  }
 }
 
-/**
- * A node no chain moves whose world transform a step reads — what a chain
- * hangs from, a collider's bone, an attachment's body side — held for this
- * frame and the last so a step between them can read the body between them.
- */
-class Input {
-  readonly node: THREE.Object3D;
-  /** This frame's world matrix, exactly as the frame posed it. */
-  readonly world = new THREE.Matrix4();
-  /** The world matrix a step between the two frames reads. */
-  readonly between = new THREE.Matrix4();
-  /** World rotation of the node's current matrix, refreshed once per step. */
-  readonly quat = new THREE.Quaternion();
-  readonly #pos = new THREE.Vector3();
-  readonly #quat = new THREE.Quaternion();
-  readonly #scale = new THREE.Vector3();
-  readonly #prevPos = new THREE.Vector3();
-  readonly #prevQuat = new THREE.Quaternion();
-  readonly #prevScale = new THREE.Vector3();
-
-  constructor(node: THREE.Object3D) {
-    this.node = node;
-  }
-
-  /** Take this frame's transform, keeping the last one as the start of the interval. */
-  capture(): void {
-    this.snap();
-    this.world.copy(this.node.matrixWorld);
-    this.world.decompose(this.#pos, this.#quat, this.#scale);
-  }
-
-  /** Drop the last frame, so nothing is interpolated across a discontinuity. */
-  snap(): void {
-    this.#prevPos.copy(this.#pos);
-    this.#prevQuat.copy(this.#quat);
-    this.#prevScale.copy(this.#scale);
-  }
-
-  /** Pose the node `s` of the way from the last frame to this one. */
-  at(s: number): void {
-    this.between.compose(
-      _ip.lerpVectors(this.#prevPos, this.#pos, s),
-      _iq.slerpQuaternions(this.#prevQuat, this.#quat, s),
-      _is.lerpVectors(this.#prevScale, this.#scale, s),
-    );
-    this.node.matrixWorld.copy(this.between);
-  }
-
-  /** Put this frame's transform back. */
-  end(): void {
-    this.node.matrixWorld.copy(this.world);
-  }
-}
-
-/**
- * A sphere or capsule the swinging parts cannot enter.
- *
- * Positioned relative to a bone, so it follows the body. `offset` and `tail` are
- * in **metres along the bone's own axes** — the bone's rotation is applied and
- * its scale is not, which makes one number mean the same distance on an avatar
- * authored in metres and on one authored in centimetres. Radii are metres for
- * the same reason.
- *
- * `inside: true` inverts it: the point is kept *within* the sphere instead of
- * out of it. That is how a ribbon is stopped from flaring off the body without
- * also being stopped from lying against it.
- */
+/** A collider of the core's pool, shared by every group that names it. */
 export class Collider {
   readonly bone: THREE.Bone;
-  readonly offset: THREE.Vector3;
-  readonly tailOffset: THREE.Vector3 | null;
   readonly radius: number;
   readonly inside: boolean;
-  readonly a: THREE.Vector3;
-  readonly b: THREE.Vector3;
-  /** `b - a` and its squared length, as of the last `place`. */
-  readonly #seg = new THREE.Vector3();
-  #len2 = 0;
+  /** The axis ends as last placed. */
+  readonly a = new THREE.Vector3();
+  readonly b = new THREE.Vector3();
+  readonly #owner: Spring;
+  readonly #index: number;
 
-  constructor(bone: THREE.Bone, spec: ColliderSpec) {
+  constructor(owner: Spring, index: number, bone: THREE.Bone, radius: number, inside: boolean) {
+    this.#owner = owner;
+    this.#index = index;
     this.bone = bone;
-    this.offset = new THREE.Vector3().fromArray(spec.offset ?? [0, 0, 0]);
-    this.tailOffset = spec.tail ? new THREE.Vector3().fromArray(spec.tail) : null;
-    this.radius = spec.radius ?? 0.05;
-    this.inside = !!spec.inside;
-    this.a = new THREE.Vector3();
-    this.b = new THREE.Vector3();
+    this.radius = radius;
+    this.inside = inside;
   }
 
-  /**
-   * Refresh world-space geometry. Once per step, before any joint reads it.
-   *
-   * @param rotation  the bone's world rotation, if the caller already has it
-   */
-  place(rotation: THREE.Quaternion = worldQuat(this.bone, _q)): void {
-    _p.setFromMatrixPosition(this.bone.matrixWorld);
-    this.a.copy(this.offset).applyQuaternion(rotation).add(_p);
-    if (this.tailOffset) this.b.copy(this.tailOffset).applyQuaternion(rotation).add(_p);
-    else this.b.copy(this.a);
-    this.#len2 = this.#seg.subVectors(this.b, this.a).lengthSq();
+  /** Place on the bone's world matrix as the last update left it. */
+  place(): void {
+    core().hd_spring_collider_place(this.#owner.handle, this.#index);
+    this.read(views().f64, this.#owner.colliderStates);
   }
 
-  /**
-   * Nearest point on the capsule's axis, into `_p`, returning the distance from
-   * `point` to it. For a sphere the two ends coincide and this collapses to the
-   * centre without a special case.
-   */
+  /** Distance from `point` to the axis as last placed. */
   nearest(point: THREE.Vector3): number {
-    const len2 = this.#len2;
-    let t = 0;
-    if (len2 > 1e-12) {
-      t = _d.subVectors(point, this.a).dot(this.#seg) / len2;
-      t = t < 0 ? 0 : t > 1 ? 1 : t;
-    }
-    _p.copy(this.a).addScaledVector(this.#seg, t);
-    return _d.subVectors(point, _p).length();
+    return core().hd_spring_collider_nearest(
+      this.#owner.handle,
+      this.#index,
+      point.x,
+      point.y,
+      point.z,
+    );
   }
 
-  /**
-   * Whether `push` and `clearLink` are sure to leave a link alone: an outside
-   * collider whose axis is further from `root` than the link's length plus
-   * either clearance (`Joint#reach`, squared), with the tip at most that length
-   * away. Neither test is run on a culled pair, so the margin keeps the cull
-   * clear of their rounding. Every axis point either test uses is at least this
-   * far, so a capsule is culled on the same terms as a sphere.
-   */
-  beyond(root: THREE.Vector3, reach: number): boolean {
-    return !this.inside && this.#axisDistanceSq(root) > reach;
-  }
-
-  /** Squared distance from `point` to the axis; its rounding is far inside the cull margin. */
-  #axisDistanceSq(point: THREE.Vector3): number {
-    const a = this.a;
-    let dx = point.x - a.x;
-    let dy = point.y - a.y;
-    let dz = point.z - a.z;
-    const len2 = this.#len2;
-    if (len2 > 1e-12) {
-      const s = this.#seg;
-      const t = Math.min(1, Math.max(0, (dx * s.x + dy * s.y + dz * s.z) / len2));
-      dx -= s.x * t;
-      dy -= s.y * t;
-      dz -= s.z * t;
-    }
-    return dx * dx + dy * dy + dz * dz;
-  }
-
-  /**
-   * Point on the capsule's axis nearest the segment `p0`–`p1`, into `out`.
-   * For a sphere, its centre.
-   */
-  nearestToLink(p0: THREE.Vector3, p1: THREE.Vector3, out: THREE.Vector3): THREE.Vector3 {
-    const seg = this.#seg;
-    const e = this.#len2;
-    if (e <= 1e-12) return out.copy(this.a);
-    _d.subVectors(p1, p0);
-    _lr.subVectors(p0, this.a);
-    const a = _d.lengthSq();
-    const b = _d.dot(seg);
-    const c = _d.dot(_lr);
-    const f = seg.dot(_lr);
-    // Closest points of two segments (Ericson 5.1.9). Only the axis point is
-    // wanted, so the link parameter is not re-clamped after the axis one.
-    const denom = a * e - b * b;
-    // `MathUtils.clamp(v, 0, 1)` spelled out, which it is word for word.
-    const s = denom > 1e-12 ? Math.max(0, Math.min(1, (b * f - c * e) / denom)) : 0;
-    const t = Math.max(0, Math.min(1, (b * s + f) / e));
-    return out.copy(this.a).addScaledVector(seg, t);
-  }
-
-  /** Distance from the axis to the segment `p0`–`p1`. */
+  /** Distance from the axis as last placed to the segment `p0`–`p1`. */
   linkDistance(p0: THREE.Vector3, p1: THREE.Vector3): number {
-    this.nearestToLink(p0, p1, _lc);
-    _lw.subVectors(p1, p0);
-    const len2 = _lw.lengthSq();
-    const t =
-      len2 > 1e-12 ? THREE.MathUtils.clamp(_lu.subVectors(_lc, p0).dot(_lw) / len2, 0, 1) : 0;
-    return _lu.copy(p0).addScaledVector(_lw, t).distanceTo(_lc);
+    return core().hd_spring_collider_link_distance(
+      this.#owner.handle,
+      this.#index,
+      p0.x,
+      p0.y,
+      p0.z,
+      p1.x,
+      p1.y,
+      p1.z,
+    );
   }
 
-  /**
-   * Swing the link from `root` to `tip` about its root, by the least angle that
-   * holds the whole link at or beyond `min` from the axis. Length is kept. A
-   * tail-only test lets a long link pass through a collider with both ends
-   * outside it. Returns whether the tip had to be moved. Outside colliders only:
-   * a link with both ends inside a convex shape is inside it along its length.
-   */
-  clearLink(root: THREE.Vector3, tip: THREE.Vector3, length: number, min: number): boolean {
-    if (this.inside) return false;
-    this.nearestToLink(root, tip, _lc);
-    _lw.subVectors(_lc, root);
-    const dist = _lw.length();
-    // A root already that close cannot be helped by turning the link.
-    if (dist <= min) return false;
-    _lu.subVectors(tip, root).multiplyScalar(1 / length);
-    const along = _lu.dot(_lw);
-    if (along <= 0) return false;
-    // The widest angle to the axis point that still clears: the tangent from the
-    // root if the link reaches it, otherwise where the tip alone touches.
-    const tangent = Math.sqrt(dist * dist - min * min);
-    const cosMax =
-      length >= tangent
-        ? tangent / dist
-        : (dist * dist + length * length - min * min) / (2 * length * dist);
-    if (along / dist <= cosMax) return false;
-    _lw.multiplyScalar(1 / dist);
-    _le.copy(_lu).addScaledVector(_lw, -_lu.dot(_lw));
-    if (_le.lengthSq() < 1e-12) {
-      _le.crossVectors(_lw, Math.abs(_lw.x) < 0.9 ? _lr.set(1, 0, 0) : _lr.set(0, 1, 0));
-    }
-    _le.normalize();
-    const sinMax = Math.sqrt(Math.max(0, 1 - cosMax * cosMax));
-    tip
-      .copy(root)
-      .addScaledVector(_lw, cosMax * length)
-      .addScaledVector(_le, sinMax * length);
-    return true;
+  /** @internal Refresh `a` and `b` from the collider state buffer at f64 index `base`. */
+  read(f64: Float64Array, base: number): void {
+    const at = base + COLLIDER_OUT * this.#index;
+    this.a.set(f64[at], f64[at + 1], f64[at + 2]);
+    this.b.set(f64[at + 3], f64[at + 4], f64[at + 5]);
   }
-
-  /**
-   * Hold `point` at or beyond `min` from the axis — or at or within it, for an
-   * inside collider. Returns whether the point had to be moved.
-   *
-   * `min` is calibrated per joint rather than being `radius + tail radius`. See
-   * `#calibrate`.
-   */
-  push(point: THREE.Vector3, min: number): boolean {
-    const dist = this.nearest(point);
-    if (this.inside ? dist <= min : dist >= min) return false;
-    // Dead centre has no direction to leave by. Any is as good as any other,
-    // and picking one beats leaving the point buried forever.
-    if (dist < 1e-9) _d.set(0, 1, 0);
-    else _d.multiplyScalar(1 / dist);
-    point.copy(_p).addScaledVector(_d, min);
-    return true;
-  }
-}
-
-/**
- * Outside colliders of one group on one bone, near each other, bounded by a
- * sphere refitted to their placed axes. A root further from the sphere than the
- * widest of the members' cull distances is further than each from its own axis,
- * so one test culls them all. A lone collider is tested on its own.
- */
-class Cluster {
-  readonly members: readonly number[];
-  readonly centre = new THREE.Vector3();
-  radius = 0;
-
-  constructor(members: readonly number[]) {
-    this.members = members;
-  }
-
-  /** Fit the sphere around every member's axis ends as last placed. */
-  refit(colliders: readonly Collider[]): void {
-    const centre = this.centre.set(0, 0, 0);
-    for (const i of this.members) centre.add(colliders[i].a).add(colliders[i].b);
-    centre.multiplyScalar(1 / (2 * this.members.length));
-    let r2 = 0;
-    for (const i of this.members) {
-      const c = colliders[i];
-      r2 = Math.max(r2, centre.distanceToSquared(c.a), centre.distanceToSquared(c.b));
-    }
-    this.radius = Math.sqrt(r2);
-  }
-
-  /** Whether the sphere is further from `root` than `reach`. */
-  beyond(root: THREE.Vector3, reach: number): boolean {
-    const r = this.radius + reach;
-    return this.centre.distanceToSquared(root) > r * r;
-  }
-}
-
-/**
- * Partition a group's colliders, as placed, into clusters: each bone's outside
- * colliders split along their widest extent until no part exceeds `CLUSTER_SIZE`.
- */
-function clusterColliders(colliders: readonly Collider[]): Cluster[] {
-  const out: Cluster[] = [];
-  const byBone = new Map<THREE.Object3D, number[]>();
-  colliders.forEach((c, i) => {
-    if (c.inside) {
-      out.push(new Cluster([i]));
-      return;
-    }
-    const members = byBone.get(c.bone) ?? [];
-    members.push(i);
-    byBone.set(c.bone, members);
-  });
-  const mid = (i: number): THREE.Vector3 =>
-    new THREE.Vector3().addVectors(colliders[i].a, colliders[i].b).multiplyScalar(0.5);
-  const split = (members: number[]): void => {
-    if (members.length <= CLUSTER_SIZE) {
-      out.push(new Cluster(members));
-      return;
-    }
-    const box = new THREE.Box3().setFromPoints(members.map(mid));
-    const size = box.getSize(new THREE.Vector3());
-    const axis = size.x >= size.y && size.x >= size.z ? 'x' : size.y >= size.z ? 'y' : 'z';
-    const sorted = [...members].sort((p, q) => mid(p)[axis] - mid(q)[axis]);
-    const half = sorted.length >> 1;
-    split(sorted.slice(0, half));
-    split(sorted.slice(half));
-  };
-  for (const members of byBone.values()) split(members);
-  return out;
-}
-
-function refitClusters(clusters: readonly Cluster[], colliders: readonly Collider[]): void {
-  for (const cluster of clusters) if (cluster.members.length > 1) cluster.refit(colliders);
-}
-
-/**
- * Mark into `_far` each collider `Collider#beyond` culls for `j` from `root`.
- * Returns whether any is left to test.
- */
-function cull(
-  colliders: readonly Collider[],
-  clusters: readonly Cluster[],
-  j: Joint,
-  root: THREE.Vector3,
-): boolean {
-  if (_far.length < colliders.length) _far = new Uint8Array(colliders.length);
-  let near = false;
-  for (let q = 0; q < clusters.length; q++) {
-    const members = clusters[q].members;
-    if (members.length > 1 && clusters[q].beyond(root, j.clusterReach[q])) {
-      for (let k = 0; k < members.length; k++) _far[members[k]] = 1;
-      continue;
-    }
-    for (let k = 0; k < members.length; k++) {
-      const i = members[k];
-      const far = colliders[i].beyond(root, j.reach[i]);
-      _far[i] = far ? 1 : 0;
-      near ||= !far;
-    }
-  }
-  return near;
-}
-
-/** A node hung from its parent by hand, as a world update would. */
-interface Hung {
-  readonly bone: THREE.Object3D;
-  readonly parent: THREE.Object3D;
-}
-
-/** One link of a chain: a bone, and the children the run continues into. */
-interface RunLink {
-  bone: THREE.Bone;
-  kids: THREE.Bone[];
 }
 
 /** One simulated chain, with the descriptor's figures resolved onto it. */
@@ -660,112 +275,92 @@ export interface SpringGroup {
   gravityDir: THREE.Vector3;
   radius: number;
   colliders: Collider[];
-  /** Optional root placement driven by a skinned point on earlier groups. */
-  anchor: SkinPointAnchor | null;
-  /** Internal edge state, so toggling a group restores or reseeds only its own chain. */
-  wasEnabled: boolean;
+  /** The attached root, while its anchor holds. Placement is the core's, so it cannot be replaced. */
+  anchor: { readonly root: THREE.Bone } | null;
 }
 
-/**
- * Walk a chain from `root`, collecting one array of joints per unbranched run.
- *
- * A branch ends the run it is in — the bone that branches is still simulated,
- * aiming at the average of its children — and each branch continues as a run of
- * its own. Without this a forked chain would simulate down one arbitrary side
- * and leave the rest rigid, which is exactly what a skirt hem is.
- */
-function collectRuns(root: THREE.Bone, out: RunLink[][]): void {
-  const run: RunLink[] = [];
-  let bone = root;
-  for (;;) {
-    const kids = boneChildren(bone);
-    if (!kids.length) break;
-    run.push({ bone, kids });
-    if (kids.length > 1) {
-      out.push(run);
-      for (const k of kids) collectRuns(k, out);
-      return;
-    }
-    bone = kids[0];
-  }
-  if (run.length) out.push(run);
+/** What the TS side keeps of a group `hd_spring_group_end` kept, by key. */
+interface Registered {
+  id: string;
+  label: Localized;
+  stiffness: number;
+  gravity: number;
+  radius: number;
+  colliders: Collider[];
+  anchorRoot: THREE.Bone | null;
 }
+
+/** The message for a status the core reported. */
+function statusText(kind: number, node: string, other: string): string {
+  switch (kind) {
+    case STATUS_ANCHOR_NOT_AFFINE:
+      return `anchor:${node} requires a finite affine local transform`;
+    case STATUS_ANCHOR_SINGULAR:
+      return `anchor:${node} has a singular local transform`;
+    case STATUS_ANCHOR_NONUNIFORM:
+      return `anchor:${node} does not support nonuniform scale`;
+    case STATUS_ANCHOR_SHEAR:
+      return `anchor:${node} does not support shear`;
+    case STATUS_ANCHOR_MODE_CHANGED:
+      return `anchor:${node} transform mode changed after resolution`;
+    case STATUS_ANCHOR_SCALE_CHANGED:
+      return `anchor:${node} scale changed after resolution`;
+    case STATUS_ANCHOR_PATH_REPARENTED:
+      return `anchor path was reparented at ${node}`;
+    case STATUS_ANCHOR_PATH_ROOT_REPARENTED:
+      return `anchor path root was reparented at ${node}`;
+    case STATUS_ANCHOR_WORLD_OVERRIDE:
+      return `anchor:${node} has a manual matrixWorld override`;
+    case STATUS_ANCHOR_ROOT_REPARENTED:
+      return `anchor root was reparented at ${node}`;
+    case STATUS_ANCHOR_SUBTREE_REPARENTED:
+      return `anchor subtree was reparented at ${node}`;
+    case STATUS_ANCHOR_PARENT_SINGULAR:
+      return 'anchor parent world is singular';
+    case STATUS_ANCESTOR_SIMULATED:
+      return `root ancestor is simulated by another group: ${node}`;
+    case STATUS_SUBTREE_SIMULATED:
+      return `root subtree is simulated by another group: ${node}`;
+    case STATUS_SOURCE_DEPENDS:
+      return `source ${node} depends on group ${other} at or after this group`;
+    default:
+      throw new Error(`unknown spring status ${kind}`);
+  }
+}
+
+/** f64 and u32 element index of a byte pointer. */
+const f64At = (ptr: number): number => ptr >>> 3;
+const u32At = (ptr: number): number => ptr >>> 2;
 
 export class Spring {
   readonly p: Profile;
   readonly root: THREE.Object3D;
-  readonly groups: SpringGroup[];
-  readonly missing: string[];
-  readonly drivenJoints: Joint[];
+  readonly groups: SpringGroup[] = [];
+  readonly missing: string[] = [];
+  readonly drivenJoints: Joint[] = [];
 
-  enabled: boolean;
-  stiffnessScale: number;
-  inertiaScale: number;
-  gravityScale: number;
+  enabled = true;
+  stiffnessScale = 1;
+  inertiaScale = 1;
+  gravityScale = 1;
 
-  _acc: number;
-  _pending: boolean;
-  _live: boolean;
-
-  readonly #inputs: Input[] = [];
-  /** Each input's `between` matrix by node, for attachments composing from it. */
-  readonly #inputWorld = new Map<THREE.Object3D, THREE.Matrix4>();
-  /** Unattached joints and bridges, shallowest first, for re-hanging chains on an interpolated body. */
-  readonly #rebase: Hung[] = [];
-  /**
-   * Unsimulated nodes between a simulated joint and something a step reads, such
-   * as a chain hung from a plain node riding on another chain. Shallowest first.
-   */
-  readonly #bridges: Hung[] = [];
-  /**
-   * The part of `#rebase` a step reads before it re-hangs it itself, and what
-   * that hangs from: a step re-hangs every other entry before anything reads it.
-   */
-  readonly #stepRebase: Hung[] = [];
-  /**
-   * Per group, the bridges its pass can move: those hanging from a joint it
-   * simulates or inside the subtree its attachment rewrites. Any other bridge
-   * would be re-hung onto an unchanged parent, to the same matrix.
-   */
-  readonly #bridgesMovedBy: Hung[][] = [];
-  /**
-   * Colliders on a node no chain moves, which holds still through a step and so
-   * is placed once per step rather than once per group sharing it.
-   */
-  readonly #fixedColliders: Array<{ collider: Collider; input: Input }> = [];
-  /** Each group's colliders on a node a chain moves, placed in turn. */
-  readonly #movingColliders = new Map<SpringGroup, Collider[]>();
-  /** Groups whose every joint `#rehang` re-hangs. */
-  readonly #rehung = new Set<SpringGroup>();
-  /** Each group's colliders, partitioned for culling; see `Cluster`. */
-  readonly #clusters = new Map<SpringGroup, Cluster[]>();
+  #handle = 0;
+  /** Every registered node by index, and the parent it was registered with. */
+  #nodes: THREE.Object3D[] = [];
+  #parents: (THREE.Object3D | null)[] = [];
+  #layout = new Uint32Array(LAYOUT);
+  #registered: Registered[] = [];
+  #pool: Collider[] = [];
+  #joints: Joint[] = [];
+  #diagnostics = new Float64Array(0);
 
   /**
-   * @param profile  the avatar profile; only `root` is used, since sway chains
-   *                 are named by the avatar and have no canonical slots
-   * @param avatar   the avatar descriptor. No `sway` field means no secondary
-   *                 motion, which is a valid state and not an error.
+   * @param profile  the avatar profile; only `root` is used
+   * @param avatar   the avatar descriptor. No `sway` field means no secondary motion.
    */
   constructor(profile: Profile, avatar?: AvatarDescriptor) {
     this.p = profile;
     this.root = profile.root;
-    this.groups = [];
-    this.missing = [];
-    // Every joint currently under an external drive, flattened. Walked on the
-    // frames the simulation is switched off, and empty on most avatars.
-    this.drivenJoints = [];
-
-    this.enabled = true;
-    // Operator-facing multipliers over the authored figures. They exist because
-    // "does this avatar swing too much" is a judgement made by watching it, and
-    // the answer has to be reachable without editing a descriptor and reloading.
-    this.stiffnessScale = 1;
-    this.inertiaScale = 1;
-    this.gravityScale = 1;
-
-    this._acc = 0;
-    this._pending = false;
-    this._live = false;
 
     const spec = avatar?.sway;
     if (!spec?.groups?.length) return;
@@ -774,9 +369,6 @@ export class Spring {
     const bonesByName = new Map<string, THREE.Bone[]>();
     this.root.traverse((o) => {
       if (!(o instanceof THREE.Bone)) return;
-      // Preserve the legacy first-name-wins lookup for unanchored groups. The
-      // attachment resolver below uses the strict all-matches map instead.
-      // Keyed by the loader-sanitised name, as descriptor names are looked up.
       const key = normaliseBoneName(o.name);
       if (!byName.has(key)) byName.set(key, o);
       const matches = bonesByName.get(key) ?? [];
@@ -785,13 +377,57 @@ export class Spring {
     });
     this.root.updateMatrixWorld(true);
 
+    const nodes: THREE.Object3D[] = [];
+    for (let n = this.root.parent; n; n = n.parent) nodes.unshift(n);
+    const rootIndex = nodes.length;
+    this.root.traverse((o) => {
+      nodes.push(o);
+    });
+    const indexOf = new Map<THREE.Object3D, number>();
+    for (const [i, n] of nodes.entries()) indexOf.set(n, i);
+    const at = (node: THREE.Object3D): number => {
+      const i = indexOf.get(node);
+      if (i === undefined) throw new Error(`spring node outside the avatar: ${node.name}`);
+      return i;
+    };
+
+    const c = core();
+    const h = c.hd_spring_new(rootIndex);
+    const scratch = f64At(c.hd_spring_scratch(h));
+    for (const node of nodes) {
+      writeNode(views().f64, scratch, node);
+      c.hd_spring_node(h, node.parent ? at(node.parent) : NO_NODE, nodeFlags(node, false));
+    }
+
     const colliders = new Map<string, Collider[]>();
     for (const [id, list] of Object.entries(spec.colliders ?? {})) {
       const built: Collider[] = [];
-      for (const c of list) {
-        const bone = byName.get(normaliseBoneName(c.bone));
-        if (bone) built.push(new Collider(bone, c));
-        else this.missing.push(`collider:${c.bone}`);
+      for (const cs of list) {
+        const bone = byName.get(normaliseBoneName(cs.bone));
+        if (!bone) {
+          this.missing.push(`collider:${cs.bone}`);
+          continue;
+        }
+        const offset = cs.offset ?? [0, 0, 0];
+        const tail = cs.tail;
+        const radius = cs.radius ?? 0.05;
+        const inside = !!cs.inside;
+        const k = c.hd_spring_collider(
+          h,
+          at(bone),
+          offset[0],
+          offset[1],
+          offset[2],
+          tail ? 1 : 0,
+          tail ? tail[0] : 0,
+          tail ? tail[1] : 0,
+          tail ? tail[2] : 0,
+          radius,
+          inside ? 1 : 0,
+        );
+        const collider = new Collider(this, k, bone, radius, inside);
+        this.#pool.push(collider);
+        built.push(collider);
       }
       if (built.length) colliders.set(id, built);
     }
@@ -804,10 +440,6 @@ export class Spring {
         if (bone) roots.push(bone);
         else this.missing.push(`sway:${name}`);
       }
-      // A hub — one bone carrying a whole hem or frill — is an anchor, not a
-      // joint. Naming its sixteen children individually would be a list nobody
-      // can check against the model, so the descriptor names the hub and the
-      // children are read off the rig.
       for (const name of g.childrenOf ?? []) {
         const hub = byName.get(normaliseBoneName(name));
         if (!hub) {
@@ -819,6 +451,7 @@ export class Spring {
         roots.push(...kids);
       }
 
+      // The spec is checked, and its names resolved, by the TS anchor; the core takes the result.
       let anchor: SkinPointAnchor | null = null;
       if (g.anchor !== undefined) {
         try {
@@ -851,369 +484,155 @@ export class Spring {
         }
       }
 
-      const runs: RunLink[][] = [];
-      for (const r of roots) collectRuns(r, runs);
-
-      const joints: Joint[] = [];
-      for (const run of runs) {
-        for (const { bone, kids } of run) {
-          // A collected joint always has a parent by construction: every run is
-          // walked down from a bone found by traversing the avatar root, so the
-          // solver dereferences the parent per step without a check. This is
-          // the one place that is established.
-          const parent = bone.parent;
-          if (!parent) continue;
-          const j = new Joint(bone, parent, kids);
-          if (j.valid) joints.push(j);
+      const dir = def.gravityDir;
+      c.hd_spring_group_begin(
+        h,
+        def.stiffness,
+        def.drag,
+        def.gravity,
+        dir[0],
+        dir[1],
+        dir[2],
+        def.radius,
+      );
+      for (const r of roots) c.hd_spring_group_root(h, at(r));
+      if (anchor) {
+        c.hd_spring_group_anchor(h, at(anchor.root));
+        for (const { bone, weight, position } of anchor.influences) {
+          c.hd_spring_anchor_influence(h, at(bone), weight, position.x, position.y, position.z);
         }
       }
-      if (!joints.length) {
+      if (!c.hd_spring_group_end(h)) {
         if (anchor) this.missing.push(`sway:${g.id} anchor: root has no simulated descendants`);
         continue;
       }
-
-      const rootBones = new Set<THREE.Bone>(roots);
-      this.groups.push({
+      const groupColliders = (g.colliders ?? []).flatMap((id) => {
+        const list = colliders.get(id);
+        if (!list) this.missing.push(`collider group:${id}`);
+        return list ?? [];
+      });
+      for (const collider of groupColliders) {
+        c.hd_spring_group_collider(h, this.#pool.indexOf(collider));
+      }
+      this.#registered.push({
         id: g.id,
         label: g.label ?? same(g.id),
+        stiffness: def.stiffness,
+        gravity: def.gravity,
+        radius: def.radius,
+        colliders: groupColliders,
+        anchorRoot: anchor?.root ?? null,
+      });
+    }
+
+    const statuses = c.hd_spring_build(h);
+    this.#handle = h;
+    this.#nodes = nodes;
+    this.#parents = nodes.map((n) => n.parent);
+    this.#layout.set(new Uint32Array(core().memory.buffer, c.hd_spring_layout(h), LAYOUT));
+    this.#report(statuses);
+
+    const groupCount = this.#layout[LAYOUT_GROUP_COUNT];
+    for (let g = 0; g < groupCount; g++) {
+      c.hd_spring_group_info(h, g);
+      const { f64 } = views();
+      const reg = this.#registered[f64[scratch]];
+      const count = f64[scratch + 1];
+      const drag = f64[scratch + 2];
+      const gravityDir = new THREE.Vector3(f64[scratch + 3], f64[scratch + 4], f64[scratch + 5]);
+      const joints: Joint[] = [];
+      const rootJoints: Joint[] = [];
+      for (let k = 0; k < count; k++) {
+        c.hd_spring_joint_info(h, g, k);
+        const v = views().f64;
+        const joint = new Joint(
+          nodes[v[scratch]] as THREE.Bone,
+          nodes[v[scratch + 1]],
+          new THREE.Quaternion(v[scratch + 7], v[scratch + 8], v[scratch + 9], v[scratch + 10]),
+          new THREE.Vector3(v[scratch + 4], v[scratch + 5], v[scratch + 6]),
+          v[scratch + 3],
+          reg.colliders.length,
+          this.#joints.length,
+        );
+        joints.push(joint);
+        if (v[scratch + 2]) rootJoints.push(joint);
+        this.#joints.push(joint);
+      }
+      this.groups.push({
+        id: reg.id,
+        label: reg.label,
         enabled: true,
         joints,
-        // The joints an external drive is allowed to reach. Only the tops of
-        // the chains: a drive is a pose for the base of an appendage, and the
-        // rest of it is meant to trail behind rather than be posed too.
-        rootJoints: joints.filter((j) => rootBones.has(j.bone)),
-        stiffness: def.stiffness,
-        drag: Math.min(0.99, Math.max(0, def.drag)),
-        gravity: def.gravity,
-        gravityDir: new THREE.Vector3().fromArray(def.gravityDir).normalize(),
-        radius: def.radius,
-        anchor,
-        wasEnabled: true,
-        colliders: (g.colliders ?? []).flatMap((id) => {
-          const c = colliders.get(id);
-          if (!c) this.missing.push(`collider group:${id}`);
-          return c ?? [];
-        }),
+        rootJoints,
+        stiffness: reg.stiffness,
+        drag,
+        gravity: reg.gravity,
+        gravityDir,
+        radius: reg.radius,
+        colliders: reg.colliders,
+        anchor: reg.anchorRoot ? { root: reg.anchorRoot } : null,
       });
     }
-
-    this.#validateAnchors();
-    this.#collectInputs();
-    this.#calibrate();
-    this.reset();
+    this.#diagnostics = new Float64Array(DIAGNOSTICS * groupCount);
+    if (!groupCount) {
+      this.dispose();
+      return;
+    }
+    this.#readLimits(this.groups);
+    this.#pull();
   }
 
-  #validateAnchors(): void {
-    if (!this.groups.some((group) => group.anchor)) return;
-    const owners = new Map<THREE.Object3D, SpringGroup[]>();
-    for (const group of this.groups) {
-      for (const joint of group.joints) {
-        const groups = owners.get(joint.bone) ?? [];
-        groups.push(group);
-        owners.set(joint.bone, groups);
-      }
-    }
-
-    const removed = new Set<SpringGroup>();
-    const earlier = new Set<SpringGroup>();
-    for (const group of this.groups) {
-      const anchor = group.anchor;
-      if (!anchor) {
-        earlier.add(group);
-        continue;
-      }
-      let problem: string | null = null;
-      const hasOtherOwner = (node: THREE.Object3D): boolean =>
-        (owners.get(node) ?? []).some((owner) => owner !== group && !removed.has(owner));
-
-      for (let current: THREE.Object3D | null = anchor.root; current; current = current.parent) {
-        if (hasOtherOwner(current)) {
-          problem = `root ancestor is simulated by another group: ${current.name}`;
-          break;
-        }
-      }
-      if (!problem) {
-        anchor.root.traverse((node) => {
-          if (!problem && hasOtherOwner(node)) {
-            problem = `root subtree is simulated by another group: ${node.name}`;
-          }
-        });
-      }
-      if (!problem) {
-        for (const influence of anchor.influences) {
-          for (
-            let current: THREE.Object3D | null = influence.bone;
-            current;
-            current = current.parent
-          ) {
-            for (const owner of owners.get(current) ?? []) {
-              if (removed.has(owner)) continue;
-              if (!earlier.has(owner)) {
-                problem = `source ${influence.bone.name} depends on group ${owner.id} at or after this group`;
-                break;
-              }
-            }
-            if (problem) break;
-          }
-          if (problem) break;
-        }
-      }
-      if (problem) {
-        this.missing.push(`sway:${group.id} anchor: ${problem}`);
-        removed.add(group);
-      }
-      earlier.add(group);
-    }
-    if (removed.size) {
-      const kept = this.groups.filter((group) => !removed.has(group));
-      this.groups.splice(0, this.groups.length, ...kept);
-    }
+  /** @internal The core handle, 0 once disposed. */
+  get handle(): number {
+    return this.#handle;
   }
 
-  #collectInputs(): void {
-    const simulated = new Set<THREE.Object3D>();
-    for (const g of this.groups) for (const j of g.joints) simulated.add(j.bone);
-    // The deepest node at or above `node` with no simulated node at or above it.
-    const outside = (node: THREE.Object3D | null): THREE.Object3D | null => {
-      let found: THREE.Object3D | null = null;
-      for (let n = node; n; n = n.parent) {
-        if (simulated.has(n)) found = null;
-        else if (!found) found = n;
-      }
-      return found;
-    };
-    const inputOf = new Map<THREE.Object3D, Input>();
-    const add = (node: THREE.Object3D): Input => {
-      const known = inputOf.get(node);
-      if (known) return known;
-      const input = new Input(node);
-      this.#inputs.push(input);
-      this.#inputWorld.set(node, input.between);
-      inputOf.set(node, input);
-      return input;
-    };
-    const depth = new Map<THREE.Object3D, number>();
-    const depthOf = (node: THREE.Object3D): number => {
-      let d = 0;
-      for (let n: THREE.Object3D | null = node.parent; n; n = n.parent) d++;
-      return d;
-    };
-    // Every unsimulated node from `node` up to the simulated joint carrying it.
-    const bridge = (node: THREE.Object3D): void => {
-      if (outside(node) === node) return;
-      for (let n: THREE.Object3D | null = node; n && !simulated.has(n); n = n.parent) {
-        if (depth.has(n) || !n.parent) continue;
-        depth.set(n, depthOf(n));
-        this.#bridges.push({ bone: n, parent: n.parent });
-      }
-    };
-    for (const g of this.groups) {
-      if (!g.anchor) this.#rehung.add(g);
-      for (const j of g.joints) {
-        if (outside(j.parent) === j.parent) j.parentQuat = add(j.parent).quat;
-        if (g.anchor) continue;
-        if (!simulated.has(j.parent)) bridge(j.parent);
-        depth.set(j.bone, depthOf(j.bone));
-        this.#rebase.push(j);
-      }
-      const moving: Collider[] = [];
-      for (const c of g.colliders) {
-        const input = outside(c.bone) === c.bone ? add(c.bone) : undefined;
-        if (input) {
-          if (!this.#fixedColliders.some((f) => f.collider === c)) {
-            this.#fixedColliders.push({ collider: c, input });
-          }
-        } else {
-          if (!simulated.has(c.bone)) bridge(c.bone);
-          moving.push(c);
-        }
-      }
-      this.#movingColliders.set(g, moving);
-      if (g.anchor) {
-        const parent = outside(g.anchor.root.parent);
-        if (parent) add(parent);
-        for (const influence of g.anchor.influences) {
-          const source = outside(influence.bone);
-          if (source) add(source);
-        }
-      }
-    }
-    const byDepth = (a: Hung, b: Hung): number =>
-      (depth.get(a.bone) ?? 0) - (depth.get(b.bone) ?? 0);
-    this.#bridges.sort(byDepth);
-    const groupsOf = new Map<THREE.Object3D, number[]>();
-    this.groups.forEach((g, k) => {
-      for (const j of g.joints) groupsOf.set(j.bone, [...(groupsOf.get(j.bone) ?? []), k]);
-    });
-    this.#bridgesMovedBy.push(...this.groups.map((): Hung[] => []));
-    for (const b of this.#bridges) {
-      let owner = b.bone.parent;
-      while (owner && !simulated.has(owner)) owner = owner.parent;
-      const movers = new Set(owner ? groupsOf.get(owner) : []);
-      this.groups.forEach((g, k) => {
-        const root = g.anchor?.root;
-        for (let n: THREE.Object3D | null = b.bone; root && n; n = n.parent) {
-          if (n === root) movers.add(k);
-        }
-      });
-      for (const k of movers) this.#bridgesMovedBy[k].push(b);
-    }
-    this.#rebase.push(...this.#bridges);
-    this.#rebase.sort(byDepth);
-    this.#collectStepRebase();
+  /** @internal f64 index of the collider state buffer. */
+  get colliderStates(): number {
+    return f64At(this.#layout[LAYOUT_COLLIDER_STATES]);
   }
 
-  /**
-   * Walk a step in `#step`'s order and keep what is read before it is written.
-   * An attached group is taken to write nothing and to read as if running, as
-   * either may change at runtime.
-   */
-  #collectStepRebase(): void {
-    const parentOf = new Map<THREE.Object3D, THREE.Object3D>();
-    for (const h of this.#rebase) parentOf.set(h.bone, h.parent);
-    const written = new Set<THREE.Object3D>();
-    const read = new Set<THREE.Object3D>();
-    const reads = (node: THREE.Object3D): void => {
-      if (parentOf.has(node) && !written.has(node)) read.add(node);
-    };
-    for (const g of this.groups) {
-      for (const b of this.#bridges) {
-        reads(b.parent);
-        written.add(b.bone);
-      }
-      for (const c of this.#movingColliders.get(g) ?? []) reads(c.bone);
-      for (const j of g.joints) {
-        reads(j.parent);
-        if (!g.anchor) written.add(j.bone);
-      }
-    }
-    for (const node of [...read]) {
-      for (let n = parentOf.get(node); n && parentOf.has(n); n = parentOf.get(n)) read.add(n);
-    }
-    for (const h of this.#rebase) if (read.has(h.bone)) this.#stepRebase.push(h);
+  /** The step accumulator. */
+  get _acc(): number {
+    return this.#handle ? core().hd_spring_acc(this.#handle) : 0;
   }
 
   /** Current weighted target and root residual for attachment diagnostics. */
   get anchorDiagnostics(): Array<{ groupId: string } & SkinPointAnchorDiagnostics> {
-    return this.groups.flatMap((group) =>
-      group.anchor ? [{ groupId: group.id, ...group.anchor.diagnostics }] : [],
-    );
-  }
-
-  /**
-   * Decide, per joint and per collider, how much clearance to actually enforce.
-   *
-   * The obvious answer is the sum of the two radii, and it is wrong often enough
-   * to matter. Both avatars here carry collider sets that were machine-converted
-   * from another system — `PhysBone` on one, and on the other a VRM produced by
-   * a converter rather than by hand — and a converted collider routinely ends up
-   * larger or further forward than the one it stands for. The result is a
-   * collider that the model's *own bind pose* is already deep inside: this
-   * avatar's apron sits 5 cm inside a 10 cm sphere at the hip, and its tail
-   * starts 13 cm inside the 20 cm sphere behind it.
-   *
-   * Enforced literally, the first frame throws the apron out to the horizontal
-   * and stands the tail up. Neither is secondary motion — it is the simulation
-   * rejecting the shape the model was drawn in.
-   *
-   * So the bind pose wins. Where a joint already sits closer than the radii say
-   * it may, the clearance for that pair is reduced to exactly where the artist
-   * put it. Nothing moves at rest, and the collider still does its job in the
-   * direction that matters — the part can swing away freely and cannot swing any
-   * further *in* than the model was drawn.
-   *
-   * Dropping such colliders instead would be simpler and gives up more than it
-   * needs to: a hair strand that rests against the skull is not bad data, and it
-   * still wants the skull there when the head turns.
-   */
-  #calibrate(): void {
-    this.root.updateMatrixWorld(true);
-    for (const g of this.groups) {
-      this.#place(g);
-      for (const j of g.joints) j.seed();
-    }
-    for (const g of this.groups) {
-      if (!g.colliders.length) continue;
-      for (const c of g.colliders) c.place();
-      const clusters = clusterColliders(g.colliders);
-      this.#clusters.set(g, clusters);
-      for (const j of g.joints) {
-        j.limits = new Float32Array(g.colliders.length);
-        j.spans = new Float32Array(g.colliders.length);
-        _bp.setFromMatrixPosition(j.bone.matrixWorld);
-        for (let i = 0; i < g.colliders.length; i++) {
-          const c = g.colliders[i];
-          const dist = c.nearest(j.cur);
-          j.limits[i] = c.inside
-            ? Math.max(c.radius - g.radius, dist)
-            : Math.min(c.radius + g.radius, dist);
-          if (!c.inside) j.spans[i] = Math.min(c.radius + g.radius, c.linkDistance(_bp, j.cur));
-        }
-        j.fitReach(clusters);
-      }
-    }
-  }
-
-  /**
-   * Widen a driven group's clearance to cover the poses it will actually be put
-   * in, given as the extremes of the drive's range.
-   *
-   * The same argument as `#calibrate`, one step further along. That pass lets
-   * the bind pose overrule a converted collider because the shape the model was
-   * drawn in is not negotiable. A driven range is the same kind of statement:
-   * the descriptor says how far this appendage may be posed, and a collider
-   * that was machine-converted from another system does not get to veto it.
-   *
-   * The case that forced it is one avatar's `Tail_C`, a 20 cm sphere the tail
-   * already starts 13 cm inside. Calibrated against the bind pose alone, the
-   * tail may move away from it and not one millimetre back, so the tail rises
-   * for joy exactly as intended and cannot drop for sadness at all — half the
-   * performance, silently, on one avatar out of two. Sampling the range instead
-   * leaves the collider doing the job it is there for: the tail still cannot be
-   * *swung* into the backside by the simulation, it just is not stopped from
-   * being *posed* where the avatar data says it may go.
-   *
-   * Sampled rather than solved. The drive is two rotations at stated maxima, so
-   * the corners of that box bound everything between them closely enough, and
-   * this runs once at load.
-   */
-  calibrateDrive(id: string, poses: THREE.Quaternion[]): void {
-    const g = this.groups.find((x) => x.id === id);
-    if (g?.anchor) {
-      this.missing.push(`drive:${id} cannot own an attached spring root`);
-      return;
-    }
-    if (!(g?.colliders.length && g.rootJoints.length && poses?.length)) return;
-
-    for (const q of poses) {
-      for (const j of g.rootJoints) j.drive.copy(q);
-      this.root.updateMatrixWorld(true);
-      for (const j of g.joints) j.seed();
-      for (const c of g.colliders) c.place();
-      for (const j of g.joints) {
-        _bp.setFromMatrixPosition(j.bone.matrixWorld);
-        for (let i = 0; i < g.colliders.length; i++) {
-          const c = g.colliders[i];
-          const dist = c.nearest(j.cur);
-          j.limits[i] = c.inside ? Math.max(j.limits[i], dist) : Math.min(j.limits[i], dist);
-          if (!c.inside) j.spans[i] = Math.min(j.spans[i], c.linkDistance(_bp, j.cur));
-        }
-      }
-    }
-
-    const clusters = this.#clusters.get(g) ?? [];
-    for (const j of g.joints) j.fitReach(clusters);
-    for (const j of g.rootJoints) j.drive.identity();
-    this.root.updateMatrixWorld(true);
-    for (const grp of this.groups) {
-      for (const j of grp.joints) j.seed();
-    }
-    this.reset();
+    const d = this.#diagnostics;
+    return this.groups.flatMap((group, g) => {
+      if (!group.anchor) return [];
+      const at = DIAGNOSTICS * g;
+      return [
+        {
+          groupId: group.id,
+          targetWorld: [d[at], d[at + 1], d[at + 2]] as [number, number, number],
+          rootWorld: [d[at + 3], d[at + 4], d[at + 5]] as [number, number, number],
+          error: d[at + 6],
+        },
+      ];
+    });
   }
 
   /** Whether this avatar has any secondary motion at all. */
   get active(): boolean {
     return this.groups.length > 0;
+  }
+
+  /** Simulated joints, across every group. Reported in the panel. */
+  get count(): number {
+    return this.groups.reduce((n, g) => n + g.joints.length, 0);
+  }
+
+  /**
+   * Drop everything back to the rest pose, on the next update.
+   *
+   * Deferred rather than done here, because the caller is usually a button on the
+   * panel and the pose at that moment is whatever the last frame left — seeding
+   * from it would bake a mid-swing pose in as the thing the hair returns to.
+   */
+  reset(): void {
+    if (this.#handle) core().hd_spring_reset(this.#handle);
   }
 
   /**
@@ -1236,9 +655,10 @@ export class Spring {
    *          which is the normal answer for an avatar without a tail.
    */
   enableDrive(id: string): Joint[] | null {
-    const g = this.groups.find((x) => x.id === id);
+    const index = this.groups.findIndex((x) => x.id === id);
+    const g = this.groups[index];
     if (!g?.rootJoints.length) return null;
-    if (g.anchor) {
+    if (core().hd_spring_enable_drive(this.#handle, index) === DRIVE_ANCHORED) {
       this.missing.push(`drive:${id} cannot own an attached spring root`);
       return null;
     }
@@ -1250,409 +670,184 @@ export class Spring {
     return g.rootJoints;
   }
 
-  /** Simulated joints, across every group. Reported in the panel. */
-  get count(): number {
-    return this.groups.reduce((n, g) => n + g.joints.length, 0);
-  }
-
   /**
-   * Drop everything back to the rest pose.
-   *
-   * Deferred to the next update rather than done here, because the caller is
-   * usually a button on the panel and the pose at that moment is whatever the
-   * last frame left — seeding from it would bake a mid-swing pose in as the
-   * thing the hair returns to.
+   * Widen a driven group's clearance to cover the poses it will actually be put
+   * in, given as the extremes of the drive's range. Sampled rather than solved;
+   * this runs once at load.
    */
-  reset(): void {
-    this._pending = true;
-  }
-
-  #seed(): void {
-    this.root.updateMatrixWorld(true);
-    for (const input of this.#inputs) input.snap();
-    for (const g of this.groups) {
-      if (g.enabled) {
-        this.#place(g);
-        for (const j of g.joints) j.seed();
-      } else {
-        for (const j of g.joints) {
-          j.restQuat(j.bone.quaternion);
-          j.bone.updateMatrix();
-        }
-      }
-      g.wasEnabled = g.enabled;
+  calibrateDrive(id: string, poses: THREE.Quaternion[]): void {
+    const index = this.groups.findIndex((x) => x.id === id);
+    const g = this.groups[index];
+    if (!g) return;
+    const c = core();
+    for (const q of poses ?? []) c.hd_spring_drive_pose(this.#handle, q.x, q.y, q.z, q.w);
+    this.#push();
+    const outcome = c.hd_spring_calibrate_drive(this.#handle, index);
+    this.#pull();
+    if (outcome === DRIVE_ANCHORED) {
+      this.missing.push(`drive:${id} cannot own an attached spring root`);
+      return;
     }
-    // A disabled anchor is placed once more after enabled producers have been
-    // reseeded. Its first placement above may have read their pre-reset pose.
-    this.#rehang();
-    for (const g of this.groups) {
-      if (g.anchor && !g.enabled) this.#place(g);
-    }
+    if (outcome !== DRIVE_DONE) return;
+    for (const j of g.rootJoints) j.drive.identity();
+    this.#readLimits([g]);
   }
 
   /**
-   * Place a group's anchor. An anchor guards its contract on every placement
-   * (a bone's scale can change at runtime), and a violation must not escape
-   * into the render loop: the group is switched off and the reason recorded.
-   */
-  #place(g: SpringGroup, inputs?: ReadonlyMap<THREE.Object3D, THREE.Matrix4>): void {
-    if (!g.anchor) return;
-    try {
-      g.anchor.place(inputs);
-    } catch (error) {
-      this.missing.push(
-        `sway:${g.id} anchor: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      g.enabled = false;
-      g.wasEnabled = false;
-      g.anchor = null;
-    }
-  }
-
-  #placeAnchors(): void {
-    for (const g of this.groups) this.#place(g);
-  }
-
-  #syncGroupToggles(): void {
-    // Restore every disabled group on every frame, rather than only on the
-    // edge. A driven rest pose can change while a group is off, and its local
-    // rotations must follow that drive before an attachment reads its bones.
-    let rehang = false;
-    for (const g of this.groups) {
-      if (!g.enabled) {
-        for (const joint of g.joints) {
-          joint.restQuat(joint.bone.quaternion);
-          joint.bone.updateMatrix();
-        }
-        if (!g.anchor) rehang = true;
-      }
-    }
-    if (rehang) this.#rehang();
-
-    for (const g of this.groups) {
-      if (g.wasEnabled === g.enabled) {
-        if (!g.enabled && g.anchor) this.#place(g);
-        continue;
-      }
-      g.wasEnabled = g.enabled;
-      if (g.enabled) {
-        this.#place(g);
-        for (const joint of g.joints) joint.seed();
-      } else if (g.anchor) {
-        this.#place(g);
-      }
-    }
-  }
-
-  /**
-   * Put every chain back where the model has it and leave it there.
-   *
-   * Switching the simulation off has to do this. A spring writes local
-   * rotations and nothing else writes them back — so simply *stopping* leaves
-   * the last solved frame on the bones forever, and what looks like the model's
-   * own pose is a mid-swing snapshot. That is worse than either state, and it
-   * makes an off/on comparison meaningless.
-   */
-  #restore(): void {
-    for (const g of this.groups) {
-      for (const j of g.joints) j.restQuat(j.bone.quaternion);
-    }
-  }
-
-  /**
-   * Advance the simulation and write the result onto the bones.
-   *
-   * Must run after everything else has posed the body for this frame: the input
-   * to a spring is where its parent ended up, so anything that moves a shoulder
-   * after this has run is a frame of lag the hair never sees.
+   * Advance the simulation and write the result onto the bones. Must run after everything else
+   * has posed the body for this frame.
    */
   update(dt: number): void {
-    if (!this.groups.length) return;
-
-    if (!this.enabled) {
-      if (this._live) {
-        this.#restore();
-        this._live = false;
-      }
-      // A drive is animation, not physics, so switching the simulation off must
-      // not freeze it — that would make the tail stop dead on a control whose
-      // label promises nothing of the kind. Only the driven roots are rewritten;
-      // everything below them stays where `#restore` left it and the chain moves
-      // as one rigid piece, which is the honest picture of the sway being off.
-      for (const j of this.drivenJoints) j.restQuat(j.bone.quaternion);
-      this.#placeAnchors();
-      return;
-    }
-    // Coming back on, the chains have been standing still while the body moved
-    // out from under them. Carrying that stale state forward would read as a
-    // flick on the first frame, so the simulation restarts from the pose.
-    if (!this._live) {
-      this._live = true;
-      this._pending = true;
-    }
-
-    // The pose was written into local quaternions and nothing has propagated it
-    // yet — the renderer would, but not until after this. Every world position
-    // read below would otherwise be one frame stale, which reads as hair that
-    // anticipates the head instead of following it.
-    this.root.updateMatrixWorld(true);
-    for (const input of this.#inputs) input.capture();
-    this.#syncGroupToggles();
-
-    if (this._pending) {
-      this.#seed();
-      this._pending = false;
-      this._acc = 0;
-      return;
-    }
-
-    const start = this._acc;
-    this._acc = Math.min(this._acc + dt, STEP * MAX_STEPS);
-    const span = this._acc - start;
-    let between = false;
-    while (this._acc >= STEP) {
-      this._acc -= STEP;
-      // What is left of the frame after this step says where in it the step
-      // falls; a remainder that is only rounding is the frame's end.
-      if (this._acc > span * 1e-9) {
-        const s = 1 - this._acc / span;
-        for (const input of this.#inputs) input.at(s);
-        this.#step(STEP, this.#inputWorld, true);
-        between = true;
-      } else {
-        if (between) for (const input of this.#inputs) input.end();
-        this.#step(STEP, undefined, between);
-        between = false;
-      }
-    }
-    if (between) {
-      // Hand the frame's own body back, and hang what is drawn on it.
-      for (const input of this.#inputs) input.end();
-    }
-    // The solver is up to a step behind the frame. Carry the last step's motion
-    // forward by the unspent remainder: nothing moves on a frame that lands on a
-    // step, and frames between steps keep moving with the head.
-    const carry = 1 + this._acc / STEP;
-    this.#present(carry);
-    this.#rehang();
-    if (carry > 1 && this.#keepClear()) this.#rehang();
-    this.#placeAnchors();
+    if (!(this.groups.length && this.#handle)) return;
+    // The core reads world matrices only when the simulation is on, as `Spring` does.
+    if (this.enabled) this.root.updateMatrixWorld(true);
+    this.#push();
+    const statuses = core().hd_spring_update(this.#handle, dt);
+    this.#pull();
+    this.#report(statuses);
   }
 
-  /**
-   * Hold back any carried-forward link that would enter a collider, at its
-   * solved rotation. The carry is never collision-checked otherwise, and a link
-   * swinging in is carried through the surface the next step will stop it at.
-   * Returns whether anything was held back.
-   */
-  #keepClear(): boolean {
-    let held = false;
-    let placed = false;
-    for (const g of this.groups) {
-      if (!(g.enabled && g.colliders.length) || g.anchor) continue;
-      if (!placed) {
-        this.#placeFixed();
-        placed = true;
-      }
-      for (const c of this.#movingColliders.get(g) ?? []) c.place();
-      const clusters = this.#clusters.get(g) ?? [];
-      refitClusters(clusters, g.colliders);
-      const rehung = this.#rehung.has(g);
-      for (const j of g.joints) {
-        // An earlier link may have been held back, so hang this one again first.
-        // Until one is, `#rehang` has just formed this same matrix.
-        if (held || !rehung) {
-          j.bone.matrixWorld.multiplyMatrices(j.parent.matrixWorld, j.bone.matrix);
-        }
-        _bp.setFromMatrixPosition(j.bone.matrixWorld);
-        // A link every collider is culled for cannot be held back.
-        if (!cull(g.colliders, clusters, j, _bp)) continue;
-        _next.copy(j.axis).multiplyScalar(j.length).applyQuaternion(worldQuat(j.bone, _q)).add(_bp);
-        let inside = false;
-        for (let i = 0; i < g.colliders.length; i++) {
-          const c = g.colliders[i];
-          if (!inside && _far[i]) continue;
-          if (c.push(_next, j.limits[i])) inside = true;
-          if (c.clearLink(_bp, _next, j.length, j.spans[i])) inside = true;
-        }
-        if (!inside) continue;
-        j.present(1);
-        j.bone.matrixWorld.multiplyMatrices(j.parent.matrixWorld, j.bone.matrix);
-        held = true;
-      }
+  /** Free the core's half. The instance does nothing afterwards. */
+  dispose(): void {
+    if (!this.#handle) return;
+    core().hd_spring_free(this.#handle);
+    this.#handle = 0;
+  }
+
+  /** Copy the read nodes, switches, scales and drives into the core. */
+  #push(): void {
+    const { f64, u32 } = views();
+    const L = this.#layout;
+    const nodes = u32At(L[LAYOUT_READ_NODES]);
+    const records = f64At(L[LAYOUT_READ_RECORDS]);
+    const flags = u32At(L[LAYOUT_READ_FLAGS]);
+    for (let k = 0; k < L[LAYOUT_READ_COUNT]; k++) {
+      const index = u32[nodes + k];
+      const node = this.#nodes[index];
+      writeNode(f64, records + NODE_IN * k, node);
+      u32[flags + k] = nodeFlags(node, node.parent !== this.#parents[index]);
     }
-    return held;
-  }
-
-  /** Read every input's rotation off its current matrix, and place the colliders on them. */
-  #placeFixed(): void {
-    for (const input of this.#inputs) worldQuat(input.node, input.quat);
-    for (const { collider, input } of this.#fixedColliders) collider.place(input.quat);
-  }
-
-  /** Write every running group's rotations at `s`; see `Joint#present`. */
-  #present(s: number): void {
-    for (const g of this.groups) {
-      if (!g.enabled) continue;
-      for (const j of g.joints) j.present(s);
+    const control = f64At(L[LAYOUT_CONTROL]);
+    f64[control] = this.enabled ? 1 : 0;
+    f64[control + 1] = this.stiffnessScale;
+    f64[control + 2] = this.inertiaScale;
+    f64[control + 3] = this.gravityScale;
+    for (let g = 0; g < this.groups.length; g++) {
+      f64[control + CONTROL_HEAD + g] = this.groups[g].enabled ? 1 : 0;
+    }
+    const drives = f64At(L[LAYOUT_DRIVES]);
+    for (const j of this.drivenJoints) {
+      const at = drives + 4 * j.slot;
+      f64[at] = j.drive.x;
+      f64[at + 1] = j.drive.y;
+      f64[at + 2] = j.drive.z;
+      f64[at + 3] = j.drive.w;
     }
   }
 
-  /** Recompute unattached joints' world matrices from their parents, as a world update would. */
-  #rehang(nodes: readonly Hung[] = this.#rebase): void {
-    for (const j of nodes) {
-      j.bone.matrixWorld.multiplyMatrices(j.parent.matrixWorld, j.bone.matrix);
+  /** Write the core's results back onto the nodes and the mirrored joints, groups and colliders. */
+  #pull(): void {
+    const { f64, u32 } = views();
+    const L = this.#layout;
+    const nodes = u32At(L[LAYOUT_WRITE_NODES]);
+    const records = f64At(L[LAYOUT_WRITE_RECORDS]);
+    const flags = u32At(L[LAYOUT_WRITE_FLAGS]);
+    for (let k = 0; k < L[LAYOUT_WRITE_COUNT]; k++) {
+      const node = this.#nodes[u32[nodes + 2 * k]];
+      const mask = u32[nodes + 2 * k + 1];
+      const r = records + NODE_OUT * k;
+      if (mask & WRITE_POSITION) node.position.set(f64[r], f64[r + 1], f64[r + 2]);
+      // Through `set`, so three keeps the Euler in step with the quaternion.
+      if (mask & WRITE_QUATERNION)
+        node.quaternion.set(f64[r + 3], f64[r + 4], f64[r + 5], f64[r + 6]);
+      node.matrix.fromArray(f64, r + 7);
+      node.matrixWorld.fromArray(f64, r + 23);
+      node.matrixWorldNeedsUpdate = (u32[flags + k] & FLAG_MATRIX_WORLD_NEEDS_UPDATE) !== 0;
+    }
+    const joints = f64At(L[LAYOUT_JOINT_STATES]);
+    for (const j of this.#joints) {
+      const at = joints + JOINT_OUT * j.slot;
+      j.cur.set(f64[at], f64[at + 1], f64[at + 2]);
+      j.prev.set(f64[at + 3], f64[at + 4], f64[at + 5]);
+      j.solvedQ.set(f64[at + 6], f64[at + 7], f64[at + 8], f64[at + 9]);
+      j.prevSolvedQ.set(f64[at + 10], f64[at + 11], f64[at + 12], f64[at + 13]);
+      j.swing.set(f64[at + 14], f64[at + 15], f64[at + 16]);
+    }
+    const states = u32At(L[LAYOUT_GROUP_STATES]);
+    for (let g = 0; g < this.groups.length; g++) {
+      const group = this.groups[g];
+      group.enabled = u32[states + 2 * g] !== 0;
+      if (!u32[states + 2 * g + 1]) group.anchor = null;
+    }
+    this.#diagnostics.set(
+      f64.subarray(
+        f64At(L[LAYOUT_DIAGNOSTICS]),
+        f64At(L[LAYOUT_DIAGNOSTICS]) + this.#diagnostics.length,
+      ),
+    );
+    const colliders = this.colliderStates;
+    for (const c of this.#pool) c.read(f64, colliders);
+  }
+
+  /** Turn the core's statuses into `missing` entries; the core has switched those groups off. */
+  #report(count: number): void {
+    if (!count) return;
+    const { u32 } = views();
+    const at = u32At(this.#layout[LAYOUT_STATUSES]);
+    for (let k = 0; k < count; k++) {
+      const [kind, key, node, other] = u32.subarray(at + STATUS * k, at + STATUS * (k + 1));
+      const name = node === NO_NODE ? '' : this.#nodes[node].name;
+      const owner = other === NO_NODE ? '' : this.#registered[other].id;
+      this.missing.push(
+        `sway:${this.#registered[key].id} anchor: ${statusText(kind, name, owner)}`,
+      );
     }
   }
 
-  /**
-   * @param inputs  interpolated body transforms, for a step before the frame's last
-   * @param rebase  re-hang unattached chains on the body this step reads, as the
-   *                frame's own world update does before its first step
-   */
-  #step(
-    dt: number,
-    inputs: ReadonlyMap<THREE.Object3D, THREE.Matrix4> | undefined,
-    rebase: boolean,
-  ): void {
-    if (rebase) this.#rehang(this.#stepRebase);
-    this.#placeFixed();
-    for (let k = 0; k < this.groups.length; k++) {
-      const g = this.groups[k];
-      // A group may hang from a node an earlier group just moved: the first
-      // re-hangs every bridge, each later one what the group before could move.
-      for (const b of k === 0 ? this.#bridges : this.#bridgesMovedBy[k - 1])
-        b.bone.matrixWorld.multiplyMatrices(b.parent.matrixWorld, b.bone.matrix);
-      // Place after prior cloth/producer groups in this same fixed step, even
-      // when this accessory group itself is switched off.
-      this.#place(g, inputs);
-      if (!g.enabled) {
-        // An ordinary disabled group can still be a producer for an attached
-        // group later in this pass. Keep its world matrices on its current
-        // parent after an earlier group has solved it.
-        if (!g.anchor) {
-          for (const j of g.joints)
-            j.bone.matrixWorld.multiplyMatrices(j.parent.matrixWorld, j.bone.matrix);
-        }
-        continue;
-      }
-      for (const c of this.#movingColliders.get(g) ?? []) c.place();
-      const clusters = this.#clusters.get(g) ?? [];
-      refitClusters(clusters, g.colliders);
-
-      const stiffness = g.stiffness * this.stiffnessScale * dt;
-      const gravity = g.gravity * this.gravityScale * dt;
-      // Velocity retained per step. Scaled rather than the drag itself so the
-      // control reads the way it behaves: more is a longer swing.
-      const retain = Math.min(0.995, Math.max(0, (1 - g.drag) * this.inertiaScale));
-
-      for (const j of g.joints) {
-        const bone = j.bone;
-        const parent = j.parent;
-        // Every joint may have a solved parent from the preceding link. Read
-        // this bone's origin from that fresh parent before integrating it;
-        // only an attached root keeps the placement written by its anchor.
-        // Nothing reads the rest of its world matrix before the end of this
-        // link rewrites it, so only the origin is formed.
-        if (g.anchor && bone === g.anchor.root) {
-          _bp.setFromMatrixPosition(bone.matrixWorld);
-        } else if (!hungOrigin(bone, parent.matrixWorld, _bp)) {
-          bone.updateMatrix();
-          bone.matrixWorld.multiplyMatrices(parent.matrixWorld, bone.matrix);
-          _bp.setFromMatrixPosition(bone.matrixWorld);
-        }
-        if (j.parentQuat) _pq.copy(j.parentQuat);
-        else worldQuat(parent, _pq);
-        if (g.anchor) _pq.normalize();
-        j.restDir(_pq, _dir);
-        if (g.anchor) _dir.normalize();
-
-        _vel.subVectors(j.cur, j.prev);
-        _next
-          .copy(j.cur)
-          .addScaledVector(_vel, retain)
-          .addScaledVector(_dir, stiffness)
-          .addScaledVector(g.gravityDir, gravity);
-
-        // The bone cannot stretch, so the tail is only ever allowed to change
-        // direction. Everything above is a force; this is the constraint.
-        _to.subVectors(_next, _bp);
-        if (_to.lengthSq() < 1e-12) _to.copy(_dir);
-        _next.copy(_bp).addScaledVector(_to.normalize(), j.length);
-
-        if (g.colliders.length) {
-          // Both passes below test from the same root, so each pair is culled once.
-          cull(g.colliders, clusters, j, _bp);
-          // A moved tip is off its length, which `beyond` assumes, so the
-          // rest of the joint's colliders are tested in full.
-          let moved = false;
-          for (let i = 0; i < g.colliders.length; i++) {
-            const c = g.colliders[i];
-            if (!moved && _far[i]) continue;
-            if (c.push(_next, j.limits[i])) moved = true;
-          }
-          // Collision moved the point off the sphere the length constraint put
-          // it on, so the constraint is reapplied. Doing it once at the end
-          // rather than after every collider costs a little accuracy where two
-          // colliders overlap and saves a square root per collider per joint.
-          _to.subVectors(_next, _bp);
-          if (_to.lengthSq() > 1e-12) {
-            _next.copy(_bp).addScaledVector(_to.normalize(), j.length);
-          }
-          // Then the rest of the link. This swing keeps the length by itself.
-          moved = false;
-          for (let i = 0; i < g.colliders.length; i++) {
-            const c = g.colliders[i];
-            if (!moved && _far[i]) continue;
-            if (c.clearLink(_bp, _next, j.length, j.spans[i])) moved = true;
-          }
-        }
-
-        j.prev.copy(j.cur);
-        j.cur.copy(_next);
-
-        // Rotate the bone from where it rests to where its tail ended up. The
-        // rest rotation is carried through rather than replaced, so a bone with
-        // an axis that is not its local Y — which is most of them — is handled
-        // without knowing anything about how the rig was built.
-        _to.subVectors(j.cur, _bp).normalize();
-        if (_dir.dot(_to) < -0.999) {
-          // Nearly a half turn, where the shortest swing's axis is the cross of two
-          // almost opposite vectors and spins with any wobble, rolling the bone.
-          // Keep the last axis (or the rest pose's side) and flip about it instead.
-          _ax.copy(j.swing).addScaledVector(_dir, -j.swing.dot(_dir));
-          if (_ax.lengthSq() < 1e-12) {
-            _ax.copy(j.side).applyQuaternion(j.rest);
-            if (j.driven) _ax.applyQuaternion(j.drive);
-            _ax.applyQuaternion(_pq);
-          }
-          j.swing.copy(_ax.normalize());
-          _aim
-            .setFromAxisAngle(_ax, Math.PI)
-            .premultiply(_flip.setFromUnitVectors(_back.copy(_dir).negate(), _to));
-        } else {
-          _aim.setFromUnitVectors(_dir, _to);
-          _ax.crossVectors(_dir, _to);
-          if (_ax.lengthSq() > 1e-12) j.swing.copy(_ax.normalize());
-        }
-        _q.copy(_pq);
-        if (j.driven) _q.multiply(j.drive);
-        _q.multiply(j.rest).premultiply(_aim);
-        _solved.copy(_pq).invert().multiply(_q);
-        if (g.anchor) _solved.normalize();
-        bone.quaternion.copy(_solved);
-        j.prevSolvedQ.copy(j.solvedQ);
-        j.solvedQ.copy(_solved);
-
-        // The next joint down reads this bone's world matrix, and three will not
-        // refresh it until render. Propagating one link by hand is cheaper than
-        // an `updateMatrixWorld` per joint, which would walk the whole subtree
-        // once per joint and turn a linear pass into a quadratic one.
-        // The next joint reads this fresh world matrix, including the solved
-        // origin and orientation of this link.
-        bone.updateMatrix();
-        bone.matrixWorld.multiplyMatrices(parent.matrixWorld, bone.matrix);
-      }
+  /** Copy calibrated clearances out of the core. */
+  #readLimits(groups: readonly SpringGroup[]): void {
+    const c = core();
+    for (const group of groups) {
+      const g = this.groups.indexOf(group);
+      group.joints.forEach((joint, k) => {
+        const n = joint.limits.length;
+        if (!n) return;
+        const { buffer } = c.memory;
+        joint.limits.set(new Float32Array(buffer, c.hd_spring_joint_limits(this.#handle, g, k), n));
+        joint.spans.set(new Float32Array(buffer, c.hd_spring_joint_spans(this.#handle, g, k), n));
+      });
     }
   }
+}
+
+/** A node's FLAG_* bits; `reparented` when its parent is not the one it was registered with. */
+function nodeFlags(node: THREE.Object3D, reparented: boolean): number {
+  return (
+    (node instanceof THREE.Bone ? FLAG_BONE : 0) |
+    (node.matrixAutoUpdate ? FLAG_MATRIX_AUTO_UPDATE : 0) |
+    (node.matrixWorldAutoUpdate ? FLAG_MATRIX_WORLD_AUTO_UPDATE : 0) |
+    (node.pivot !== null ? FLAG_PIVOT : 0) |
+    (node.matrixWorldNeedsUpdate ? FLAG_MATRIX_WORLD_NEEDS_UPDATE : 0) |
+    (reparented ? FLAG_REPARENTED : 0)
+  );
+}
+
+/** Write a NODE_IN record for `node` at f64 index `at`. */
+function writeNode(f64: Float64Array, at: number, node: THREE.Object3D): void {
+  const { position: p, quaternion: q, scale: s, pivot } = node;
+  f64[at] = p.x;
+  f64[at + 1] = p.y;
+  f64[at + 2] = p.z;
+  f64[at + 3] = q.x;
+  f64[at + 4] = q.y;
+  f64[at + 5] = q.z;
+  f64[at + 6] = q.w;
+  f64[at + 7] = s.x;
+  f64[at + 8] = s.y;
+  f64[at + 9] = s.z;
+  f64[at + 10] = pivot ? pivot.x : 0;
+  f64[at + 11] = pivot ? pivot.y : 0;
+  f64[at + 12] = pivot ? pivot.z : 0;
+  f64.set(node.matrix.elements, at + 13);
+  f64.set(node.matrixWorld.elements, at + 29);
 }

@@ -97,6 +97,7 @@ describe('mountAvatar', () => {
     const loaded = {
       root,
       transparentTriangles: { dispose: () => order.push('transparent-triangles') },
+      director: { spring: { dispose: () => undefined } },
       materials: { dispose: () => order.push('materials') },
     } as unknown as LoadedAvatar;
 

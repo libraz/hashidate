@@ -1,5 +1,8 @@
 import { writeFile } from 'node:fs/promises';
 import { runTrajectory } from '../tests/helpers/spring-trajectory';
+import { loadCoreForNode } from './rust-core/node';
+
+await loadCoreForNode();
 
 const output = process.argv[2] ?? 'tests/secondary/spring-trajectory.json';
 

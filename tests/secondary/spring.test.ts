@@ -1079,32 +1079,6 @@ describe('Spring weighted root attachments', () => {
       }
     }
   });
-
-  it('catches a negative-control source.updateWorldMatrix between legacy fixed steps', () => {
-    const plain = makeAnchorFixture({ attached: false });
-    const broken = makeAnchorFixture();
-    plain.spring.update(0);
-    broken.spring.update(0);
-
-    const group = must(
-      broken.spring.groups.find((candidate) => candidate.id === 'charm'),
-      'charm group',
-    );
-    const source = must(broken.rig.bones.get('ProducerA_1'), 'ProducerA_1');
-    const place = must(group.anchor, 'anchor').place.bind(group.anchor);
-    must(group.anchor, 'anchor').place = () => {
-      place();
-      source.updateWorldMatrix(true, false);
-    };
-
-    for (let frame = 0; frame < 80; frame++) {
-      poseAnchorFixture(plain, frame);
-      poseAnchorFixture(broken, frame);
-      plain.spring.update(0.05);
-      broken.spring.update(0.05);
-    }
-    expect(originalMotionState(broken.spring)).not.toEqual(originalMotionState(plain.spring));
-  });
 });
 
 describe('Spring collision along a link', () => {

@@ -245,6 +245,7 @@ export function disposeAvatar(cur: LoadedAvatar): void {
   // Materials and their textures belong to the material layer, which holds
   // both the imported set and the toon set; only the geometry is ours.
   cur.transparentTriangles.dispose();
+  cur.director.spring.dispose();
   cur.materials.dispose();
   // Geometry, and the skeleton's bone texture, which hangs off a skinned mesh
   // rather than its material and shows up only as a climbing texture count.
