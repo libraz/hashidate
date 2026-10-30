@@ -10,6 +10,8 @@ export interface CoreViews {
 let instance: Core | null = null;
 let started: Promise<void> | null = null;
 let cached: { buffer: ArrayBufferLike; views: CoreViews } | null = null;
+let seen: ArrayBufferLike | null = null;
+const growListeners = new Set<() => void>();
 
 /**
  * Load and instantiate the wasm core. Later calls return the first call's promise
@@ -44,4 +46,29 @@ export function views(): CoreViews {
     };
   }
   return cached.views;
+}
+
+/**
+ * Registers `cb` to run after an `allocating` call finds that the memory has grown. Returns the
+ * function that unregisters it.
+ */
+export function onMemoryGrow(cb: () => void): () => void {
+  growListeners.add(cb);
+  return () => growListeners.delete(cb);
+}
+
+/**
+ * Runs an export that may allocate, then rebuilds the views and notifies `onMemoryGrow` listeners
+ * if `memory.buffer` is no longer the one last seen. Every export that can grow the memory goes
+ * through this, as `allocating(() => c.hd_x(...))`.
+ */
+export function allocating<T>(fn: () => T): T {
+  const result = fn();
+  const { buffer } = core().memory;
+  if (buffer !== seen) {
+    seen = buffer;
+    views();
+    for (const cb of growListeners) cb();
+  }
+  return result;
 }
