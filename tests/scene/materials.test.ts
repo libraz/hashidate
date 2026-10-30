@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
-import { AVATAR_ANISOTROPY, setupMaterials } from '@/engine/scene/materials';
+import {
+  AVATAR_ANISOTROPY,
+  cloneTransparentTriangleMaterial,
+  setupMaterials,
+} from '@/engine/scene/materials';
 import { LilToonMaterial, type TextureSource } from '@/engine/scene/toon';
 import type { AvatarDescriptor, MaterialRules, ToonSpec } from '@/engine/types';
 
@@ -681,6 +685,91 @@ describe('authored lilToon specs', () => {
     expect(toonCloth.defines).toEqual({ TOON: '' });
     expect((toonCloth as THREE.MeshToonMaterial).normalMap).toBeNull();
     materials.dispose();
+  });
+
+  it('clones the known lilToon shader through a plain toon material and keeps its source hooks', () => {
+    const map = new THREE.Texture();
+    const disposeMap = vi.spyOn(map, 'dispose');
+    const src = new THREE.MeshStandardMaterial({ map, transparent: true, opacity: 0.5 });
+    src.name = 'Sleeve';
+    const root = new THREE.Group().add(mesh(src));
+    const materials = setupMaterials(
+      root,
+      avatar({
+        doubleSided: /^Sleeve$/,
+        blendTransparent: /^Sleeve$/,
+        toon: { Sleeve: shade() },
+      }),
+    );
+    materials.apply(true);
+    const source = (root.children[0] as THREE.Mesh).material as LilToonMaterial;
+
+    const clone = cloneTransparentTriangleMaterial(source);
+    expect(clone).toBeInstanceOf(THREE.MeshToonMaterial);
+    expect(clone).not.toBeInstanceOf(LilToonMaterial);
+    expect(clone).not.toBe(source);
+    expect(clone?.defines).toEqual(source.defines);
+    expect(clone?.defines).not.toBe(source.defines);
+    expect((clone as THREE.MeshToonMaterial).map).toBe(map);
+    expect(clone?.transparent).toBe(true);
+    expect(clone?.depthWrite).toBe(false);
+    expect(clone?.side).toBe(THREE.DoubleSide);
+    expect(clone?.customProgramCacheKey()).toBe(source.customProgramCacheKey());
+
+    const shader = {
+      uniforms: {} as Record<string, THREE.IUniform>,
+      fragmentShader:
+        '#include <lights_toon_pars_fragment>\n#include <lights_fragment_begin>\n#include <lights_fragment_end>\n#include <alphatest_fragment>',
+      vertexShader: '#include <skinning_vertex>',
+    };
+    clone!.onBeforeCompile(
+      shader as THREE.WebGLProgramParametersWithUniforms,
+      {} as THREE.WebGLRenderer,
+    );
+    expect(shader.uniforms.lilShadowColor).toBe(source.lilUniforms.lilShadowColor);
+    expect(shader.fragmentShader).not.toContain('#include <lights_toon_pars_fragment>');
+    expect(shader.vertexShader).toContain('#include <skinning_vertex>');
+
+    clone?.dispose();
+    expect(disposeMap).not.toHaveBeenCalled();
+    materials.dispose();
+    expect(disposeMap).toHaveBeenCalledOnce();
+  });
+
+  it('rejects lilToon variants with displacement, outline expansion, or replaced hooks', () => {
+    const src = new THREE.MeshStandardMaterial();
+    src.name = 'Skin';
+    const root = new THREE.Group().add(mesh(src));
+    const materials = setupMaterials(root, avatar({ toon: { Skin: shade() } }));
+    materials.apply(true);
+    const source = (root.children[0] as THREE.Mesh).material as LilToonMaterial;
+    const originalDefines = source.defines;
+    const originalCompile = source.onBeforeCompile;
+
+    const displacement = new THREE.Texture();
+    source.displacementMap = displacement;
+    expect(cloneTransparentTriangleMaterial(source)).toBeNull();
+    source.displacementMap = null;
+    displacement.dispose();
+    source.defines = { ...originalDefines, LIL_OUTLINE: '' };
+    expect(cloneTransparentTriangleMaterial(source)).toBeNull();
+    source.defines = originalDefines;
+    source.onBeforeCompile = () => {};
+    expect(cloneTransparentTriangleMaterial(source)).toBeNull();
+    source.onBeforeCompile = originalCompile;
+    source.onBeforeRender = vi.fn();
+    expect(cloneTransparentTriangleMaterial(source)).toBeNull();
+
+    materials.dispose();
+  });
+
+  it('rejects materials whose custom shader subclass is not the known lilToon implementation', () => {
+    class DisplacingMaterial extends THREE.MeshStandardMaterial {
+      override onBeforeCompile(shader: THREE.WebGLProgramParametersWithUniforms): void {
+        shader.vertexShader = `// displaced\n${shader.vertexShader}`;
+      }
+    }
+    expect(cloneTransparentTriangleMaterial(new DisplacingMaterial())).toBeNull();
   });
 
   it.each([

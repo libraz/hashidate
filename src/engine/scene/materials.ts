@@ -467,3 +467,30 @@ export function setupMaterials(
 
   return { apply, installOutlines, names, rebindEnvironment, dispose };
 }
+
+/**
+ * A plain `MeshToonMaterial` carrying the known position-preserving lilToon
+ * fragment hooks. `LilToonMaterial.clone()` reconstructs from no parameters,
+ * so it would silently drop the authored program and uniform references.
+ * Displacement maps and outline expansion are refused because CPU centroids
+ * cannot account for those vertex changes.
+ */
+export function cloneTransparentTriangleMaterial(source: THREE.Material): THREE.Material | null {
+  if (
+    !(source instanceof LilToonMaterial) ||
+    source.constructor !== LilToonMaterial ||
+    source.onBeforeCompile !== LilToonMaterial.prototype.onBeforeCompile ||
+    source.customProgramCacheKey !== LilToonMaterial.prototype.customProgramCacheKey ||
+    source.onBeforeRender !== LilToonMaterial.prototype.onBeforeRender ||
+    source.displacementMap !== null ||
+    source.defines?.LIL_OUTLINE !== undefined
+  ) {
+    return null;
+  }
+  const clone = new THREE.MeshToonMaterial();
+  clone.copy(source);
+  clone.defines = { ...(source.defines ?? {}) };
+  clone.onBeforeCompile = source.onBeforeCompile.bind(source);
+  clone.customProgramCacheKey = source.customProgramCacheKey.bind(source);
+  return clone;
+}

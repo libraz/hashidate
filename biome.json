@@ -101,6 +101,16 @@
           }
         }
       }
+    },
+    {
+      "includes": ["src/engine/scene/transparent-triangles.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useNumberNamespace": "off"
+          }
+        }
+      }
     }
   ],
   "files": {
