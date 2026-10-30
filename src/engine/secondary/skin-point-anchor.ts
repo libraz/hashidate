@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { hypot3 } from '../../core/math';
 import { normaliseBoneName } from '../profile/candidates';
 import type { SkinPointAnchorSpec } from '../types';
 
@@ -111,9 +112,9 @@ function transformScale(node: THREE.Object3D, matrix: THREE.Matrix4): number {
   ) {
     fail(`anchor:${node.name} requires a finite affine local transform`);
   }
-  const x = Math.hypot(element(0), element(1), element(2));
-  const y = Math.hypot(element(4), element(5), element(6));
-  const z = Math.hypot(element(8), element(9), element(10));
+  const x = hypot3(element(0), element(1), element(2));
+  const y = hypot3(element(4), element(5), element(6));
+  const z = hypot3(element(8), element(9), element(10));
   const maximum = Math.max(x, y, z);
   if (!(maximum > 1e-12)) fail(`anchor:${node.name} has a singular local transform`);
   if (
