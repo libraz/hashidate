@@ -1,9 +1,11 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ArmAnatomy } from '@/engine/anatomy/arm';
 import * as armFrame from '@/engine/anatomy/arm-frame';
 import * as strain from '@/engine/anatomy/strain';
 import * as volume from '@/engine/anatomy/volume';
+import { type BodyClearance, makeBodyVolumeFrame } from '@/engine/anatomy/volumes';
 import { Director } from '@/engine/director';
 import * as armConfiguration from '@/engine/rig/arm-configuration';
 import * as armPath from '@/engine/rig/arm-path';
@@ -40,6 +42,12 @@ import { must } from '../helpers/must';
  * `avatar-base.bin` holds the base variant as the rig is built on it: the node table, the
  * profile's numbers and what construction measures off the mesh; `avatar-base.json` indexes it
  * by name. An array the profile does not have (a null face, an absent override) is not listed.
+ *
+ * `arm-battery` is not a function's calls but a fixed sequence of them on the base avatar's
+ * `ArmAnatomy`, in the corpus format: one case per step, `kind` saying which. `frame` is the
+ * anatomy's frame after `update`; `pose` places one arm, then measures, costs and clamps a pose
+ * and clears a second one's hand; `volume` samples both clearances at a point and pushes it to
+ * the surface; `face` samples the head's skin.
  *
  * Without `HASHIDATE_RECORD_CORPORA=1` this checks the files against a fresh recording;
  * with it, it writes them.
@@ -867,6 +875,169 @@ function recordAvatarBase(): Recorded {
   return { json: `${JSON.stringify({ arrays: a.index }, null, 1)}\n`, bin: a.bytes() };
 }
 
+// --- the anatomy battery ------------------------------------------------------------------
+
+const BATTERY_KIND = oneOf(['frame', 'pose', 'volume', 'face']);
+const clearanceRow = obj([
+  ['valid', bool],
+  ['distance', num],
+  ['normal', vec3],
+]);
+
+/** The base avatar's `ArmAnatomy` through a fixed run of its queries; see the file comment. */
+function recordArmBattery(): Recorded {
+  const fixture = must(
+    DIRECTOR_FIXTURES.find((f) => f.variant === BASE_VARIANT),
+    'a base-variant fixture',
+  );
+  const { root, profile } = prepareFixture(fixture);
+  root.updateMatrixWorld(true);
+  const cases: Array<{ input: Field[]; output: Field[] }> = [];
+  withCoreMath(() => {
+    const anat = new ArmAnatomy(profile);
+    anat.update();
+    const dir = (k: number) =>
+      new THREE.Vector3(
+        Math.sin(k * 1.7 + 0.3),
+        Math.cos(k * 2.3),
+        Math.sin(k * 0.9 - 1.1),
+      ).normalize();
+    const step = (kind: string, input: Field[], output: Field[]) => {
+      const head: Field[] = [];
+      BATTERY_KIND(kind, 'kind', head);
+      cases.push({ input: [...head, ...input], output });
+    };
+
+    const frame: Field[] = [];
+    tuple2([anat.radialSign.L, anat.radialSign.R], 'radialSign', frame);
+    for (const [name, v] of [
+      ['up', anat.up],
+      ['fwd', anat.fwd],
+      ['right', anat.right],
+      ['axisO', anat.axisO],
+    ] as const) {
+      vec3(v, name, frame);
+    }
+    step('frame', [], frame);
+
+    for (const s of ['L', 'R'] as const) {
+      for (let k = 0; k < 12; k++) {
+        const [u, l, h] = [dir(k), dir(k + 0.4), dir(k + 0.7)];
+        const palm = k % 2 ? dir(k + 3.1) : null;
+        const forearmRoll = 0.1 * k - 0.5;
+        const humeralRoll = k % 3 ? 0 : 0.3;
+        const [cu, cl, ch] = [dir(k + 5), dir(k + 5.2), dir(k + 5.5)];
+        const input: Field[] = [];
+        side(s, 'side', input);
+        for (const [name, v] of [
+          ['u', u],
+          ['l', l],
+          ['h', h],
+        ] as const) {
+          vec3(v, name, input);
+        }
+        opt(vec3)(palm, 'palm', input);
+        num(forearmRoll, 'forearmRoll', input);
+        num(humeralRoll, 'humeralRoll', input);
+        for (const [name, v] of [
+          ['clear.u', cu],
+          ['clear.l', cl],
+          ['clear.h', ch],
+        ] as const) {
+          vec3(v, name, input);
+        }
+
+        const bone = must(profile.bones[`upperArm.${s}`], `upperArm.${s}`);
+        anat.setArm(
+          bone.getWorldPosition(new THREE.Vector3()),
+          profile.limb[`upper.${s}`],
+          profile.limb[`lower.${s}`],
+          profile.limb[`tip.${s}.middle`] * 0.35,
+        );
+        const output: Field[] = [];
+        const m = anat.measure(s, u, l, h, palm, forearmRoll, humeralRoll);
+        nums([
+          'elevation',
+          'plane',
+          'rotation',
+          'elbow',
+          'forearm',
+          'wristFlex',
+          'wristDev',
+          'torso',
+          'inboard',
+          'rotationRead',
+        ])(m, 'measure', output);
+        num(anat.cost(), 'cost', output);
+        anat.clamp(s, u, l, h, palm);
+        for (const [name, v] of [
+          ['clamp.u', u],
+          ['clamp.l', l],
+          ['clamp.h', h],
+        ] as const) {
+          vec3(v, name, output);
+        }
+        bool(anat.clearHand(s, cu, cl, ch), 'clearHand', output);
+        for (const [name, v] of [
+          ['clearHand.u', cu],
+          ['clearHand.l', cl],
+          ['clearHand.h', ch],
+        ] as const) {
+          vec3(v, name, output);
+        }
+        step('pose', input, output);
+      }
+    }
+
+    const volumes = makeBodyVolumeFrame();
+    anat.captureVolumeFrame(volumes);
+    const rows: BodyClearance[] = (['torso', 'head'] as const).map((surface) => ({
+      surface,
+      valid: false,
+      distance: Number.POSITIVE_INFINITY,
+      normal: new THREE.Vector3(),
+    }));
+    for (let k = 0; k < 16; k++) {
+      const P = anat.axisO
+        .clone()
+        .addScaledVector(dir(k), 0.03 + 0.012 * k)
+        .addScaledVector(anat.up, -0.15 + 0.03 * k);
+      const input: Field[] = [];
+      vec3(P, 'point', input);
+      anat.sampleVolumeClearances(volumes, P, rows);
+      const output: Field[] = [];
+      clearanceRow(rows[0], 'torso', output);
+      clearanceRow(rows[1], 'head', output);
+      num(anat.surface(P), 'surface.depth', output);
+      vec3(P, 'surface.point', output);
+      step('volume', input, output);
+    }
+
+    const face = must(anat.face, 'a face surface');
+    const head = must(profile.bones.head, 'head').getWorldPosition(new THREE.Vector3());
+    const sample = { distance: 0, normal: new THREE.Vector3(), valid: false };
+    for (let k = 0; k < 16; k++) {
+      const P = head.clone().addScaledVector(dir(k + 9), 0.02 + 0.006 * k);
+      const input: Field[] = [];
+      vec3(P, 'point', input);
+      face.refresh();
+      face.sample(P, sample);
+      const output: Field[] = [];
+      clearanceRow(sample, 'face', output);
+      step('face', input, output);
+    }
+  });
+  const input = layout(cases.map((c) => c.input));
+  const output = layout(cases.map((c) => c.output));
+  const values: number[] = [];
+  for (const c of cases) {
+    fill(values, c.input, input);
+    fill(values, c.output, output);
+  }
+  const index = { fn: 'arm-battery', cases: cases.length, in: input, out: output };
+  return { json: `${JSON.stringify(index, null, 1)}\n`, bin: f64Bytes(values) };
+}
+
 // --- the files ----------------------------------------------------------------------------
 
 function settle(name: string, recorded: Recorded): void {
@@ -895,5 +1066,9 @@ describe('the recorded corpora', () => {
 
   it('match a fresh recording of the base avatar', () => {
     settle('avatar-base', recordAvatarBase());
+  });
+
+  it('match a fresh recording of the anatomy battery', () => {
+    settle('arm-battery', recordArmBattery());
   });
 });

@@ -1,0 +1,196 @@
+{
+ "fn": "arm-battery",
+ "cases": 57,
+ "in": [
+  {
+   "name": "kind",
+   "len": 1
+  },
+  {
+   "name": "point",
+   "len": 3
+  },
+  {
+   "name": "side",
+   "len": 1
+  },
+  {
+   "name": "u",
+   "len": 3
+  },
+  {
+   "name": "l",
+   "len": 3
+  },
+  {
+   "name": "h",
+   "len": 3
+  },
+  {
+   "name": "palm.present",
+   "len": 1
+  },
+  {
+   "name": "palm",
+   "len": 3
+  },
+  {
+   "name": "forearmRoll",
+   "len": 1
+  },
+  {
+   "name": "humeralRoll",
+   "len": 1
+  },
+  {
+   "name": "clear.u",
+   "len": 3
+  },
+  {
+   "name": "clear.l",
+   "len": 3
+  },
+  {
+   "name": "clear.h",
+   "len": 3
+  }
+ ],
+ "out": [
+  {
+   "name": "face.valid",
+   "len": 1
+  },
+  {
+   "name": "face.distance",
+   "len": 1
+  },
+  {
+   "name": "face.normal",
+   "len": 3
+  },
+  {
+   "name": "torso.valid",
+   "len": 1
+  },
+  {
+   "name": "torso.distance",
+   "len": 1
+  },
+  {
+   "name": "torso.normal",
+   "len": 3
+  },
+  {
+   "name": "head.valid",
+   "len": 1
+  },
+  {
+   "name": "head.distance",
+   "len": 1
+  },
+  {
+   "name": "head.normal",
+   "len": 3
+  },
+  {
+   "name": "surface.depth",
+   "len": 1
+  },
+  {
+   "name": "surface.point",
+   "len": 3
+  },
+  {
+   "name": "measure.elevation",
+   "len": 1
+  },
+  {
+   "name": "measure.plane",
+   "len": 1
+  },
+  {
+   "name": "measure.rotation",
+   "len": 1
+  },
+  {
+   "name": "measure.elbow",
+   "len": 1
+  },
+  {
+   "name": "measure.forearm",
+   "len": 1
+  },
+  {
+   "name": "measure.wristFlex",
+   "len": 1
+  },
+  {
+   "name": "measure.wristDev",
+   "len": 1
+  },
+  {
+   "name": "measure.torso",
+   "len": 1
+  },
+  {
+   "name": "measure.inboard",
+   "len": 1
+  },
+  {
+   "name": "measure.rotationRead",
+   "len": 1
+  },
+  {
+   "name": "cost",
+   "len": 1
+  },
+  {
+   "name": "clamp.u",
+   "len": 3
+  },
+  {
+   "name": "clamp.l",
+   "len": 3
+  },
+  {
+   "name": "clamp.h",
+   "len": 3
+  },
+  {
+   "name": "clearHand",
+   "len": 1
+  },
+  {
+   "name": "clearHand.u",
+   "len": 3
+  },
+  {
+   "name": "clearHand.l",
+   "len": 3
+  },
+  {
+   "name": "clearHand.h",
+   "len": 3
+  },
+  {
+   "name": "radialSign",
+   "len": 2
+  },
+  {
+   "name": "up",
+   "len": 3
+  },
+  {
+   "name": "fwd",
+   "len": 3
+  },
+  {
+   "name": "right",
+   "len": 3
+  },
+  {
+   "name": "axisO",
+   "len": 3
+  }
+ ]
+}
