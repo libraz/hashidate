@@ -39,7 +39,7 @@ CLIPS    = $(TTS)/reference/clips
 
 .PHONY: help dev stop import textures glb \
         voice tts-setup tts-vet tts-refs tts \
-        check-assets clean
+        format format-check lint check-assets clean
 
 help:
 	@echo "Model conversion and startup. Use yarn ctl for control."
@@ -58,6 +58,9 @@ help:
 	@echo "  tts-refs         re-encode the clips after changing them"
 	@echo "  tts              start the speech server ($(TTS_SOCK))"
 	@echo "-- Common"
+	@echo "  format           format Rust and TypeScript, then lint"
+	@echo "  format-check     fail if Rust or TypeScript is not formatted"
+	@echo "  lint             clippy, biome and tsc"
 	@echo "  check-assets     check that no huge file has crept into what git tracks"
 	@echo "  clean            remove the generated files"
 
@@ -267,6 +270,22 @@ tts:
 	cd $(TTS) && .venv/bin/python server.py
 
 # ------------------------------------------------------------------ Common
+
+# The Python under tools/ has no configured formatter or linter, so none of the
+# three targets below runs anything for it.
+format:
+	cargo fmt --all
+	yarn lint:fix
+	$(MAKE) lint
+
+format-check:
+	cargo fmt --all --check
+	yarn lint
+
+lint:
+	cargo clippy --workspace --all-targets -- -D warnings
+	yarn lint
+	yarn typecheck
 
 # A .gitignore is weak against being forgotten to be written, and a single file
 # handled here reaches 500 MB. Measuring what is actually tracked and failing on

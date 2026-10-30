@@ -39,7 +39,14 @@ jobs:
       # gets locally.
       - uses: jdx/mise-action@v5
 
+      # Reads rust-toolchain.toml, so the version is pinned in one place.
+      - run: rustup toolchain install
+
       - run: yarn install --immutable
+
+      - run: cargo fmt --all --check
+
+      - run: cargo clippy --workspace --all-targets -- -D warnings
 
       # `biome check` is the linter and the formatter both, so there is no
       # separate format-check step to keep in sync with it.
@@ -53,7 +60,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
+      - run: rustup toolchain install
       - run: yarn install --immutable
+
+      - run: cargo test --workspace
 
       # The suite builds a synthetic avatar in code rather than loading a GLB —
       # a suite that needed the purchased 16 MB model could only run on a
