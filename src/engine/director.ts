@@ -289,7 +289,8 @@ export class Director {
     this.#morphs.set(shape, w);
     const lid = this._emotionLid.get(shape);
     if (!lid) return;
-    const v = Math.min(1, w);
+    // Clamped as the morph write is, so a negative weight cannot widen the blink's room.
+    const v = Math.min(1, Math.max(0, w));
     this._emotionLidNow.L += lid.L * v;
     this._emotionLidNow.R += lid.R * v;
   }

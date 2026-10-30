@@ -62,6 +62,24 @@ describe('Director / blink headroom under an emotion', () => {
     expect(peak).toBeGreaterThan(0.94);
   });
 
+  it('gives a negative-weight emotion no more than the whole blink', () => {
+    const { director, weight, step } = joyRig();
+    director.setEmotion({ joy: -1 });
+    step(240);
+
+    director.triggerBlink();
+    let blinked = false;
+    for (let i = 0; i < 30; i++) {
+      step();
+      if (director.blink <= 0.001) continue;
+      blinked = true;
+      // The room is at most one blink, so the lid is never written past the blink itself.
+      expect(weight('eyeBlinkLeft')).toBeLessThanOrEqual(director.blink + 1e-6);
+      expect(weight('eyeBlinkRight')).toBeLessThanOrEqual(director.blink + 1e-6);
+    }
+    expect(blinked).toBe(true);
+  });
+
   it('gives a neutral face the whole blink', () => {
     const { director, weight, step } = joyRig();
     step(60);
