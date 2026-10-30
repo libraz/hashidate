@@ -9,6 +9,7 @@ A clone of this repository is the runtime and nothing else. Read this section be
 | Requirement | Notes |
 |---|---|
 | Node 22 and Yarn 4 | Pinned in `mise.toml`. `mise install` installs both. |
+| Rust toolchain | Install `rustup`. The version and the `wasm32-unknown-unknown` target are pinned in `rust-toolchain.toml` and installed on the first build. |
 | **An avatar** | Required, and **not included.** A file in `avatars/<id>.json` describes each avatar and points at `public/models/<id>.glb`; both directories are git-ignored. With nothing there, the renderer comes up with nothing to draw. |
 
 None of the avatars this project was built against can be redistributed here, so supply your own. The quickest is to buy one of the two the engine was tuned with, Manuka or Tabimakura Yoka, each of which has a pack that `make import` turns the purchased package into a working avatar with; see [Importing a pack](avatars.md#importing-a-pack). For any other model, write an export profile at `avatars/export/<id>.json`, convert a rigged humanoid model with `make glb AVATAR=<id>`, and describe it in `avatars/<id>.json`. The control server finds the file on its own; nothing is registered. See [Avatars](avatars.md).

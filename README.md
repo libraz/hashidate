@@ -50,6 +50,7 @@ A clone of this repository is the runtime and nothing else. Two of its requireme
 | Requirement | Notes |
 |---|---|
 | Node 22 and Yarn 4 | Pinned in `mise.toml`. `mise install` installs both. |
+| Rust toolchain | Install `rustup`. The version and the `wasm32-unknown-unknown` target are pinned in `rust-toolchain.toml` and installed on the first build. |
 | **An avatar** | Required, and **not included.** A file `avatars/<id>.json` describes each avatar and sits beside its model at `public/models/<id>.glb`. Both directories are git-ignored, so a fresh clone has nothing to draw. The models this runtime was built against are purchased and cannot be redistributed here; buying one of them, Manuka or Tabimakura Yoka, is the quickest start, because each has a pack in `packs/` that `make import` turns the purchased package into a working avatar with ([importing a pack](docs/en/avatars.md#importing-a-pack)). Otherwise supply your own, convert it with `make glb AVATAR=<id>`, and write the file; the control server finds it without registration. |
 | **A voice** | Not required to run, but needed for anything broadcast. Requires `uv` and Python 3.11, and pulls in several GB of PyTorch. The recordings the voice is cloned from are of a real person and are **not included** either. |
 | Blender, OBS | Only to convert a model, and only to put the result on a stream. |
