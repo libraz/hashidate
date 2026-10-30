@@ -27,7 +27,8 @@ already clean, which is a better outcome for both. Order in `server.py`:
 
 Below roughly a second of audio the payload stops decoding — not corrupted, but
 absent: the reader reports finding nothing at all. Measured on real speech, 0.7 s
-fails and 1.0 s comes back exact, with no partial region in between.
+fails and 1.0 s came back exact. Longer takes are not guaranteed: a 1.7 s take
+read back with one bit flipped, so a take just over a second can still fail.
 
 Nothing here can fix that. It is a property of the scheme rather than of this
 pipeline, and it applied just as much to the payload upstream was writing.
@@ -58,9 +59,10 @@ import torch
 # than silently replacing it in the record.
 PAYLOAD = (76, 66, 82, 90, 49)
 
-# Below this, the payload does not read back. Not a threshold anything here
-# enforces — a shorter take is still marked and still served — but the number
-# the startup check has to clear, and the reason its warm-up line is a sentence.
+# Below this, the payload does not read back; above it a read is likely but not
+# certain (1.7 s once flipped a bit). Nothing here enforces it — a shorter take
+# is still marked and served — but the startup check's warm-up line must be
+# comfortably longer than this.
 WATERMARK_MIN_SECONDS = 1.0
 
 

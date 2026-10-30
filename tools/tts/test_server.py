@@ -93,7 +93,7 @@ class FakeRequest:
         return self.disconnected
 
 
-def load_startup(latents_dir: Path, runtime, watermark) -> dict:
+def load_startup(latents_dir: Path, runtime, watermark, speaker: str = "latents") -> dict:
     """The startup and health functions, over stubs for the model and the mark."""
     source_path = Path(__file__).with_name("server.py")
     tree = ast.parse(source_path.read_text())
@@ -118,6 +118,8 @@ def load_startup(latents_dir: Path, runtime, watermark) -> dict:
         "asyncio": asyncio,
         "time": time,
         "LATENTS": latents_dir,
+        "SPEAKER": speaker,
+        "SPEAKER_EMBEDDING": latents_dir / "voice.speaker.safetensors",
         "InferenceRuntime": types.SimpleNamespace(from_key=lambda key: runtime),
         "runtime_key": lambda: None,
         "watermark": watermark,
@@ -139,6 +141,7 @@ def load_startup(latents_dir: Path, runtime, watermark) -> dict:
         "_gpu_workers": set(),
         "_runtime": None,
         "_latents": [],
+        "_speaker": {},
         "_startup_error": None,
         "stopped": [],
     }
@@ -335,6 +338,75 @@ class StartupTests(unittest.TestCase):
             self.assertFalse(ns["health"]()["ready"])
 
 
+class SpeakerTests(unittest.TestCase):
+    def load(self, root: Path, speaker: str, requests: list):
+        audio = types.SimpleNamespace(
+            squeeze=lambda: types.SimpleNamespace(
+                cpu=lambda: types.SimpleNamespace(numpy=lambda: b"audio")
+            )
+        )
+
+        def synthesize(request):
+            requests.append(request)
+            return types.SimpleNamespace(audio=audio, sample_rate=48000)
+
+        runtime = types.SimpleNamespace(synthesize=synthesize)
+        mark = types.SimpleNamespace(
+            claim=lambda r: None, self_test=lambda r, a, s: None, mark=lambda r, a, s: a
+        )
+        return load_startup(root, runtime, mark, speaker)
+
+    def speak(self, ns):
+        ns["_repair_take"] = lambda audio, rate: audio
+        ns["_encode_audio"] = lambda audio, rate: b"wav"
+        return asyncio.run(
+            ns["speak"](
+                types.SimpleNamespace(text="hello", caption=None, steps=4, seed=1),
+                FakeRequest(),
+            )
+        )
+
+    def test_latents_condition_warmup_and_every_line(self):
+        with tempfile.TemporaryDirectory(prefix="hashidate-tts-") as root:
+            (Path(root) / "ref.pt").write_bytes(b"x")
+            (Path(root) / "voice.speaker.safetensors").write_bytes(b"x")
+            requests: list = []
+            ns = self.load(Path(root), "latents", requests)
+            ns["_load_model"]()
+            self.speak(ns)
+            for request in requests:
+                self.assertEqual(request["ref_latents"], [str(Path(root) / "ref.pt")])
+                self.assertNotIn("ref_embed", request)
+            self.assertEqual(ns["health"]()["speaker"], "latents")
+
+    def test_embedding_conditions_warmup_and_every_line_without_latents(self):
+        with tempfile.TemporaryDirectory(prefix="hashidate-tts-") as root:
+            (Path(root) / "ref.pt").write_bytes(b"x")
+            (Path(root) / "voice.speaker.safetensors").write_bytes(b"x")
+            requests: list = []
+            ns = self.load(Path(root), "embedding", requests)
+            ns["_load_model"]()
+            self.assertEqual(ns["stopped"], [])
+            self.speak(ns)
+            self.assertEqual(len(requests), 2)
+            for request in requests:
+                self.assertEqual(request["ref_embed"], str(Path(root) / "voice.speaker.safetensors"))
+                self.assertNotIn("ref_latents", request)
+            health = ns["health"]()
+            self.assertEqual((health["speaker"], health["refs"]), ("embedding", 0))
+
+    def test_a_missing_embedding_stops_the_process_even_with_latents_present(self):
+        with tempfile.TemporaryDirectory(prefix="hashidate-tts-") as root:
+            (Path(root) / "ref.pt").write_bytes(b"x")
+            requests: list = []
+            ns = self.load(Path(root), "embedding", requests)
+            with contextlib.redirect_stderr(io.StringIO()):
+                ns["_load_model"]()
+            self.assertEqual(ns["stopped"], [True])
+            self.assertEqual(requests, [])
+            self.assertFalse(ns["health"]()["ready"])
+
+
 class ShutdownTests(unittest.TestCase):
     def test_the_sigterm_handler_raises_the_dedicated_exception(self):
         with self.assertRaises(BOUNDARY.Terminated):
@@ -396,6 +468,45 @@ class SpeechCancellationTests(unittest.TestCase):
             self.assertEqual(result.content, b"wav")
             self.assertIn("X-Speech-Seconds", result.headers)
             self.assertEqual(events, ["synth", "numpy", "repair", "mark", "encode"])
+            self.assertTrue(ns["_gpu"].acquire(blocking=False))
+            ns["_gpu"].release()
+
+        asyncio.run(scenario())
+
+    def test_a_take_that_repairs_to_nothing_is_refused_and_never_marked(self):
+        async def scenario():
+            events = []
+
+            class Audio:
+                def squeeze(self):
+                    return self
+
+                def cpu(self):
+                    return self
+
+                def numpy(self):
+                    return "raw"
+
+            runtime = types.SimpleNamespace(
+                synthesize=lambda request: types.SimpleNamespace(audio=Audio(), sample_rate=24000)
+            )
+            mark = types.SimpleNamespace(
+                mark=lambda runtime, audio, rate: (events.append("mark"), audio)[1]
+            )
+            ns = load_startup(Path("/tmp/missing-refs"), runtime, mark)
+            ns["_runtime"] = runtime
+            ns["_latents"] = ["ref.pt"]
+            ns["_repair_take"] = lambda audio, rate: []
+            ns["_encode_audio"] = lambda audio, rate: (events.append("encode"), b"wav")[1]
+
+            with self.assertRaises(StubHttpError) as caught:
+                await ns["speak"](
+                    types.SimpleNamespace(text="...", caption=None, steps=4, seed=1),
+                    FakeRequest(),
+                )
+
+            self.assertEqual(caught.exception.status_code, 422)
+            self.assertEqual(events, [])
             self.assertTrue(ns["_gpu"].acquire(blocking=False))
             ns["_gpu"].release()
 

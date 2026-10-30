@@ -55,6 +55,8 @@ from config import (
     MAX_SECONDS,
     MODEL,
     REF_NORMALIZE_DB,
+    SPEAKER,
+    SPEAKER_EMBEDDING,
     runtime_key,
 )
 import watermark
@@ -113,6 +115,7 @@ PARENT_POLL_SECONDS = 2.0
 
 _runtime: InferenceRuntime | None = None
 _latents: list[str] = []
+_speaker: dict = {}
 _startup_error: Exception | None = None
 
 
@@ -169,11 +172,17 @@ def _load_model() -> None:
     stops the process: a sidecar that is up but can never become ready is the
     one state worse than none.
     """
-    global _runtime, _latents, _startup_error
+    global _runtime, _latents, _speaker, _startup_error
     try:
-        latents = sorted(str(p) for p in LATENTS.glob("*.pt"))
-        if not latents:
-            raise RuntimeError(f"no reference latents in {LATENTS}; run refs.py first")
+        if SPEAKER == "embedding":
+            if not SPEAKER_EMBEDDING.is_file():
+                raise RuntimeError(f"no speaker embedding at {SPEAKER_EMBEDDING}")
+            latents, speaker = [], {"ref_embed": str(SPEAKER_EMBEDDING)}
+        else:
+            latents = sorted(str(p) for p in LATENTS.glob("*.pt"))
+            if not latents:
+                raise RuntimeError(f"no reference latents in {LATENTS}; run refs.py first")
+            speaker = {"ref_latents": latents}
         runtime = InferenceRuntime.from_key(runtime_key())
         # Before anything is generated: the runtime marks takes on the way out of
         # the decoder, and `speak` needs to mark them at the end instead.
@@ -183,11 +192,13 @@ def _load_model() -> None:
         #
         # A sentence rather than a word, because this take is also what the
         # watermark is checked against and the payload needs about a second of audio
-        # to be readable back. See `watermark.WATERMARK_MIN_SECONDS`.
+        # to be readable back. See `watermark.WATERMARK_MIN_SECONDS`. Two sentences,
+        # because the speaker embedding speaks the first alone in 1.7 s, and at
+        # the default seed that take read back with one bit flipped.
         warmup = runtime.synthesize(
             SamplingRequest(
-                text="音声の準備をしています。",
-                ref_latents=latents,
+                text="音声の準備をしています。少しだけお待ちください。",
+                **speaker,
                 num_steps=DEFAULT_STEPS,
                 seed=DEFAULT_SEED,
             )
@@ -204,8 +215,10 @@ def _load_model() -> None:
         _stop_serving()
         return
     _latents = latents
+    _speaker = speaker
     _runtime = runtime
-    print(f"speech ready on {DEVICE}: {MODEL} model, {len(latents)} reference latents", flush=True)
+    voice = f"speaker embedding {SPEAKER_EMBEDDING}" if SPEAKER == "embedding" else f"{len(latents)} reference latents"
+    print(f"speech ready on {DEVICE}: {MODEL} model, {voice}", flush=True)
 
 
 @asynccontextmanager
@@ -271,6 +284,7 @@ def health() -> dict:
         "ready": _runtime is not None,
         "device": DEVICE,
         "model": MODEL,
+        "speaker": SPEAKER,
         "refs": len(_latents),
         "steps": DEFAULT_STEPS,
         "max_seconds": MAX_SECONDS,
@@ -303,7 +317,7 @@ async def speak(req: SpeakRequest, request: Request) -> Response:
             SamplingRequest(
                 text=req.text,
                 caption=req.caption,
-                ref_latents=_latents,
+                **_speaker,
                 num_steps=req.steps,
                 seed=req.seed,
                 ref_normalize_db=REF_NORMALIZE_DB,
@@ -334,6 +348,9 @@ async def speak(req: SpeakRequest, request: Request) -> Response:
     audio = await asyncio.to_thread(_repair_take, audio, sample_rate)
     if await request.is_disconnected():
         return _cancelled_response()
+    # A take that trimmed to nothing has no voice to mark or to send on.
+    if len(audio) == 0:
+        raise HTTPException(status_code=422, detail="take is silent")
 
     marked = await _run_gpu(
         request,

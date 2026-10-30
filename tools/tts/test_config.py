@@ -5,21 +5,24 @@ import os
 import unittest
 
 
-def load(model: str | None):
-    previous = os.environ.get("HASHIDATE_TTS_MODEL")
+def load(model: str | None, speaker: str | None = None):
+    wanted = {"HASHIDATE_TTS_MODEL": model, "HASHIDATE_TTS_SPEAKER": speaker}
+    previous = {name: os.environ.get(name) for name in wanted}
     try:
-        if model is None:
-            os.environ.pop("HASHIDATE_TTS_MODEL", None)
-        else:
-            os.environ["HASHIDATE_TTS_MODEL"] = model
+        for name, value in wanted.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
         import config
 
         return importlib.reload(config)
     finally:
-        if previous is None:
-            os.environ.pop("HASHIDATE_TTS_MODEL", None)
-        else:
-            os.environ["HASHIDATE_TTS_MODEL"] = previous
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 class ConfigTests(unittest.TestCase):
@@ -33,6 +36,18 @@ class ConfigTests(unittest.TestCase):
                 config = load(model)
                 self.assertEqual(config.DEFAULT_STEPS, config.STEPS[model])
         self.assertEqual(load("mf").DEFAULT_STEPS, 4)
+
+    def test_the_speaker_defaults_to_the_reference_latents(self):
+        self.assertEqual(load(None).SPEAKER, "latents")
+
+    def test_the_embedding_lives_in_the_voice_directory(self):
+        config = load(None, "embedding")
+        self.assertEqual(config.SPEAKER, "embedding")
+        self.assertEqual(config.SPEAKER_EMBEDDING, config.VOICE / "voice.speaker.safetensors")
+
+    def test_an_unknown_speaker_is_refused(self):
+        with self.assertRaises(SystemExit):
+            load(None, "clips")
 
 
 if __name__ == "__main__":

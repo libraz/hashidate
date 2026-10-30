@@ -99,6 +99,26 @@ PRECISION = "fp32"
 STEPS = {"small": 16, "large": 16, "mf": 4}
 DEFAULT_STEPS = STEPS[MODEL]
 
+# What the voice is conditioned on, by the name HASHIDATE_TTS_SPEAKER takes.
+# `latents` are the reference clips `make voice` encodes. `embedding` is a
+# Speaker Inversion file trained elsewhere and placed beside them; it means
+# something only to the checkpoint it was trained against, which nothing in the
+# file records, so pairing the two is the operator's job.
+SPEAKERS = ("latents", "embedding")
+DEFAULT_SPEAKER = "latents"
+# The upstream loader refuses any name not ending in `.speaker.safetensors`.
+SPEAKER_EMBEDDING = VOICE / "voice.speaker.safetensors"
+
+
+def _speaker() -> str:
+    name = os.environ.get("HASHIDATE_TTS_SPEAKER") or DEFAULT_SPEAKER
+    if name not in SPEAKERS:
+        raise SystemExit(f"HASHIDATE_TTS_SPEAKER must be one of {', '.join(SPEAKERS)}, not {name!r}")
+    return name
+
+
+SPEAKER = _speaker()
+
 # Reference loudness target. Matches what the waveform path applies, so a
 # precomputed latent stays interchangeable with the clip it came from.
 REF_NORMALIZE_DB = -16.0
