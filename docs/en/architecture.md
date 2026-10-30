@@ -9,6 +9,8 @@ Three processes and a page. A caller posts commands to the control server; the s
 | Path | What it holds |
 |---|---|
 | `src/engine` | The runtime. Profile, rig, anatomy, motion, face, secondary motion, director, session. Depends on three.js and on nothing in a browser. |
+| `src/core` | Loads the wasm build of the core and types its exports. The engine calls it; the viewer and the tests load it. |
+| `crates/` | The Rust workspace. `hashidate-core` is the numeric core — math, secondary motion, triangle sorting — with no I/O. `hashidate-wasm` is the thin C ABI that exposes it as wasm. |
 | `src/protocol` | The wire format, as zod schemas. The viewer, the server and the CLI all import it, so the command vocabulary cannot drift between them. |
 | `src/viewer` | The renderer: a three.js stage, with a development console beside it. This is the page OBS points at. |
 | `src/panel` | The broadcast panel, on `/panel/`. Everything it does goes through the control API, so what it can do is what an orchestrator can do. |
@@ -28,7 +30,7 @@ Three processes and a page. A caller posts commands to the control server; the s
 
 **The wire vocabulary lives once**, in `src/protocol`, as zod schemas. Adding a command means adding it there first; the viewer, the server and the CLI follow. That is what keeps three processes on separate release cycles from drifting apart.
 
-**The engine does not know it is in a browser.** It depends on three.js and on nothing else — no `AudioContext`, no DOM, no `fetch`. It states what a spoken line is, and the viewer, which has the audio, provides one. That is why the test suite can run the whole engine headlessly against a synthetic avatar.
+**The engine does not know it is in a browser.** It depends on three.js and on the core, which is computation and not a browser API — no `AudioContext`, no DOM, no `fetch`. The engine calls the core and never loads it; the viewer and the tests do. It states what a spoken line is, and the viewer, which has the audio, provides one. That is why the test suite can run the whole engine headlessly against a synthetic avatar.
 
 **The server holds the standing state.** The avatar, the costume, the shot, the set, the acoustic, the voice chain, the BGM transport and the tuning are folded into a setup as they are chosen, and handed to a renderer the moment it attaches, along with the pending queue. Nothing about the show lives in the URL a browser source was configured with, so a reload mid-broadcast is survivable. See [The surfaces](surfaces.md).
 
