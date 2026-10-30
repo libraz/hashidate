@@ -3,9 +3,10 @@
 
 use super::StatusKind;
 use super::spring::InputWorld;
+use super::tree::Tree;
 use crate::math::f::{hypot3, js_max};
-use crate::math::{Mat4, Vec3};
-use crate::scene::{NONE, Node, Scene};
+use crate::math::{Mat4, Quat, Vec3};
+use crate::scene::graph::NO_NODE;
 
 const MANUAL_MATRIX_SCALE_TOLERANCE: f64 = 2e-7;
 const UNIFORM_SCALE_TOLERANCE: f64 = 1e-5;
@@ -15,7 +16,7 @@ const ORTHOGONAL_TOLERANCE: f64 = 1e-6;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Failure {
     pub kind: StatusKind,
-    /// The node it broke on, or [`NONE`] when the failure is not about one node.
+    /// The node it broke on, or [`NO_NODE`] when the failure is not about one node.
     pub node: u32,
 }
 
@@ -47,11 +48,15 @@ enum Guard {
 }
 
 // skin-point-anchor.ts readLocalMatrix
-fn read_local_matrix(node: &Node, out: &mut Mat4) {
-    if node.matrix_auto_update {
-        out.compose(&node.position, &node.quaternion, &node.scale);
+fn read_local_matrix(scene: &Tree, index: u32, out: &mut Mat4) {
+    if scene.matrix_auto_update(index) {
+        out.compose(
+            &scene.position(index),
+            &scene.quaternion(index),
+            &scene.scale(index),
+        );
     } else {
-        out.copy(&node.matrix);
+        out.copy(&scene.matrix(index));
     }
 }
 
@@ -95,11 +100,12 @@ fn transform_scale(index: u32, matrix: &Mat4) -> Result<f64, Failure> {
 }
 
 // skin-point-anchor.ts snapshotTransform
-fn snapshot_transform(index: u32, node: &Node, matrix: &Mat4) -> Result<Guard, Failure> {
+fn snapshot_transform(index: u32, scene: &Tree, matrix: &Mat4) -> Result<Guard, Failure> {
     let scale = transform_scale(index, matrix)?;
-    Ok(if node.matrix_auto_update {
+    Ok(if scene.matrix_auto_update(index) {
+        let k = scene.scale(index);
         Guard::Auto {
-            scale: [node.scale.x, node.scale.y, node.scale.z],
+            scale: [k.x, k.y, k.z],
         }
     } else {
         Guard::Manual {
@@ -112,11 +118,11 @@ fn snapshot_transform(index: u32, node: &Node, matrix: &Mat4) -> Result<Guard, F
 // skin-point-anchor.ts assertTransformStable
 fn assert_transform_stable(
     index: u32,
-    node: &Node,
+    scene: &Tree,
     matrix: &Mat4,
     expected: &Guard,
 ) -> Result<(), Failure> {
-    if node.matrix_auto_update != matches!(expected, Guard::Auto { .. }) {
+    if scene.matrix_auto_update(index) != matches!(expected, Guard::Auto { .. }) {
         return fail(StatusKind::AnchorModeChanged, index);
     }
     let scale = transform_scale(index, matrix)?;
@@ -124,10 +130,8 @@ fn assert_transform_stable(
         Guard::Auto { scale: expected } => {
             // A changing quaternion can perturb composed column lengths by Float32
             // roundoff. The Object3D TRS scale itself is the immutable contract.
-            if !(node.scale.x == expected[0]
-                && node.scale.y == expected[1]
-                && node.scale.z == expected[2])
-            {
+            let k = scene.scale(index);
+            if !(k.x == expected[0] && k.y == expected[1] && k.z == expected[2]) {
                 return fail(StatusKind::AnchorScaleChanged, index);
             }
             Ok(())
@@ -170,11 +174,11 @@ struct PathNode {
 // on nothing else, so the same values compose and pass the same. Only values that passed are
 // kept, and a NaN never passes, so `Object.is` cannot match one; it also tells the two zeros
 // apart, as composing does.
-fn still_passed(entry: &PathNode, node: &Node) -> bool {
-    if !(entry.has_passed && node.matrix_auto_update) {
+fn still_passed(entry: &PathNode, scene: &Tree) -> bool {
+    if !(entry.has_passed && scene.matrix_auto_update(entry.node)) {
         return false;
     }
-    let (p, q, k) = (&node.position, &node.quaternion, &node.scale);
+    let (p, q, k) = trs(scene, entry.node);
     let now = [p.x, p.y, p.z, q.x, q.y, q.z, q.w, k.x, k.y, k.z];
     now.iter()
         .zip(&entry.passed)
@@ -182,18 +186,26 @@ fn still_passed(entry: &PathNode, node: &Node) -> bool {
 }
 
 // skin-point-anchor.ts rememberPassed
-fn remember_passed(entry: &mut PathNode, node: &Node) {
-    entry.has_passed = node.matrix_auto_update;
+fn remember_passed(entry: &mut PathNode, scene: &Tree) {
+    entry.has_passed = scene.matrix_auto_update(entry.node);
     if !entry.has_passed {
         return;
     }
-    let (p, q, k) = (&node.position, &node.quaternion, &node.scale);
+    let (p, q, k) = trs(scene, entry.node);
     entry.passed = [p.x, p.y, p.z, q.x, q.y, q.z, q.w, k.x, k.y, k.z];
+}
+
+fn trs(scene: &Tree, index: u32) -> (Vec3, Quat, Vec3) {
+    (
+        scene.position(index),
+        scene.quaternion(index),
+        scene.scale(index),
+    )
 }
 
 // skin-point-anchor.ts matrixPath
 fn matrix_path(
-    scene: &Scene,
+    scene: &Tree,
     node: u32,
     nodes: &mut Vec<PathNode>,
     shared: &mut [u32],
@@ -207,17 +219,16 @@ fn matrix_path(
     chain.reverse();
     let mut path = Vec::with_capacity(chain.len());
     for index in chain {
-        let n = scene.node(index);
-        if !n.matrix_world_auto_update {
+        if !scene.matrix_world_auto_update(index) {
             return fail(StatusKind::AnchorWorldOverride, index);
         }
         let mut entry = shared[index as usize];
-        if entry == NONE {
+        if entry == NO_NODE {
             let mut local = Mat4::default();
-            read_local_matrix(n, &mut local);
+            read_local_matrix(scene, index, &mut local);
             nodes.push(PathNode {
                 node: index,
-                transform: snapshot_transform(index, n, &local)?,
+                transform: snapshot_transform(index, scene, &local)?,
                 local: Mat4::default(),
                 passed: [0.0; 10],
                 has_passed: false,
@@ -276,10 +287,14 @@ impl SkinPointAnchor {
     //
     // The numeric half: paths and the transforms they resolved with. The spec has been read and
     // its names resolved by the caller.
-    pub fn new(scene: &Scene, root: u32, influences: &[(u32, f64, Vec3)]) -> Result<Self, Failure> {
+    pub(crate) fn new(
+        scene: &Tree,
+        root: u32,
+        influences: &[(u32, f64, Vec3)],
+    ) -> Result<Self, Failure> {
         let parent = scene.parent(root).expect("an anchor root has a parent");
         let mut nodes = Vec::new();
-        let mut shared = vec![NONE; scene.len()];
+        let mut shared = vec![NO_NODE; scene.len()];
         let mut resolved = Vec::with_capacity(influences.len());
         for &(bone, weight, position) in influences {
             let path = matrix_path(scene, bone, &mut nodes, &mut shared)?;
@@ -292,9 +307,8 @@ impl SkinPointAnchor {
         }
         let parent_path = matrix_path(scene, parent, &mut nodes, &mut shared)?;
         let mut local = Mat4::default();
-        let root_node = scene.node(root);
-        read_local_matrix(root_node, &mut local);
-        let root_transform = snapshot_transform(root, root_node, &local)?;
+        read_local_matrix(scene, root, &mut local);
+        let root_transform = snapshot_transform(root, scene, &local)?;
         let mut subtree = Vec::new();
         Self::read_subtree_transforms(scene, root, &mut subtree)?;
         Ok(Self {
@@ -313,21 +327,20 @@ impl SkinPointAnchor {
 
     // skin-point-anchor.ts SkinPointAnchor.#readSubtreeTransforms
     fn read_subtree_transforms(
-        scene: &Scene,
+        scene: &Tree,
         node: u32,
         out: &mut Vec<SubtreeNode>,
     ) -> Result<(), Failure> {
         for &child in scene.children(node) {
-            let n = scene.node(child);
-            if !n.matrix_world_auto_update {
+            if !scene.matrix_world_auto_update(child) {
                 return fail(StatusKind::AnchorWorldOverride, child);
             }
             let mut local = Mat4::default();
-            read_local_matrix(n, &mut local);
+            read_local_matrix(scene, child, &mut local);
             out.push(SubtreeNode {
                 node: child,
                 parent: node,
-                transform: snapshot_transform(child, n, &local)?,
+                transform: snapshot_transform(child, scene, &local)?,
             });
             Self::read_subtree_transforms(scene, child, out)?;
         }
@@ -348,14 +361,15 @@ impl SkinPointAnchor {
     //
     // `inputs`: world matrices standing in for nodes no chain moves, so a step between two frames
     // composes from the body between them.
-    pub fn place(&mut self, scene: &mut Scene, inputs: Option<&InputWorld>) -> Result<(), Failure> {
+    pub(crate) fn place(
+        &mut self,
+        scene: &mut Tree,
+        inputs: Option<&InputWorld>,
+    ) -> Result<(), Failure> {
         self.placement += 1;
         let placement = self.placement;
         let root = self.root;
-        if scene.node(root).reparented {
-            return fail(StatusKind::AnchorRootReparented, root);
-        }
-        if !scene.node(root).matrix_world_auto_update {
+        if !scene.matrix_world_auto_update(root) {
             return fail(StatusKind::AnchorWorldOverride, root);
         }
         self.target_world.set(0.0, 0.0, 0.0);
@@ -389,22 +403,21 @@ impl SkinPointAnchor {
         )?;
         let determinant = parent_world.determinant();
         if !(determinant.is_finite() && determinant.abs() > 1e-18) {
-            return fail(StatusKind::AnchorParentSingular, NONE);
+            return fail(StatusKind::AnchorParentSingular, NO_NODE);
         }
         let mut inverse_parent = parent_world;
         inverse_parent.invert();
-        let node = scene.node_mut(root);
-        node.position
-            .copy(&self.target_world)
-            .apply_matrix4(&inverse_parent);
+        let mut position = self.target_world;
+        position.apply_matrix4(&inverse_parent);
+        scene.set_position(root, &position);
         let mut local = Mat4::default();
-        read_local_matrix(node, &mut local);
-        assert_transform_stable(root, node, &local, &self.root_transform)?;
-        node.update_matrix();
+        read_local_matrix(scene, root, &mut local);
+        assert_transform_stable(root, scene, &local, &self.root_transform)?;
+        scene.update_matrix(root);
         let mut root_matrix = Mat4::default();
-        root_matrix.multiply_matrices(&parent_world, &node.matrix);
-        node.matrix_world.copy(&root_matrix);
-        node.matrix_world_needs_update = false;
+        root_matrix.multiply_matrices(&parent_world, &scene.matrix(root));
+        scene.set_matrix_world(root, &root_matrix);
+        scene.clear_needs_update(root);
         self.refresh_subtree(scene)?;
         self.root_world.set_from_matrix_position(&root_matrix);
         self.error = self.root_world.distance_to(&self.target_world);
@@ -412,21 +425,18 @@ impl SkinPointAnchor {
     }
 
     // skin-point-anchor.ts SkinPointAnchor.#refreshSubtree
-    fn refresh_subtree(&self, scene: &mut Scene) -> Result<(), Failure> {
+    fn refresh_subtree(&self, scene: &mut Tree) -> Result<(), Failure> {
         for entry in &self.subtree {
-            let child = scene.node_mut(entry.node);
-            if !child.matrix_world_auto_update {
-                return fail(StatusKind::AnchorWorldOverride, entry.node);
+            let child = entry.node;
+            if !scene.matrix_world_auto_update(child) {
+                return fail(StatusKind::AnchorWorldOverride, child);
             }
-            if child.matrix_auto_update {
-                child.update_matrix();
+            if scene.matrix_auto_update(child) {
+                scene.update_matrix(child);
             }
-            assert_transform_stable(entry.node, child, &child.matrix, &entry.transform)?;
-            if child.reparented {
-                return fail(StatusKind::AnchorSubtreeReparented, entry.node);
-            }
-            scene.hang(entry.node, entry.parent);
-            scene.node_mut(entry.node).matrix_world_needs_update = false;
+            assert_transform_stable(child, scene, &scene.matrix(child), &entry.transform)?;
+            scene.hang(child, entry.parent);
+            scene.clear_needs_update(child);
         }
         Ok(())
     }
@@ -437,7 +447,7 @@ fn walk(
     nodes: &mut [PathNode],
     path: &[usize],
     placement: i64,
-    scene: &Scene,
+    scene: &Tree,
     inputs: Option<&InputWorld>,
     out: &mut Mat4,
 ) -> Result<(), Failure> {
@@ -466,24 +476,15 @@ fn walk(
         }
         let entry = &mut nodes[e];
         let index = entry.node;
-        let node = scene.node(index);
-        if node.reparented {
-            let kind = if i > 0 {
-                StatusKind::AnchorPathReparented
-            } else {
-                StatusKind::AnchorPathRootReparented
-            };
-            return fail(kind, index);
-        }
-        if !node.matrix_world_auto_update {
+        if !scene.matrix_world_auto_update(index) {
             return fail(StatusKind::AnchorWorldOverride, index);
         }
         // A node shared by several paths, or one nothing has moved since the last
         // placement, is read and guarded once.
-        if !(matches!(entry.transform, Guard::Auto { .. }) && still_passed(entry, node)) {
-            read_local_matrix(node, &mut entry.local);
-            assert_transform_stable(index, node, &entry.local, &entry.transform)?;
-            remember_passed(entry, node);
+        if !(matches!(entry.transform, Guard::Auto { .. }) && still_passed(entry, scene)) {
+            read_local_matrix(scene, index, &mut entry.local);
+            assert_transform_stable(index, scene, &entry.local, &entry.transform)?;
+            remember_passed(entry, scene);
         }
         entry.guarded = placement;
         if i >= start {
@@ -509,26 +510,43 @@ fn extend(entry: &mut PathNode, out: &mut Mat4, from: Option<usize>, placement: 
 
 #[cfg(test)]
 mod tests {
-    use super::super::testkit::{Rig, chain, euler_xyz, group};
-    use super::super::{Spring, StatusKind};
+    use super::super::Spring;
+    use super::super::StatusKind;
+    use super::super::testkit::{
+        Node, Rig, chain, euler_xyz, graph, group, matrix, matrix_world, needs_update, quaternion,
+        set_quaternion, world_update,
+    };
+    use super::super::tree::Tree;
     use super::{Failure, SkinPointAnchor};
     use crate::math::{Mat4, Quat, Vec3};
-    use crate::scene::{NONE, Node, Scene};
+    use crate::scene::graph::{Graph, NO_NODE, flag};
 
     const STEP: f64 = 1.0 / 60.0;
 
+    fn read3(s: &[f64], i: u32) -> Vec3 {
+        let at = 3 * i as usize;
+        Vec3::new(s[at], s[at + 1], s[at + 2])
+    }
+
+    fn write3(s: &mut [f64], i: u32, v: &Vec3) {
+        let at = 3 * i as usize;
+        s[at..at + 3].copy_from_slice(&[v.x, v.y, v.z]);
+    }
+
     /// Two producer chains, and with `attached` a charm placed on four of their bones.
-    fn producers(attached: bool) -> (Rig, Spring, u32) {
+    fn producers(attached: bool) -> (Rig, Graph, Spring, u32) {
         let mut rig = Rig::humanoid(0.01);
         let (hips, spine) = (rig.bone("Hips"), rig.bone("Spine"));
         let a = chain(&mut rig, hips, 3, [0.0, -0.025, 0.03], [0.0, -0.08, 0.02]);
         let b = chain(&mut rig, spine, 3, [0.0, -0.025, 0.03], [0.0, -0.08, 0.02]);
         let charm = chain(&mut rig, hips, 3, [0.0, -0.025, 0.03], [0.0, -0.08, 0.02]);
-        let mut spring = rig.spring();
+        let (mut graph, mut spring) = rig.spring();
+        let at = |ids: &[u32]| -> Vec<u32> { ids.iter().map(|&id| rig.at(id)).collect() };
+        let (a, b, charm) = (at(&a), at(&b), at(&charm));
         for (root, figures) in [(a[0], (0.9, 0.32, 0.11)), (b[0], (0.7, 0.41, 0.07))] {
             spring.begin_group(group(figures.0, figures.1, figures.2));
             spring.add_group_root(root);
-            assert!(spring.end_group() > 0);
+            assert!(spring.end_group(&mut graph) > 0);
         }
         if attached {
             spring.begin_group(group(0.0, 0.45, 0.16));
@@ -538,58 +556,57 @@ mod tests {
             spring.add_anchor_influence(a[2], 0.27, Vec3::new(1.0, -3.0, 0.5));
             spring.add_anchor_influence(b[1], 0.22, Vec3::new(-0.5, -2.0, 1.0));
             spring.add_anchor_influence(b[2], 0.2, Vec3::new(0.0, -1.0, -1.0));
-            assert!(spring.end_group() > 0);
+            assert!(spring.end_group(&mut graph) > 0);
         }
-        spring.build();
+        spring.build(&mut graph);
         assert!(spring.statuses().is_empty());
-        (rig, spring, a[1])
+        (rig, graph, spring, a[1])
     }
 
-    fn pose(rig: &Rig, spring: &mut Spring, frame: f64) {
-        let root = spring.scene_mut().node_mut(0);
-        root.position.set(
-            0.3 + (frame * 0.13).sin() * 0.04,
-            (frame * 0.07).cos() * 0.03,
-            -0.2 + (frame * 0.11).sin() * 0.02,
+    fn pose(rig: &Rig, graph: &mut Graph, frame: f64) {
+        write3(
+            &mut graph.position,
+            0,
+            &Vec3::new(
+                0.3 + (frame * 0.13).sin() * 0.04,
+                (frame * 0.07).cos() * 0.03,
+                -0.2 + (frame * 0.11).sin() * 0.02,
+            ),
         );
-        root.quaternion = euler_xyz([
-            (frame * 0.03).sin() * 0.11,
-            (frame * 0.05).cos() * 0.16,
-            (frame * 0.09).sin() * 0.08,
+        set_quaternion(
+            graph,
+            0,
+            &euler_xyz([
+                (frame * 0.03).sin() * 0.11,
+                (frame * 0.05).cos() * 0.16,
+                (frame * 0.09).sin() * 0.08,
+            ]),
+        );
+        let hips = euler_xyz([
+            (frame * 0.12).sin() * 0.24,
+            (frame * 0.08).cos() * 0.2,
+            (frame * 0.17).sin() * 0.19,
         ]);
-        let (hips, spine) = (rig.bone("Hips"), rig.bone("Spine"));
-        rig.rotate(
-            spring,
-            hips,
-            [
-                (frame * 0.12).sin() * 0.24,
-                (frame * 0.08).cos() * 0.2,
-                (frame * 0.17).sin() * 0.19,
-            ],
-        );
-        rig.rotate(
-            spring,
-            spine,
-            [
-                (frame * 0.09).cos() * 0.2,
-                (frame * 0.14).sin() * 0.16,
-                (frame * 0.18).cos() * 0.13,
-            ],
-        );
-        rig.world_update(spring);
+        set_quaternion(graph, rig.node("Hips"), &hips);
+        let spine = euler_xyz([
+            (frame * 0.09).cos() * 0.2,
+            (frame * 0.14).sin() * 0.16,
+            (frame * 0.18).cos() * 0.13,
+        ]);
+        set_quaternion(graph, rig.node("Spine"), &spine);
+        world_update(graph);
     }
 
     /// The producers' tails, rotations and matrices, as bits.
-    fn producer_state(spring: &Spring) -> Vec<u64> {
+    fn producer_state(graph: &Graph, spring: &Spring) -> Vec<u64> {
         let mut out = Vec::new();
         for g in &spring.groups()[..2] {
             for j in &g.joints {
-                let n = spring.scene().node(j.bone);
-                let (c, p, q) = (j.cur, j.prev, n.quaternion);
+                let (c, p, q) = (j.cur, j.prev, quaternion(graph, j.bone));
                 out.extend([c.x, c.y, c.z, p.x, p.y, p.z, q.x, q.y, q.z, q.w].map(f64::to_bits));
-                out.extend(n.matrix.elements.map(f64::to_bits));
-                out.extend(n.matrix_world.elements.map(f64::to_bits));
-                out.push(u64::from(n.matrix_world_needs_update));
+                out.extend(matrix(graph, j.bone).elements.map(f64::to_bits));
+                out.extend(matrix_world(graph, j.bone).elements.map(f64::to_bits));
+                out.push(u64::from(needs_update(graph, j.bone)));
             }
         }
         out
@@ -597,21 +614,18 @@ mod tests {
 
     #[test]
     fn an_attachment_changes_no_bit_of_its_producers() {
-        let (rig_p, mut plain) = {
-            let (r, s, _) = producers(false);
-            (r, s)
-        };
-        let (rig_a, mut attached, _) = producers(true);
+        let (rig_p, mut graph_p, mut plain, _) = producers(false);
+        let (rig_a, mut graph_a, mut attached, _) = producers(true);
         let durations = [STEP, 1.0 / 30.0, 0.05, STEP, 0.007, 1.0 / 30.0, 0.05, 0.0];
         for frame in 0..240 {
-            pose(&rig_p, &mut plain, frame as f64);
-            pose(&rig_a, &mut attached, frame as f64);
+            pose(&rig_p, &mut graph_p, frame as f64);
+            pose(&rig_a, &mut graph_a, frame as f64);
             let dt = durations[frame % durations.len()];
-            plain.update(dt);
-            attached.update(dt);
+            plain.update(&mut graph_p, dt);
+            attached.update(&mut graph_a, dt);
             assert_eq!(
-                producer_state(&attached),
-                producer_state(&plain),
+                producer_state(&graph_a, &attached),
+                producer_state(&graph_p, &plain),
                 "frame {frame}"
             );
         }
@@ -619,21 +633,25 @@ mod tests {
 
     #[test]
     fn a_stale_producer_matrix_between_steps_is_caught() {
-        let (rig_p, mut plain, _) = producers(false);
-        let (rig_b, mut broken, source) = producers(true);
+        let (rig_p, mut graph_p, mut plain, _) = producers(false);
+        let (rig_b, mut graph_b, mut broken, source) = producers(true);
         broken.after_place = Some(source);
         for frame in 0..80 {
-            pose(&rig_p, &mut plain, frame as f64);
-            pose(&rig_b, &mut broken, frame as f64);
-            plain.update(0.05);
-            broken.update(0.05);
+            pose(&rig_p, &mut graph_p, frame as f64);
+            pose(&rig_b, &mut graph_b, frame as f64);
+            plain.update(&mut graph_p, 0.05);
+            broken.update(&mut graph_b, 0.05);
         }
-        assert_ne!(producer_state(&broken), producer_state(&plain));
+        assert_ne!(
+            producer_state(&graph_b, &broken),
+            producer_state(&graph_p, &plain)
+        );
     }
 
-    /// A placed avatar under a scene, four sources on its hips and a two-link charm.
+    /// A placed avatar under a scene, four sources on its hips and a two-link charm. Nodes are
+    /// added in `traverse` order, so their ids are their graph indices.
     struct Skin {
-        scene: Scene,
+        graph: Graph,
         avatar: u32,
         hips: u32,
         sources: [u32; 4],
@@ -642,42 +660,33 @@ mod tests {
         influences: Vec<(u32, f64, Vec3)>,
     }
 
-    fn add(scene: &mut Scene, parent: u32, position: [f64; 3], is_bone: bool) -> u32 {
-        let mut node = Node {
-            parent,
-            is_bone,
-            ..Node::default()
-        };
-        node.position.set(position[0], position[1], position[2]);
-        scene.push(node)
-    }
-
-    fn world_update(scene: &mut Scene) {
-        let all: Vec<u32> = (0..scene.len() as u32).collect();
-        scene.update_matrix_world_forced(&all);
+    fn add(nodes: &mut Vec<Node>, parent: u32, position: [f64; 3], is_bone: bool) -> u32 {
+        nodes.push(Node::new(parent, is_bone, position));
+        (nodes.len() - 1) as u32
     }
 
     fn skin() -> Skin {
-        let mut scene = Scene::default();
-        let top = add(&mut scene, NONE, [0.0; 3], false);
-        let avatar = add(&mut scene, top, [2.3, -1.2, 0.7], false);
-        let n = scene.node_mut(avatar);
+        let mut nodes = Vec::new();
+        let top = add(&mut nodes, NO_NODE, [0.0; 3], false);
+        let avatar = add(&mut nodes, top, [2.3, -1.2, 0.7], false);
+        let n = &mut nodes[avatar as usize];
         n.quaternion = euler_xyz([0.31, -0.22, 0.48]);
         n.scale.set(0.01, 0.01, 0.01);
-        let hips = add(&mut scene, avatar, [2.0, 90.0, -1.0], true);
+        let hips = add(&mut nodes, avatar, [2.0, 90.0, -1.0], true);
         let sources = [0, 1, 2, 3].map(|i| {
             let i = f64::from(i);
             add(
-                &mut scene,
+                &mut nodes,
                 hips,
                 [-22.0 + i * 13.0, 4.0 + i * 5.0, -9.0 + i * 7.0],
                 true,
             )
         });
-        let root = add(&mut scene, hips, [0.0; 3], true);
-        let link = add(&mut scene, root, [0.0, -3.5, 0.0], true);
-        add(&mut scene, link, [0.0, -3.5, 0.0], true);
-        world_update(&mut scene);
+        let root = add(&mut nodes, hips, [0.0; 3], true);
+        let link = add(&mut nodes, root, [0.0, -3.5, 0.0], true);
+        add(&mut nodes, link, [0.0, -3.5, 0.0], true);
+        let (mut graph, _) = graph(&nodes);
+        world_update(&mut graph);
         let influences = sources
             .iter()
             .enumerate()
@@ -691,7 +700,7 @@ mod tests {
             })
             .collect();
         Skin {
-            scene,
+            graph,
             avatar,
             hips,
             sources,
@@ -702,18 +711,22 @@ mod tests {
     }
 
     impl Skin {
-        fn anchor(&self) -> Result<SkinPointAnchor, Failure> {
-            SkinPointAnchor::new(&self.scene, self.root, &self.influences)
+        fn anchor(&mut self) -> Result<SkinPointAnchor, Failure> {
+            SkinPointAnchor::new(&Tree::new(&mut self.graph), self.root, &self.influences)
+        }
+
+        fn place(&mut self, anchor: &mut SkinPointAnchor) -> Result<(), Failure> {
+            anchor.place(&mut Tree::new(&mut self.graph), None)
         }
 
         /// The weighted sum of each influence's position through its bone's world matrix,
         /// after a world update, independent of the anchor's own composition.
         fn oracle(&mut self) -> Vec3 {
-            world_update(&mut self.scene);
+            world_update(&mut self.graph);
             let mut out = Vec3::default();
             for &(bone, weight, position) in &self.influences {
                 let mut p = position;
-                p.apply_matrix4(&self.scene.node(bone).matrix_world);
+                p.apply_matrix4(&matrix_world(&self.graph, bone));
                 out.add_scaled_vector(&p, weight);
             }
             out
@@ -724,17 +737,29 @@ mod tests {
                 .iter()
                 .chain(&self.sources)
                 .map(|&i| {
-                    let n = self.scene.node(i);
-                    (n.matrix, n.matrix_world, n.matrix_world_needs_update)
+                    (
+                        matrix(&self.graph, i),
+                        matrix_world(&self.graph, i),
+                        needs_update(&self.graph, i),
+                    )
                 })
                 .collect()
         }
+
+        fn change_scale(&mut self, node: u32, change: fn(&mut Vec3)) {
+            let mut k = read3(&self.graph.scale, node);
+            change(&mut k);
+            write3(&mut self.graph.scale, node, &k);
+        }
+
+        fn clear_flag(&mut self, node: u32, bit: u8) {
+            self.graph.flags[node as usize] &= !bit;
+        }
     }
 
-    /// Which node of a fixture a case touches, what it does there, and what that breaks.
+    /// Which node of a fixture a case touches, and what that change does to its scale.
     type Pick = fn(&Skin) -> u32;
     type ScaleCase = (Pick, fn(&mut Vec3));
-    type NodeCase = (Pick, fn(&mut Node), StatusKind);
 
     fn failure(kind: StatusKind, node: u32) -> Failure {
         Failure { kind, node }
@@ -744,17 +769,21 @@ mod tests {
     fn places_a_four_weight_point_through_scale_and_moved_ancestors() {
         let mut skin = skin();
         let mut anchor = skin.anchor().expect("valid");
-        let s = &mut skin.scene;
-        s.node_mut(skin.avatar).position.set(-1.7, 0.6, 2.2);
-        s.node_mut(skin.avatar).quaternion = euler_xyz([-0.27, 0.42, -0.19]);
-        s.node_mut(skin.hips).quaternion = euler_xyz([0.2, -0.13, 0.34]);
-        s.node_mut(skin.sources[0]).quaternion = euler_xyz([0.18, 0.12, -0.3]);
-        s.node_mut(skin.sources[1]).position.x += 7.0;
-        s.node_mut(skin.sources[2]).quaternion = euler_xyz([-0.24, 0.31, 0.16]);
-        s.node_mut(skin.sources[3]).position.z -= 5.0;
-        world_update(s);
+        let g = &mut skin.graph;
+        write3(&mut g.position, skin.avatar, &Vec3::new(-1.7, 0.6, 2.2));
+        set_quaternion(g, skin.avatar, &euler_xyz([-0.27, 0.42, -0.19]));
+        set_quaternion(g, skin.hips, &euler_xyz([0.2, -0.13, 0.34]));
+        set_quaternion(g, skin.sources[0], &euler_xyz([0.18, 0.12, -0.3]));
+        let mut p = read3(&g.position, skin.sources[1]);
+        p.x += 7.0;
+        write3(&mut g.position, skin.sources[1], &p);
+        set_quaternion(g, skin.sources[2], &euler_xyz([-0.24, 0.31, 0.16]));
+        let mut p = read3(&g.position, skin.sources[3]);
+        p.z -= 5.0;
+        write3(&mut g.position, skin.sources[3], &p);
+        world_update(g);
         let before = skin.source_matrices();
-        anchor.place(&mut skin.scene, None).expect("placed");
+        skin.place(&mut anchor).expect("placed");
         assert_eq!(skin.source_matrices(), before, "placement touched a source");
         let oracle = skin.oracle();
         assert!(anchor.target_world.distance_to(&oracle) < 2e-6);
@@ -763,7 +792,7 @@ mod tests {
         // The point is a blend, not the dominant bone's alone.
         let (bone, _, position) = skin.influences[3];
         let mut dominant = position;
-        dominant.apply_matrix4(&skin.scene.node(bone).matrix_world);
+        dominant.apply_matrix4(&matrix_world(&skin.graph, bone));
         assert!(dominant.distance_to(&oracle) > 1e-3);
     }
 
@@ -771,28 +800,33 @@ mod tests {
     fn accepts_float32_ppm_scale_and_stays_put_through_rotation() {
         let mut skin = skin();
         let f = |x: f64| f64::from(x as f32);
-        let root = skin.scene.node_mut(skin.root);
-        root.scale
-            .set(f(1.0), f(0.9999998807907104), f(1.0000059604644775));
-        root.quaternion = Quat::new(
+        let root = skin.root;
+        write3(
+            &mut skin.graph.scale,
+            root,
+            &Vec3::new(f(1.0), f(0.9999998807907104), f(1.0000059604644775)),
+        );
+        let q = Quat::new(
             f(-0.5785567164421082),
             f(0.5854491591453552),
             f(-0.5619037747383118),
             f(-0.08237501978874207),
         );
-        let length = root.quaternion.length();
+        set_quaternion(&mut skin.graph, root, &q);
+        let length = q.length();
         assert!((length - 1.0).abs() > 4e-8 && (length - 1.0).abs() < 5e-8);
         let mut anchor = skin.anchor().expect("valid");
         let mut rotated = Quat::default();
         rotated.set_from_axis_angle(&Vec3::new(1.0, 0.0, 0.0), std::f64::consts::PI / 100.0);
-        skin.scene.node_mut(skin.root).quaternion = Quat::new(
+        let scaled = Quat::new(
             rotated.x * length,
             rotated.y * length,
             rotated.z * length,
             rotated.w * length,
         );
+        set_quaternion(&mut skin.graph, root, &scaled);
         let before = skin.source_matrices();
-        anchor.place(&mut skin.scene, None).expect("placed");
+        skin.place(&mut anchor).expect("placed");
         assert_eq!(skin.source_matrices(), before);
         let oracle = skin.oracle();
         assert!(anchor.root_world.distance_to(&oracle) < 2e-6);
@@ -801,11 +835,10 @@ mod tests {
     #[test]
     fn rejects_shear_and_changed_scale() {
         let mut sheared = skin();
-        let link = sheared.scene.node_mut(sheared.link);
-        link.update_matrix();
-        link.matrix.elements[4] = 2e-6;
-        link.matrix_auto_update = false;
         let link = sheared.link;
+        sheared.graph.update_matrix(link);
+        sheared.graph.matrix[16 * link as usize + 4] = 2e-6;
+        sheared.clear_flag(link, flag::MATRIX_AUTO_UPDATE);
         assert_eq!(
             sheared.anchor().err(),
             Some(failure(StatusKind::AnchorShear, link))
@@ -826,59 +859,39 @@ mod tests {
             let mut s = skin();
             let mut anchor = s.anchor().expect("valid");
             let node = node(&s);
-            change(&mut s.scene.node_mut(node).scale);
+            s.change_scale(node, change);
             assert_eq!(
-                anchor.place(&mut s.scene, None).err(),
+                s.place(&mut anchor).err(),
                 Some(failure(StatusKind::AnchorScaleChanged, node))
             );
         }
     }
 
     #[test]
-    fn rejects_unsupported_transforms_and_moved_nodes() {
+    fn rejects_unsupported_transforms_and_manual_world_matrices() {
         let mut s = skin();
-        s.scene.node_mut(s.avatar).scale.set(0.01, 0.02, 0.01);
+        let avatar = s.avatar;
+        write3(&mut s.graph.scale, avatar, &Vec3::new(0.01, 0.02, 0.01));
         assert_eq!(
             s.anchor().err(),
-            Some(failure(StatusKind::AnchorNonuniform, s.avatar))
+            Some(failure(StatusKind::AnchorNonuniform, avatar))
         );
-        s.scene.node_mut(s.avatar).scale.set(0.01, 0.01, 0.01);
-        s.scene.node_mut(s.avatar).matrix_world_auto_update = false;
+        write3(&mut s.graph.scale, avatar, &Vec3::new(0.01, 0.01, 0.01));
+        s.clear_flag(avatar, flag::MATRIX_WORLD_AUTO_UPDATE);
         assert_eq!(
             s.anchor().err(),
-            Some(failure(StatusKind::AnchorWorldOverride, s.avatar))
+            Some(failure(StatusKind::AnchorWorldOverride, avatar))
         );
 
-        let cases: [NodeCase; 4] = [
-            (
-                |s| s.sources[0],
-                |n| n.matrix_world_auto_update = false,
-                StatusKind::AnchorWorldOverride,
-            ),
-            (
-                |s| s.sources[0],
-                |n| n.reparented = true,
-                StatusKind::AnchorPathReparented,
-            ),
-            (
-                |s| s.root,
-                |n| n.reparented = true,
-                StatusKind::AnchorRootReparented,
-            ),
-            (
-                |s| s.root,
-                |n| n.matrix_world_auto_update = false,
-                StatusKind::AnchorWorldOverride,
-            ),
-        ];
-        for (node, change, kind) in cases {
+        let picks: [Pick; 2] = [|s| s.sources[0], |s| s.root];
+        for node in picks {
             let mut s = skin();
             let mut anchor = s.anchor().expect("valid");
             let node = node(&s);
-            change(s.scene.node_mut(node));
+            s.clear_flag(node, flag::MATRIX_WORLD_AUTO_UPDATE);
             assert_eq!(
-                anchor.place(&mut s.scene, None).err(),
-                Some(failure(kind, node))
+                s.place(&mut anchor).err(),
+                Some(failure(StatusKind::AnchorWorldOverride, node))
             );
         }
     }

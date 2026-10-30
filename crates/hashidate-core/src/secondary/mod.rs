@@ -1,13 +1,15 @@
 //! Secondary motion: spring-bone simulation.
 //!
 //! A port of `src/engine/secondary/spring.ts` and the numeric half of `skin-point-anchor.ts`,
-//! operation for operation, over a node table the caller mirrors from three. Names, descriptor
-//! defaults and message text stay with the caller; failures come back as [`Status`] codes.
+//! operation for operation, reading and writing the avatar's scene graph in place. Names,
+//! descriptor defaults and message text stay with the caller; failures come back as [`Status`]
+//! codes.
 
 pub mod anchor;
 pub mod build;
 pub mod collider;
 pub mod spring;
+mod tree;
 
 pub use build::GroupSpec;
 pub use spring::{DriveOutcome, Group, Joint, Spring};
@@ -48,16 +50,8 @@ pub enum StatusKind {
     AnchorModeChanged = 5,
     /// `anchor:<node> scale changed after resolution`
     AnchorScaleChanged = 6,
-    /// `anchor path was reparented at <node>`
-    AnchorPathReparented = 7,
-    /// `anchor path root was reparented at <node>`
-    AnchorPathRootReparented = 8,
     /// `anchor:<node> has a manual matrixWorld override`
     AnchorWorldOverride = 9,
-    /// `anchor root was reparented at <node>`
-    AnchorRootReparented = 10,
-    /// `anchor subtree was reparented at <node>`
-    AnchorSubtreeReparented = 11,
     /// `anchor parent world is singular`
     AnchorParentSingular = 12,
     /// `root ancestor is simulated by another group: <node>`
@@ -74,9 +68,10 @@ pub struct Status {
     pub kind: StatusKind,
     /// The group's registration key.
     pub group: u32,
-    /// The node the failure names, or `scene::NONE`.
+    /// The node the failure names, or `NO_NODE`. Past the graph's table it is one of the root's
+    /// ancestors, the root's parent first.
     pub node: u32,
-    /// Another group's registration key, or `scene::NONE`.
+    /// Another group's registration key, or `NO_NODE`.
     pub other: u32,
 }
 
@@ -85,12 +80,144 @@ pub(crate) mod testkit {
     //! Synthetic rigs for the in-crate tests.
 
     use super::{GroupSpec, Spring};
-    use crate::math::{Quat, Vec3};
-    use crate::scene::Node;
+    use crate::math::{Mat4, Quat, Vec3};
+    use crate::scene::graph::{
+        Graph, NO_NODE, R_MATRIX, R_MATRIX_WORLD, R_POSITION, R_QUATERNION, R_SCALE, RECORD, Shape,
+        flag,
+    };
 
-    /// A humanoid-ish armature laid out in metres under an armature scale.
+    /// A synthetic node: three's defaults but for its parent, class and transform.
+    #[derive(Clone, Debug)]
+    pub struct Node {
+        pub parent: u32,
+        pub is_bone: bool,
+        pub position: Vec3,
+        pub quaternion: Quat,
+        pub scale: Vec3,
+    }
+
+    impl Node {
+        pub fn new(parent: u32, is_bone: bool, position: [f64; 3]) -> Self {
+            Self {
+                parent,
+                is_bone,
+                position: Vec3::new(position[0], position[1], position[2]),
+                quaternion: Quat::default(),
+                scale: Vec3::new(1.0, 1.0, 1.0),
+            }
+        }
+    }
+
+    /// Each node's position in `traverse` order, children in the order they were given. Node 0
+    /// is the root; every other node's parent comes before it.
+    fn traverse_order(nodes: &[Node]) -> Vec<u32> {
+        let mut children = vec![Vec::new(); nodes.len()];
+        for (i, n) in nodes.iter().enumerate().skip(1) {
+            children[n.parent as usize].push(i);
+        }
+        let mut index = vec![NO_NODE; nodes.len()];
+        let mut next = 0;
+        let mut stack = vec![0];
+        while let Some(i) = stack.pop() {
+            index[i] = next;
+            next += 1;
+            stack.extend(children[i].iter().rev());
+        }
+        index
+    }
+
+    /// The nodes as a built graph, with identity matrices and every node's graph index.
+    pub fn graph(nodes: &[Node]) -> (Graph, Vec<u32>) {
+        let index = traverse_order(nodes);
+        let mut order = vec![0; nodes.len()];
+        for (i, &k) in index.iter().enumerate() {
+            order[k as usize] = i;
+        }
+        let mut g = Graph::new(Shape {
+            nodes: nodes.len(),
+            ..Shape::default()
+        });
+        let identity = Mat4::default().elements;
+        for i in order {
+            let n = &nodes[i];
+            let (p, q, s) = (&n.position, &n.quaternion, &n.scale);
+            let mut r = [0.0; RECORD];
+            r[R_POSITION..R_POSITION + 3].copy_from_slice(&[p.x, p.y, p.z]);
+            r[R_QUATERNION..R_QUATERNION + 4].copy_from_slice(&[q.x, q.y, q.z, q.w]);
+            r[R_SCALE..R_SCALE + 3].copy_from_slice(&[s.x, s.y, s.z]);
+            r[R_MATRIX..R_MATRIX + 16].copy_from_slice(&identity);
+            r[R_MATRIX_WORLD..R_MATRIX_WORLD + 16].copy_from_slice(&identity);
+            let flags = flag::MATRIX_AUTO_UPDATE
+                | flag::MATRIX_WORLD_AUTO_UPDATE
+                | if n.is_bone { flag::BONE } else { 0 };
+            let parent = if n.parent == NO_NODE {
+                NO_NODE
+            } else {
+                index[n.parent as usize]
+            };
+            g.push_node(parent, flags, &r);
+        }
+        g.build();
+        (g, index)
+    }
+
+    /// `root.updateMatrixWorld(true)`, as the caller runs it before each update.
+    pub fn world_update(graph: &mut Graph) {
+        graph.update_matrix_world(0, true);
+    }
+
+    pub fn quaternion(graph: &Graph, i: u32) -> Quat {
+        let q = &graph.quaternion[4 * i as usize..];
+        Quat::new(q[0], q[1], q[2], q[3])
+    }
+
+    pub fn set_quaternion(graph: &mut Graph, i: u32, q: &Quat) {
+        graph.quaternion[4 * i as usize..4 * i as usize + 4].copy_from_slice(&[q.x, q.y, q.z, q.w]);
+    }
+
+    fn mat4(s: &[f64], i: u32) -> Mat4 {
+        let mut elements = [0.0; 16];
+        elements.copy_from_slice(&s[16 * i as usize..16 * i as usize + 16]);
+        Mat4::from_elements(elements)
+    }
+
+    pub fn matrix(graph: &Graph, i: u32) -> Mat4 {
+        mat4(&graph.matrix, i)
+    }
+
+    pub fn matrix_world(graph: &Graph, i: u32) -> Mat4 {
+        mat4(&graph.matrix_world, i)
+    }
+
+    pub fn needs_update(graph: &Graph, i: u32) -> bool {
+        graph.flags[i as usize] & flag::MATRIX_WORLD_NEEDS_UPDATE != 0
+    }
+
+    /// Sets a node's rotation from XYZ Euler angles.
+    pub fn rotate(graph: &mut Graph, node: u32, euler: [f64; 3]) {
+        set_quaternion(graph, node, &euler_xyz(euler));
+    }
+
+    /// Every node's rotation and world matrix and every tail, as bits.
+    pub fn state(graph: &Graph, spring: &Spring) -> Vec<u64> {
+        let mut out = Vec::new();
+        for i in 0..graph.len() as u32 {
+            let q = quaternion(graph, i);
+            out.extend([q.x, q.y, q.z, q.w].map(f64::to_bits));
+            out.extend(matrix_world(graph, i).elements.map(f64::to_bits));
+        }
+        for g in spring.groups() {
+            for j in &g.joints {
+                out.extend([j.cur.x, j.cur.y, j.cur.z].map(f64::to_bits));
+            }
+        }
+        out
+    }
+
+    /// A humanoid-ish armature laid out in metres under an armature scale. Nodes are numbered
+    /// as they are added; `at` gives a node's graph index once every node is in.
     pub struct Rig {
-        pub nodes: Vec<Node>,
+        nodes: Vec<Node>,
         names: Vec<(String, u32)>,
         scale: f64,
     }
@@ -98,7 +225,7 @@ pub(crate) mod testkit {
     impl Rig {
         /// An empty rig whose root carries `scale`.
         pub fn new(scale: f64) -> Self {
-            let mut root = Node::default();
+            let mut root = Node::new(NO_NODE, false, [0.0; 3]);
             root.scale.set(scale, scale, scale);
             Self {
                 nodes: vec![root],
@@ -129,26 +256,29 @@ pub(crate) mod testkit {
             rig
         }
 
-        /// Adds a bone under `parent` at an offset in metres.
+        /// Adds a bone under `parent` at an offset in metres; returns its id.
         pub fn add(&mut self, parent: u32, offset: [f64; 3]) -> u32 {
-            let mut node = Node {
-                parent,
-                is_bone: true,
-                ..Node::default()
-            };
             let s = self.scale;
-            node.position
-                .set(offset[0] / s, offset[1] / s, offset[2] / s);
-            self.nodes.push(node);
+            self.nodes.push(Node::new(
+                parent,
+                true,
+                [offset[0] / s, offset[1] / s, offset[2] / s],
+            ));
             (self.nodes.len() - 1) as u32
         }
 
         pub fn named(&mut self, name: &str, parent: u32, offset: [f64; 3]) -> u32 {
-            let index = self.add(parent, offset);
-            self.names.push((name.into(), index));
-            index
+            let id = self.add(parent, offset);
+            self.names.push((name.into(), id));
+            id
         }
 
+        /// The graph index of node `id`.
+        pub fn at(&self, id: u32) -> u32 {
+            traverse_order(&self.nodes)[id as usize]
+        }
+
+        /// The id of a named bone.
         pub fn bone(&self, name: &str) -> u32 {
             self.names
                 .iter()
@@ -157,42 +287,17 @@ pub(crate) mod testkit {
                 .1
         }
 
-        /// A solver over the rig, every node registered and posed.
-        pub fn spring(&self) -> Spring {
-            let mut spring = Spring::new(0);
-            for node in &self.nodes {
-                spring.add_node(node.clone());
-            }
-            self.world_update(&mut spring);
-            spring
+        /// The graph index of a named bone.
+        pub fn node(&self, name: &str) -> u32 {
+            self.at(self.bone(name))
         }
 
-        /// `root.updateMatrixWorld(true)` over the whole rig.
-        pub fn world_update(&self, spring: &mut Spring) {
-            let all: Vec<u32> = (0..self.nodes.len() as u32).collect();
-            spring.scene_mut().update_matrix_world_forced(&all);
-        }
-
-        /// Sets a node's rotation from XYZ Euler angles.
-        pub fn rotate(&self, spring: &mut Spring, node: u32, euler: [f64; 3]) {
-            spring.scene_mut().node_mut(node).quaternion = euler_xyz(euler);
-        }
-
-        /// Every node's rotation and world matrix and every tail, as bits.
-        pub fn state(&self, spring: &Spring) -> Vec<u64> {
-            let mut out = Vec::new();
-            for i in 0..self.nodes.len() as u32 {
-                let n = spring.scene().node(i);
-                let q = n.quaternion;
-                out.extend([q.x, q.y, q.z, q.w].map(f64::to_bits));
-                out.extend(n.matrix_world.elements.map(f64::to_bits));
-            }
-            for g in spring.groups() {
-                for j in &g.joints {
-                    out.extend([j.cur.x, j.cur.y, j.cur.z].map(f64::to_bits));
-                }
-            }
-            out
+        /// The rig's graph after a world update, and a solver over it.
+        pub fn spring(&self) -> (Graph, Spring) {
+            let (mut graph, _) = graph(&self.nodes);
+            world_update(&mut graph);
+            let spring = Spring::new(&graph);
+            (graph, spring)
         }
     }
 

@@ -1,16 +1,17 @@
 //! Construction: the builder calls, the chain walk, the structural lists a step walks, and
 //! calibration.
 //!
-//! The caller registers every node in `traverse` order (the root's ancestors first, top down),
-//! then colliders, then each group between `begin_group` and `end_group`, then calls `build`.
+//! The caller creates the solver over a built scene graph, registers colliders, then each group
+//! between `begin_group` and `end_group`, then calls `build`. Nodes are the graph's indices.
 
 use super::anchor::SkinPointAnchor;
 use super::collider::{Collider, cluster_colliders};
 use super::spring::{DriveOutcome, Group, Hung, Input, Joint, Spring};
+use super::tree::Tree;
 use super::{Status, StatusKind};
 use crate::math::f::{js_max, js_min};
 use crate::math::{Quat, Vec3};
-use crate::scene::{NONE, Node, Scene};
+use crate::scene::graph::{Graph, NO_NODE};
 
 /// A group's figures, with the descriptor defaults already applied by the caller.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -47,7 +48,7 @@ type RunLink = (u32, Vec<u32>);
 // average of its children — and each branch continues as a run of its own. Without this a forked
 // chain would simulate down one arbitrary side and leave the rest rigid, which is exactly what a
 // skirt hem is.
-fn collect_runs(scene: &Scene, root: u32, out: &mut Vec<Vec<RunLink>>) {
+fn collect_runs(scene: &Tree, root: u32, out: &mut Vec<Vec<RunLink>>) {
     let mut run = Vec::new();
     let mut bone = root;
     loop {
@@ -72,15 +73,15 @@ fn collect_runs(scene: &Scene, root: u32, out: &mut Vec<Vec<RunLink>>) {
 
 impl Joint {
     // spring.ts Joint.constructor
-    fn new(scene: &mut Scene, bone: u32, parent: u32, kids: &[u32]) -> Self {
-        let rest = scene.node(bone).quaternion;
+    fn new(scene: &mut Tree, bone: u32, parent: u32, kids: &[u32]) -> Self {
+        let rest = scene.quaternion(bone);
 
         // Where the chain continues, in this bone's own coordinates. A branch point
         // aims at the average of its children, which is the only answer that does
         // not privilege one branch over another.
         let mut tail = Vec3::default();
         for &k in kids {
-            tail.add(&scene.node(k).position);
+            tail.add(&scene.position(k));
         }
         tail.divide_scalar(kids.len() as f64);
         let mut axis = tail;
@@ -90,7 +91,7 @@ impl Joint {
         // authored in centimetres under a 0.01 armature scale — see the note in
         // `profile/bones.ts`. The solver works entirely in world space, so this must too.
         scene.update_world_matrix_parents(bone);
-        let world = scene.node(bone).matrix_world;
+        let world = scene.matrix_world(bone);
         let mut p = tail;
         let mut bp = Vec3::default();
         let length = p
@@ -138,7 +139,7 @@ impl Joint {
 }
 
 /// The deepest node at or above `node` with no simulated node at or above it.
-fn outside(scene: &Scene, simulated: &[bool], node: Option<u32>) -> Option<u32> {
+fn outside(scene: &Tree, simulated: &[bool], node: Option<u32>) -> Option<u32> {
     let mut found = None;
     let mut n = node;
     while let Some(i) = n {
@@ -152,7 +153,7 @@ fn outside(scene: &Scene, simulated: &[bool], node: Option<u32>) -> Option<u32> 
     found
 }
 
-fn depth_of(scene: &Scene, node: u32) -> u32 {
+fn depth_of(scene: &Tree, node: u32) -> u32 {
     let mut d = 0;
     let mut n = scene.parent(node);
     while let Some(i) = n {
@@ -165,12 +166,10 @@ fn depth_of(scene: &Scene, node: u32) -> u32 {
 impl Spring {
     // spring.ts Spring.constructor (the numeric part)
     //
-    // An empty solver over an avatar whose root will be node `root`; the nodes before it are its
-    // ancestors.
-    pub fn new(root: u32) -> Self {
+    // An empty solver over an avatar whose root is node 0 of the scene graph it is given.
+    pub fn new(graph: &Graph) -> Self {
         Self {
-            scene: Scene::default(),
-            root,
+            nodes: graph.len() as u32,
             colliders: Vec::new(),
             groups: Vec::new(),
             enabled: true,
@@ -193,7 +192,6 @@ impl Spring {
             fixed_colliders: Vec::new(),
             far: Default::default(),
             statuses: Vec::new(),
-            read_nodes: Vec::new(),
             forced: Vec::new(),
             next_key: 0,
             draft: None,
@@ -201,11 +199,6 @@ impl Spring {
             #[cfg(test)]
             after_place: None,
         }
-    }
-
-    /// Registers the next node in `traverse` order.
-    pub fn add_node(&mut self, node: Node) -> u32 {
-        self.scene.push(node)
     }
 
     // spring.ts Collider.constructor
@@ -219,10 +212,7 @@ impl Spring {
         radius: f64,
         inside: bool,
     ) -> usize {
-        assert!(
-            (bone as usize) < self.scene.len(),
-            "collider bone {bone} is not a node"
-        );
+        assert!(bone < self.nodes, "collider bone {bone} is not a node");
         self.colliders
             .push(Collider::new(bone, offset, tail, radius, inside));
         self.colliders.len() - 1
@@ -239,27 +229,18 @@ impl Spring {
     }
 
     pub fn add_group_root(&mut self, node: u32) {
-        assert!(
-            (node as usize) < self.scene.len(),
-            "root {node} is not a node"
-        );
+        assert!(node < self.nodes, "root {node} is not a node");
         self.draft_mut().roots.push(node);
     }
 
     /// Attaches the open group's single root to a skinned point.
     pub fn set_group_anchor(&mut self, root: u32) {
-        assert!(
-            (root as usize) < self.scene.len(),
-            "anchor root {root} is not a node"
-        );
+        assert!(root < self.nodes, "anchor root {root} is not a node");
         self.draft_mut().anchor = Some(root);
     }
 
     pub fn add_anchor_influence(&mut self, bone: u32, weight: f64, position: Vec3) {
-        assert!(
-            (bone as usize) < self.scene.len(),
-            "influence {bone} is not a node"
-        );
+        assert!(bone < self.nodes, "influence {bone} is not a node");
         self.draft_mut().influences.push((bone, weight, position));
     }
 
@@ -269,16 +250,17 @@ impl Spring {
 
     /// Builds the open group's joints and returns how many there are. A group with none is
     /// dropped, and the caller words why.
-    pub fn end_group(&mut self) -> usize {
+    pub fn end_group(&mut self, graph: &mut Graph) -> usize {
+        let scene = &mut Tree::new(graph);
         let draft = self.draft.take().expect("no group is open");
         let anchor = draft.anchor.map(|root| {
-            SkinPointAnchor::new(&self.scene, root, &draft.influences)
+            SkinPointAnchor::new(scene, root, &draft.influences)
                 .expect("the anchor's contract was checked when it was resolved")
         });
 
         let mut runs = Vec::new();
         for &r in &draft.roots {
-            collect_runs(&self.scene, r, &mut runs);
+            collect_runs(scene, r, &mut runs);
         }
         let mut joints = Vec::new();
         for run in runs {
@@ -287,10 +269,10 @@ impl Spring {
                 // walked down from a bone found by traversing the avatar root, so the
                 // solver dereferences the parent per step without a check. This is
                 // the one place that is established.
-                let Some(parent) = self.scene.parent(bone) else {
+                let Some(parent) = scene.parent(bone) else {
                     continue;
                 };
-                let mut j = Joint::new(&mut self.scene, bone, parent, &kids);
+                let mut j = Joint::new(scene, bone, parent, &kids);
                 // The joints an external drive is allowed to reach. Only the tops of
                 // the chains: a drive is a pose for the base of an appendage, and the
                 // rest of it is meant to trail behind rather than be posed too.
@@ -342,25 +324,25 @@ impl Spring {
 
     /// Finishes construction. Groups an anchor check removes, and anchors that fail their first
     /// placement, are reported in `statuses`.
-    pub fn build(&mut self) {
+    pub fn build(&mut self, graph: &mut Graph) {
         assert!(self.draft.is_none(), "a group is still open");
+        let scene = &mut Tree::new(graph);
         self.statuses.clear();
         self.statuses.reserve(self.max_statuses());
-        self.validate_anchors();
-        self.collect_inputs();
-        self.select_nodes();
+        self.validate_anchors(scene);
+        self.collect_inputs(scene);
+        self.select_nodes(scene);
         let widest = self.groups.iter().map(|g| g.colliders.len()).max();
         self.far.marks.resize(widest.unwrap_or(0), 0);
-        self.calibrate();
+        self.calibrate(scene);
         self.reset();
     }
 
     // spring.ts Spring.#validateAnchors
-    fn validate_anchors(&mut self) {
+    fn validate_anchors(&mut self, scene: &Tree) {
         if !self.groups.iter().any(|g| g.anchor.is_some()) {
             return;
         }
-        let scene = &self.scene;
         let mut owners: Vec<Vec<usize>> = vec![Vec::new(); scene.len()];
         for (k, group) in self.groups.iter().enumerate() {
             for joint in &group.joints {
@@ -386,7 +368,7 @@ impl Spring {
             let mut current = Some(anchor.root);
             while let Some(c) = current {
                 if has_other_owner(c, &removed) {
-                    problem = Some((StatusKind::AncestorSimulated, c, NONE));
+                    problem = Some((StatusKind::AncestorSimulated, c, NO_NODE));
                     break;
                 }
                 current = scene.parent(c);
@@ -395,7 +377,7 @@ impl Spring {
                 problem = std::iter::once(anchor.root)
                     .chain(anchor.subtree_nodes())
                     .find(|&node| has_other_owner(node, &removed))
-                    .map(|node| (StatusKind::SubtreeSimulated, node, NONE));
+                    .map(|node| (StatusKind::SubtreeSimulated, node, NO_NODE));
             }
             if problem.is_none() {
                 'influences: for influence in &anchor.influences {
@@ -437,19 +419,18 @@ impl Spring {
     }
 
     // spring.ts Spring.#collectInputs
-    fn collect_inputs(&mut self) {
-        let n = self.scene.len();
+    fn collect_inputs(&mut self, scene: &Tree) {
+        let n = scene.len();
         let mut simulated = vec![false; n];
         for g in &self.groups {
             for j in &g.joints {
                 simulated[j.bone as usize] = true;
             }
         }
-        self.input_of = vec![NONE; n];
+        self.input_of = vec![NO_NODE; n];
         let mut depth: Vec<Option<u32>> = vec![None; n];
 
         let Self {
-            scene,
             groups,
             colliders,
             inputs,
@@ -459,10 +440,9 @@ impl Spring {
             fixed_colliders,
             ..
         } = self;
-        let scene: &Scene = scene;
         let mut add = |node: u32, inputs: &mut Vec<Input>| -> usize {
             let known = input_of[node as usize];
-            if known != NONE {
+            if known != NO_NODE {
                 return known as usize;
             }
             inputs.push(Input::new(node));
@@ -579,15 +559,14 @@ impl Spring {
         }
         rebase.extend(bridges.iter().copied());
         rebase.sort_by_key(depth_key);
-        self.collect_step_rebase();
+        self.collect_step_rebase(n);
     }
 
     // spring.ts Spring.#collectStepRebase
     //
     // Walk a step in `step`'s order and keep what is read before it is written. An attached group
     // is taken to write nothing and to read as if running, as either may change at runtime.
-    fn collect_step_rebase(&mut self) {
-        let n = self.scene.len();
+    fn collect_step_rebase(&mut self, n: usize) {
         let mut parent_of: Vec<Option<u32>> = vec![None; n];
         for h in &self.rebase {
             parent_of[h.node as usize] = Some(h.parent);
@@ -637,9 +616,9 @@ impl Spring {
 
     /// Picks the nodes an update reads: joints and what they hang from, bridges, collider bones,
     /// inputs, and each anchor's paths and subtree, closed over ancestors so a world update over
-    /// them forms every matrix from a parent formed in the same pass.
-    fn select_nodes(&mut self) {
-        let scene = &self.scene;
+    /// them forms every matrix from a parent formed in the same pass. The table's share is what
+    /// the solver's own world updates reach.
+    fn select_nodes(&mut self, scene: &Tree) {
         let mut marked = vec![false; scene.len()];
         let mut mark = |node: u32| marked[node as usize] = true;
         for g in &self.groups {
@@ -677,25 +656,13 @@ impl Spring {
                 p = scene.parent(q);
             }
         }
-        self.read_nodes = (0..scene.len() as u32)
-            .filter(|&i| marked[i as usize])
-            .collect();
-        let root = self.root;
-        self.forced = self
-            .read_nodes
-            .iter()
-            .copied()
-            .filter(|&i| i >= root)
-            .collect();
+        self.forced = (0..scene.nodes()).filter(|&i| marked[i as usize]).collect();
     }
 
     /// Clearance for joint `j` of group `g` against each of the group's colliders as placed.
-    fn measure(&mut self, k: usize, first: bool) {
+    fn measure(&mut self, scene: &Tree, k: usize, first: bool) {
         let Self {
-            scene,
-            groups,
-            colliders,
-            ..
+            groups, colliders, ..
         } = self;
         let g = &mut groups[k];
         let radius = g.radius;
@@ -755,12 +722,11 @@ impl Spring {
     // Dropping such colliders instead would be simpler and gives up more than it needs to: a hair
     // strand that rests against the skull is not bad data, and it still wants the skull there
     // when the head turns.
-    fn calibrate(&mut self) {
-        self.scene.update_matrix_world_forced(&self.forced);
+    fn calibrate(&mut self, scene: &mut Tree) {
+        scene.update_matrix_world_forced(&self.forced);
         for k in 0..self.groups.len() {
-            self.place(k, false);
-            let Self { scene, groups, .. } = self;
-            for j in &mut groups[k].joints {
+            self.place(scene, k, false);
+            for j in &mut self.groups[k].joints {
                 j.seed(scene);
             }
         }
@@ -769,10 +735,7 @@ impl Spring {
                 continue;
             }
             let Self {
-                scene,
-                groups,
-                colliders,
-                ..
+                groups, colliders, ..
             } = self;
             let g = &mut groups[k];
             for &c in &g.colliders {
@@ -785,7 +748,7 @@ impl Spring {
                 j.spans = vec![0.0; n];
             }
             g.clusters = Some(clusters);
-            self.measure(k, true);
+            self.measure(scene, k, true);
             let g = &mut self.groups[k];
             let clusters = g.clusters.as_deref().unwrap_or(&[]);
             for j in &mut g.joints {
@@ -820,7 +783,8 @@ impl Spring {
     //
     // Sampled rather than solved. The drive is two rotations at stated maxima, so the corners of
     // that box bound everything between them closely enough, and this runs once at load.
-    pub fn calibrate_drive(&mut self, group: usize) -> DriveOutcome {
+    pub fn calibrate_drive(&mut self, graph: &mut Graph, group: usize) -> DriveOutcome {
+        let scene = &mut Tree::new(graph);
         let poses = std::mem::take(&mut self.poses);
         let g = &self.groups[group];
         if g.anchor.is_some() {
@@ -834,12 +798,9 @@ impl Spring {
             for j in self.groups[group].joints.iter_mut().filter(|j| j.is_root) {
                 j.drive.copy(q);
             }
-            self.scene.update_matrix_world_forced(&self.forced);
+            scene.update_matrix_world_forced(&self.forced);
             let Self {
-                scene,
-                groups,
-                colliders,
-                ..
+                groups, colliders, ..
             } = self;
             let g = &mut groups[group];
             for j in &mut g.joints {
@@ -848,7 +809,7 @@ impl Spring {
             for &c in &g.colliders {
                 colliders[c].place_on_bone(scene);
             }
-            self.measure(group, false);
+            self.measure(scene, group, false);
         }
 
         let g = &mut self.groups[group];
@@ -859,9 +820,8 @@ impl Spring {
         for j in g.joints.iter_mut().filter(|j| j.is_root) {
             j.drive.identity();
         }
-        self.scene.update_matrix_world_forced(&self.forced);
-        let Self { scene, groups, .. } = self;
-        for g in groups.iter_mut() {
+        scene.update_matrix_world_forced(&self.forced);
+        for g in &mut self.groups {
             for j in &mut g.joints {
                 j.seed(scene);
             }

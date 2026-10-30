@@ -1,17 +1,11 @@
 import * as THREE from 'three';
-import { core, views } from '../../core';
+import { allocating, core, views } from '../../core';
 import {
   COLLIDER_OUT,
   CONTROL_HEAD,
   DIAGNOSTICS,
   DRIVE_ANCHORED,
   DRIVE_DONE,
-  FLAG_BONE,
-  FLAG_MATRIX_AUTO_UPDATE,
-  FLAG_MATRIX_WORLD_AUTO_UPDATE,
-  FLAG_MATRIX_WORLD_NEEDS_UPDATE,
-  FLAG_PIVOT,
-  FLAG_REPARENTED,
   JOINT_OUT,
   LAYOUT,
   LAYOUT_COLLIDER_STATES,
@@ -21,37 +15,22 @@ import {
   LAYOUT_GROUP_COUNT,
   LAYOUT_GROUP_STATES,
   LAYOUT_JOINT_STATES,
-  LAYOUT_READ_COUNT,
-  LAYOUT_READ_FLAGS,
-  LAYOUT_READ_NODES,
-  LAYOUT_READ_RECORDS,
   LAYOUT_STATUSES,
-  LAYOUT_WRITE_COUNT,
-  LAYOUT_WRITE_FLAGS,
-  LAYOUT_WRITE_NODES,
-  LAYOUT_WRITE_RECORDS,
   NO_NODE,
-  NODE_IN,
-  NODE_OUT,
   STATUS,
   STATUS_ANCESTOR_SIMULATED,
   STATUS_ANCHOR_MODE_CHANGED,
   STATUS_ANCHOR_NONUNIFORM,
   STATUS_ANCHOR_NOT_AFFINE,
   STATUS_ANCHOR_PARENT_SINGULAR,
-  STATUS_ANCHOR_PATH_REPARENTED,
-  STATUS_ANCHOR_PATH_ROOT_REPARENTED,
-  STATUS_ANCHOR_ROOT_REPARENTED,
   STATUS_ANCHOR_SCALE_CHANGED,
   STATUS_ANCHOR_SHEAR,
   STATUS_ANCHOR_SINGULAR,
-  STATUS_ANCHOR_SUBTREE_REPARENTED,
   STATUS_ANCHOR_WORLD_OVERRIDE,
   STATUS_SOURCE_DEPENDS,
   STATUS_SUBTREE_SIMULATED,
-  WRITE_POSITION,
-  WRITE_QUATERNION,
 } from '../../core/abi/spring';
+import { SceneGraph } from '../../core/scene';
 import { type Localized, same } from '../../i18n/locale';
 import { normaliseBoneName } from '../profile/candidates';
 import type {
@@ -125,13 +104,13 @@ import { SkinPointAnchor, type SkinPointAnchorDiagnostics } from './skin-point-a
  *
  * ## The core
  *
- * The solver runs in the wasm core. This side keeps what is about names — bone lookup, descriptor
- * defaults, the anchor spec's checks and every `missing` message — and hands the core numbers
- * only: one call per node of the avatar (its ancestors first, then `traverse` order), its
- * colliders, and each group's roots and anchor. The core picks which nodes a frame reads and
- * writes; per frame this side copies the read nodes in after its own world update, runs one
- * `hd_spring_update`, and copies the written nodes back. The layouts are tabled in
- * `src/core/abi/spring.ts`. `dispose` frees the core's half.
+ * The solver runs in the wasm core, on the avatar's scene graph (`SceneGraph.of(profile.root)`),
+ * reading and writing its nodes in place. This side keeps what is about names — bone lookup,
+ * descriptor defaults, the anchor spec's checks and every `missing` message — and hands the core
+ * numbers only: graph indices of the colliders' bones and of each group's roots and anchor. Per
+ * frame it runs its own world update, copies the switches, scales and drives in, runs one
+ * `hd_spring_update`, and reads the joints, groups, diagnostics and colliders back. The layouts
+ * are tabled in `src/core/abi/spring.ts`. `dispose` frees the core's half.
  */
 
 const GROUP_DEFAULTS = {
@@ -305,16 +284,8 @@ function statusText(kind: number, node: string, other: string): string {
       return `anchor:${node} transform mode changed after resolution`;
     case STATUS_ANCHOR_SCALE_CHANGED:
       return `anchor:${node} scale changed after resolution`;
-    case STATUS_ANCHOR_PATH_REPARENTED:
-      return `anchor path was reparented at ${node}`;
-    case STATUS_ANCHOR_PATH_ROOT_REPARENTED:
-      return `anchor path root was reparented at ${node}`;
     case STATUS_ANCHOR_WORLD_OVERRIDE:
       return `anchor:${node} has a manual matrixWorld override`;
-    case STATUS_ANCHOR_ROOT_REPARENTED:
-      return `anchor root was reparented at ${node}`;
-    case STATUS_ANCHOR_SUBTREE_REPARENTED:
-      return `anchor subtree was reparented at ${node}`;
     case STATUS_ANCHOR_PARENT_SINGULAR:
       return 'anchor parent world is singular';
     case STATUS_ANCESTOR_SIMULATED:
@@ -345,9 +316,9 @@ export class Spring {
   gravityScale = 1;
 
   #handle = 0;
-  /** Every registered node by index, and the parent it was registered with. */
+  #graph: SceneGraph | null = null;
+  /** Every node of the graph by its index. */
   #nodes: THREE.Object3D[] = [];
-  #parents: (THREE.Object3D | null)[] = [];
   #layout = new Uint32Array(LAYOUT);
   #registered: Registered[] = [];
   #pool: Collider[] = [];
@@ -365,6 +336,7 @@ export class Spring {
     const spec = avatar?.sway;
     if (!spec?.groups?.length) return;
 
+    const graph = SceneGraph.of(this.root);
     const byName = new Map<string, THREE.Bone>();
     const bonesByName = new Map<string, THREE.Bone[]>();
     this.root.traverse((o) => {
@@ -378,26 +350,19 @@ export class Spring {
     this.root.updateMatrixWorld(true);
 
     const nodes: THREE.Object3D[] = [];
-    for (let n = this.root.parent; n; n = n.parent) nodes.unshift(n);
-    const rootIndex = nodes.length;
     this.root.traverse((o) => {
-      nodes.push(o);
+      const i = graph.indexOf(o);
+      if (i !== NO_NODE) nodes[i] = o;
     });
-    const indexOf = new Map<THREE.Object3D, number>();
-    for (const [i, n] of nodes.entries()) indexOf.set(n, i);
     const at = (node: THREE.Object3D): number => {
-      const i = indexOf.get(node);
-      if (i === undefined) throw new Error(`spring node outside the avatar: ${node.name}`);
+      const i = graph.indexOf(node);
+      if (i === NO_NODE) throw new Error(`spring node outside the avatar: ${node.name}`);
       return i;
     };
 
     const c = core();
-    const h = c.hd_spring_new(rootIndex);
+    const h = allocating(() => c.hd_spring_new(graph.handle));
     const scratch = f64At(c.hd_spring_scratch(h));
-    for (const node of nodes) {
-      writeNode(views().f64, scratch, node);
-      c.hd_spring_node(h, node.parent ? at(node.parent) : NO_NODE, nodeFlags(node, false));
-    }
 
     const colliders = new Map<string, Collider[]>();
     for (const [id, list] of Object.entries(spec.colliders ?? {})) {
@@ -412,18 +377,20 @@ export class Spring {
         const tail = cs.tail;
         const radius = cs.radius ?? 0.05;
         const inside = !!cs.inside;
-        const k = c.hd_spring_collider(
-          h,
-          at(bone),
-          offset[0],
-          offset[1],
-          offset[2],
-          tail ? 1 : 0,
-          tail ? tail[0] : 0,
-          tail ? tail[1] : 0,
-          tail ? tail[2] : 0,
-          radius,
-          inside ? 1 : 0,
+        const k = allocating(() =>
+          c.hd_spring_collider(
+            h,
+            at(bone),
+            offset[0],
+            offset[1],
+            offset[2],
+            tail ? 1 : 0,
+            tail ? tail[0] : 0,
+            tail ? tail[1] : 0,
+            tail ? tail[2] : 0,
+            radius,
+            inside ? 1 : 0,
+          ),
         );
         const collider = new Collider(this, k, bone, radius, inside);
         this.#pool.push(collider);
@@ -495,14 +462,17 @@ export class Spring {
         dir[2],
         def.radius,
       );
-      for (const r of roots) c.hd_spring_group_root(h, at(r));
+      for (const r of roots) allocating(() => c.hd_spring_group_root(h, at(r)));
       if (anchor) {
         c.hd_spring_group_anchor(h, at(anchor.root));
         for (const { bone, weight, position } of anchor.influences) {
-          c.hd_spring_anchor_influence(h, at(bone), weight, position.x, position.y, position.z);
+          allocating(() =>
+            c.hd_spring_anchor_influence(h, at(bone), weight, position.x, position.y, position.z),
+          );
         }
       }
-      if (!c.hd_spring_group_end(h)) {
+      // Measuring a joint climbs into the root's ancestors, so this and the build run mirrored.
+      if (!graph.run(() => allocating(() => c.hd_spring_group_end(h)))) {
         if (anchor) this.missing.push(`sway:${g.id} anchor: root has no simulated descendants`);
         continue;
       }
@@ -512,7 +482,7 @@ export class Spring {
         return list ?? [];
       });
       for (const collider of groupColliders) {
-        c.hd_spring_group_collider(h, this.#pool.indexOf(collider));
+        allocating(() => c.hd_spring_group_collider(h, this.#pool.indexOf(collider)));
       }
       this.#registered.push({
         id: g.id,
@@ -525,10 +495,10 @@ export class Spring {
       });
     }
 
-    const statuses = c.hd_spring_build(h);
+    const statuses = graph.run(() => allocating(() => c.hd_spring_build(h)));
     this.#handle = h;
+    this.#graph = graph;
     this.#nodes = nodes;
-    this.#parents = nodes.map((n) => n.parent);
     this.#layout.set(new Uint32Array(core().memory.buffer, c.hd_spring_layout(h), LAYOUT));
     this.#report(statuses);
 
@@ -547,7 +517,7 @@ export class Spring {
         const v = views().f64;
         const joint = new Joint(
           nodes[v[scratch]] as THREE.Bone,
-          nodes[v[scratch + 1]],
+          this.#node(v[scratch + 1]) as THREE.Object3D,
           new THREE.Quaternion(v[scratch + 7], v[scratch + 8], v[scratch + 9], v[scratch + 10]),
           new THREE.Vector3(v[scratch + 4], v[scratch + 5], v[scratch + 6]),
           v[scratch + 3],
@@ -579,7 +549,7 @@ export class Spring {
       return;
     }
     this.#readLimits(this.groups);
-    this.#pull();
+    this.#readOutputs();
   }
 
   /** @internal The core handle, 0 once disposed. */
@@ -658,7 +628,8 @@ export class Spring {
     const index = this.groups.findIndex((x) => x.id === id);
     const g = this.groups[index];
     if (!g?.rootJoints.length) return null;
-    if (core().hd_spring_enable_drive(this.#handle, index) === DRIVE_ANCHORED) {
+    const h = this.#handle;
+    if (allocating(() => core().hd_spring_enable_drive(h, index)) === DRIVE_ANCHORED) {
       this.missing.push(`drive:${id} cannot own an attached spring root`);
       return null;
     }
@@ -678,12 +649,14 @@ export class Spring {
   calibrateDrive(id: string, poses: THREE.Quaternion[]): void {
     const index = this.groups.findIndex((x) => x.id === id);
     const g = this.groups[index];
-    if (!g) return;
+    const graph = this.#graph;
+    if (!(g && graph)) return;
     const c = core();
-    for (const q of poses ?? []) c.hd_spring_drive_pose(this.#handle, q.x, q.y, q.z, q.w);
-    this.#push();
-    const outcome = c.hd_spring_calibrate_drive(this.#handle, index);
-    this.#pull();
+    const h = this.#handle;
+    for (const q of poses ?? []) allocating(() => c.hd_spring_drive_pose(h, q.x, q.y, q.z, q.w));
+    this.#writeInputs();
+    const outcome = graph.run(() => allocating(() => c.hd_spring_calibrate_drive(h, index)));
+    this.#readOutputs();
     if (outcome === DRIVE_ANCHORED) {
       this.missing.push(`drive:${id} cannot own an attached spring root`);
       return;
@@ -698,35 +671,38 @@ export class Spring {
    * has posed the body for this frame.
    */
   update(dt: number): void {
-    if (!(this.groups.length && this.#handle)) return;
+    const graph = this.#graph;
+    if (!(this.groups.length && this.#handle && graph)) return;
     // The core reads world matrices only when the simulation is on, as `Spring` does.
     if (this.enabled) this.root.updateMatrixWorld(true);
-    this.#push();
-    const statuses = core().hd_spring_update(this.#handle, dt);
-    this.#pull();
+    this.#writeInputs();
+    const h = this.#handle;
+    const statuses = graph.run(() => core().hd_spring_update(h, dt));
+    this.#readOutputs();
     this.#report(statuses);
   }
 
   /** Free the core's half. The instance does nothing afterwards. */
   dispose(): void {
-    if (!this.#handle) return;
-    core().hd_spring_free(this.#handle);
+    const h = this.#handle;
+    if (!h) return;
+    allocating(() => core().hd_spring_free(h));
     this.#handle = 0;
+    this.#graph = null;
   }
 
-  /** Copy the read nodes, switches, scales and drives into the core. */
-  #push(): void {
-    const { f64, u32 } = views();
+  /** The node at core index `i`: a graph node, or past the graph one of the root's ancestors. */
+  #node(i: number): THREE.Object3D | null {
+    if (i < this.#nodes.length) return this.#nodes[i];
+    let node = this.root.parent;
+    for (let k = i - this.#nodes.length; k > 0 && node; k--) node = node.parent;
+    return node;
+  }
+
+  /** Copy the switches, scales and drives into the core. */
+  #writeInputs(): void {
+    const { f64 } = views();
     const L = this.#layout;
-    const nodes = u32At(L[LAYOUT_READ_NODES]);
-    const records = f64At(L[LAYOUT_READ_RECORDS]);
-    const flags = u32At(L[LAYOUT_READ_FLAGS]);
-    for (let k = 0; k < L[LAYOUT_READ_COUNT]; k++) {
-      const index = u32[nodes + k];
-      const node = this.#nodes[index];
-      writeNode(f64, records + NODE_IN * k, node);
-      u32[flags + k] = nodeFlags(node, node.parent !== this.#parents[index]);
-    }
     const control = f64At(L[LAYOUT_CONTROL]);
     f64[control] = this.enabled ? 1 : 0;
     f64[control + 1] = this.stiffnessScale;
@@ -745,25 +721,10 @@ export class Spring {
     }
   }
 
-  /** Write the core's results back onto the nodes and the mirrored joints, groups and colliders. */
-  #pull(): void {
+  /** Read the core's joints, groups, diagnostics and colliders back; the nodes are its own. */
+  #readOutputs(): void {
     const { f64, u32 } = views();
     const L = this.#layout;
-    const nodes = u32At(L[LAYOUT_WRITE_NODES]);
-    const records = f64At(L[LAYOUT_WRITE_RECORDS]);
-    const flags = u32At(L[LAYOUT_WRITE_FLAGS]);
-    for (let k = 0; k < L[LAYOUT_WRITE_COUNT]; k++) {
-      const node = this.#nodes[u32[nodes + 2 * k]];
-      const mask = u32[nodes + 2 * k + 1];
-      const r = records + NODE_OUT * k;
-      if (mask & WRITE_POSITION) node.position.set(f64[r], f64[r + 1], f64[r + 2]);
-      // Through `set`, so three keeps the Euler in step with the quaternion.
-      if (mask & WRITE_QUATERNION)
-        node.quaternion.set(f64[r + 3], f64[r + 4], f64[r + 5], f64[r + 6]);
-      node.matrix.fromArray(f64, r + 7);
-      node.matrixWorld.fromArray(f64, r + 23);
-      node.matrixWorldNeedsUpdate = (u32[flags + k] & FLAG_MATRIX_WORLD_NEEDS_UPDATE) !== 0;
-    }
     const joints = f64At(L[LAYOUT_JOINT_STATES]);
     for (const j of this.#joints) {
       const at = joints + JOINT_OUT * j.slot;
@@ -796,7 +757,7 @@ export class Spring {
     const at = u32At(this.#layout[LAYOUT_STATUSES]);
     for (let k = 0; k < count; k++) {
       const [kind, key, node, other] = u32.subarray(at + STATUS * k, at + STATUS * (k + 1));
-      const name = node === NO_NODE ? '' : this.#nodes[node].name;
+      const name = node === NO_NODE ? '' : (this.#node(node)?.name ?? '');
       const owner = other === NO_NODE ? '' : this.#registered[other].id;
       this.missing.push(
         `sway:${this.#registered[key].id} anchor: ${statusText(kind, name, owner)}`,
@@ -818,36 +779,4 @@ export class Spring {
       });
     }
   }
-}
-
-/** A node's FLAG_* bits; `reparented` when its parent is not the one it was registered with. */
-function nodeFlags(node: THREE.Object3D, reparented: boolean): number {
-  return (
-    (node instanceof THREE.Bone ? FLAG_BONE : 0) |
-    (node.matrixAutoUpdate ? FLAG_MATRIX_AUTO_UPDATE : 0) |
-    (node.matrixWorldAutoUpdate ? FLAG_MATRIX_WORLD_AUTO_UPDATE : 0) |
-    (node.pivot !== null ? FLAG_PIVOT : 0) |
-    (node.matrixWorldNeedsUpdate ? FLAG_MATRIX_WORLD_NEEDS_UPDATE : 0) |
-    (reparented ? FLAG_REPARENTED : 0)
-  );
-}
-
-/** Write a NODE_IN record for `node` at f64 index `at`. */
-function writeNode(f64: Float64Array, at: number, node: THREE.Object3D): void {
-  const { position: p, quaternion: q, scale: s, pivot } = node;
-  f64[at] = p.x;
-  f64[at + 1] = p.y;
-  f64[at + 2] = p.z;
-  f64[at + 3] = q.x;
-  f64[at + 4] = q.y;
-  f64[at + 5] = q.z;
-  f64[at + 6] = q.w;
-  f64[at + 7] = s.x;
-  f64[at + 8] = s.y;
-  f64[at + 9] = s.z;
-  f64[at + 10] = pivot ? pivot.x : 0;
-  f64[at + 11] = pivot ? pivot.y : 0;
-  f64[at + 12] = pivot ? pivot.z : 0;
-  f64.set(node.matrix.elements, at + 13);
-  f64.set(node.matrixWorld.elements, at + 29);
 }

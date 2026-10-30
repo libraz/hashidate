@@ -3,8 +3,8 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-use hashidate_core::math::{Quat, Vec3};
-use hashidate_core::scene::Node;
+use hashidate_core::math::{Mat4, Quat, Vec3};
+use hashidate_core::scene::graph::{Graph, NO_NODE, RECORD, Shape, flag};
 use hashidate_core::secondary::{GroupSpec, Spring};
 
 /// Counts this thread's allocations, so parallel tests do not see each other's.
@@ -47,18 +47,42 @@ const STEP: f64 = 1.0 / 60.0;
 /// A solver over a body node, a hanging chain of `links` below it and a collider on the body,
 /// plus, with `anchored`, a second chain attached to a point on the first.
 struct Rig {
+    graph: Graph,
     spring: Spring,
     body: u32,
 }
 
-fn node(parent: u32, position: [f64; 3]) -> Node {
-    let mut n = Node {
-        parent,
-        is_bone: true,
-        ..Node::default()
-    };
-    n.position.set(position[0], position[1], position[2]);
-    n
+/// A graph of bones under a plain top node, given in `traverse` order as parent and position,
+/// after `top.updateMatrixWorld(true)`.
+fn graph(bones: &[(u32, [f64; 3])]) -> Graph {
+    let n = bones.len() + 1;
+    let mut g = Graph::new(Shape {
+        nodes: n,
+        ..Shape::default()
+    });
+    let auto = flag::MATRIX_AUTO_UPDATE | flag::MATRIX_WORLD_AUTO_UPDATE;
+    g.push_node(NO_NODE, auto, &[0.0; RECORD]);
+    for &(parent, _) in bones {
+        g.push_node(parent, auto | flag::BONE, &[0.0; RECORD]);
+    }
+    g.build();
+    let identity = Mat4::default().elements;
+    for i in 0..n {
+        g.quaternion[4 * i + 3] = 1.0;
+        g.scale[3 * i..3 * i + 3].copy_from_slice(&[1.0; 3]);
+        g.matrix[16 * i..16 * i + 16].copy_from_slice(&identity);
+        g.matrix_world[16 * i..16 * i + 16].copy_from_slice(&identity);
+    }
+    for (i, &(_, p)) in bones.iter().enumerate() {
+        g.position[3 * (i + 1)..3 * (i + 1) + 3].copy_from_slice(&p);
+    }
+    g.update_matrix_world(0, true);
+    g
+}
+
+fn world_position(graph: &Graph, i: u32) -> Vec3 {
+    let e = &graph.matrix_world[16 * i as usize..];
+    Vec3::new(e[12], e[13], e[14])
 }
 
 fn spec(stiffness: f64, gravity: f64) -> GroupSpec {
@@ -72,9 +96,12 @@ fn spec(stiffness: f64, gravity: f64) -> GroupSpec {
 }
 
 fn rig(links: usize, stiffness: f64, gravity: f64, anchored: bool) -> Rig {
-    let mut spring = Spring::new(0);
-    let top = spring.add_node(Node::default());
-    let body = spring.add_node(node(top, [0.0, 1.0, 0.0]));
+    let mut bones = Vec::new();
+    let mut add = |parent: u32, position: [f64; 3]| {
+        bones.push((parent, position));
+        bones.len() as u32
+    };
+    let body = add(0, [0.0, 1.0, 0.0]);
     let mut chain = Vec::new();
     let mut parent = body;
     for i in 0..=links {
@@ -83,34 +110,34 @@ fn rig(links: usize, stiffness: f64, gravity: f64, anchored: bool) -> Rig {
         } else {
             [0.0, -0.08, 0.03]
         };
-        parent = spring.add_node(node(parent, offset));
+        parent = add(parent, offset);
         chain.push(parent);
     }
     let charm: Vec<u32> = if anchored {
         let mut out = Vec::new();
         let mut p = body;
         for i in 0..3 {
-            p = spring.add_node(node(
+            p = add(
                 p,
                 if i == 0 {
                     [0.1, 0.0, 0.0]
                 } else {
                     [0.0, -0.05, 0.0]
                 },
-            ));
+            );
             out.push(p);
         }
         out
     } else {
         Vec::new()
     };
-    let all: Vec<u32> = (0..spring.scene().len() as u32).collect();
-    spring.scene_mut().update_matrix_world_forced(&all);
+    let mut graph = graph(&bones);
+    let mut spring = Spring::new(&graph);
 
     let collider = spring.add_collider(body, Vec3::new(0.0, -0.15, 0.0), None, 0.05, false);
     spring.begin_group(spec(stiffness, gravity));
     spring.add_group_root(chain[0]);
-    assert_eq!(spring.end_group(), links);
+    assert_eq!(spring.end_group(&mut graph), links);
     spring.add_group_collider(collider);
     if anchored {
         spring.begin_group(spec(0.5, 0.2));
@@ -118,11 +145,15 @@ fn rig(links: usize, stiffness: f64, gravity: f64, anchored: bool) -> Rig {
         spring.set_group_anchor(charm[0]);
         spring.add_anchor_influence(chain[1], 0.5, Vec3::new(0.0, -0.02, 0.0));
         spring.add_anchor_influence(body, 0.5, Vec3::new(0.1, 0.0, 0.0));
-        assert_eq!(spring.end_group(), 2);
+        assert_eq!(spring.end_group(&mut graph), 2);
     }
-    spring.build();
+    spring.build(&mut graph);
     assert!(spring.statuses().is_empty());
-    Rig { spring, body }
+    Rig {
+        graph,
+        spring,
+        body,
+    }
 }
 
 impl Rig {
@@ -130,10 +161,10 @@ impl Rig {
     fn frame(&mut self, angle: f64, dt: f64) {
         let mut q = Quat::default();
         q.set_from_axis_angle(&Vec3::new(0.0, 0.0, 1.0), angle);
-        self.spring.scene_mut().node_mut(self.body).quaternion = q;
-        let nodes = self.spring.write_nodes().to_vec();
-        self.spring.scene_mut().update_matrix_world_forced(&nodes);
-        self.spring.update(dt);
+        let at = 4 * self.body as usize;
+        self.graph.quaternion[at..at + 4].copy_from_slice(&[q.x, q.y, q.z, q.w]);
+        self.graph.update_matrix_world(0, true);
+        self.spring.update(&mut self.graph, dt);
     }
 }
 
@@ -144,11 +175,11 @@ fn links_keep_their_length_and_stay_joined() {
         rig.frame((frame as f64 * 0.11).sin() * 1.2, STEP);
         let joints = &rig.spring.groups()[0].joints;
         for (k, j) in joints.iter().enumerate() {
-            let origin = rig.spring.scene().world_position(j.bone);
+            let origin = world_position(&rig.graph, j.bone);
             let length = j.cur.distance_to(&origin);
             assert!((length - j.length).abs() < 1e-9, "frame {frame} joint {k}");
             if let Some(next) = joints.get(k + 1) {
-                let head = rig.spring.scene().world_position(next.bone);
+                let head = world_position(&rig.graph, next.bone);
                 assert!(head.distance_to(&j.cur) < 1e-9, "frame {frame} joint {k}");
             }
         }
@@ -193,14 +224,14 @@ fn caps_a_long_frame_at_four_steps() {
 fn nothing_is_allocated_after_construction() {
     let mut rig = rig(4, 0.6, 0.8, true);
     rig.frame(0.0, 0.0);
-    let nodes = rig.spring.write_nodes().to_vec();
     let before = allocations();
     for frame in 0..400 {
         let angle = (frame as f64 * 0.17).sin() * 1.5;
         let mut q = Quat::default();
         q.set_from_axis_angle(&Vec3::new(0.0, 0.0, 1.0), angle);
-        rig.spring.scene_mut().node_mut(rig.body).quaternion = q;
-        rig.spring.scene_mut().update_matrix_world_forced(&nodes);
+        let at = 4 * rig.body as usize;
+        rig.graph.quaternion[at..at + 4].copy_from_slice(&[q.x, q.y, q.z, q.w]);
+        rig.graph.update_matrix_world(0, true);
         if frame == 150 {
             rig.spring.enabled = false;
         }
@@ -210,7 +241,8 @@ fn nothing_is_allocated_after_construction() {
         if frame == 250 {
             rig.spring.reset();
         }
-        rig.spring.update([STEP, 1.0 / 144.0, 0.05, 0.2][frame % 4]);
+        rig.spring
+            .update(&mut rig.graph, [STEP, 1.0 / 144.0, 0.05, 0.2][frame % 4]);
     }
     assert_eq!(allocations(), before);
 }

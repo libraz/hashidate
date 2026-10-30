@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { core } from '@/core';
+import { SceneGraph } from '@/core/scene';
 import { buildProfile } from '@/engine/profile';
 import { Spring } from '@/engine/secondary';
 import { ByteWriter, type HashFile, hashBytes, writeSpringState } from '../../tools/parity/hash';
-import { coreMathCalls, withCoreMath } from '../helpers/core-math';
+import { withCoreMath } from '../helpers/core-math';
 import { must } from '../helpers/must';
 import { applyFrame, SPRING_FIXTURES, type SpringFixture } from '../helpers/spring-fixtures';
 
@@ -66,13 +67,12 @@ describe('Spring against the recorded hashes', () => {
 
   for (const fixture of SPRING_FIXTURES) {
     it(`matches frame for frame: ${fixture.id}`, () => {
-      const calls = coreMathCalls();
+      // No JS transcendental runs here; the hash comparison guards against a vacuous pass.
       const { hashes } = run(fixture);
       const expected = must(recorded.fixtures[fixture.id], fixture.id);
       expect(hashes).toHaveLength(expected.frames);
       expect(expected.frames).toBe(600);
       expect(firstDifference(fixture, hashes)).toBe(-1);
-      if (fixture === SPRING_FIXTURES[0]) expect(coreMathCalls()).toBeGreaterThan(calls);
     });
   }
 
@@ -125,9 +125,11 @@ describe('Spring against the recorded hashes', () => {
     }
     const after = core().memory.buffer.byteLength;
     spring.dispose();
+    SceneGraph.of(tree.rig.root).dispose();
     for (let k = 0; k < 3; k++) {
       const again = fixture.build();
       new Spring(buildProfile(again.rig.root, again.descriptor), again.descriptor).dispose();
+      SceneGraph.of(again.rig.root).dispose();
     }
     const rebuilt = core().memory.buffer.byteLength;
     expect(after).toBe(before);

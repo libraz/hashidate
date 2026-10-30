@@ -1,15 +1,12 @@
 //! Exports for the spring module. The functions, buffer layouts and codes are tabled in
 //! `src/core/abi/spring.ts`.
 
-use hashidate_core::math::{Mat4, Quat, Vec3};
-use hashidate_core::scene::Node;
+use hashidate_core::math::{Quat, Vec3};
+use hashidate_core::scene::graph::Graph;
 use hashidate_core::secondary::{GroupSpec, Spring};
 
-/// f64 per node record the caller writes: position, quaternion, scale, pivot, matrix,
-/// matrixWorld.
-const NODE_IN: usize = 45;
-/// f64 per node record the caller reads back: position, quaternion, matrix, matrixWorld.
-const NODE_OUT: usize = 39;
+use crate::scene::with_scenes;
+
 /// f64 per joint: cur, prev, solvedQ, prevSolvedQ, swing.
 const JOINT_OUT: usize = 17;
 /// f64 per group: targetWorld, rootWorld, error.
@@ -20,29 +17,16 @@ const COLLIDER_OUT: usize = 6;
 const STATUS: usize = 4;
 /// f64 ahead of the per-group flags in the control buffer.
 const CONTROL_HEAD: usize = 4;
-const LAYOUT: usize = 18;
-const SCRATCH: usize = NODE_IN;
+const LAYOUT: usize = 10;
+/// f64 the info calls write; the longest is JOINT_INFO.
+const SCRATCH: usize = 11;
 
-const FLAG_BONE: u32 = 1;
-const FLAG_MATRIX_AUTO_UPDATE: u32 = 2;
-const FLAG_MATRIX_WORLD_AUTO_UPDATE: u32 = 4;
-const FLAG_PIVOT: u32 = 8;
-const FLAG_MATRIX_WORLD_NEEDS_UPDATE: u32 = 16;
-const FLAG_REPARENTED: u32 = 32;
-
-const WRITE_QUATERNION: u32 = 1;
-const WRITE_POSITION: u32 = 2;
-
-/// A solver and the buffers it is synchronised through.
+/// A solver over a scene graph and the buffers it is synchronised through.
 pub struct Handle {
     spring: Spring,
+    /// The `hd_scene_new` handle the solver reads and writes, retained until free.
+    scene: u32,
     scratch: [f64; SCRATCH],
-    read_records: Vec<f64>,
-    read_flags: Vec<u32>,
-    /// Pairs of node index and write mask.
-    write_nodes: Vec<u32>,
-    write_records: Vec<f64>,
-    write_flags: Vec<u32>,
     control: Vec<f64>,
     drives: Vec<f64>,
     joint_states: Vec<f64>,
@@ -53,33 +37,8 @@ pub struct Handle {
     layout: [u32; LAYOUT],
 }
 
-fn v3(s: &[f64]) -> Vec3 {
-    Vec3::new(s[0], s[1], s[2])
-}
-
 fn q4(s: &[f64]) -> Quat {
     Quat::new(s[0], s[1], s[2], s[3])
-}
-
-fn m16(s: &[f64]) -> Mat4 {
-    let mut elements = [0.0; 16];
-    elements.copy_from_slice(&s[..16]);
-    Mat4::from_elements(elements)
-}
-
-/// Copies one record into a node: everything the caller mirrors from three.
-fn load_node(node: &mut Node, record: &[f64], flags: u32) {
-    node.is_bone = flags & FLAG_BONE != 0;
-    node.matrix_auto_update = flags & FLAG_MATRIX_AUTO_UPDATE != 0;
-    node.matrix_world_auto_update = flags & FLAG_MATRIX_WORLD_AUTO_UPDATE != 0;
-    node.matrix_world_needs_update = flags & FLAG_MATRIX_WORLD_NEEDS_UPDATE != 0;
-    node.reparented = flags & FLAG_REPARENTED != 0;
-    node.position = v3(record);
-    node.quaternion = q4(&record[3..]);
-    node.scale = v3(&record[7..]);
-    node.pivot = (flags & FLAG_PIVOT != 0).then(|| v3(&record[10..]));
-    node.matrix = m16(&record[13..]);
-    node.matrix_world = m16(&record[29..]);
 }
 
 fn put(out: &mut [f64], values: &[f64]) {
@@ -91,7 +50,13 @@ fn ptr<T>(v: &[T]) -> u32 {
 }
 
 impl Handle {
-    /// Copies the caller's inputs in: read nodes, switches, scales and drives.
+    /// Runs `f` on the solver and the graph it was created on.
+    fn with_graph<R>(&mut self, f: impl FnOnce(&mut Spring, &mut Graph) -> R) -> R {
+        let scene = self.scene;
+        with_scenes(|scenes| f(&mut self.spring, &mut scenes.get(scene).graph))
+    }
+
+    /// Copies the caller's inputs in: switches, scales and drives.
     fn load(&mut self) {
         let spring = &mut self.spring;
         spring.enabled = self.control[0] != 0.0;
@@ -108,33 +73,11 @@ impl Handle {
                 joint += 1;
             }
         }
-        for k in 0..spring.read_nodes().len() {
-            let node = spring.read_nodes()[k];
-            load_node(
-                spring.scene_mut().node_mut(node),
-                &self.read_records[NODE_IN * k..NODE_IN * (k + 1)],
-                self.read_flags[k],
-            );
-        }
     }
 
-    /// Copies the solver's results out for the caller to write back.
+    /// Copies the solver's state that is not on the graph out for the caller to read.
     fn publish(&mut self) {
         let spring = &self.spring;
-        let scene = spring.scene();
-        for (k, &[node, _]) in self.write_nodes.as_chunks::<2>().0.iter().enumerate() {
-            let n = scene.node(node);
-            let out = &mut self.write_records[NODE_OUT * k..NODE_OUT * (k + 1)];
-            let (p, q) = (&n.position, &n.quaternion);
-            put(out, &[p.x, p.y, p.z, q.x, q.y, q.z, q.w]);
-            put(&mut out[7..], &n.matrix.elements);
-            put(&mut out[23..], &n.matrix_world.elements);
-            self.write_flags[k] = if n.matrix_world_needs_update {
-                FLAG_MATRIX_WORLD_NEEDS_UPDATE
-            } else {
-                0
-            };
-        }
         let mut joint = 0;
         for (g, group) in spring.groups().iter().enumerate() {
             for j in &group.joints {
@@ -183,17 +126,19 @@ unsafe fn handle<'a>(h: *mut Handle) -> &'a mut Handle {
     unsafe { &mut *h }
 }
 
-/// Creates a solver over an avatar whose root is node `root`.
+/// Creates a solver over the avatar whose root is node 0 of scene graph `scene`, and registers it
+/// as a dependent of that graph.
 #[unsafe(no_mangle)]
-pub extern "C" fn hd_spring_new(root: u32) -> *mut Handle {
+pub extern "C" fn hd_spring_new(scene: u32) -> *mut Handle {
+    let spring = with_scenes(|scenes| {
+        let spring = Spring::new(&scenes.get(scene).graph);
+        scenes.retain(scene);
+        spring
+    });
     Box::into_raw(Box::new(Handle {
-        spring: Spring::new(root),
+        spring,
+        scene,
         scratch: [0.0; SCRATCH],
-        read_records: Vec::new(),
-        read_flags: Vec::new(),
-        write_nodes: Vec::new(),
-        write_records: Vec::new(),
-        write_flags: Vec::new(),
         control: Vec::new(),
         drives: Vec::new(),
         joint_states: Vec::new(),
@@ -205,17 +150,19 @@ pub extern "C" fn hd_spring_new(root: u32) -> *mut Handle {
     }))
 }
 
-/// Frees a solver and every buffer it owns.
+/// Frees a solver and every buffer it owns, and releases its graph; a graph already freed is
+/// left alone.
 ///
 /// # Safety
 /// `h` must come from `hd_spring_new` and not have been freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hd_spring_free(h: *mut Handle) {
     // SAFETY: the caller passes the pointer `Box::into_raw` returned, once.
-    drop(unsafe { Box::from_raw(h) });
+    let h = unsafe { Box::from_raw(h) };
+    with_scenes(|scenes| scenes.release(h.scene));
 }
 
-/// The scratch record `hd_spring_node` reads and the info calls write.
+/// The scratch record the info calls write.
 ///
 /// # Safety
 /// As for `hd_spring_free`.
@@ -223,22 +170,6 @@ pub unsafe extern "C" fn hd_spring_free(h: *mut Handle) {
 pub unsafe extern "C" fn hd_spring_scratch(h: *mut Handle) -> *mut f64 {
     // SAFETY: forwarded from this function's contract.
     unsafe { handle(h) }.scratch.as_mut_ptr()
-}
-
-/// Registers the next node from the record in scratch.
-///
-/// # Safety
-/// As for `hd_spring_free`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn hd_spring_node(h: *mut Handle, parent: u32, flags: u32) {
-    // SAFETY: forwarded from this function's contract.
-    let h = unsafe { handle(h) };
-    let mut node = Node {
-        parent,
-        ..Node::default()
-    };
-    load_node(&mut node, &h.scratch, flags & !FLAG_REPARENTED);
-    h.spring.add_node(node);
 }
 
 /// Registers a collider and returns its pool index.
@@ -339,7 +270,7 @@ pub unsafe extern "C" fn hd_spring_anchor_influence(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hd_spring_group_end(h: *mut Handle) -> u32 {
     // SAFETY: forwarded from this function's contract.
-    unsafe { handle(h) }.spring.end_group() as u32
+    unsafe { handle(h) }.with_graph(|spring, graph| spring.end_group(graph)) as u32
 }
 
 /// Adds a pooled collider to the last group built.
@@ -362,31 +293,11 @@ pub unsafe extern "C" fn hd_spring_group_collider(h: *mut Handle, collider: u32)
 pub unsafe extern "C" fn hd_spring_build(h: *mut Handle) -> u32 {
     // SAFETY: forwarded from this function's contract.
     let h = unsafe { handle(h) };
-    h.spring.build();
+    h.with_graph(|spring, graph| spring.build(graph));
     let spring = &h.spring;
     let joints = spring.count();
     let groups = spring.groups().len();
     let colliders = spring.colliders().len();
-    let reads = spring.read_nodes().len();
-    let mut written: Vec<u32> = Vec::with_capacity(2 * spring.write_nodes().len());
-    for &node in spring.write_nodes() {
-        let mut mask = 0;
-        for g in spring.groups() {
-            if g.joints.iter().any(|j| j.bone == node) {
-                mask |= WRITE_QUATERNION;
-            }
-            if g.anchor.as_ref().is_some_and(|a| a.root == node) {
-                mask |= WRITE_POSITION;
-            }
-        }
-        written.extend([node, mask]);
-    }
-    let writes = written.len() / 2;
-    h.write_nodes = written;
-    h.read_records = vec![0.0; NODE_IN * reads];
-    h.read_flags = vec![0; reads];
-    h.write_records = vec![0.0; NODE_OUT * writes];
-    h.write_flags = vec![0; writes];
     h.control = vec![1.0; CONTROL_HEAD + groups];
     h.drives = vec![0.0; 4 * joints];
     h.joint_states = vec![0.0; JOINT_OUT * joints];
@@ -395,16 +306,7 @@ pub unsafe extern "C" fn hd_spring_build(h: *mut Handle) -> u32 {
     h.collider_states = vec![0.0; COLLIDER_OUT * colliders];
     h.statuses = vec![0; STATUS * h.spring.max_statuses()];
     h.publish();
-    let spring = &h.spring;
     h.layout = [
-        reads as u32,
-        ptr(spring.read_nodes()),
-        ptr(&h.read_records),
-        ptr(&h.read_flags),
-        writes as u32,
-        ptr(&h.write_nodes),
-        ptr(&h.write_records),
-        ptr(&h.write_flags),
         ptr(&h.control),
         ptr(&h.drives),
         ptr(&h.joint_states),
@@ -504,7 +406,7 @@ pub unsafe extern "C" fn hd_spring_joint_spans(h: *mut Handle, g: u32, k: u32) -
         .as_ptr()
 }
 
-/// Runs one frame on the inputs in the buffers and returns the status count.
+/// Runs one frame on the graph and the inputs in the buffers and returns the status count.
 ///
 /// # Safety
 /// As for `hd_spring_free`.
@@ -513,7 +415,7 @@ pub unsafe extern "C" fn hd_spring_update(h: *mut Handle, dt: f64) -> u32 {
     // SAFETY: forwarded from this function's contract.
     let h = unsafe { handle(h) };
     h.load();
-    h.spring.update(dt);
+    h.with_graph(|spring, graph| spring.update(graph, dt));
     h.publish();
     h.spring.statuses().len() as u32
 }
@@ -569,7 +471,7 @@ pub unsafe extern "C" fn hd_spring_calibrate_drive(h: *mut Handle, g: u32) -> u3
     // SAFETY: forwarded from this function's contract.
     let h = unsafe { handle(h) };
     h.load();
-    let outcome = h.spring.calibrate_drive(g as usize);
+    let outcome = h.with_graph(|spring, graph| spring.calibrate_drive(graph, g as usize));
     h.publish();
     outcome as u32
 }
@@ -583,7 +485,7 @@ pub unsafe extern "C" fn hd_spring_collider_place(h: *mut Handle, c: u32) {
     // SAFETY: forwarded from this function's contract.
     let h = unsafe { handle(h) };
     let c = c as usize;
-    h.spring.place_collider(c);
+    h.with_graph(|spring, graph| spring.place_collider(graph, c));
     let placed = &h.spring.colliders()[c];
     put(
         &mut h.collider_states[COLLIDER_OUT * c..],

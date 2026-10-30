@@ -142,8 +142,13 @@ async function loadRecord(avatar: string): Promise<{ header: Header; events: Eve
 /** One rebuilt copy of the recorded tree. */
 class Tree {
   readonly nodes: THREE.Object3D[] = [];
+  /** Set once the solver exists; the hierarchy is fixed from then on but for plain leaves. */
+  built = false;
+  readonly #parents: Set<number>;
 
-  constructor(private readonly header: Header) {}
+  constructor(private readonly header: Header) {
+    this.#parents = new Set(header.nodes.map((n) => n.parent));
+  }
 
   get root(): THREE.Object3D {
     return this.nodes[this.header.rootIndex];
@@ -152,7 +157,18 @@ class Tree {
   birth(state: Float64Array): void {
     const id = this.nodes.length;
     const info = this.header.nodes[id];
-    const node = info.bone ? new THREE.Bone() : new THREE.Object3D();
+    // A node born after the solver is an outline: a childless mesh, which the viewer adds as a
+    // plain leaf. The recording does not say "mesh", so a bone or a parent there is refused.
+    if (this.built && (info.bone || this.#parents.has(id))) {
+      throw new Error(
+        `${this.header.avatar}: ${info.name} was born after construction and is not a childless mesh`,
+      );
+    }
+    const node = info.bone
+      ? new THREE.Bone()
+      : this.built
+        ? new THREE.Mesh()
+        : new THREE.Object3D();
     node.name = info.name;
     this.nodes.push(node);
     if (info.parent >= 0) this.nodes[info.parent].add(node);
@@ -204,6 +220,7 @@ class Side {
 
   construct(): void {
     this.spring = this.build({ root: this.tree.root } as Profile);
+    this.tree.built = true;
   }
 
   /** Everything an update frame hands the solver, as the recording has it. */

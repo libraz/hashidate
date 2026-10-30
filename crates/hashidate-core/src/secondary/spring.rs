@@ -5,10 +5,11 @@
 
 use super::anchor::SkinPointAnchor;
 use super::collider::{Cluster, Collider, Far, cull, refit_clusters};
+use super::tree::Tree;
 use super::{CULL_MARGIN, MAX_STEPS, STEP, Status};
 use crate::math::f::{js_max, js_min, sqrt};
 use crate::math::{Mat4, Quat, Vec3};
-use crate::scene::{NONE, Scene};
+use crate::scene::graph::{Graph, NO_NODE};
 
 /// One simulated joint.
 ///
@@ -79,17 +80,16 @@ impl Joint {
     }
 
     /// `joint.restQuat(joint.bone.quaternion)`.
-    pub(crate) fn restore_bone(&self, scene: &mut Scene) {
-        scene.node_mut(self.bone).quaternion = self.rest_quat();
+    pub(crate) fn restore_bone(&self, scene: &mut Tree) {
+        scene.set_quaternion(self.bone, &self.rest_quat());
     }
 
     // spring.ts Joint.seed
     //
     // Drop the tail back onto the rest pose, killing all velocity.
-    pub fn seed(&mut self, scene: &mut Scene) {
-        let node = scene.node_mut(self.bone);
-        node.quaternion = self.rest_quat();
-        node.update_matrix();
+    pub(crate) fn seed(&mut self, scene: &mut Tree) {
+        scene.set_quaternion(self.bone, &self.rest_quat());
+        scene.update_matrix(self.bone);
         scene.hang(self.bone, self.parent);
         let rotation = scene.world_quat(self.bone);
         let origin = scene.world_position(self.bone);
@@ -99,7 +99,7 @@ impl Joint {
             .apply_quaternion(&rotation)
             .add(&origin);
         self.prev.copy(&self.cur);
-        self.solved_q.copy(&scene.node(self.bone).quaternion);
+        self.solved_q.copy(&scene.quaternion(self.bone));
         self.prev_solved_q.copy(&self.solved_q);
         self.swing.set(0.0, 0.0, 0.0);
     }
@@ -108,12 +108,11 @@ impl Joint {
     //
     // Write the rotation `s` of the way from the previous step's result to the last one's. Above
     // 1 it continues past the last result along the same arc.
-    pub fn present(&self, scene: &mut Scene, s: f64) {
+    pub(crate) fn present(&self, scene: &mut Tree, s: f64) {
         let mut solved = Quat::default();
         solved.slerp_quaternions(&self.prev_solved_q, &self.solved_q, s);
-        let node = scene.node_mut(self.bone);
-        node.quaternion = solved;
-        node.update_matrix();
+        scene.set_quaternion(self.bone, &solved);
+        scene.update_matrix(self.bone);
     }
 
     // spring.ts Joint.fitReach
@@ -177,9 +176,9 @@ impl Input {
     // spring.ts Input.capture
     //
     // Take this frame's transform, keeping the last one as the start of the interval.
-    fn capture(&mut self, scene: &Scene) {
+    fn capture(&mut self, scene: &Tree) {
         self.snap();
-        self.world.copy(&scene.node(self.node).matrix_world);
+        self.world.copy(&scene.matrix_world(self.node));
         self.world
             .decompose(&mut self.pos, &mut self.rot, &mut self.scale);
     }
@@ -196,7 +195,7 @@ impl Input {
     // spring.ts Input.at
     //
     // Pose the node `s` of the way from the last frame to this one.
-    fn at(&mut self, scene: &mut Scene, s: f64) {
+    fn at(&mut self, scene: &mut Tree, s: f64) {
         let mut ip = Vec3::default();
         let mut iq = Quat::default();
         let mut is = Vec3::default();
@@ -204,14 +203,14 @@ impl Input {
         iq.slerp_quaternions(&self.prev_rot, &self.rot, s);
         is.lerp_vectors(&self.prev_scale, &self.scale, s);
         self.between.compose(&ip, &iq, &is);
-        scene.node_mut(self.node).matrix_world.copy(&self.between);
+        scene.set_matrix_world(self.node, &self.between);
     }
 
     // spring.ts Input.end
     //
     // Put this frame's transform back.
-    fn end(&self, scene: &mut Scene) {
-        scene.node_mut(self.node).matrix_world.copy(&self.world);
+    fn end(&self, scene: &mut Tree) {
+        scene.set_matrix_world(self.node, &self.world);
     }
 }
 
@@ -224,7 +223,7 @@ pub struct InputWorld<'a> {
 impl InputWorld<'_> {
     pub(crate) fn get(&self, node: u32) -> Option<&Mat4> {
         let input = self.of_node[node as usize];
-        (input != NONE).then(|| &self.inputs[input as usize].between)
+        (input != NO_NODE).then(|| &self.inputs[input as usize].between)
     }
 }
 
@@ -277,13 +276,12 @@ impl Group {
 // Origin of `bone` hung from its parent's world matrix `parent`, formed term for term as
 // `updateMatrix` and `multiplyMatrices` would form it. A pivot moves the origin with the rotation,
 // so a bone with one returns `None` and is left alone.
-fn hung_origin(scene: &Scene, bone: u32, parent: u32) -> Option<Vec3> {
-    let node = scene.node(bone);
-    if node.pivot.is_some() {
+fn hung_origin(scene: &Tree, bone: u32, parent: u32) -> Option<Vec3> {
+    if scene.has_pivot(bone) {
         return None;
     }
-    let e = &scene.node(parent).matrix_world.elements;
-    let Vec3 { x, y, z } = node.position;
+    let e = &scene.matrix_world(parent).elements;
+    let Vec3 { x, y, z } = scene.position(bone);
     Some(Vec3::new(
         e[0] * x + e[4] * y + e[8] * z + e[12],
         e[1] * x + e[5] * y + e[9] * z + e[13],
@@ -294,18 +292,17 @@ fn hung_origin(scene: &Scene, bone: u32, parent: u32) -> Option<Vec3> {
 // spring.ts Spring.#rehang
 //
 // Recompute unattached joints' world matrices from their parents, as a world update would.
-fn rehang(scene: &mut Scene, nodes: &[Hung]) {
+fn rehang(scene: &mut Tree, nodes: &[Hung]) {
     for h in nodes {
         scene.hang(h.node, h.parent);
     }
 }
 
-/// The secondary-motion solver over one avatar.
+/// The secondary-motion solver over one avatar, reading and writing its scene graph in place.
 #[derive(Clone, Debug)]
 pub struct Spring {
-    pub(crate) scene: Scene,
-    /// The avatar root; nodes before it are its ancestors.
-    pub(crate) root: u32,
+    /// Nodes of the graph's table; an index past them is one of the root's ancestors.
+    pub(crate) nodes: u32,
     pub(crate) colliders: Vec<Collider>,
     pub(crate) groups: Vec<Group>,
 
@@ -321,7 +318,7 @@ pub struct Spring {
     /// Every joint currently under an external drive, as `(group, joint)`.
     pub(crate) driven_joints: Vec<(usize, usize)>,
     pub(crate) inputs: Vec<Input>,
-    /// Per node, its input, or `NONE`.
+    /// Per node, its input, or `NO_NODE`.
     pub(crate) input_of: Vec<u32>,
     /// Unattached joints and bridges, shallowest first, for re-hanging chains on an interpolated
     /// body.
@@ -342,9 +339,7 @@ pub struct Spring {
     pub(crate) far: Far,
     pub(crate) statuses: Vec<Status>,
 
-    /// Every node the solver reads, ascending.
-    pub(crate) read_nodes: Vec<u32>,
-    /// The read nodes at or below the root: what a world update from the root reaches.
+    /// The table nodes the solver reads, ascending: what its world updates from the root reach.
     pub(crate) forced: Vec<u32>,
 
     pub(crate) next_key: u32,
@@ -358,15 +353,6 @@ pub struct Spring {
 }
 
 impl Spring {
-    /// The node table the solver reads and writes.
-    pub fn scene(&self) -> &Scene {
-        &self.scene
-    }
-
-    pub fn scene_mut(&mut self) -> &mut Scene {
-        &mut self.scene
-    }
-
     pub fn groups(&self) -> &[Group] {
         &self.groups
     }
@@ -395,23 +381,13 @@ impl Spring {
     }
 
     /// Places pooled collider `c` on its bone's current world matrix.
-    pub fn place_collider(&mut self, c: usize) {
-        self.colliders[c].place_on_bone(&self.scene);
+    pub fn place_collider(&mut self, graph: &mut Graph, c: usize) {
+        self.colliders[c].place_on_bone(&Tree::new(graph));
     }
 
     /// The step accumulator.
     pub fn acc(&self) -> f64 {
         self.acc
-    }
-
-    /// Every node the solver reads, ascending.
-    pub fn read_nodes(&self) -> &[u32] {
-        &self.read_nodes
-    }
-
-    /// Every node an update may write, ascending: the read nodes at or below the root.
-    pub fn write_nodes(&self) -> &[u32] {
-        &self.forced
     }
 
     // spring.ts Spring.active
@@ -440,23 +416,21 @@ impl Spring {
     }
 
     // spring.ts Spring.#seed
-    pub(crate) fn seed(&mut self) {
-        self.scene.update_matrix_world_forced(&self.forced);
+    pub(crate) fn seed(&mut self, scene: &mut Tree) {
+        scene.update_matrix_world_forced(&self.forced);
         for input in &mut self.inputs {
             input.snap();
         }
         for k in 0..self.groups.len() {
             if self.groups[k].enabled {
-                self.place(k, false);
-                let Self { scene, groups, .. } = self;
-                for j in &mut groups[k].joints {
+                self.place(scene, k, false);
+                for j in &mut self.groups[k].joints {
                     j.seed(scene);
                 }
             } else {
-                let Self { scene, groups, .. } = self;
-                for j in &groups[k].joints {
+                for j in &self.groups[k].joints {
                     j.restore_bone(scene);
-                    scene.node_mut(j.bone).update_matrix();
+                    scene.update_matrix(j.bone);
                 }
             }
             let g = &mut self.groups[k];
@@ -464,10 +438,10 @@ impl Spring {
         }
         // A disabled anchor is placed once more after enabled producers have been
         // reseeded. Its first placement above may have read their pre-reset pose.
-        rehang(&mut self.scene, &self.rebase);
+        rehang(scene, &self.rebase);
         for k in 0..self.groups.len() {
             if self.groups[k].anchor.is_some() && !self.groups[k].enabled {
-                self.place(k, false);
+                self.place(scene, k, false);
             }
         }
     }
@@ -477,13 +451,12 @@ impl Spring {
     // Place a group's anchor. An anchor guards its contract on every placement (a bone's scale
     // can change at runtime), and a violation must not escape into the render loop: the group is
     // switched off and the reason recorded.
-    pub(crate) fn place(&mut self, k: usize, with_inputs: bool) {
+    pub(crate) fn place(&mut self, scene: &mut Tree, k: usize, with_inputs: bool) {
         #[cfg(test)]
         let after_place = self.after_place;
         #[cfg(test)]
         let with_inputs = with_inputs && after_place.is_none();
         let Self {
-            scene,
             groups,
             inputs,
             input_of,
@@ -508,7 +481,7 @@ impl Spring {
                 kind: failure.kind,
                 group: g.key,
                 node: failure.node,
-                other: NONE,
+                other: NO_NODE,
             });
             g.enabled = false;
             g.was_enabled = false;
@@ -517,54 +490,50 @@ impl Spring {
     }
 
     // spring.ts Spring.#placeAnchors
-    fn place_anchors(&mut self) {
+    fn place_anchors(&mut self, scene: &mut Tree) {
         for k in 0..self.groups.len() {
-            self.place(k, false);
+            self.place(scene, k, false);
         }
     }
 
     // spring.ts Spring.#syncGroupToggles
-    fn sync_group_toggles(&mut self) {
+    fn sync_group_toggles(&mut self, scene: &mut Tree) {
         // Restore every disabled group on every frame, rather than only on the
         // edge. A driven rest pose can change while a group is off, and its local
         // rotations must follow that drive before an attachment reads its bones.
         let mut rehang_all = false;
-        {
-            let Self { scene, groups, .. } = self;
-            for g in groups.iter() {
-                if !g.enabled {
-                    for joint in &g.joints {
-                        joint.restore_bone(scene);
-                        scene.node_mut(joint.bone).update_matrix();
-                    }
-                    if g.anchor.is_none() {
-                        rehang_all = true;
-                    }
+        for g in &self.groups {
+            if !g.enabled {
+                for joint in &g.joints {
+                    joint.restore_bone(scene);
+                    scene.update_matrix(joint.bone);
+                }
+                if g.anchor.is_none() {
+                    rehang_all = true;
                 }
             }
         }
         if rehang_all {
-            rehang(&mut self.scene, &self.rebase);
+            rehang(scene, &self.rebase);
         }
 
         for k in 0..self.groups.len() {
             let g = &self.groups[k];
             if g.was_enabled == g.enabled {
                 if !g.enabled && g.anchor.is_some() {
-                    self.place(k, false);
+                    self.place(scene, k, false);
                 }
                 continue;
             }
             let enabled = g.enabled;
             self.groups[k].was_enabled = enabled;
             if enabled {
-                self.place(k, false);
-                let Self { scene, groups, .. } = self;
-                for joint in &mut groups[k].joints {
+                self.place(scene, k, false);
+                for joint in &mut self.groups[k].joints {
                     joint.seed(scene);
                 }
             } else if self.groups[k].anchor.is_some() {
-                self.place(k, false);
+                self.place(scene, k, false);
             }
         }
     }
@@ -577,10 +546,10 @@ impl Spring {
     // else writes them back — so simply *stopping* leaves the last solved frame on the bones
     // forever, and what looks like the model's own pose is a mid-swing snapshot. That is worse
     // than either state, and it makes an off/on comparison meaningless.
-    fn restore(&mut self) {
+    fn restore(&mut self, scene: &mut Tree) {
         for g in &self.groups {
             for j in &g.joints {
-                j.restore_bone(&mut self.scene);
+                j.restore_bone(scene);
             }
         }
     }
@@ -592,16 +561,17 @@ impl Spring {
     // Must run after everything else has posed the body for this frame: the input to a spring is
     // where its parent ended up, so anything that moves a shoulder after this has run is a frame
     // of lag the hair never sees. The caller has already run the frame's world update from the
-    // root (when enabled) and copied the read nodes in.
-    pub fn update(&mut self, dt: f64) {
+    // root (when enabled).
+    pub fn update(&mut self, graph: &mut Graph, dt: f64) {
         self.statuses.clear();
         if self.groups.is_empty() {
             return;
         }
+        let scene = &mut Tree::new(graph);
 
         if !self.enabled {
             if self.live {
-                self.restore();
+                self.restore(scene);
                 self.live = false;
             }
             // A drive is animation, not physics, so switching the simulation off must
@@ -610,9 +580,9 @@ impl Spring {
             // everything below them stays where `restore` left it and the chain moves
             // as one rigid piece, which is the honest picture of the sway being off.
             for &(g, j) in &self.driven_joints {
-                self.groups[g].joints[j].restore_bone(&mut self.scene);
+                self.groups[g].joints[j].restore_bone(scene);
             }
-            self.place_anchors();
+            self.place_anchors(scene);
             return;
         }
         // Coming back on, the chains have been standing still while the body moved
@@ -628,12 +598,12 @@ impl Spring {
         // read below would otherwise be one frame stale, which reads as hair that
         // anticipates the head instead of following it. (The caller's world update.)
         for input in &mut self.inputs {
-            input.capture(&self.scene);
+            input.capture(scene);
         }
-        self.sync_group_toggles();
+        self.sync_group_toggles(scene);
 
         if self.pending {
-            self.seed();
+            self.seed(scene);
             self.pending = false;
             self.acc = 0.0;
             return;
@@ -650,36 +620,36 @@ impl Spring {
             if self.acc > span * 1e-9 {
                 let s = 1.0 - self.acc / span;
                 for input in &mut self.inputs {
-                    input.at(&mut self.scene, s);
+                    input.at(scene, s);
                 }
-                self.step(STEP, true, true);
+                self.step(scene, STEP, true, true);
                 between = true;
             } else {
                 if between {
                     for input in &self.inputs {
-                        input.end(&mut self.scene);
+                        input.end(scene);
                     }
                 }
-                self.step(STEP, false, between);
+                self.step(scene, STEP, false, between);
                 between = false;
             }
         }
         if between {
             // Hand the frame's own body back, and hang what is drawn on it.
             for input in &self.inputs {
-                input.end(&mut self.scene);
+                input.end(scene);
             }
         }
         // The solver is up to a step behind the frame. Carry the last step's motion
         // forward by the unspent remainder: nothing moves on a frame that lands on a
         // step, and frames between steps keep moving with the head.
         let carry = 1.0 + self.acc / STEP;
-        self.present(carry);
-        rehang(&mut self.scene, &self.rebase);
-        if carry > 1.0 && self.keep_clear() {
-            rehang(&mut self.scene, &self.rebase);
+        self.present(scene, carry);
+        rehang(scene, &self.rebase);
+        if carry > 1.0 && self.keep_clear(scene) {
+            rehang(scene, &self.rebase);
         }
-        self.place_anchors();
+        self.place_anchors(scene);
     }
 
     // spring.ts Spring.#keepClear
@@ -687,7 +657,7 @@ impl Spring {
     // Hold back any carried-forward link that would enter a collider, at its solved rotation. The
     // carry is never collision-checked otherwise, and a link swinging in is carried through the
     // surface the next step will stop it at. Returns whether anything was held back.
-    fn keep_clear(&mut self) -> bool {
+    fn keep_clear(&mut self, scene: &mut Tree) -> bool {
         let mut held = false;
         let mut placed = false;
         for k in 0..self.groups.len() {
@@ -698,11 +668,10 @@ impl Spring {
                 }
             }
             if !placed {
-                self.place_fixed();
+                self.place_fixed(scene);
                 placed = true;
             }
             let Self {
-                scene,
                 groups,
                 colliders,
                 far,
@@ -757,25 +726,25 @@ impl Spring {
     // spring.ts Spring.#placeFixed
     //
     // Read every input's rotation off its current matrix, and place the colliders on them.
-    fn place_fixed(&mut self) {
+    fn place_fixed(&mut self, scene: &Tree) {
         for input in &mut self.inputs {
-            input.quat = self.scene.world_quat(input.node);
+            input.quat = scene.world_quat(input.node);
         }
         for &(c, input) in &self.fixed_colliders {
-            self.colliders[c].place(&self.scene, &self.inputs[input].quat);
+            self.colliders[c].place(scene, &self.inputs[input].quat);
         }
     }
 
     // spring.ts Spring.#present
     //
     // Write every running group's rotations at `s`; see `Joint::present`.
-    fn present(&mut self, s: f64) {
+    fn present(&mut self, scene: &mut Tree, s: f64) {
         for g in &self.groups {
             if !g.enabled {
                 continue;
             }
             for j in &g.joints {
-                j.present(&mut self.scene, s);
+                j.present(scene, s);
             }
         }
     }
@@ -785,11 +754,11 @@ impl Spring {
     // `with_inputs`: place attachments from the interpolated body, for a step before the frame's
     // last. `rebase`: re-hang unattached chains on the body this step reads, as the frame's own
     // world update does before its first step.
-    fn step(&mut self, dt: f64, with_inputs: bool, rebase: bool) {
+    fn step(&mut self, scene: &mut Tree, dt: f64, with_inputs: bool, rebase: bool) {
         if rebase {
-            rehang(&mut self.scene, &self.step_rebase);
+            rehang(scene, &self.step_rebase);
         }
-        self.place_fixed();
+        self.place_fixed(scene);
         for k in 0..self.groups.len() {
             // A group may hang from a node an earlier group just moved: the first
             // re-hangs every bridge, each later one what the group before could move.
@@ -798,14 +767,13 @@ impl Spring {
             } else {
                 &self.bridges_moved_by[k - 1]
             };
-            rehang(&mut self.scene, hung);
+            rehang(scene, hung);
             // Place after prior cloth/producer groups in this same fixed step, even
             // when this accessory group itself is switched off.
-            self.place(k, with_inputs);
+            self.place(scene, k, with_inputs);
             let (stiffness_scale, gravity_scale, inertia_scale) =
                 (self.stiffness_scale, self.gravity_scale, self.inertia_scale);
             let Self {
-                scene,
                 groups,
                 colliders,
                 inputs,
@@ -851,7 +819,7 @@ impl Spring {
                 } else if let Some(origin) = hung_origin(scene, bone, parent) {
                     origin
                 } else {
-                    scene.node_mut(bone).update_matrix();
+                    scene.update_matrix(bone);
                     scene.hang(bone, parent);
                     scene.world_position(bone)
                 };
@@ -973,7 +941,7 @@ impl Spring {
                 if anchored {
                     solved.normalize();
                 }
-                scene.node_mut(bone).quaternion = solved;
+                scene.set_quaternion(bone, &solved);
                 j.prev_solved_q.copy(&j.solved_q);
                 j.solved_q.copy(&solved);
 
@@ -983,7 +951,7 @@ impl Spring {
                 // once per joint and turn a linear pass into a quadratic one.
                 // The next joint reads this fresh world matrix, including the solved
                 // origin and orientation of this link.
-                scene.node_mut(bone).update_matrix();
+                scene.update_matrix(bone);
                 scene.hang(bone, parent);
             }
         }

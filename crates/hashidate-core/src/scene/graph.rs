@@ -51,12 +51,12 @@ pub mod force {
 
 /// f64 per node record: position 3, quaternion 4, scale 3, pivot 3, matrix 16, matrixWorld 16.
 pub const RECORD: usize = 45;
-const R_POSITION: usize = 0;
-const R_QUATERNION: usize = 3;
-const R_SCALE: usize = 7;
-const R_PIVOT: usize = 10;
-const R_MATRIX: usize = 13;
-const R_MATRIX_WORLD: usize = 29;
+pub(crate) const R_POSITION: usize = 0;
+pub(crate) const R_QUATERNION: usize = 3;
+pub(crate) const R_SCALE: usize = 7;
+pub(crate) const R_PIVOT: usize = 10;
+pub(crate) const R_MATRIX: usize = 13;
+pub(crate) const R_MATRIX_WORLD: usize = 29;
 
 /// Ancestor levels the mirror holds. Production has one (`scene`), tests up to three.
 pub const MAX_ANCESTORS: usize = 16;

@@ -1,9 +1,9 @@
 //! Colliders, the clusters that cull them, and the cull itself.
 
+use super::tree::Tree;
 use super::{CLUSTER_SIZE, spring::Joint};
 use crate::math::f::{js_max, js_min, sqrt};
 use crate::math::{Box3, Quat, Vec3, clamp};
-use crate::scene::Scene;
 
 /// A sphere or capsule the swinging parts cannot enter.
 ///
@@ -54,7 +54,7 @@ impl Collider {
     // spring.ts Collider.place
     //
     // Refresh world-space geometry. Once per step, before any joint reads it.
-    pub fn place(&mut self, scene: &Scene, rotation: &Quat) {
+    pub(crate) fn place(&mut self, scene: &Tree, rotation: &Quat) {
         let p = scene.world_position(self.bone);
         self.a.copy(&self.offset).apply_quaternion(rotation).add(&p);
         if let Some(tail) = &self.tail_offset {
@@ -66,7 +66,7 @@ impl Collider {
     }
 
     /// `place` at the bone's own world rotation.
-    pub fn place_on_bone(&mut self, scene: &Scene) {
+    pub(crate) fn place_on_bone(&mut self, scene: &Tree) {
         let rotation = scene.world_quat(self.bone);
         self.place(scene, &rotation);
     }
@@ -449,12 +449,13 @@ pub fn cull(
 #[cfg(test)]
 mod tests {
     use super::super::Spring;
-    use super::super::testkit::{Rig, chain, group};
+    use super::super::testkit::{Rig, chain, group, rotate, state, world_update};
     use crate::math::Vec3;
+    use crate::scene::graph::Graph;
 
     /// Hair and a skirt against a torso carrying twenty colliders on one bone, enough to be split
     /// into several clusters, plus capsules, an inside sphere and colliders riding the hair.
-    fn fixture(cull_disabled: bool) -> (Rig, Spring) {
+    fn fixture(cull_disabled: bool) -> (Rig, Graph, Spring) {
         let mut rig = Rig::humanoid(0.01);
         let head = rig.bone("Head");
         let hips = rig.bone("Hips");
@@ -472,7 +473,9 @@ mod tests {
                 [a.cos() * 0.02, -0.09, a.sin() * 0.02],
             ));
         }
-        let mut spring = rig.spring();
+        let (mut graph, mut spring) = rig.spring();
+        let hair: Vec<u32> = hair.iter().map(|&id| rig.at(id)).collect();
+        let (head, hips, chest) = (rig.at(head), rig.at(hips), rig.at(chest));
         let head_c = spring.add_collider(head, Vec3::new(0.0, 0.08, 0.0), None, 0.09, false);
         let mut torso = Vec::new();
         for k in 0..20 {
@@ -493,21 +496,21 @@ mod tests {
 
         spring.begin_group(group(0.4, 0.2, 1.0));
         spring.add_group_root(hair[0]);
-        assert!(spring.end_group() > 0);
+        assert!(spring.end_group(&mut graph) > 0);
         for &c in [head_c].iter().chain(&torso) {
             spring.add_group_collider(c);
         }
         spring.begin_group(group(0.3, 0.25, 0.8));
         for s in &skirt {
-            spring.add_group_root(s[0]);
+            spring.add_group_root(rig.at(s[0]));
         }
-        assert!(spring.end_group() > 0);
+        assert!(spring.end_group(&mut graph) > 0);
         for &c in [leg, ribbon, hair_c].iter().chain(&torso) {
             spring.add_group_collider(c);
         }
-        spring.build();
+        spring.build(&mut graph);
         spring.far.disabled = cull_disabled;
-        (rig, spring)
+        (rig, graph, spring)
     }
 
     fn run(cull_disabled: bool) -> (Vec<Vec<u64>>, usize, usize) {
@@ -521,33 +524,33 @@ mod tests {
             0.05,
             1.0 / 90.0,
         ];
-        let (rig, mut spring) = fixture(cull_disabled);
-        let hips = rig.bone("Hips");
-        let chest = rig.bone("UpperChest");
-        let head = rig.bone("Head");
+        let (rig, mut graph, mut spring) = fixture(cull_disabled);
+        let hips = rig.node("Hips");
+        let chest = rig.node("UpperChest");
+        let head = rig.node("Head");
         let mut frames = Vec::new();
         let mut t = 0.0;
         for frame in 0..360 {
             let dt = DTS[frame % DTS.len()];
             t += dt;
-            rig.rotate(
-                &mut spring,
+            rotate(
+                &mut graph,
                 hips,
                 [(t * 2.1).sin() * 0.6, (t * 1.3).cos() * 0.9, 0.0],
             );
-            rig.rotate(
-                &mut spring,
+            rotate(
+                &mut graph,
                 chest,
                 [(t * 1.7).sin() * 0.4, 0.0, (t * 2.3).cos() * 0.3],
             );
-            rig.rotate(
-                &mut spring,
+            rotate(
+                &mut graph,
                 head,
                 [(t * 4.1).sin() * 0.8, (t * 3.7).sin() * 1.2, 0.0],
             );
-            rig.world_update(&mut spring);
-            spring.update(dt);
-            frames.push(rig.state(&spring));
+            world_update(&mut graph);
+            spring.update(&mut graph, dt);
+            frames.push(state(&graph, &spring));
         }
         (frames, spring.far.culled, spring.far.contacts)
     }
@@ -567,7 +570,7 @@ mod tests {
 
     #[test]
     fn the_torso_is_split_into_several_clusters() {
-        let (_, spring) = fixture(false);
+        let (_, _, spring) = fixture(false);
         let clusters = spring.groups[0].clusters.as_ref().expect("clusters");
         let torso: Vec<_> = clusters.iter().filter(|c| c.members.len() > 1).collect();
         assert!(torso.len() >= 3, "{} clusters", torso.len());
