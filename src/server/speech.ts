@@ -40,14 +40,14 @@ const ENDPOINT = speechEndpoint();
 export const SIDECAR = describeEndpoint(ENDPOINT);
 
 /**
- * Long enough for the slowest line the model will accept.
+ * How long one synthesis may take before it is that line's failure.
  *
- * Synthesis is roughly a second for a normal line and scales with length; the
- * model's own ceiling is thirty seconds of output. Half a minute of wall clock
- * is well past anything healthy, which is what a timeout is for — the session
- * has given up and started speaking silently long before this fires.
+ * Synthesis is roughly a second for a normal line and scales with length, so a
+ * very long line on a slower checkpoint can run past this. Running past it is
+ * answered 504, the line's own failure, never 503: the sidecar is up, and a
+ * renderer told it is unavailable would re-ask every line it silenced.
  */
-const TIMEOUT_MS = 30_000;
+export const TIMEOUT_MS = 30_000;
 
 /**
  * How long a take stays worth handing back, and how much of them to hold.
@@ -231,19 +231,28 @@ export function speak(request: SpeechRequest, signal?: AbortSignal): Promise<Tak
 
 /** One round trip to the sidecar. Never rejects: a failure is a take too. */
 async function synthesise(line: string, signal: AbortSignal): Promise<Take> {
+  // Timed here as well as in `askSidecar`, so a timeout can be told from the
+  // caller leaving; armed first, so it fires first.
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), TIMEOUT_MS);
   let upstream: SidecarReply;
   try {
     upstream = await askSidecar(ENDPOINT, '/speak', {
       method: 'POST',
       body: JSON.stringify({ text: line }),
       timeoutMs: TIMEOUT_MS,
-      signal,
+      signal: AbortSignal.any([signal, deadline.signal]),
     });
   } catch {
-    // Not running, or wedged, or the socket is a file left behind by one that
-    // was killed. Expected rather than exceptional: the sidecar is optional,
+    if (deadline.signal.aborted && !signal.aborted) {
+      return refusal(504, 'speech sidecar timed out');
+    }
+    // Not running, or the socket is a file left behind by one that was
+    // killed. Expected rather than exceptional: the sidecar is optional,
     // and the renderer's whole point is that it works without one.
     return refusal(503, 'speech sidecar not reachable');
+  } finally {
+    clearTimeout(timer);
   }
 
   // Still loading its model: the renderer treats a 503 as "try again when ready".

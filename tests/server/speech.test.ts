@@ -9,6 +9,7 @@ import {
   speak,
   TAKE_MAX,
   TAKE_TTL_MS,
+  TIMEOUT_MS,
 } from '@/server/speech';
 import { askSidecar, type SidecarReply } from '@/speech/sidecar';
 
@@ -366,6 +367,49 @@ describe('asking the sidecar for a line', () => {
 
     expect(asked).toHaveBeenCalledTimes(2);
     expect(a.body.length).not.toBe(b.body.length);
+  });
+});
+
+describe('a sidecar that answers too slowly', () => {
+  /** A round trip that never answers, and fails the way the transport does once its signal aborts. */
+  const hung = (): void => {
+    asked.mockImplementation(
+      (_endpoint, _path, request) =>
+        new Promise<SidecarReply>((_resolve, reject) => {
+          request.signal?.addEventListener('abort', () => reject(request.signal?.reason), {
+            once: true,
+          });
+        }),
+    );
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('answers a hung synthesis as the line timing out, not as the sidecar being gone', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    hung();
+
+    const answer = speak({ text: 'a very long line' });
+    await vi.waitFor(() => expect(asked).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(TIMEOUT_MS);
+
+    const take = await answer;
+    expect(take.status).toBe(504);
+    expect(take.ok).toBe(false);
+  });
+
+  it('keeps a caller leaving apart from a timeout', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    hung();
+
+    const controller = new AbortController();
+    const answer = speak({ text: 'a line nobody waits for' }, controller.signal);
+    await vi.waitFor(() => expect(asked).toHaveBeenCalledTimes(1));
+    controller.abort();
+
+    expect((await answer).status).toBe(499);
   });
 });
 
