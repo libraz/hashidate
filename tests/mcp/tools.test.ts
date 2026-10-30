@@ -932,3 +932,132 @@ describe('the ids the later tools were built from', () => {
     expect(enumOf(propertyNode(await schemaOf(client, 'react'), 'gesture'))).toEqual(['nod']);
   });
 });
+
+describe('input strictness', () => {
+  /** One call per registered tool that is accepted as written. */
+  const valid: Record<string, Record<string, unknown>> = {
+    speak: { lines: [{ text: 'こんにちは' }] },
+    status: {},
+    interrupt: { mode: 'now' },
+    react: { look: 0.5 },
+    stage: { idle: true },
+    revise: { action: 'clear' },
+    deck: { action: 'list' },
+    bgm: { action: 'list' },
+  };
+
+  it('covers every registered tool', async () => {
+    h = harness();
+    const client = await connect(h.control);
+    const { tools } = await client.listTools();
+    expect(tools.map((tool) => tool.name).sort()).toEqual(Object.keys(valid).sort());
+  });
+
+  it.each(Object.keys(valid))('accepts %s as written and refuses an unknown key', async (name) => {
+    h = harness();
+    const client = await connect(h.control);
+
+    const accepted = await client.callTool({ name, arguments: valid[name] });
+    expect(accepted.isError).not.toBe(true);
+
+    h = harness();
+    const refusing = await connect(h.control);
+    const refused = await refusing.callTool({ name, arguments: { ...valid[name], bogus: 1 } });
+    expect(refused.isError).toBe(true);
+    expect(h.control.command).not.toHaveBeenCalled();
+    expect(h.control.queueAdd).not.toHaveBeenCalled();
+    expect(h.control.queueClear).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['speak', { lines: [{ text: 'a', bogus: 1 }] }],
+    ['speak', { lines: [{ text: 'a', stage: { camera: 'bust', bogus: 1 } }] }],
+    ['speak', { lines: [{ text: 'a', stage: { place: { avatar: { widht: 0.4 } } } }] }],
+    ['speak', { lines: [{ text: 'a', stage: { place: { slide: { fit: 'cover', bogus: 1 } } } }] }],
+    ['react', { point: { azimuth: 1, elevation: 1, bogus: 1 } }],
+    ['react', { overlay: { id: 'sweat', bogus: 1 } }],
+    ['stage', { wear: { slot: 'outer', bogus: 1 } }],
+    ['revise', { action: 'update', id: 'q1', line: { text: 'a', bogus: 1 } }],
+    ['revise', { action: 'remove', id: 'q1', bogus: 1 }],
+    ['deck', { action: 'read', id: 'intro', bogus: 1 }],
+  ])('refuses a misspelled key nested in %s %j', async (name, args) => {
+    h = harness();
+    h.seed([entry({ id: 'q1' })]);
+    const client = await connect(h.control);
+
+    const result = await client.callTool({ name, arguments: args });
+
+    expect(result.isError).toBe(true);
+    expect(h.control.command).not.toHaveBeenCalled();
+    expect(h.control.queueAdd).not.toHaveBeenCalled();
+    expect(h.control.queueUpdate).not.toHaveBeenCalled();
+    expect(h.control.queueRemove).not.toHaveBeenCalled();
+  });
+
+  it.each(['', '   ', '\n\t'])('refuses speak text %j', async (text) => {
+    h = harness();
+    const client = await connect(h.control);
+
+    const result = await client.callTool({ name: 'speak', arguments: { lines: [{ text }] } });
+
+    expect(result.isError).toBe(true);
+    expect(h.control.queueAdd).not.toHaveBeenCalled();
+  });
+
+  it('refuses blank text in a revise update and still allows leaving it out', async () => {
+    h = harness();
+    h.seed([entry({ id: 'q1' })]);
+    const client = await connect(h.control);
+
+    const blank = await client.callTool({
+      name: 'revise',
+      arguments: { action: 'update', id: 'q1', line: { text: ' ' } },
+    });
+    const omitted = await client.callTool({
+      name: 'revise',
+      arguments: { action: 'update', id: 'q1', line: { reading: 'あ' } },
+    });
+
+    expect(blank.isError).toBe(true);
+    expect(omitted.isError).not.toBe(true);
+    expect(h.control.queueUpdate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('why a revise was refused', () => {
+  it('blames a stale id only when the entry is not there', async () => {
+    h = harness();
+    h.seed([entry({ id: 'q1' })]);
+    const client = await connect(h.control);
+
+    const result = await client.callTool({
+      name: 'revise',
+      arguments: { action: 'remove', id: 'gone' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain('started being said');
+  });
+
+  it('passes the server reason through when the sidecar refuses a rewind', async () => {
+    h = harness();
+    h.seed([entry({ id: 'q1' })]);
+    h.control.queueRewind.mockResolvedValueOnce({
+      queue: [entry({ id: 'q1' })],
+      viewers: 1,
+      error: 'speech sidecar is loading',
+    });
+    const client = await connect(h.control);
+
+    const result = await client.callTool({
+      name: 'revise',
+      arguments: { action: 'rewind', id: 'h1', mode: 'from', interrupt: false },
+    });
+
+    const shown = JSON.stringify(result);
+    expect(result.isError).toBe(true);
+    expect(shown).toContain('speech sidecar is loading');
+    expect(shown).not.toContain('started being said');
+    expect(shown).toContain('q1');
+  });
+});

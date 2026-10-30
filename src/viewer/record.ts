@@ -332,6 +332,8 @@ interface ActiveTake {
   unsubscribe: (() => void) | null;
   finalizing: Promise<void>;
   finalize: () => void;
+  /** Set once the final marker for this take has been queued or sent. */
+  finalPosted: boolean;
   shutdown: Promise<void> | null;
   fallback: ReturnType<typeof setTimeout> | null;
   errored: boolean;
@@ -367,10 +369,17 @@ export class StageRecorder {
   private readonly slideCache = new SlideComposite();
   /** Uploads are chained so the server appends them in the order they were made. */
   private uploads: Promise<void> = Promise.resolve();
-  /** The last problem, for the renderer's own report. Cleared by a new take. */
+  /** Session whose data chunks the server refused; its queued uploads are dropped. */
+  private refused: string | null = null;
+  /** The last problem, kept on this page for diagnostics only. Cleared by a new take. */
   private failure: string | null = null;
-  /** The page lifecycle owns this recorder, so unload gets one last chance to flush. */
+  /**
+   * The page lifecycle owns this recorder. Nothing queued runs after unload, so
+   * the final marker leaves synchronously, inside the handler.
+   */
   private readonly onPageHide = (): void => {
+    const take = this.take;
+    if (take !== null) void this.abort(take.request.session, take, null, { now: true });
     void this.dispose();
   };
   private disposed = false;
@@ -390,7 +399,7 @@ export class StageRecorder {
     return this.take !== null;
   }
 
-  /** Why the last take would not start, or null. */
+  /** Why the last take would not start, or null. Local diagnostics only. */
   get error(): string | null {
     return this.failure;
   }
@@ -413,8 +422,7 @@ export class StageRecorder {
 
     const mime = pickMime();
     if (mime === null) {
-      this.failure = 'this browser cannot encode video';
-      return;
+      return this.abort(request.session, null, 'this browser cannot encode video');
     }
 
     const canvas = document.createElement('canvas');
@@ -424,8 +432,7 @@ export class StageRecorder {
     // `captureStream`.
     const ctx = canvas.getContext('2d', { alpha: false });
     if (ctx === null) {
-      this.failure = 'no 2d context for the recording canvas';
-      return;
+      return this.abort(request.session, null, 'no 2d context for the recording canvas');
     }
     ctx.imageSmoothingQuality = 'high';
 
@@ -433,8 +440,7 @@ export class StageRecorder {
     try {
       stream = canvas.captureStream(request.fps);
     } catch (error) {
-      this.failure = error instanceof Error ? error.message : String(error);
-      return;
+      return this.abort(request.session, null, errorText(error));
     }
     // Before the recorder is built, because a track cannot be added to a stream
     // one is already reading. A renderer that has not spoken yet has no audio
@@ -444,9 +450,7 @@ export class StageRecorder {
       audio = await this.openAudio();
     } catch (error) {
       this.closeVideoTracks(stream);
-      if (this.current(generation)) {
-        this.failure = error instanceof Error ? error.message : String(error);
-      }
+      if (this.current(generation)) return this.abort(request.session, null, errorText(error));
       return;
     }
     if (!this.current(generation)) {
@@ -463,8 +467,7 @@ export class StageRecorder {
       });
     } catch (error) {
       this.closeVideoTracks(stream);
-      this.failure = error instanceof Error ? error.message : String(error);
-      return;
+      return this.abort(request.session, null, errorText(error));
     }
 
     let stopped = false;
@@ -476,7 +479,7 @@ export class StageRecorder {
       if (stopped) return;
       stopped = true;
       // The final marker is queued after every data chunk already observed.
-      this.post(request.session, mime, new Blob([]), true);
+      this.postFinal(request.session, mime, take);
       void this.uploads.then(resolveStopped, resolveStopped);
     };
 
@@ -490,6 +493,7 @@ export class StageRecorder {
       unsubscribe: null,
       finalizing: complete,
       finalize,
+      finalPosted: false,
       shutdown: null,
       fallback: null,
       errored: false,
@@ -510,21 +514,19 @@ export class StageRecorder {
       // a fake that omits stop is still closed by the deferred shutdown.
       setTimeout(() => {
         if (take.shutdown !== null) return;
-        if (this.take === take) this.detach(take);
-        void this.registerShutdown(take);
+        void this.abort(request.session, take, null);
       }, 0);
     };
 
     this.take = take;
+    this.refused = null;
     try {
       take.unsubscribe = this.onFrame((frame) => {
         if (this.take === take) compose(take.ctx, frame, take.out, this.slideCache);
       });
       recorder.start(CHUNK_MS);
     } catch (error) {
-      this.failure = error instanceof Error ? error.message : String(error);
-      this.detach(take);
-      await this.registerShutdown(take);
+      await this.abort(request.session, take, errorText(error));
     }
   }
 
@@ -565,6 +567,40 @@ export class StageRecorder {
     take.unsubscribe?.();
     take.unsubscribe = null;
     this.slideCache.dispose();
+  }
+
+  /**
+   * Stop delivering `session` for good, whatever ended it.
+   *
+   * The one path for a server refusal, an encoder that failed to start or
+   * errored, and pagehide: the take is detached, its encoder and video tracks
+   * are stopped through the shared shutdown, and the server is sent the final
+   * marker once. With no take, the marker alone says this renderer delivers
+   * nothing for the session. `now` skips the upload queue, for an unloading page.
+   */
+  private abort(
+    session: string,
+    take: ActiveTake | null,
+    reason: string | null,
+    { now = false }: { now?: boolean } = {},
+  ): Promise<void> {
+    if (reason !== null) this.failure = reason;
+    if (take === null) {
+      this.postFinal(session, null, null, now);
+      return Promise.resolve();
+    }
+    if (now) this.postFinal(session, take.mime, take, true);
+    this.detach(take);
+    return this.registerShutdown(take);
+  }
+
+  /** The server refused a data chunk: nothing more of that session is sent. */
+  private refuse(session: string): void {
+    this.refused = session;
+    const take = this.take;
+    if (take !== null && take.request.session === session) {
+      void this.abort(session, take, 'the server refused the take');
+    }
   }
 
   /** Share one shutdown with overlapping public stop/start calls. */
@@ -642,24 +678,64 @@ export class StageRecorder {
    * Chained rather than sent in parallel: the server appends what arrives, and
    * two overlapping posts would interleave two seconds of one file.
    */
-  private post(session: string, mime: string, blob: Blob, final: boolean): void {
-    const url =
-      `${this.base}/record/chunk?session=${encodeURIComponent(session)}` +
-      `&mime=${encodeURIComponent(mime)}` +
-      `&renderer=${encodeURIComponent(this.rendererId)}` +
-      `${final ? '&final=1' : ''}`;
+  private post(session: string, mime: string | null, blob: Blob, final: boolean): void {
+    const url = this.chunkURL(session, mime, final);
     this.uploads = this.uploads.then(async () => {
+      if (!final && this.refused === session) return;
       try {
-        await this.send(url, {
+        const response = await this.send(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/octet-stream' },
           body: blob,
           ...(final ? { keepalive: true } : {}),
         });
+        // A refused final marker is harmless: the take is already over there.
+        if (!final && (response.status === 409 || response.status === 500)) {
+          this.refuse(session);
+        }
       } catch {
         // The server went away mid-take. Nothing here can repair that, and the
         // panel is already reading the byte count that stopped climbing.
       }
     });
   }
+
+  /**
+   * Send the empty chunk that tells the server this renderer is done with
+   * `session`, at most once per take. `now` sends it outside the upload queue.
+   */
+  private postFinal(
+    session: string,
+    mime: string | null,
+    take: ActiveTake | null,
+    now = false,
+  ): void {
+    if (take !== null) {
+      if (take.finalPosted) return;
+      take.finalPosted = true;
+    }
+    if (!now) {
+      this.post(session, mime, new Blob([]), true);
+      return;
+    }
+    void this.send(this.chunkURL(session, mime, true), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: new Blob([]),
+      keepalive: true,
+    }).catch(() => {});
+  }
+
+  private chunkURL(session: string, mime: string | null, final: boolean): string {
+    return (
+      `${this.base}/record/chunk?session=${encodeURIComponent(session)}` +
+      `${mime === null ? '' : `&mime=${encodeURIComponent(mime)}`}` +
+      `&renderer=${encodeURIComponent(this.rendererId)}` +
+      `${final ? '&final=1' : ''}`
+    );
+  }
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -26,15 +26,23 @@ export const EVENT_LOG_MAX = 512;
  * finish is woken once per renderer instead of once per line.
  *
  * Turn lifecycle events are not timed at all: a turn id names one line once —
- * the queue mints a fresh one for a line put back by a rewind — so its start,
- * end and interrupt are each kept once however far apart renderers report them.
- * See `acceptedTurnEvents`. This window is for the rest: a drop names a set of
- * lines, and the same set can be dropped again later.
+ * the queue mints a fresh one for a line put back by a rewind — so its start is
+ * kept once, and its ending once in whichever form arrived first, however far
+ * apart renderers report them. See `turnKey`. This window is for the rest: a
+ * drop names a set of lines, and the same set can be dropped again later.
  */
 export const ECHO_SECONDS = 2.0;
 
 /** The turn lifecycle events matched by id rather than by `ECHO_SECONDS`. */
 const TURN_EVENTS = new Set<SessionEvent['type']>(['turn.start', 'turn.end', 'turn.interrupted']);
+
+/**
+ * The key a turn lifecycle event is kept once under. `turn.end` and
+ * `turn.interrupted` share one: a line ends once, however each renderer saw it.
+ */
+function turnKey(type: SessionEvent['type'], turn: string): string {
+  return type === 'turn.start' ? `turn.start:${turn}` : `turn.final:${turn}`;
+}
 
 /**
  * What an event is about, or null when it is about nothing in particular.
@@ -72,8 +80,8 @@ export class EventLog {
   private readonly acceptedCueIds = new Set<string>();
   private counter = 0;
   /**
-   * `type:turn` keys of the lifecycle events already logged, in arrival order
-   * and bounded like the event log. See `ECHO_SECONDS`.
+   * `turnKey`s of the lifecycle events already logged, in arrival order and
+   * bounded like the event log. See `ECHO_SECONDS`.
    */
   private readonly acceptedTurnEvents = new Set<string>();
 
@@ -107,9 +115,9 @@ export class EventLog {
     return true;
   }
 
-  /** Record a lifecycle event key as already logged. */
-  markFiled(key: string): void {
-    remember(this.acceptedTurnEvents, key);
+  /** Record a lifecycle event the server logged itself, so a renderer's copy is an echo. */
+  markFiled(event: SessionEvent & { turn: string }): void {
+    remember(this.acceptedTurnEvents, turnKey(event.type, event.turn));
   }
 
   /**
@@ -123,7 +131,7 @@ export class EventLog {
    */
   isEcho(event: SessionEvent, at: number): boolean {
     if (TURN_EVENTS.has(event.type) && event.turn !== undefined) {
-      const key = `${event.type}:${event.turn}`;
+      const key = turnKey(event.type, event.turn);
       if (this.acceptedTurnEvents.has(key)) return true;
       remember(this.acceptedTurnEvents, key);
       return false;

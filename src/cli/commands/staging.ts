@@ -8,9 +8,9 @@ import {
   roomCommandSchema,
   slideCommandSchema,
 } from '../../protocol';
-import { build, type Handler, NUMBER, toInteger, toNumber } from '../args';
+import { build, type Handler, NUMBER, takesAtMost, takesNone, toInteger, toNumber } from '../args';
 import { fail } from '../client';
-import { localized, show } from '../output';
+import { localized, scannedDirectory, show } from '../output';
 
 /**
  * Where the line is delivered: the camera, the acoustic, the set, the document
@@ -30,6 +30,7 @@ export const camera: Handler = async (client, args) => {
     options: { yaw: { type: 'string' }, pitch: { type: 'string' }, zoom: { type: 'string' } },
     allowPositionals: true,
   });
+  takesAtMost('camera', positionals, 1);
   const degrees = (raw: string | undefined, flag: string) =>
     raw === undefined ? undefined : toNumber(raw, 0, flag);
   show(
@@ -48,6 +49,7 @@ export const camera: Handler = async (client, args) => {
 /** No id is dry, matching `perform` and `gesture` rather than needing a word for it. */
 export const room: Handler = async (client, args) => {
   const { positionals } = parseArgs({ args, allowPositionals: true });
+  takesAtMost('room', positionals, 1);
   show(
     await client.command(
       build(roomCommandSchema, {
@@ -61,6 +63,7 @@ export const room: Handler = async (client, args) => {
 /** Same shape as `room` beside it, and the same rule: no id is the bare stage. */
 export const backdrop: Handler = async (client, args) => {
   const { positionals } = parseArgs({ args, allowPositionals: true });
+  takesAtMost('backdrop', positionals, 1);
   show(
     await client.command(
       build(backdropCommandSchema, {
@@ -82,6 +85,7 @@ export const bloom: Handler = async (client, args) => {
     },
     allowPositionals: true,
   });
+  takesAtMost('bloom', positionals, 1);
   const mode = positionals[0];
   if (positionals.length !== 1 || (mode !== 'on' && mode !== 'off')) {
     fail('bloom on|off [--strength value] [--radius value] [--threshold value]');
@@ -117,6 +121,7 @@ export const deck: Handler = async (client, args) => {
     options: { page: { type: 'string' } },
     allowPositionals: true,
   });
+  takesAtMost('deck', positionals, 1);
   const id = positionals[0];
   if (id === undefined) fail('deck needs the id of a document (to take one down, deck none)');
   show(
@@ -139,6 +144,7 @@ export const deck: Handler = async (client, args) => {
  */
 export const slide: Handler = async (client, args) => {
   const { positionals } = parseArgs({ args, allowPositionals: true });
+  takesAtMost('slide', positionals, 1);
   const where = positionals[0];
   show(await client.command(build(slideCommandSchema, { cmd: 'slide', ...move(where) })));
 };
@@ -173,6 +179,7 @@ export const place: Handler = async (client, args) => {
     },
     allowPositionals: true,
   });
+  takesAtMost('place', positionals, 1);
   const layer = positionals[0] ?? 'avatar';
   if (layer !== 'avatar' && layer !== 'slide') fail(`place takes avatar or slide: ${layer}`);
   // `fit` is how a picture fills its rectangle, which the character's does not
@@ -201,10 +208,12 @@ export const place: Handler = async (client, args) => {
 };
 
 /** What the server can see in the document directory. Not avatar data; see `deckSchema`. */
-export const decks: Handler = async (client) => {
+export const decks: Handler = async (client, args) => {
+  takesNone('decks', args);
   const { decks: found } = await client.decks();
   if (found.length === 0) {
-    console.log('no documents (put a PDF in slides/)');
+    const where = await scannedDirectory(client, 'slides', "the server's slides directory");
+    console.log(`no documents (put a PDF in ${where})`);
     return;
   }
   for (const item of found) {

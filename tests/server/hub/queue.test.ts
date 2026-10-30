@@ -441,3 +441,47 @@ describe('the history and rewinding', () => {
  * counts turns, and counting three of them per line is worse than useless: an
  * LLM loop waiting for the character to stop talking is woken twice too often.
  */
+describe('one ending per line, in whichever form it arrives', () => {
+  const terminal = (turn: string): SessionEvent[] =>
+    hub
+      .snapshot()
+      .events.filter(
+        (e) => e.turn === turn && (e.type === 'turn.end' || e.type === 'turn.interrupted'),
+      );
+
+  it('logs one terminal event when two renderers saw the line end in different forms', () => {
+    const [line] = hub.queue.add([{ text: 'a' }]);
+    hub.subscribe(() => {}, 'renderer-a');
+    hub.subscribe(() => {}, 'renderer-b');
+    hub.report({ events: [event(line.id, 'turn.start')] }, 'renderer-a');
+    hub.report({ events: [event(line.id, 'turn.start')] }, 'renderer-b');
+    // One finished the line just before the interrupt reached the other.
+    hub.report({ events: [event(line.id, 'turn.end')] }, 'renderer-a');
+    hub.report({ events: [event(line.id, 'turn.interrupted')] }, 'renderer-b');
+    hub.report({ events: [{ type: 'turn.end', turn: line.id, interrupted: true }] }, 'renderer-b');
+
+    expect(terminal(line.id)).toMatchObject([{ type: 'turn.end' }]);
+    expect(hub.queue.history().map((entry) => entry.id)).toEqual([line.id]);
+  });
+
+  it('takes the first form whichever renderer reports it, in either order', () => {
+    const [line] = hub.queue.add([{ text: 'a' }]);
+    hub.report({ events: [event(line.id, 'turn.start')] }, 'renderer-b');
+    hub.report({ events: [event(line.id, 'turn.interrupted')] }, 'renderer-b');
+    hub.report({ events: [event(line.id, 'turn.end')] }, 'renderer-a');
+
+    expect(terminal(line.id)).toMatchObject([{ type: 'turn.interrupted' }]);
+  });
+
+  it('treats a straggler interrupt after the server filed an abandoned line as an echo', () => {
+    const [line] = hub.queue.add([{ text: 'a' }]);
+    const detach = hub.subscribe(() => {}, 'renderer-a');
+    hub.report({ events: [event(line.id, 'turn.start')] }, 'renderer-a');
+    detach();
+    hub.subscribe(() => {}, 'renderer-b');
+    expect(terminal(line.id)).toHaveLength(1);
+
+    hub.report({ events: [event(line.id, 'turn.interrupted')] }, 'renderer-a');
+    expect(terminal(line.id)).toHaveLength(1);
+  });
+});

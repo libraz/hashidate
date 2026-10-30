@@ -22,6 +22,7 @@ import {
   type ScriptsResponse,
   scriptRunSchema,
 } from '../protocol';
+import { NO_SUCH_ENTRY, SERVER_VERBS } from '../protocol/commands';
 import { linesFrom, ScriptError } from '../script';
 import type { Avatars } from './avatars';
 import { type BgmLibrary, listBgm } from './bgm';
@@ -657,7 +658,7 @@ function queue(res: ServerResponse, hub: Hub, pathname: string, body: unknown): 
   const done = (ok: boolean): void => {
     const viewers = hub.publishQueue();
     const payload: QueueResponse = { queue: hub.queue.list(), viewers };
-    json(res, ok ? payload : { ...payload, error: 'no such entry' }, ok ? 200 : 404);
+    json(res, ok ? payload : { ...payload, error: NO_SUCH_ENTRY }, ok ? 200 : 404);
   };
   const fields = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
   const id = typeof fields.id === 'string' ? fields.id : '';
@@ -749,7 +750,7 @@ function queue(res: ServerResponse, hub: Hub, pathname: string, body: unknown): 
       });
       const payload: QueueResponse = { queue: hub.queue.list(), viewers: hub.viewers };
       if (added === null) {
-        json(res, { ...payload, error: 'no such entry' }, 404);
+        json(res, { ...payload, error: NO_SUCH_ENTRY }, 404);
         return;
       }
       json(res, payload);
@@ -806,7 +807,12 @@ async function command(
   if (!parsed.success) {
     return json(res, { error: 'no command', detail: parsed.error.issues }, 400);
   }
-  const commands: StampedCommand[] = parsed.data.map(stamp);
+  // The server's own verbs are dropped like an unknown element; nothing else left is a 400.
+  const accepted = parsed.data.filter((command) => !SERVER_VERBS.has(command.cmd));
+  if (accepted.length === 0) {
+    return json(res, { error: 'record, idleAct and idleFace are issued by the server' }, 400);
+  }
+  const commands: StampedCommand[] = accepted.map(stamp);
   const refused = hub.refuseStart(commands.map((c) => c.command));
   if (refused !== null) return json(res, { error: refused }, 409);
 
@@ -833,8 +839,11 @@ async function command(
     const last = commands.findLastIndex((c) => c.command.cmd === 'say');
     if (last !== -1) {
       const turn = ids[last];
+      // Gone from both lists is every ending: said, cut off, abandoned, or dropped unstarted.
+      const settled = (entries: readonly { id: string }[]): boolean =>
+        !entries.some((entry) => entry.id === turn);
       const { snapshot, completed } = await hub.waitFor(
-        (snap) => snap.events.some((e) => e.type === 'turn.end' && e.turn === turn),
+        (snap) => settled(snap.queue) && settled(snap.airing ?? []),
         waitSeconds(wait, COMMAND_WAIT_SECONDS) * 1000,
       );
       result.completed = completed;

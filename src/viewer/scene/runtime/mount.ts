@@ -13,11 +13,14 @@ import {
   type WornState,
   wornState,
 } from '@/engine/scene';
+import { cloneTransparentTriangleMaterial } from '@/engine/scene/materials';
+import { TransparentTriangleController } from '@/engine/scene/transparent-triangles';
 import type { AvatarDescriptor, BoneOverrides, FingerOverrides, Profile } from '@/engine/types';
 import { getLocale } from '@/i18n/locale';
 import type { MessageKey } from '@/i18n/messages';
 import { translate } from '@/i18n/translate';
 import type { ToonTextures } from './toon-textures';
+import { resolveTransparentTriangleTargets } from './transparent-triangle-policy';
 import type { LoadedAvatar } from './types';
 
 /**
@@ -35,6 +38,7 @@ export interface Mounted {
   director: Director;
   wardrobe: Wardrobe;
   materials: MaterialSet;
+  transparentTriangles: TransparentTriangleController;
   /** Everything the profile, wardrobe or sway layer could not resolve. */
   problems: string[];
 }
@@ -89,6 +93,11 @@ export function mountAvatar(
   const state = wornState(avatar.wardrobe, worn);
   poseWardrobe(root, avatar.wardrobe, state);
 
+  const transparentTriangles = new TransparentTriangleController({
+    cloneMaterial: cloneTransparentTriangleMaterial,
+  });
+  transparentTriangles.reconcile(resolveTransparentTriangleTargets(root, parser));
+
   // Every mesh casts. The shadow the avatar throws on the wall behind it is
   // what puts it in the room rather than in front of a picture of one, and
   // costs a second pass over geometry that is already skinned. Receiving is the
@@ -137,13 +146,16 @@ export function mountAvatar(
   if (director.tail.missing.length) {
     say('console.problem.tail', director.tail.missing, ' / ');
   }
+  if (director.rig.armSolverOff.length) {
+    say('console.problem.armSolver', director.rig.armSolverOff, ' / ');
+  }
   const faceIds = new Set(director.presets.map((p) => p.id));
   const idleFaces = (avatar.idle?.faces?.exclude ?? []).filter((id) => !faceIds.has(id));
   if (idleFaces.length) say('console.problem.idleFaces', idleFaces, ', ');
   const { unknown: idleActs } = idlePool(avatar.idle?.acts);
   if (idleActs.length) say('console.problem.idleActs', idleActs, ', ');
 
-  return { root, profile, director, wardrobe, materials, problems };
+  return { root, profile, director, wardrobe, materials, transparentTriangles, problems };
 }
 
 type DisposableResource = { dispose: () => void };
@@ -232,6 +244,7 @@ export function disposeRawAvatar(root: THREE.Object3D): void {
 export function disposeAvatar(cur: LoadedAvatar): void {
   // Materials and their textures belong to the material layer, which holds
   // both the imported set and the toon set; only the geometry is ours.
+  cur.transparentTriangles.dispose();
   cur.materials.dispose();
   // Geometry, and the skeleton's bone texture, which hangs off a skinned mesh
   // rather than its material and shows up only as a climbing texture count.

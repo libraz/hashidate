@@ -1,6 +1,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { type ZodError, type ZodType, z } from 'zod';
 import {
+  avatarPlacementSchema,
   bgmDspPatchSchema,
   bgmFadePatchSchema,
   bgmRampSecondsSchema,
@@ -14,6 +15,7 @@ import {
   placeStageSchema,
   pointCommandSchema,
   queueUpdateSchema,
+  slidePlacementSchema,
   stageSchema,
   turnSchema,
   type Vocabulary,
@@ -52,6 +54,10 @@ import {
  * steer.
  */
 const MAX_LINES = 16;
+
+/** Text must carry something to say: whitespace alone is read out as nothing. */
+const NOT_BLANK = /\S/;
+const BLANK_TEXT = 'text may not be blank';
 
 export type ToolName =
   | 'speak'
@@ -260,19 +266,32 @@ const REWIND_INTERRUPT_NOTE =
  * `speak` with no words in it is a call that meant to say something and did not,
  * which is exactly the silent failure this adapter is here to catch.
  */
-const speakLine = turnSchema.omit({ id: true }).extend({
-  text: turnSchema.shape.text.unwrap().describe(TEXT_NOTE),
-  reading: turnSchema.shape.reading.describe(READING_NOTE),
-  side: turnSchema.shape.side.describe(SIDE_NOTE),
-});
+const speakLine = turnSchema
+  .omit({ id: true })
+  .extend({
+    text: turnSchema.shape.text.unwrap().regex(NOT_BLANK, BLANK_TEXT).describe(TEXT_NOTE),
+    reading: turnSchema.shape.reading.describe(READING_NOTE),
+    side: turnSchema.shape.side.describe(SIDE_NOTE),
+  })
+  .strict();
+
+/** A layout whose misspelled keys are refused at every level rather than stripped. */
+const strictPlace = placeStageSchema
+  .extend({
+    avatar: avatarPlacementSchema.strict().optional(),
+    slide: slidePlacementSchema.strict().optional(),
+  })
+  .strict();
 
 /** The three staging axes a line can carry, before any ids are injected. */
-const speakStage = stageSchema.extend({
-  // Keep this nested protocol schema explicit at the consumer boundary. The
-  // base stage schema already carries it, but reaching through `.shape` on a
-  // turn would make this adapter depend on how that larger schema is built.
-  place: placeStageSchema.optional(),
-});
+const speakStage = stageSchema
+  .extend({
+    // Keep this nested protocol schema explicit at the consumer boundary. The
+    // base stage schema already carries it, but reaching through `.shape` on a
+    // turn would make this adapter depend on how that larger schema is built.
+    place: strictPlace.optional(),
+  })
+  .strict();
 
 /** The run of lines, however narrow the line itself has been made. */
 const lineList = <T extends ZodType>(line: T) =>
@@ -284,45 +303,54 @@ const lineList = <T extends ZodType>(line: T) =>
       `1..${MAX_LINES} lines, in the order they are said. The more that travel together, the tighter the gaps between them.`,
     );
 
-const speakInput = z.object({
-  lines: lineList(speakLine),
-  at: z
-    .enum(['push', 'unshift'])
-    .optional()
-    .describe('push appends (the default), unshift puts them at the front.'),
-  note: z.string().optional().describe('A note for the operator. Neither spoken nor synthesised.'),
-});
+const speakInput = z
+  .object({
+    lines: lineList(speakLine),
+    at: z
+      .enum(['push', 'unshift'])
+      .optional()
+      .describe('push appends (the default), unshift puts them at the front.'),
+    note: z
+      .string()
+      .optional()
+      .describe('A note for the operator. Neither spoken nor synthesised.'),
+  })
+  .strict();
 
 export type SpeakInput = z.infer<typeof speakInput>;
 
-const statusInput = z.object({
-  since: z
-    .number()
-    .int()
-    .min(0)
-    .optional()
-    .describe('The seq that came back last time. Only events newer than it are returned.'),
-  /**
-   * How much of the queue comes back. Default is the same five lines it has
-   * always been — a status is not a script — and asking for more is how a caller
-   * gets at the id of a line that is too far down to be shown by default, which
-   * is the one thing `revise` cannot be used without.
-   */
-  depth: z.number().int().min(0).max(MAX_DEPTH).optional().describe(DEPTH_NOTE),
-});
+const statusInput = z
+  .object({
+    since: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('The seq that came back last time. Only events newer than it are returned.'),
+    /**
+     * How much of the queue comes back. Default is the same five lines it has
+     * always been — a status is not a script — and asking for more is how a caller
+     * gets at the id of a line that is too far down to be shown by default, which
+     * is the one thing `revise` cannot be used without.
+     */
+    depth: z.number().int().min(0).max(MAX_DEPTH).optional().describe(DEPTH_NOTE),
+  })
+  .strict();
 
 export type StatusInput = z.infer<typeof statusInput>;
 
-const interruptInput = z.object({
-  mode: z
-    .enum(['now', 'after_line'])
-    .describe('now cuts even mid-word. after_line waits until the end of the current line.'),
-});
+const interruptInput = z
+  .object({
+    mode: z
+      .enum(['now', 'after_line'])
+      .describe('now cuts even mid-word. after_line waits until the end of the current line.'),
+  })
+  .strict();
 
 export type InterruptInput = z.infer<typeof interruptInput>;
 
 /** The overlay payload, which is the command's own minus the verb. */
-const overlaySpec = overlayCommandSchema.omit({ cmd: true });
+const overlaySpec = overlayCommandSchema.omit({ cmd: true }).strict();
 
 /**
  * Where to point, with the bearing required.
@@ -332,14 +360,17 @@ const overlaySpec = overlayCommandSchema.omit({ cmd: true });
  * `point: null` and a bearing given by halves is a mistake rather than a
  * cancellation.
  */
-const pointSpec = pointCommandSchema.omit({ cmd: true, id: true }).extend({
-  azimuth: pointCommandSchema.shape.azimuth
-    .unwrap()
-    .describe("Degrees. 0 is straight ahead, positive is the character's own right."),
-  elevation: pointCommandSchema.shape.elevation
-    .unwrap()
-    .describe('Degrees. 0 is shoulder height, positive is up.'),
-});
+const pointSpec = pointCommandSchema
+  .omit({ cmd: true, id: true })
+  .extend({
+    azimuth: pointCommandSchema.shape.azimuth
+      .unwrap()
+      .describe("Degrees. 0 is straight ahead, positive is the character's own right."),
+    elevation: pointCommandSchema.shape.elevation
+      .unwrap()
+      .describe('Degrees. 0 is shoulder height, positive is up.'),
+  })
+  .strict();
 
 /**
  * Dressing, as the command's own flat payload. Every field is optional on the
@@ -348,24 +379,29 @@ const pointSpec = pointCommandSchema.omit({ cmd: true, id: true }).extend({
  * precedence. Keeping this rooted in the protocol schema means a future
  * wire-valid field cannot be dropped here.
  */
-const wearSpec = wearCommandSchema.omit({ cmd: true, id: true }).extend({
-  slot: wearCommandSchema.shape.slot.describe(WEAR_SLOT_NOTE),
-  item: wearCommandSchema.shape.item.describe(WEAR_ITEM_NOTE),
-  preset: wearCommandSchema.shape.preset.describe(WEAR_PRESET_NOTE),
-});
+const wearSpec = wearCommandSchema
+  .omit({ cmd: true, id: true })
+  .extend({
+    slot: wearCommandSchema.shape.slot.describe(WEAR_SLOT_NOTE),
+    item: wearCommandSchema.shape.item.describe(WEAR_ITEM_NOTE),
+    preset: wearCommandSchema.shape.preset.describe(WEAR_PRESET_NOTE),
+  })
+  .strict();
 
-const reactInput = z.object({
-  reset: z.boolean().optional().describe(RESET_NOTE),
-  emotion: emotionVectorSchema.optional().describe(EMOTION_NOTE),
-  perform: z.string().nullable().optional().describe(PERFORM_NOTE),
-  expression: z.string().nullable().optional().describe(EXPRESSION_NOTE),
-  gesture: z.string().nullable().optional().describe(GESTURE_NOTE),
-  side: turnSchema.shape.side.describe(SIDE_NOTE),
-  overlay: overlaySpec.optional().describe(OVERLAY_NOTE),
-  hop: z.string().optional().describe(HOP_NOTE),
-  point: pointSpec.nullable().optional().describe(POINT_NOTE),
-  look: lookCommandSchema.shape.amount.describe(LOOK_NOTE),
-});
+const reactInput = z
+  .object({
+    reset: z.boolean().optional().describe(RESET_NOTE),
+    emotion: emotionVectorSchema.optional().describe(EMOTION_NOTE),
+    perform: z.string().nullable().optional().describe(PERFORM_NOTE),
+    expression: z.string().nullable().optional().describe(EXPRESSION_NOTE),
+    gesture: z.string().nullable().optional().describe(GESTURE_NOTE),
+    side: turnSchema.shape.side.describe(SIDE_NOTE),
+    overlay: overlaySpec.optional().describe(OVERLAY_NOTE),
+    hop: z.string().optional().describe(HOP_NOTE),
+    point: pointSpec.nullable().optional().describe(POINT_NOTE),
+    look: lookCommandSchema.shape.amount.describe(LOOK_NOTE),
+  })
+  .strict();
 
 export type ReactInput = z.infer<typeof reactInput>;
 
@@ -380,29 +416,38 @@ export type ReactInput = z.infer<typeof reactInput>;
  * render. Neither is a surface to hand to something that cannot hear or see the
  * result of what it sent.
  */
-const stageInput = z.object({
-  avatar: z.string().optional().describe(AVATAR_NOTE),
-  camera: cameraFrameSchema.optional().describe(CAMERA_NOTE),
-  bloom: z.boolean().optional().describe('Enable or disable the renderer bloom effect.'),
-  backdrop: z.string().nullable().optional().describe(BACKDROP_NOTE),
-  room: z.string().nullable().optional().describe(ROOM_NOTE),
-  wear: wearSpec.optional().describe(WEAR_NOTE),
-  idle: z.boolean().optional().describe(IDLE_NOTE),
-});
+const stageInput = z
+  .object({
+    avatar: z.string().optional().describe(AVATAR_NOTE),
+    camera: cameraFrameSchema.optional().describe(CAMERA_NOTE),
+    bloom: z.boolean().optional().describe('Enable or disable the renderer bloom effect.'),
+    backdrop: z.string().nullable().optional().describe(BACKDROP_NOTE),
+    room: z.string().nullable().optional().describe(ROOM_NOTE),
+    wear: wearSpec.optional().describe(WEAR_NOTE),
+    idle: z.boolean().optional().describe(IDLE_NOTE),
+  })
+  .strict();
 
 export type StageInput = z.infer<typeof stageInput>;
 
 /** One line as an edit writes it: everything optional, including the words. */
-const reviseLine = turnSchema.omit({ id: true }).extend({
-  text: turnSchema.shape.text.describe(TEXT_NOTE),
-  // A null reading explicitly removes one already stored on the queue. An
-  // omitted reading keeps it, which is why this is an update-only shape rather
-  // than a change to the shared TurnRequest schema.
-  reading: queueUpdateSchema.shape.reading.describe(
-    `${READING_NOTE} Send null to remove an existing reading; omit to keep it.`,
-  ),
-  side: turnSchema.shape.side.describe(SIDE_NOTE),
-});
+const reviseLine = turnSchema
+  .omit({ id: true })
+  .extend({
+    text: turnSchema.shape.text
+      .unwrap()
+      .regex(NOT_BLANK, BLANK_TEXT)
+      .optional()
+      .describe(TEXT_NOTE),
+    // A null reading explicitly removes one already stored on the queue. An
+    // omitted reading keeps it, which is why this is an update-only shape rather
+    // than a change to the shared TurnRequest schema.
+    reading: queueUpdateSchema.shape.reading.describe(
+      `${READING_NOTE} Send null to remove an existing reading; omit to keep it.`,
+    ),
+    side: turnSchema.shape.side.describe(SIDE_NOTE),
+  })
+  .strict();
 
 const entryId = z.string().describe(REVISE_ID_NOTE);
 
@@ -421,24 +466,30 @@ const entryId = z.string().describe(REVISE_ID_NOTE);
  */
 const reviseUnion = <T extends ZodType>(line: T) =>
   z.discriminatedUnion('action', [
-    z.object({
-      action: z.literal('update'),
-      id: entryId,
-      line: line.describe(REVISE_LINE_NOTE),
-    }),
-    z.object({ action: z.literal('remove'), id: entryId }),
-    z.object({
-      action: z.literal('move'),
-      id: entryId,
-      to: z.number().int().min(0).describe(REVISE_TO_NOTE),
-    }),
-    z.object({ action: z.literal('clear') }),
-    z.object({
-      action: z.literal('rewind'),
-      id: entryId,
-      mode: z.enum(['from', 'one']).describe(REWIND_MODE_NOTE),
-      interrupt: z.boolean().describe(REWIND_INTERRUPT_NOTE),
-    }),
+    z
+      .object({
+        action: z.literal('update'),
+        id: entryId,
+        line: line.describe(REVISE_LINE_NOTE),
+      })
+      .strict(),
+    z.object({ action: z.literal('remove'), id: entryId }).strict(),
+    z
+      .object({
+        action: z.literal('move'),
+        id: entryId,
+        to: z.number().int().min(0).describe(REVISE_TO_NOTE),
+      })
+      .strict(),
+    z.object({ action: z.literal('clear') }).strict(),
+    z
+      .object({
+        action: z.literal('rewind'),
+        id: entryId,
+        mode: z.enum(['from', 'one']).describe(REWIND_MODE_NOTE),
+        interrupt: z.boolean().describe(REWIND_INTERRUPT_NOTE),
+      })
+      .strict(),
   ]);
 
 const reviseInput = reviseUnion(reviseLine);
@@ -460,13 +511,15 @@ export type ReviseInput = z.infer<typeof reviseInput>;
  * `list` cannot arrive carrying a page range that nothing will use.
  */
 const deckInput = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('list') }),
-  z.object({
-    action: z.literal('read'),
-    id: z.string().describe(DECK_ID_NOTE),
-    from: z.number().int().min(1).optional().describe(DECK_FROM_NOTE),
-    to: z.number().int().min(1).optional().describe(DECK_TO_NOTE),
-  }),
+  z.object({ action: z.literal('list') }).strict(),
+  z
+    .object({
+      action: z.literal('read'),
+      id: z.string().describe(DECK_ID_NOTE),
+      from: z.number().int().min(1).optional().describe(DECK_FROM_NOTE),
+      to: z.number().int().min(1).optional().describe(DECK_TO_NOTE),
+    })
+    .strict(),
 ]);
 
 export type DeckInput = z.infer<typeof deckInput>;

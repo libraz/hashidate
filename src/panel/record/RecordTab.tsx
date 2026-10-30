@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useT } from '@/i18n';
-import { RECORD_DEFAULTS, RECORD_LIMITS, type Snapshot } from '@/protocol';
+import { RECORD_LIMITS, type Snapshot } from '@/protocol';
 import { Field } from '@/ui/Field';
 import { Section } from '@/ui/Section';
 import { Segmented } from '@/ui/Segmented';
@@ -9,6 +9,7 @@ import { Toggle } from '@/ui/Toggle';
 import { isFailure, readScripts, recordStart, recordStop } from '../api';
 import { loadedScript } from '../script/ScriptPicker';
 import styles from './RecordTab.module.css';
+import { chooseSettings, chosenSettings, type TakeSettings, useChosenSettings } from './settings';
 
 /**
  * Writing the composed frame to a file.
@@ -87,6 +88,36 @@ export function recordingFrameLabel(recording: RecordingDetails): string {
   return `${recording.width}×${recording.height}`;
 }
 
+/** A take setting, as the controls show it. */
+export interface EffectiveSettings {
+  frame: FrameValue | 'custom';
+  fps: RateValue | 'custom';
+  autoStop: boolean;
+  lead: number;
+  tail: number;
+  /** Whether a take is open, which is the one reason any take control is disabled. */
+  locked: boolean;
+}
+
+/**
+ * The single answer to what each take control shows: the open take's values
+ * while one is recording, the operator's chosen values otherwise.
+ */
+export function effectiveSettings(
+  chosen: TakeSettings,
+  recording: RecordingDetails | null | undefined,
+): EffectiveSettings {
+  if (recording === null || recording === undefined) return { ...chosen, locked: false };
+  return {
+    frame: recordingFrameValue(recording, chosen.frame),
+    fps: recordingRateValue(recording, chosen.fps),
+    autoStop: recording.autoStop,
+    lead: recording.lead,
+    tail: recording.tail,
+    locked: true,
+  };
+}
+
 /** A recording error is state from the server, not a local button notice. */
 export function recordingError(recording: RecordingDetails | null | undefined): string | null {
   return recording?.error ?? null;
@@ -138,28 +169,22 @@ export function RecordTab({ snapshot, refresh }: Props) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const [frame, setFrame] = useState<(typeof SIZES)[number]['value']>('1920x1080');
-  const [fps, setFps] = useState<(typeof RATES)[number]['value']>('30');
-  const [autoStop, setAutoStop] = useState(true);
-  const [lead, setLead] = useState<number>(RECORD_DEFAULTS.lead);
-  const [tail, setTail] = useState<number>(RECORD_DEFAULTS.tail);
-
+  const settings = useChosenSettings();
   const recording = snapshot.recording;
   const paused = snapshot.paused;
+  const shown = effectiveSettings(settings, recording);
   // Releasing a held queue is refused while the sidecar cannot speak.
   const noVoice =
     recording === null && paused && (snapshot.speech === 'loading' || snapshot.speech === 'down');
-  const selectedFrame = recordingFrameValue(recording, frame);
-  const selectedRate = recordingRateValue(recording, fps);
   const frameOptions = [
-    ...SIZES.map((entry) => ({ ...entry, disabled: recording !== null })),
-    ...(recording !== null && selectedFrame === 'custom'
+    ...SIZES.map((entry) => ({ ...entry, disabled: shown.locked })),
+    ...(recording !== null && shown.frame === 'custom'
       ? [{ value: 'custom' as const, label: recordingFrameLabel(recording), disabled: true }]
       : []),
   ];
   const rateOptions = [
-    ...RATES.map((entry) => ({ ...entry, disabled: recording !== null })),
-    ...(recording !== null && selectedRate === 'custom'
+    ...RATES.map((entry) => ({ ...entry, disabled: shown.locked })),
+    ...(recording !== null && shown.fps === 'custom'
       ? [{ value: 'custom' as const, label: `${recording.fps} fps`, disabled: true }]
       : []),
   ];
@@ -167,6 +192,7 @@ export function RecordTab({ snapshot, refresh }: Props) {
   const roll = async (): Promise<void> => {
     setBusy(true);
     setNotice(null);
+    const { frame, fps, autoStop, lead, tail } = chosenSettings();
     const [width, height] = frame.split('x').map(Number);
     const roster = await readScripts();
     const known = new Set(isFailure(roster) ? [] : roster.scripts.map((script) => script.id));
@@ -214,9 +240,9 @@ export function RecordTab({ snapshot, refresh }: Props) {
         <Segmented
           ariaLabel={t('panel.record.take.size')}
           options={frameOptions}
-          value={selectedFrame}
+          value={shown.frame}
           onChange={(value) => {
-            if (value !== 'custom') setFrame(value);
+            if (value !== 'custom') chooseSettings({ frame: value });
           }}
         />
       </Field>
@@ -224,44 +250,46 @@ export function RecordTab({ snapshot, refresh }: Props) {
         <Segmented
           ariaLabel={t('panel.record.take.fps')}
           options={rateOptions}
-          value={selectedRate}
+          value={shown.fps}
           onChange={(value) => {
-            if (value !== 'custom') setFps(value);
+            if (value !== 'custom') chooseSettings({ fps: value });
           }}
         />
       </Field>
-      <Toggle
-        label={t('panel.record.take.autoStop')}
-        checked={autoStop}
-        onChange={setAutoStop}
-        title={t('panel.record.take.autoStop.title')}
-      />
+      <fieldset className={styles.group} disabled={shown.locked}>
+        <Toggle
+          label={t('panel.record.take.autoStop')}
+          checked={shown.autoStop}
+          onChange={(autoStop) => chooseSettings({ autoStop })}
+          title={t('panel.record.take.autoStop.title')}
+        />
+      </fieldset>
       {/* Read back off the take once one is open, as the size and rate are. Each
           is disabled where it would change nothing: the lead without a held
           queue to release, the tail without a stop at the end of the script. */}
       <Slider
         label={t('panel.record.take.lead')}
         title={t('panel.record.take.lead.title')}
-        value={recording?.lead ?? lead}
-        onChange={setLead}
+        value={shown.lead}
+        onChange={(lead) => chooseSettings({ lead })}
         min={RECORD_LIMITS.lead.min}
         max={RECORD_LIMITS.lead.max}
         step={0.1}
         precision={1}
         unit="s"
-        disabled={recording !== null || !paused}
+        disabled={shown.locked || !paused}
       />
       <Slider
         label={t('panel.record.take.tail')}
         title={t('panel.record.take.tail.title')}
-        value={recording?.tail ?? tail}
-        onChange={setTail}
+        value={shown.tail}
+        onChange={(tail) => chooseSettings({ tail })}
         min={RECORD_LIMITS.tail.min}
         max={RECORD_LIMITS.tail.max}
         step={0.1}
         precision={1}
         unit="s"
-        disabled={recording !== null || !autoStop}
+        disabled={shown.locked || !shown.autoStop}
       />
 
       <div className={styles.transport}>

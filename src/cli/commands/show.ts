@@ -1,9 +1,9 @@
 import { parseArgs } from 'node:util';
 import { loadScript, outline, ScriptError } from '../../script';
 import { runScript, setupOutcome } from '../../script/run';
-import type { Handler } from '../args';
+import { type Handler, takesAtMost, takesNone } from '../args';
 import { fail } from '../client';
-import { localized, show } from '../output';
+import { localized, scannedDirectory, show } from '../output';
 
 /**
  * What is on disk in `show/`: the scripts a segment is run from, and the
@@ -39,6 +39,7 @@ export const play: Handler = async (client, args) => {
     },
     allowPositionals: true,
   });
+  takesAtMost('play', positionals, 1);
   const name = positionals[0];
   if (name === undefined) fail('play needs a script: a name in show/scripts/, or a path to one');
 
@@ -93,10 +94,12 @@ export const play: Handler = async (client, args) => {
  * see `Motions` — this is a directory, and only the process with a filesystem
  * can answer what is in it.
  */
-export const motions: Handler = async (client) => {
+export const motions: Handler = async (client, args) => {
+  takesNone('motions', args);
   const { motions: found, errors } = await client.motions();
   if (found.length === 0 && errors.length === 0) {
-    console.log('no motions (put a YAML file in show/motions/)');
+    const where = await scannedDirectory(client, 'motions', "the server's motions directory");
+    console.log(`no motions (put a YAML file in ${where})`);
     return;
   }
   for (const item of found) {
@@ -115,7 +118,8 @@ export const motions: Handler = async (client) => {
  * The avatars the server can see. A directory, like `motions`: only the process
  * with a filesystem can say which files are there and which of them were rejected.
  */
-export const avatars: Handler = async (client) => {
+export const avatars: Handler = async (client, args) => {
+  takesNone('avatars', args);
   const { avatars: found, errors } = await client.avatars();
   if (found.length === 0 && errors.length === 0) {
     console.log('no avatars (put a JSON file in avatars/)');

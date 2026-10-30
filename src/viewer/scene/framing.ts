@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { drawnBounds } from '@/engine/scene/drawn';
 import type { CameraFrame, Profile } from '@/engine/types';
 import type { Localized } from '@/i18n/locale';
 
@@ -53,7 +54,8 @@ export function buildFramings(
   fovDegrees: number,
 ): Framings {
   root.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(root);
+  // What the worn state draws, so an unworn hat or boot cannot move the crown or the floor.
+  const box = drawnBounds(root);
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
 

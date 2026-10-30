@@ -1,6 +1,26 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { avatarReplaces } from '@/engine/session/folds';
+import type { WardrobeTable } from '@/engine/types';
+import { same } from '@/i18n/locale';
 import type { Command, CommandName } from '@/protocol';
 import { Standing } from '@/server/standing';
+import { BrowserVoice } from '@/viewer/voice';
+import { build } from '../session/harness';
+
+// The real chain resolution needs the WASM; a base per preset id is enough to
+// tell two chains apart.
+vi.mock('@/viewer/voice-chain', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/viewer/voice-chain')>();
+  const ids = Object.keys(actual.VOICE_PRESETS);
+  return {
+    ...actual,
+    loadBase: vi.fn(async (id: string) => ({
+      inputGainDb: Math.max(0, ids.indexOf(id)),
+      retune: { semitones: 0, mix: 1, grainSize: 0 },
+      eq: { highpassHz: 0, bodyDb: 0, presenceDb: 0, airDb: 0 },
+    })),
+  };
+});
 
 /**
  * The setup a renderer joining late has to be told about.
@@ -224,10 +244,29 @@ describe('the wardrobe, which is a list rather than a value', () => {
     expect(standing.commands()).toEqual([{ cmd: 'wear', slot: 'top', item: null }]);
   });
 
-  it('starts the list over on a whole outfit', () => {
+  it('keeps the slots chosen before an outfit, which lays itself over them', () => {
     standing.record({ cmd: 'wear', slot: 'top', item: 'shirt' });
     standing.record({ cmd: 'wear', preset: 'stage' });
-    expect(standing.commands()).toEqual([{ cmd: 'wear', preset: 'stage' }]);
+    expect(standing.commands()).toEqual([
+      { cmd: 'wear', slot: 'top', item: 'shirt' },
+      { cmd: 'wear', preset: 'stage' },
+    ]);
+  });
+
+  it('replaces an earlier statement of the same outfit', () => {
+    standing.record({ cmd: 'wear', preset: 'stage' });
+    standing.record({ cmd: 'wear', slot: 'head', item: 'hat' });
+    standing.record({ cmd: 'wear', preset: 'stage' });
+    expect(standing.commands()).toEqual([
+      { cmd: 'wear', slot: 'head', item: 'hat' },
+      { cmd: 'wear', preset: 'stage' },
+    ]);
+  });
+
+  it('keeps the garment through a wear that names a slot and no item', () => {
+    standing.record({ cmd: 'wear', slot: 'top', item: 'coat' });
+    standing.record({ cmd: 'wear', slot: 'top' });
+    expect(standing.commands()).toEqual([{ cmd: 'wear', slot: 'top', item: 'coat' }]);
   });
 
   it('keeps the slots chosen after an outfit, in order behind it', () => {
@@ -251,6 +290,18 @@ describe('the wardrobe, which is a list rather than a value', () => {
     standing.record({ cmd: 'wear', slot: 'top', item: 'shirt' });
     standing.record({ cmd: 'avatar', id: 'other' });
     expect(verbs()).toEqual(['avatar', 'tune']);
+  });
+
+  it('keeps the wardrobe when the avatar standing is named again', () => {
+    standing.record({ cmd: 'avatar', id: 'sample' });
+    standing.record({ cmd: 'wear', slot: 'top', item: 'shirt' });
+    standing.record({ cmd: 'avatar', id: 'sample' });
+    expect(standing.commands()).toEqual([
+      { cmd: 'avatar', id: 'sample' },
+      { cmd: 'wear', slot: 'top', item: 'shirt' },
+    ]);
+    standing.record({ cmd: 'avatar', id: 'other' });
+    expect(verbs()).toEqual(['avatar']);
   });
 });
 
@@ -448,5 +499,123 @@ describe('turning pages', () => {
     standing.record({ cmd: 'deck', id: 'intro', page: 4 });
     standing.record({ cmd: 'slide', by: -9 });
     expect(slide()).toEqual({ cmd: 'slide', page: 1 });
+  });
+});
+
+/**
+ * A renderer attaching late, handed `commands()`, against one that heard every
+ * command live. Each side runs the renderer's own code, so agreement is the
+ * claim and not an echo of the fold.
+ */
+describe('a replay lands where the live renderer is', () => {
+  /** The chain a fresh voice holds after `commands`, once its base has resolved. */
+  async function chainAfter(commands: Command[]) {
+    const voice = new BrowserVoice({ muted: true });
+    for (const command of commands) if (command.cmd === 'voice') voice.setChain(command);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const { preset, dsp } = voice.report();
+    voice.dispose();
+    return { preset, dsp };
+  }
+
+  async function expectVoiceReplay(sequence: Command[]): Promise<void> {
+    for (const command of sequence) standing.record(command);
+    const live = await chainAfter(sequence);
+    // Every sequence here ends on a running chain, so a resolved one is compared.
+    expect(live.dsp).not.toBeNull();
+    expect(await chainAfter(standing.commands())).toEqual(live);
+  }
+
+  it('drops a retune a bypass cleared', async () => {
+    await expectVoiceReplay([
+      { cmd: 'voice', preset: 'bright-idol', dsp: { retune: { semitones: 3 } } },
+      { cmd: 'voice', preset: null },
+      { cmd: 'voice', preset: 'bright-idol' },
+    ]);
+  });
+
+  it('turns a bypassed chain back on for an override', async () => {
+    await expectVoiceReplay([
+      { cmd: 'voice', preset: null },
+      { cmd: 'voice', dsp: { eq: { airDb: 2 } } },
+    ]);
+  });
+
+  it('replaces a section whole, as the renderer does', async () => {
+    await expectVoiceReplay([
+      { cmd: 'voice', dsp: { retune: { semitones: 3 } } },
+      { cmd: 'voice', dsp: { retune: { mix: 0.5 } } },
+      { cmd: 'voice', preset: 'no-such-preset', dsp: { eq: { airDb: 1 } } },
+    ]);
+  });
+
+  const TABLE: WardrobeTable = {
+    slots: {
+      top: {
+        label: same('top'),
+        items: [
+          { id: 'shirt', label: same('shirt'), meshes: ['Shirt'] },
+          { id: 'coat', label: same('coat'), meshes: ['Coat'] },
+        ],
+      },
+      head: { label: same('head'), items: [{ id: 'hat', label: same('hat'), meshes: ['Hat'] }] },
+    },
+    presets: { stage: { label: same('stage'), set: { top: 'coat' } } },
+  };
+
+  /**
+   * The outfit a renderer ends on: a session per avatar, replaced only when an
+   * `avatar` command names a different one, as the viewer's loader decides.
+   */
+  function outfitAfter(commands: Command[]): Record<string, string | null> {
+    let avatar: string | null = null;
+    let session = build({ wardrobe: TABLE }).session;
+    for (const command of commands) {
+      if (command.cmd === 'avatar' && avatarReplaces(avatar, command.id)) {
+        avatar = command.id;
+        session = build({ wardrobe: TABLE }).session;
+      }
+      if (command.cmd === 'wear') session.wear(command);
+    }
+    return session.state().wardrobe ?? {};
+  }
+
+  it.each<[string, Command[]]>([
+    [
+      'a slot named with no item',
+      [
+        { cmd: 'wear', slot: 'top', item: 'coat' },
+        { cmd: 'wear', slot: 'top' },
+      ],
+    ],
+    [
+      'an outfit over a slot it does not name',
+      [
+        { cmd: 'wear', slot: 'head', item: 'hat' },
+        { cmd: 'wear', preset: 'stage' },
+        { cmd: 'wear', slot: 'top', item: null },
+        { cmd: 'wear', preset: 'stage' },
+      ],
+    ],
+    [
+      'the avatar standing named again',
+      [
+        { cmd: 'avatar', id: 'sample' },
+        { cmd: 'wear', slot: 'head', item: 'hat' },
+        { cmd: 'avatar', id: 'sample' },
+      ],
+    ],
+    [
+      'a different avatar',
+      [
+        { cmd: 'avatar', id: 'sample' },
+        { cmd: 'wear', slot: 'head', item: 'hat' },
+        { cmd: 'avatar', id: 'other' },
+        { cmd: 'wear', slot: 'top', item: 'shirt' },
+      ],
+    ],
+  ])('dresses the same after %s', (_case, sequence) => {
+    for (const command of sequence) standing.record(command);
+    expect(outfitAfter(standing.commands())).toEqual(outfitAfter(sequence));
   });
 });

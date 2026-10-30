@@ -9,7 +9,7 @@ export const recordEn = {
   'panel.record.take.note2':
     'The renderer that is not muted is the one that records, which is the stage rather than the preview above.',
   'panel.record.take.note3':
-    'Load a script in the Queue tab, frame the shot, then record. The file lands in recordings/.',
+    'Load a script in the Queue tab, frame the shot, then record. The file lands in show/recordings/.',
   'panel.record.take.size': 'Output size',
   'panel.record.take.fps': 'Frame rate',
   'panel.record.take.autoStop': 'Stop at the end of the script',
@@ -42,7 +42,7 @@ export const recordJa: Record<keyof typeof recordEn, string> = {
   'panel.record.take.note2':
     '録画するのはミュートされていないレンダラー。つまり上のプレビューではなくステージのほう。',
   'panel.record.take.note3':
-    'キュータブで台本を読み込み、画角を決めてから録画する。ファイルは recordings/ に落ちる。',
+    'キュータブで台本を読み込み、画角を決めてから録画する。ファイルは show/recordings/ に落ちる。',
   'panel.record.take.size': '出力サイズ',
   'panel.record.take.fps': '毎秒コマ',
   'panel.record.take.autoStop': '台本の終わりで停止',

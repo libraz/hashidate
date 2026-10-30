@@ -1,5 +1,5 @@
 import { getLocale, type Localized, pick } from '../i18n/locale';
-import { fail } from './client';
+import { type ControlClient, fail } from './client';
 
 /**
  * What this client prints.
@@ -36,3 +36,16 @@ function commandError(value: unknown): string | null {
  * nothing has said otherwise.
  */
 export const localized = (text: Localized): string => pick(text, getLocale());
+
+/**
+ * The directory the server scans for `root`, as the server reports it, or a
+ * description when it does not say — never a path this client guessed, since
+ * `--slides` and `--motions` move it.
+ */
+export async function scannedDirectory(
+  client: ControlClient,
+  root: 'slides' | 'motions',
+  fallback: string,
+): Promise<string> {
+  return (await client.state()).roots?.[root] ?? fallback;
+}

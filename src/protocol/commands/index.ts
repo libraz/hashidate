@@ -230,10 +230,25 @@ export type CommandName = Command['cmd'];
  */
 export const RUN_VERBS: ReadonlySet<CommandName> = new Set(['say', 'queue', 'interrupt', 'clear']);
 
-/** A command that sets state, never one of `RUN_VERBS`. */
-export const stateCommandSchema = commandSchema.refine((command) => !RUN_VERBS.has(command.cmd), {
-  error: 'say, queue, interrupt and clear act on the run and cannot be carried beside lines',
-});
+/**
+ * The verbs only the server issues: `record` carries a session the server
+ * mints, and `idleAct`/`idleFace` are the autopilot's choices, made once for
+ * every renderer. Refused from every caller, so what a renderer acts on is
+ * always what the server decided.
+ */
+export const SERVER_VERBS: ReadonlySet<CommandName> = new Set(['record', 'idleAct', 'idleFace']);
+
+/** A command that sets state, never one of `RUN_VERBS` or `SERVER_VERBS`. */
+export const stateCommandSchema = commandSchema
+  .refine((command) => !RUN_VERBS.has(command.cmd), {
+    error: 'say, queue, interrupt and clear act on the run and cannot be carried beside lines',
+  })
+  .refine((command) => !SERVER_VERBS.has(command.cmd), {
+    error: 'record, idleAct and idleFace are issued by the server, not by a caller',
+  });
+
+/** What the control server answers when a queue edit names an entry that is not pending. */
+export const NO_SUCH_ENTRY = 'no such entry';
 
 /** Commands whose `id` belongs to the payload rather than to correlation. */
 export const PAYLOAD_ID_COMMAND_NAMES = [

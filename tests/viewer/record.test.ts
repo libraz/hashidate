@@ -717,4 +717,98 @@ describe('StageRecorder lifecycle', () => {
     expect(env.calls[0].url).toContain('final=1');
     expect(env.calls[0].init?.keepalive).toBe(true);
   });
+
+  it('ends the take on the first refused data chunk and posts no more data', async () => {
+    const env = recorderEnvironment();
+    env.send.mockImplementation(async (input, init) => {
+      env.calls.push({ url: String(input), init });
+      return { ok: false, status: 409 } as Response;
+    });
+    await env.recorder.start({ session: 'take-refused', width: 640, height: 360, fps: 24 });
+    const media = FakeMediaRecorder.instances[0];
+    media.emitData(new Blob(['one']));
+    media.emitData(new Blob(['two']));
+
+    await vi.waitFor(() => expect(env.recorder.recording).toBe(false));
+    expect(media.stopCalls).toBe(1);
+    media.emitData(new Blob(['three']));
+    media.emitStop();
+    await env.recorder.stop();
+
+    expect(env.streams[0].videoTracks[0].stop).toHaveBeenCalledOnce();
+    expect(env.frameListeners.size).toBe(0);
+    const data = env.calls.filter(({ url }) => !url.includes('final=1'));
+    expect(data).toHaveLength(1);
+    expect(env.calls.filter(({ url }) => url.includes('final=1'))).toHaveLength(1);
+  });
+
+  it.each([
+    [
+      'the browser encodes nothing',
+      () => {
+        vi.spyOn(FakeMediaRecorder, 'isTypeSupported').mockReturnValue(false);
+      },
+    ],
+    [
+      'the capture stream throws',
+      () => {
+        vi.stubGlobal('document', {
+          createElement: () => ({
+            width: 0,
+            height: 0,
+            getContext: () => ({}),
+            captureStream: () => {
+              throw new Error('no capture');
+            },
+          }),
+        });
+      },
+    ],
+  ])('tells the server it delivers nothing when %s', async (_label, breakIt) => {
+    const env = recorderEnvironment();
+    breakIt();
+    await env.recorder.start({ session: 'take-broken', width: 640, height: 360, fps: 24 });
+    await env.recorder.stop();
+
+    expect(env.recorder.recording).toBe(false);
+    expect(FakeMediaRecorder.instances).toHaveLength(0);
+    expect(env.calls).toHaveLength(1);
+    expect(env.calls[0].url).toContain('session=take-broken');
+    expect(env.calls[0].url).toContain('final=1');
+  });
+
+  it('tells the server it delivers nothing when audio cannot be opened', async () => {
+    const env = recorderEnvironment({
+      openAudio: async () => {
+        throw new Error('no audio graph');
+      },
+    });
+    await env.recorder.start({ session: 'take-mute', width: 640, height: 360, fps: 24 });
+    await env.recorder.stop();
+
+    expect(env.recorder.recording).toBe(false);
+    expect(env.recorder.error).toBe('no audio graph');
+    expect(env.streams[0].videoTracks[0].stop).toHaveBeenCalledOnce();
+    expect(env.calls).toHaveLength(1);
+    expect(env.calls[0].url).toContain('session=take-mute');
+    expect(env.calls[0].url).toContain('final=1');
+  });
+
+  it('sends the final marker inside the pagehide handler itself', async () => {
+    const env = recorderEnvironment();
+    await env.recorder.start({ session: 'take-unload', width: 640, height: 360, fps: 24 });
+    const media = FakeMediaRecorder.instances[0];
+    const pagehide = env.listeners.get('pagehide') as () => void;
+
+    pagehide();
+    // Nothing queued runs after unload, so the request must exist already.
+    expect(env.calls).toHaveLength(1);
+    expect(env.calls[0].url).toContain('session=take-unload');
+    expect(env.calls[0].url).toContain('final=1');
+    expect(env.calls[0].init?.keepalive).toBe(true);
+
+    media.emitStop();
+    await env.recorder.stop();
+    expect(env.calls).toHaveLength(1);
+  });
 });

@@ -1,3 +1,4 @@
+import { foldVoiceChain } from '@/engine/session/folds';
 import type { LabelledId, Take, Voice, VoiceChainRequest, VoiceReport } from '@/engine/types';
 import { type SpeechState, speechStateSchema, type VoiceDsp } from '@/protocol';
 import { BrowserAudioOutput } from './audio-output';
@@ -458,26 +459,24 @@ export class BrowserVoice implements Voice {
    * a line synthesised in between is heard unprocessed.
    */
   setChain({ preset, dsp }: VoiceChainRequest): void {
-    if (preset === null) {
-      this.preset = null;
-      this.overrides = {};
+    // An unknown id falls back to the default rather than being refused, on
+    // the same rule `setRoom` follows.
+    const known =
+      typeof preset === 'string' && !Object.hasOwn(VOICE_PRESETS, preset) ? DEFAULT_PRESET : preset;
+    // The fold is shared with the standing state, so a late renderer replays
+    // the chain this one holds. See `foldVoiceChain`.
+    const next = foldVoiceChain(
+      { preset: this.preset, dsp: this.overrides },
+      { preset: known, dsp },
+    );
+    this.preset = next.preset === undefined ? DEFAULT_PRESET : next.preset;
+    this.overrides = (next.dsp ?? {}) as VoiceDsp;
+    this.chainEpoch += 1;
+    if (this.preset === null) {
       this.dsp = null;
       this.lastMeasured = UNMEASURED;
-      this.chainEpoch += 1;
       return;
     }
-    if (preset !== undefined) {
-      // An unknown id falls back to the default rather than being refused, on
-      // the same rule `setRoom` follows.
-      this.preset = Object.hasOwn(VOICE_PRESETS, preset) ? preset : DEFAULT_PRESET;
-    } else if (this.preset === null) {
-      // Overrides arriving on a bypassed chain turn it back on. The alternative
-      // is silently discarding them, which from the panel looks like a slider
-      // that does nothing.
-      this.preset = DEFAULT_PRESET;
-    }
-    if (dsp) this.overrides = { ...this.overrides, ...(dsp as VoiceDsp) };
-    this.chainEpoch += 1;
     void this.applyChain(this.chainEpoch);
   }
 

@@ -64,25 +64,36 @@ export type HistoryEntry = z.infer<typeof historyEntrySchema>;
  * `turn` and `turns` both work, and the single form is not sugar: the caller
  * that matters most is a comment handler with exactly one line to say, and
  * making it wrap that line in an array it did not want is the kind of friction
- * that gets worked around with a helper in every consumer.
+ * that gets worked around with a helper in every consumer. Both at once is
+ * refused rather than choosing one, except that an empty `turns` beside a
+ * `turn` is no batch at all and leaves the single line to be queued.
  */
-export const queueAddSchema = z.object({
-  turn: turnSchema.optional(),
-  turns: z.array(turnSchema).optional(),
-  /** Where it goes. Default is the end. */
-  at: z.enum(['push', 'unshift']).optional(),
-  /** Which producer this came from. Applied to every turn in the batch. Never spoken. */
-  source: z.string().optional(),
-  /** The operator's note. Never spoken. */
-  note: z.string().optional(),
-  /**
-   * Commands applied once this batch's last line has been said and nothing else
-   * is waiting — a script's `teardown`. Only the latest batch that carries one
-   * is remembered, so a run replaced mid-way leaves it to its replacement; an
-   * empty list is how a run with nothing to undo says so.
-   */
-  after: z.array(stateCommandSchema).optional(),
-});
+export const queueAddSchema = z
+  .object({
+    turn: turnSchema.optional(),
+    turns: z.array(turnSchema).optional(),
+    /** Where it goes. Default is the end. */
+    at: z.enum(['push', 'unshift']).optional(),
+    /** Which producer this came from. Applied to every turn in the batch. Never spoken. */
+    source: z.string().optional(),
+    /** The operator's note. Never spoken. */
+    note: z.string().optional(),
+    /**
+     * Commands applied once this batch's last line has been said and nothing else
+     * is waiting — a script's `teardown`. Only the latest batch that carries one
+     * is remembered, so a run replaced mid-way leaves it to its replacement; an
+     * empty list is how a run with nothing to undo says so.
+     */
+    after: z.array(stateCommandSchema).optional(),
+  })
+  .transform((body, ctx) => {
+    if (body.turn === undefined || body.turns === undefined) return body;
+    if (body.turns.length > 0) {
+      ctx.addIssue({ code: 'custom', message: 'give either turn or turns, not both' });
+      return z.NEVER;
+    }
+    return { ...body, turns: undefined };
+  });
 
 export type QueueAdd = z.infer<typeof queueAddSchema>;
 
@@ -129,7 +140,7 @@ export type QueueUpdate = z.infer<typeof queueUpdateSchema>;
  */
 export const queueRewindSchema = z.object({
   id: z.string(),
-  mode: z.enum(['from', 'one']).default('from'),
+  mode: z.enum(['from', 'one']),
   /** Cut the line being said. Absent lets it finish. */
   interrupt: z.boolean().optional(),
 });

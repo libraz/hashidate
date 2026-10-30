@@ -10,6 +10,7 @@ import {
   recordingFrameValue,
   recordingRateValue,
 } from '@/panel/record/RecordTab';
+import { chooseSettings, chosenSettings, resetSettings } from '@/panel/record/settings';
 import type { Snapshot } from '@/protocol';
 
 function recording(over: Partial<NonNullable<Snapshot['recording']>> = {}) {
@@ -153,6 +154,56 @@ describe('RecordTab rendering', () => {
     });
 
     expect(host.querySelector('[role="alert"]')?.textContent).toBe('Recording failed: disk full');
+  });
+});
+
+describe('RecordTab take settings', () => {
+  let root: Root | null = null;
+  let host: HTMLDivElement | null = null;
+
+  const mount = async (snap: Snapshot): Promise<HTMLDivElement> => {
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root?.render(createElement(RecordTab, { snapshot: snap, refresh: () => {} }));
+    });
+    return host;
+  };
+
+  afterEach(() => {
+    if (root !== null) act(() => root?.unmount());
+    root = null;
+    host?.remove();
+    host = null;
+    resetSettings();
+  });
+
+  it('keeps the chosen values when the tab is closed and opened again', async () => {
+    await mount(snapshot());
+    act(() => chooseSettings({ fps: '60', autoStop: false, tail: 3 }));
+    act(() => root?.unmount());
+    host?.remove();
+    root = null;
+
+    const again = await mount(snapshot());
+    expect(
+      again.querySelector('[role="radiogroup"][aria-label="Frame rate"] [aria-checked="true"]')
+        ?.textContent,
+    ).toBe('60 fps');
+    expect(again.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(false);
+    expect(chosenSettings().tail).toBe(3);
+  });
+
+  it('shows the open take and disables the auto-stop toggle and the tail while recording', async () => {
+    chooseSettings({ autoStop: true });
+    const el = await mount(snapshot(recording({ autoStop: false, tail: 4 })));
+    const box = el.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    expect(box?.checked).toBe(false);
+    expect(box?.closest('fieldset')?.disabled).toBe(true);
+    expect(el.querySelector<HTMLInputElement>('input[type="range"]:disabled')).not.toBeNull();
+    // The chosen value is untouched by what the open take says.
+    expect(chosenSettings().autoStop).toBe(true);
   });
 });
 

@@ -4,7 +4,7 @@ import {
   expressionCommandSchema,
   overlayCommandSchema,
 } from '../../protocol';
-import { build, type Handler, parseVec, toNumber } from '../args';
+import { build, type Handler, parseVec, takesAtMost, toNumber } from '../args';
 import { fail } from '../client';
 import { show } from '../output';
 
@@ -28,6 +28,7 @@ export const emotion: Handler = async (client, args) => {
 
 export const expression: Handler = async (client, args) => {
   const { positionals } = parseArgs({ args, allowPositionals: true });
+  takesAtMost('expression', positionals, 1);
   show(
     await client.command(
       build(expressionCommandSchema, {
@@ -48,6 +49,7 @@ export const overlay: Handler = async (client, args) => {
     options: { weight: { type: 'string' }, off: { type: 'boolean' } },
     allowPositionals: true,
   });
+  takesAtMost('overlay', positionals, 1);
   const id = positionals[0];
   if (id === undefined) fail('overlay needs the id of an effect');
   show(

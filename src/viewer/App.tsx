@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { avatarReplaces } from '@/engine/session/folds';
 import type { AvatarDescriptor } from '@/engine/types';
 import { useT } from '@/i18n';
 import { isTyping } from '@/ui/typing';
@@ -189,7 +190,7 @@ export function App() {
       // for a load that will never land. The setup a viewer is handed on
       // connect names the avatar it is usually already showing, so this is the
       // ordinary case rather than the odd one.
-      if (rt.avatarId === id) return false;
+      if (!avatarReplaces(rt.avatarId, id)) return false;
       rememberAvatar(id);
       startedRef.current = true;
       void rt.load(next);

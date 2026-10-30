@@ -23,7 +23,10 @@ import type { AppendResult, OpenOptions, RecordingStore } from './recordings';
  */
 export const RECORD_FLUSH_SECONDS = 6.0;
 
-/** How long an owner-less live renderer may be absent before its take is closed. */
+/**
+ * How long a take may go without a renderer delivering it before it is closed:
+ * its owner gone, or no first chunk since the start.
+ */
 export const RECORD_ORPHAN_SECONDS = 6.0;
 
 export class TakeControl {
@@ -42,6 +45,9 @@ export class TakeControl {
   /** The bounded safety net for a renderer that disappears mid-take. */
   private orphanTimer: ReturnType<typeof setTimeout> | null = null;
   private orphanOwner: string | null = null;
+
+  /** Closes a take no renderer has delivered a chunk for. See `RECORD_ORPHAN_SECONDS`. */
+  private firstChunkTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** True after this take has observed at least one pending/on-air line. */
   private recordingQueueSeen = false;
@@ -109,13 +115,10 @@ export class TakeControl {
       const still = this.recordings?.current ?? null;
       if (still === null || this.recordingOwner !== rendererId) return;
       if (this.connections(rendererId) > 0) return;
-      // No renderer remains to deliver the encoder's terminal chunk. Send the
-      // normal stop command for observers, then close the sink immediately
-      // rather than waiting for the ordinary renderer-flush watchdog; this is
-      // the bounded orphan path itself.
-      this.stopRecording(still.session);
-      this.clearFlush();
-      void this.finishRecording(still.session);
+      // No renderer remains to deliver the encoder's terminal chunk. Close the
+      // sink now rather than waiting for the ordinary renderer-flush watchdog;
+      // this is the bounded orphan path itself.
+      void this.abandon(still.session);
     }, RECORD_ORPHAN_SECONDS * 1000);
     this.orphanTimer.unref?.();
   }
@@ -154,6 +157,16 @@ export class TakeControl {
     this.recordingQueueSeen = this.queue.hasWork;
     this.queueWorkObserved = this.queue.hasWork;
     this.releaseOn = options.release ? opened.session : null;
+    // A renderer that is muted, gone, or cannot encode never pins an owner, so
+    // the orphan watchdog alone would leave this take and its hold open.
+    this.firstChunkTimer = setTimeout(() => {
+      this.firstChunkTimer = null;
+      const still = this.recordings?.current ?? null;
+      if (still === null || still.session !== opened.session) return;
+      if (this.recordingOwner !== null) return;
+      void this.abandon(still.session);
+    }, RECORD_ORPHAN_SECONDS * 1000);
+    this.firstChunkTimer.unref?.();
     this.send({
       type: 'command',
       commands: [
@@ -185,6 +198,7 @@ export class TakeControl {
     this.clearLead();
     this.releaseOn = null;
     this.clearOrphan();
+    this.clearFirstChunk();
     if (this.flushTimer === null) {
       this.flushTimer = setTimeout(() => {
         this.flushTimer = null;
@@ -220,10 +234,24 @@ export class TakeControl {
     if (current === null || current.session !== session) {
       return { status: 'stale', first: false, recording: current };
     }
+    // An empty final marker from a renderer that never delivered anything is it
+    // giving up, not finishing: another renderer may still own this take. Only
+    // after a stop does it close the file; otherwise the first-chunk bound does.
+    if (
+      this.recordingOwner === null &&
+      final &&
+      chunk.byteLength === 0 &&
+      this.flushTimer === null
+    ) {
+      return { status: 'accepted', first: false, recording: current };
+    }
     // Keep this synchronous with the store's owner pin. A second renderer can
     // reach this method before the first write callback, but it must still see
     // a conflict rather than interleave bytes into the same take.
-    if (this.recordingOwner === null) this.recordingOwner = owner;
+    if (this.recordingOwner === null) {
+      this.recordingOwner = owner;
+      this.clearFirstChunk();
+    }
     // A renderer can disappear after the take starts but before its first
     // chunk arrives. In that case detach() had no owner to arm against; once
     // this synchronous pin identifies the owner, arm the same bounded orphan
@@ -236,14 +264,7 @@ export class TakeControl {
       // for this take to roll comes off rather than holding the queue for a
       // recording that is not happening. Stale and conflict responses must never
       // close a live take they do not own.
-      const held = this.releaseOn === session;
-      this.clearLead();
-      if (!final) this.stopRecording(session);
-      this.releaseOn = null;
-      this.clearFlush();
-      await this.recordings.close(session);
-      this.clearFinishedRecording(session);
-      if (held) this.send({ type: 'command', commands: [{ cmd: 'pause', on: false }] });
+      await this.abandon(session, { notify: !final });
       return result;
     }
     if (result.status !== 'accepted') return result;
@@ -295,6 +316,23 @@ export class TakeControl {
     await this.recordings?.close();
   }
 
+  /**
+   * End a take no renderer will finish: tell the renderers to stop, close the
+   * file now, and let go of a hold that was waiting for it to roll.
+   */
+  private async abandon(
+    session: string,
+    { notify = true }: { notify?: boolean } = {},
+  ): Promise<void> {
+    const held = this.releaseOn === session;
+    this.clearLead();
+    if (notify) this.stopRecording(session);
+    this.releaseOn = null;
+    this.clearFlush();
+    await this.finishRecording(session);
+    if (held) this.send({ type: 'command', commands: [{ cmd: 'pause', on: false }] });
+  }
+
   private async finishRecording(session: string): Promise<void> {
     await this.recordings?.close(session);
     this.clearFinishedRecording(session);
@@ -305,6 +343,7 @@ export class TakeControl {
     const current = this.recordings?.current ?? null;
     if (current !== null && current.session !== session) return;
     this.clearOrphan();
+    this.clearFirstChunk();
     this.recordingOwner = null;
     this.recordingQueueSeen = false;
   }
@@ -356,10 +395,17 @@ export class TakeControl {
     this.flushTimer = null;
   }
 
+  private clearFirstChunk(): void {
+    if (this.firstChunkTimer === null) return;
+    clearTimeout(this.firstChunkTimer);
+    this.firstChunkTimer = null;
+  }
+
   private clearTimers(): void {
     this.clearTail();
     this.clearLead();
     this.clearFlush();
+    this.clearFirstChunk();
   }
 
   /** Stop every timer the take owns, for when the control server is torn down. */

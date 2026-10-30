@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
 import { BGM_RAMP_LIMITS, bgmCommandSchema } from '../../protocol';
-import { build, type Handler, toNumber } from '../args';
+import { build, type Handler, takesAtMost, takesNone, toNumber } from '../args';
 import { fail } from '../client';
 import { show } from '../output';
 
@@ -26,8 +26,7 @@ export const bgm: Handler = async (client, args) => {
     );
 
   if (action === 'list') {
-    const extra = args.slice(1);
-    if (extra.length > 0) fail(`bgm list takes no arguments: ${extra.join(' ')}`);
+    takesNone('bgm list', args.slice(1));
     const tracks = await client.bgmTracks();
     if (tracks.length === 0) {
       console.log('no BGM tracks (put an .mp3 or .flac file in show/bgm/)');
@@ -53,8 +52,7 @@ export const bgm: Handler = async (client, args) => {
     const track = positionals[0];
     if (track === undefined || track === '')
       fail('bgm play needs the exact filename from bgm list');
-    if (positionals.length > 1)
-      fail(`bgm play takes one filename: ${positionals.slice(1).join(' ')}`);
+    takesAtMost('bgm play', positionals, 1);
     const volume = values.volume === undefined ? undefined : bgmVolume(values.volume);
     const loop = values.loop === undefined ? undefined : bgmLoop(values.loop);
     const fadeIn =
@@ -88,7 +86,7 @@ export const bgm: Handler = async (client, args) => {
   }
 
   if (action === 'pause' || action === 'resume' || action === 'stop') {
-    if (args.length !== 1) fail(`bgm ${action} takes no arguments`);
+    takesNone(`bgm ${action}`, args.slice(1));
     show(
       await client.command(
         build(bgmCommandSchema, {

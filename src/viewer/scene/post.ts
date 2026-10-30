@@ -4,6 +4,7 @@ import { FullScreenQuad, Pass } from 'three/addons/postprocessing/Pass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { forEachDrawn } from '@/engine/scene/drawn';
 import type { BloomPatch, BloomSettings } from '@/engine/types';
 import { BLOOM_DEFAULTS, BLOOM_RANGES } from '@/engine/types';
 import type { Finish } from './backdrop/patterns';
@@ -12,6 +13,8 @@ import type { Finish } from './backdrop/patterns';
 export interface Focus {
   centre: THREE.Vector3;
   radius: number;
+  /** The avatar itself, whose blended meshes write no depth for the blur to read. */
+  avatar: THREE.Object3D | null;
 }
 
 /** The renderer resources owned by one active postprocess configuration. */
@@ -64,7 +67,7 @@ export class PostStage {
   private settings: BloomSettings = { ...BLOOM_DEFAULTS };
   private finish: Finish | null = null;
   /** Set by `setFocus` and spent by the next `render`, so a frame without it has no blur. */
-  private readonly focus: Focus = { centre: new THREE.Vector3(), radius: 0 };
+  private readonly focus: Focus = { centre: new THREE.Vector3(), radius: 0, avatar: null };
   private focused = false;
   private pipeline: PostPipeline | null = null;
   private width: number;
@@ -128,10 +131,11 @@ export class PostStage {
   }
 
   /** Where the avatar is for the next frame. Called every frame there is one. */
-  setFocus(centreWorld: THREE.Vector3, radius: number): void {
+  setFocus(centreWorld: THREE.Vector3, radius: number, avatar: THREE.Object3D): void {
     if (this.disposed) return;
     this.focus.centre.copy(centreWorld);
     this.focus.radius = radius;
+    this.focus.avatar = avatar;
     this.focused = true;
   }
 
@@ -292,20 +296,42 @@ const FULLSCREEN_VERTEX = /* glsl */ `
   }
 `;
 
-/** How far behind the focus a pixel is, as 0 (sharp) to 1 (fully blurred). */
+/**
+ * How far behind the focus a pixel is, as 0 (sharp) to 1 (fully blurred). The
+ * nearer of the scene's depth and the avatar's blended meshes' own, which the
+ * scene pass does not write.
+ */
 const COC = /* glsl */ `
   #include <packing>
   uniform sampler2D tDepth;
+  uniform sampler2D tAvatarDepth;
   uniform float cameraNear;
   uniform float cameraFar;
   uniform float focusFar;
   uniform float ramp;
 
   float coc(vec2 uv) {
-    float viewZ = perspectiveDepthToViewZ(texture2D(tDepth, uv).x, cameraNear, cameraFar);
+    float depth = min(texture2D(tDepth, uv).x, texture2D(tAvatarDepth, uv).x);
+    float viewZ = perspectiveDepthToViewZ(depth, cameraNear, cameraFar);
     return smoothstep(focusFar, focusFar + ramp, -viewZ);
   }
 `;
+
+/** The layer the avatar depth pass draws on; nothing else is ever put on it. */
+const AVATAR_DEPTH_LAYER = 31;
+/** Half coverage: below it a pixel shows more of what is behind the fabric than of the fabric. */
+const AVATAR_DEPTH_ALPHA = 0.5;
+/** Fills the slots of a multi-material mesh that the avatar depth pass leaves out. */
+const SKIPPED = new THREE.MeshBasicMaterial({ visible: false });
+
+type MappedMaterial = THREE.Material & {
+  map?: THREE.Texture | null;
+  alphaMap?: THREE.Texture | null;
+};
+
+/** A blended material the scene pass draws without writing depth. */
+const writesNoDepth = (material: THREE.Material): boolean =>
+  material.visible && material.transparent && !material.depthWrite;
 
 /**
  * Blurs what lies behind the avatar's bounding sphere, by depth.
@@ -313,11 +339,14 @@ const COC = /* glsl */ `
  * A separable 13-tap gaussian at half resolution, each tap weighted by its own
  * circle of confusion, so the sharp foreground never bleeds into the blurred
  * background around it — including through the gaps in the hair. Reads the
- * depth the scene left in `readBuffer.depthTexture`.
+ * depth the scene left in `readBuffer.depthTexture`, and the depth of the
+ * avatar's blended meshes, drawn here first because the scene pass writes none
+ * for them.
  */
 export class FocusBlurPass extends Pass {
   private readonly depth = {
     tDepth: { value: null as THREE.Texture | null },
+    tAvatarDepth: { value: null as THREE.Texture | null },
     cameraNear: { value: 0.1 },
     cameraFar: { value: 100 },
     focusFar: { value: 0 },
@@ -385,12 +414,30 @@ export class FocusBlurPass extends Pass {
     type: THREE.HalfFloatType,
     depthBuffer: false,
   });
+  /** Full resolution: the composite reads it at every output pixel. */
+  private readonly avatarDepth = new THREE.WebGLRenderTarget(1, 1, {
+    depthBuffer: true,
+    depthTexture: new THREE.DepthTexture(1, 1, THREE.UnsignedIntType),
+  });
+  /** The scene camera, copied each frame and limited to the avatar depth layer. */
+  private readonly lens = new THREE.PerspectiveCamera();
+  /** Depth stand-ins by the material they replace, for the current avatar only. */
+  private readonly depthMaterials = new Map<THREE.Material, THREE.MeshDepthMaterial>();
+  /** Meshes swapped for the depth draw, each followed by the material it had. */
+  private readonly swapped: (THREE.Mesh | THREE.Material | THREE.Material[])[] = [];
+  private camera: THREE.PerspectiveCamera | null = null;
+  private avatar: THREE.Object3D | null = null;
   private readonly eye = new THREE.Vector3();
   /** The room's blur radius, in pixels of a 1080-line frame. */
   private radius = 0;
 
   /** Point the blur at a focus for the coming frame. */
   aim(camera: THREE.PerspectiveCamera, focus: Focus, blur: Finish['blur']): void {
+    this.camera = camera;
+    if (focus.avatar !== this.avatar) {
+      this.releaseDepthMaterials();
+      this.avatar = focus.avatar;
+    }
     const eye = camera.getWorldPosition(this.eye);
     this.depth.cameraNear.value = camera.near;
     this.depth.cameraFar.value = camera.far;
@@ -404,6 +451,73 @@ export class FocusBlurPass extends Pass {
     const h = Math.max(1, Math.round(height / 2));
     this.across.setSize(w, h);
     this.down.setSize(w, h);
+    this.avatarDepth.setSize(width, height);
+  }
+
+  /**
+   * Draw the depth of the avatar's blended meshes into `avatarDepth`, colour
+   * locked off, so a sleeve with only the wall behind it reads as the sleeve.
+   */
+  private drawAvatarDepth(renderer: THREE.WebGLRenderer): void {
+    renderer.setRenderTarget(this.avatarDepth);
+    renderer.clear(false, true, false);
+    const { avatar, camera, swapped } = this;
+    if (!(avatar && camera)) return;
+    swapped.length = 0;
+    forEachDrawn(avatar, (mesh) => {
+      const source = mesh.material;
+      if (Array.isArray(source)) {
+        if (!source.some(writesNoDepth)) return;
+        mesh.material = source.map((m) => (writesNoDepth(m) ? this.depthFor(m) : SKIPPED));
+      } else {
+        if (!writesNoDepth(source)) return;
+        mesh.material = this.depthFor(source);
+      }
+      swapped.push(mesh, source);
+      mesh.layers.enable(AVATAR_DEPTH_LAYER);
+    });
+    if (swapped.length === 0) return;
+
+    this.lens.copy(camera, false);
+    this.lens.matrixWorldAutoUpdate = false;
+    this.lens.layers.set(AVATAR_DEPTH_LAYER);
+    const autoClear = renderer.autoClear;
+    renderer.autoClear = false;
+    try {
+      renderer.render(avatar, this.lens);
+    } finally {
+      renderer.autoClear = autoClear;
+      for (let i = 0; i < swapped.length; i += 2) {
+        const mesh = swapped[i] as THREE.Mesh;
+        mesh.material = swapped[i + 1] as THREE.Material | THREE.Material[];
+        mesh.layers.disable(AVATAR_DEPTH_LAYER);
+      }
+      swapped.length = 0;
+    }
+  }
+
+  /** The depth-only stand-in for `source`, carrying its coverage and its culling. */
+  private depthFor(source: MappedMaterial): THREE.MeshDepthMaterial {
+    let depth = this.depthMaterials.get(source);
+    if (!depth) {
+      depth = new THREE.MeshDepthMaterial({ colorWrite: false, alphaTest: AVATAR_DEPTH_ALPHA });
+      this.depthMaterials.set(source, depth);
+    }
+    const map = source.map ?? null;
+    const alphaMap = source.alphaMap ?? null;
+    if (depth.map !== map || depth.alphaMap !== alphaMap) {
+      depth.map = map;
+      depth.alphaMap = alphaMap;
+      depth.needsUpdate = true;
+    }
+    depth.opacity = source.opacity;
+    depth.side = source.side;
+    return depth;
+  }
+
+  private releaseDepthMaterials(): void {
+    for (const depth of this.depthMaterials.values()) depth.dispose();
+    this.depthMaterials.clear();
   }
 
   override render(
@@ -411,7 +525,9 @@ export class FocusBlurPass extends Pass {
     writeBuffer: THREE.WebGLRenderTarget,
     readBuffer: THREE.WebGLRenderTarget,
   ): void {
+    this.drawAvatarDepth(renderer);
     this.depth.tDepth.value = readBuffer.depthTexture;
+    this.depth.tAvatarDepth.value = this.avatarDepth.depthTexture;
     // Half-resolution pixels, so the blur reads the same at any output size.
     const tap = (this.radius * readBuffer.height) / 1080 / 2 / 6;
     const blur = this.blurMaterial.uniforms;
@@ -440,6 +556,8 @@ export class FocusBlurPass extends Pass {
     this.quad.dispose();
     this.across.dispose();
     this.down.dispose();
+    this.avatarDepth.dispose();
+    this.releaseDepthMaterials();
   }
 }
 

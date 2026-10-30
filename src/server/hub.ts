@@ -112,6 +112,46 @@ interface Waiter {
   timer: ReturnType<typeof setTimeout>;
 }
 
+/**
+ * One renderer's latest report, field by field.
+ *
+ * Kept per renderer rather than as one last-writer-wins copy, because the
+ * renderers legitimately disagree — a held renderer is silent while the stage
+ * speaks, a browser source carries its own layout — and the snapshot must not
+ * flip with whichever of them posted last. See `Hub.ranked`.
+ */
+interface RendererSlot {
+  /** When it last reported anything. */
+  heardAt: number;
+  /** When it last reported a state. */
+  stateAt: number;
+  /** Whether its last BGM report said it is not muted. */
+  audible: boolean;
+  state?: SessionState;
+  avatar?: AvatarStatus | null;
+  vocabulary?: Vocabulary;
+  voice?: VoiceReport;
+  tuning?: Tuning;
+  slides?: SlideReport;
+  placement?: PlacementReport;
+  bloom?: BloomReport;
+  avatars?: LabelledId[];
+}
+
+/** The settings a snapshot takes from one renderer, the first in `Hub.ranked` that has it. */
+const SLOT_FIELDS = [
+  'avatar',
+  'vocabulary',
+  'voice',
+  'tuning',
+  'slides',
+  'placement',
+  'bloom',
+  'avatars',
+] as const satisfies readonly (keyof RendererSlot)[];
+
+type SlotField = (typeof SLOT_FIELDS)[number];
+
 /** Epoch seconds, which is the unit the events carry their `at` in. */
 function now(): number {
   return Date.now() / 1000;
@@ -126,18 +166,10 @@ export class Hub {
   private readonly clients = new Set<ViewerClient>();
   private readonly waiters = new Set<Waiter>();
   private readonly log = new EventLog();
-  private state: Partial<SessionState> = {};
-  private vocabulary: Partial<Vocabulary> = {};
-  private voice: VoiceReport | null = null;
-  private tuning: Tuning | null = null;
-  private slides: SlideReport | null = null;
-  private placement: PlacementReport | null = null;
-  private bloom: BloomReport | null = null;
-  private avatars: LabelledId[] = [];
-  private avatar: AvatarStatus | null = null;
+  /** Each renderer's latest report, keyed by renderer id; '' for an anonymous one. */
+  private readonly slots = new Map<string, RendererSlot>();
   /** Last valid report, including avatar-only heartbeats. */
   private heartbeatAt = 0;
-  private stateAt = 0;
   /**
    * The pending turns, and the authority on what they are. See `queue.ts`.
    *
@@ -203,7 +235,7 @@ export class Hub {
       this.queue,
       (message) => this.send(message),
       (owner) => this.owners.connections(owner),
-      () => this.state.speaking === true,
+      () => this.currentState().speaking === true,
     );
     this.owners = new OnAirOwners(
       this.queue,
@@ -304,9 +336,10 @@ export class Hub {
   /** File a line whose owners are all gone, preserving every pending line behind it. */
   private fileAbandoned(turnId: string): void {
     const at = now();
-    this.log.append({ type: 'turn.end', turn: turnId, interrupted: true }, at);
-    // The end this files stands for every renderer's, should one still arrive.
-    this.log.markFiled(`turn.end:${turnId}`);
+    const ended = { type: 'turn.end', turn: turnId, interrupted: true } as const;
+    this.log.append(ended, at);
+    // The end this files stands for every renderer's, in either form, should one still arrive.
+    this.log.markFiled(ended);
     this.queue.complete(turnId, { interrupted: true });
     const after = this.endsBatch(turnId);
     this.log.trim();
@@ -520,6 +553,8 @@ export class Hub {
     );
     const kept = canonical.map((command) => this.standing.record(command));
     this.broadcast({ type: 'command', commands: canonical });
+    // A queue edit can be the end of a waited line: one dropped before it started.
+    this.wake();
     return { viewers: this.clients.size, kept };
   }
 
@@ -628,7 +663,7 @@ export class Hub {
    * dropped rather than sent back down to be ignored.
    */
   private idlePool(): readonly PerformanceId[] {
-    const reported = this.vocabulary.idleActs;
+    const reported = this.reported(this.ranked(), 'vocabulary')?.idleActs;
     if (reported === undefined) return AUTO_ACTS;
     return reported.filter((id): id is PerformanceId => performanceDef(id) !== null);
   }
@@ -690,21 +725,7 @@ export class Hub {
     // connected while its state clock remains unset and its state stays empty.
     this.heartbeatAt = now();
     const previousWork = this.queue.hasWork;
-    if (body.state !== undefined) {
-      this.state = body.state;
-      this.stateAt = now();
-    }
-    if (body.avatar !== undefined) this.avatar = body.avatar;
-    if (body.vocabulary) this.vocabulary = body.vocabulary;
-    if (body.voice !== undefined) this.voice = body.voice;
-    if (body.tuning !== undefined) this.tuning = body.tuning;
-    if (body.slides !== undefined) this.slides = body.slides;
-    if (body.placement !== undefined) this.placement = body.placement;
-    if (body.bloom !== undefined) this.bloom = body.bloom;
-    // Rides with the vocabulary rather than on the timer. Replaced by each
-    // report that carries one, since a renderer refetches it on every stream
-    // open; not cleared by a report that omits it.
-    if (body.avatars) this.avatars = body.avatars;
+    this.recordSlot(body, rendererId ?? '');
     let after: Command[] | null = null;
     const bgmTransition = body.bgm === undefined ? null : this.bgmCoordinator.report(body.bgm);
     if (bgmTransition !== null) {
@@ -773,38 +794,111 @@ export class Hub {
     return this.log.seq;
   }
 
+  /** Fold one report into its renderer's slot, then forget renderers nothing is read from. */
+  private recordSlot(body: ReportBody, key: string): void {
+    const at = now();
+    const slot = this.slots.get(key) ?? { heardAt: at, stateAt: 0, audible: false };
+    slot.heardAt = at;
+    if (body.state !== undefined) {
+      slot.state = body.state;
+      slot.stateAt = at;
+    }
+    if (body.bgm !== undefined) slot.audible = body.bgm.muted === false;
+    if (body.avatar !== undefined) slot.avatar = body.avatar;
+    if (body.vocabulary) slot.vocabulary = body.vocabulary;
+    if (body.voice !== undefined) slot.voice = body.voice;
+    if (body.tuning !== undefined) slot.tuning = body.tuning;
+    if (body.slides !== undefined) slot.slides = body.slides;
+    if (body.placement !== undefined) slot.placement = body.placement;
+    if (body.bloom !== undefined) slot.bloom = body.bloom;
+    // Rides with the vocabulary rather than on the timer. Replaced by each
+    // report that carries one, since a renderer refetches it on every stream
+    // open; not cleared by a report that omits it.
+    if (body.avatars) slot.avatars = body.avatars;
+    this.slots.set(key, slot);
+    // A stale renderer is dropped once no field is read from it, so reloads do
+    // not grow the map and a gone renderer's settings last until replaced.
+    const ranked = this.ranked();
+    const sources = new Set(SLOT_FIELDS.map((field) => ranked.find((s) => s[field] !== undefined)));
+    for (const [other, held] of this.slots) {
+      if (at - held.heardAt >= STATE_STALE_SECONDS && !sources.has(held)) this.slots.delete(other);
+    }
+  }
+
+  /**
+   * The slots in the order their reports are believed, which never depends on
+   * arrival order among fresh ones: fresh before stale, the audible renderer
+   * before a muted preview, then by renderer id. Stale ones follow newest
+   * first, so with nothing connected the last shape heard is the one kept.
+   */
+  private ranked(): RendererSlot[] {
+    const at = now();
+    const fresh = (slot: RendererSlot): boolean => at - slot.heardAt < STATE_STALE_SECONDS;
+    return [...this.slots.entries()]
+      .sort(([keyA, a], [keyB, b]) => {
+        if (fresh(a) !== fresh(b)) return fresh(a) ? -1 : 1;
+        if (fresh(a) && a.audible !== b.audible) return a.audible ? -1 : 1;
+        if (!fresh(a) && a.heardAt !== b.heardAt) return b.heardAt - a.heardAt;
+        return keyA < keyB ? -1 : keyA > keyB ? 1 : 0;
+      })
+      .map(([, slot]) => slot);
+  }
+
+  /** One setting, from the first renderer in `ranked` that reported it. */
+  private reported<K extends SlotField>(
+    ranked: readonly RendererSlot[],
+    field: K,
+  ): RendererSlot[K] | undefined {
+    return ranked.find((slot) => slot[field] !== undefined)?.[field];
+  }
+
+  /**
+   * The fresh state, from the first renderer in `ranked` with one, speaking
+   * whenever any fresh renderer is: a renderer held mid-line is silent while
+   * the stage is not.
+   */
+  private currentState(ranked: readonly RendererSlot[] = this.ranked()): Partial<SessionState> {
+    const at = now();
+    const fresh = ranked.filter(
+      (slot) => slot.state !== undefined && at - slot.stateAt < STATE_STALE_SECONDS,
+    );
+    const first = fresh[0]?.state;
+    if (first === undefined) return {};
+    return { ...first, speaking: fresh.some((slot) => slot.state?.speaking === true) };
+  }
+
   snapshot(since?: number): Snapshot {
     const heartbeatFresh = now() - this.heartbeatAt < STATE_STALE_SECONDS;
-    const stateFresh = now() - this.stateAt < STATE_STALE_SECONDS;
+    const ranked = this.ranked();
     return {
       connected: this.clients.size > 0 && heartbeatFresh,
       viewers: this.clients.size,
       seq: this.log.seq,
-      state: stateFresh ? this.state : {},
-      vocabulary: this.vocabulary,
+      state: this.currentState(ranked),
+      vocabulary: this.reported(ranked, 'vocabulary') ?? {},
       events: since === undefined ? this.log.entries() : this.since(since),
-      avatar: this.avatar,
+      avatar: this.reported(ranked, 'avatar') ?? null,
       // Not gated on `fresh`, unlike the state above. A stale state is a lie
       // about what the avatar is doing right now; the chain and the queue are
       // settings and a script, and both are still true with nothing connected —
       // which is exactly when an operator is most likely to be looking at them.
-      voice: this.voice,
+      voice: this.reported(ranked, 'voice') ?? null,
       // Settings too, and on the same footing: a fader is worth drawing at the
       // value it will resume at.
-      tuning: this.tuning,
+      tuning: this.reported(ranked, 'tuning') ?? null,
       // And the layout, for the same reason again — with nothing connected it
       // is the last shape the frame had, which is the shape it will come back
       // in when the source is reopened.
-      placement: this.placement,
-      bloom: this.bloom,
-      avatars: this.avatars,
+      placement: this.reported(ranked, 'placement') ?? null,
+      bloom: this.reported(ranked, 'bloom') ?? null,
+      avatars: this.reported(ranked, 'avatars') ?? [],
       // The roster the store last read, not one read here: the snapshot is
       // assembled in one turn and the directory is on disk. See `Decks.current`
       // for who pays for the rescan and why the answer may be a poll behind.
       decks: this.decks?.current ?? [],
       // A renderer with no document layer never reports one, which is how a
       // panel tells "no such layer" from "nothing up".
-      slides: this.slides,
+      slides: this.reported(ranked, 'slides') ?? null,
       // BGM is owned by this server rather than any one renderer, so it remains
       // available even while all renderer state has gone stale.
       bgm: this.bgmCoordinator.state(),

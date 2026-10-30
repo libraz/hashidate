@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import { ArmAnatomy, JOINTS } from '@/engine/anatomy';
+import { buildProfile } from '@/engine/profile';
 import { avatarsResponseSchema, parseAvatar } from '@/protocol';
+import { buildRig } from '../helpers/scene';
 
 const label = { en: 'Example', ja: '例' };
 const minimal = { label };
+
+/** A fresh deep copy of the engine's own joint table, which is a complete one. */
+function completeAnatomy() {
+  return structuredClone(JOINTS);
+}
 
 function reject(value: unknown): string {
   const result = parseAvatar('example', value);
@@ -131,22 +139,94 @@ describe('parseAvatar', () => {
   });
 
   it('flattens the shoulder of an anatomy table', () => {
-    const dof = { label, free: [0, 1], max: [0, 2] };
-    const joint = { label, dofs: { x: dof } };
-    const anatomy = {
-      shoulder: { ...joint, elevation: [[0, 1, 2]] },
-      elbow: joint,
-      wrist: joint,
-      finger: joint,
-      thumb: joint,
-      neck: joint,
-      spine: joint,
-    };
-    expect(accept({ ...minimal, anatomy }).anatomy?.shoulder.elevation).toEqual([[0, 1, 2]]);
+    const anatomy = completeAnatomy();
+    expect(accept({ ...minimal, anatomy }).anatomy?.shoulder.elevation).toEqual(
+      anatomy.shoulder.elevation,
+    );
     const { elevation: _, ...flat } = anatomy.shoulder;
     expect(reject({ ...minimal, anatomy: { ...anatomy, shoulder: flat } })).toContain(
       'anatomy.shoulder.elevation',
     );
+  });
+
+  it('runs the arm solver on a complete anatomy table it accepts', () => {
+    const anatomy = accept({ ...minimal, anatomy: completeAnatomy() }).anatomy;
+    const built = buildRig();
+    const profile = buildProfile(built.root, { ...built.descriptor, anatomy });
+    const arm = new ArmAnatomy(profile);
+    expect(arm.update()).toBe(true);
+    expect(() => arm.report()).not.toThrow();
+  });
+
+  it('names the path of a joint that lacks a degree of freedom the engine reads', () => {
+    const required: [string, string][] = [
+      ['shoulder', 'rotation'],
+      ['elbow', 'flexion'],
+      ['elbow', 'rotation'],
+      ['wrist', 'flexion'],
+      ['wrist', 'deviation'],
+      ['finger', 'proximal'],
+      ['finger', 'intermediate'],
+      ['finger', 'distal'],
+      ['thumb', 'proximal'],
+      ['thumb', 'intermediate'],
+      ['thumb', 'distal'],
+    ];
+    for (const [joint, name] of required) {
+      const anatomy = completeAnatomy();
+      delete (anatomy[joint as 'elbow'].dofs as Record<string, unknown>)[name];
+      expect(reject({ ...minimal, anatomy }), `${joint}.${name}`).toContain(
+        `anatomy.${joint}.dofs.${name}`,
+      );
+    }
+    const onlyX = completeAnatomy();
+    onlyX.elbow.dofs = { x: onlyX.elbow.dofs.flexion };
+    expect(reject({ ...minimal, anatomy: onlyX })).toContain('anatomy.elbow.dofs.flexion');
+  });
+
+  it('rejects an inverted range and a free band outside the hard stop', () => {
+    const inverted = completeAnatomy();
+    inverted.elbow.dofs.flexion.max = [2, 1];
+    expect(reject({ ...minimal, anatomy: inverted })).toContain('anatomy.elbow.dofs.flexion.max');
+    const outside = completeAnatomy();
+    outside.elbow.dofs.flexion.free = [0, 3];
+    expect(reject({ ...minimal, anatomy: outside })).toContain('anatomy.elbow.dofs.flexion.free');
+    const reversed = completeAnatomy();
+    reversed.elbow.dofs.flexion.free = [1, 0];
+    expect(reject({ ...minimal, anatomy: reversed })).toContain('anatomy.elbow.dofs.flexion.free');
+  });
+
+  it('rejects an elevation table that cannot be interpolated', () => {
+    const rows = (elevation: unknown) => {
+      const anatomy = completeAnatomy();
+      (anatomy.shoulder as { elevation: unknown }).elevation = elevation;
+      return reject({ ...minimal, anatomy });
+    };
+    expect(rows([])).toContain('anatomy.shoulder.elevation');
+    expect(rows([[0, 1, 2]])).toContain('anatomy.shoulder.elevation');
+    expect(
+      rows([
+        [-180, 1, 2],
+        [90, 1, 2],
+        [0, 1, 2],
+        [180, 1, 2],
+      ]),
+    ).toContain('anatomy.shoulder.elevation');
+    expect(
+      rows([
+        [-90, 1, 2],
+        [90, 1, 2],
+      ]),
+    ).toContain('anatomy.shoulder.elevation');
+  });
+
+  it('rejects wrist hard ranges whose combined bend reaches 90 degrees', () => {
+    const anatomy = completeAnatomy();
+    anatomy.wrist.dofs.flexion.max = [-1.3, 1.3];
+    anatomy.wrist.dofs.flexion.free = [0, 0];
+    anatomy.wrist.dofs.deviation.max = [-1, 1];
+    anatomy.wrist.dofs.deviation.free = [0, 0];
+    expect(reject({ ...minimal, anatomy })).toContain('anatomy.wrist.dofs');
   });
 });
 

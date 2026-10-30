@@ -70,8 +70,8 @@ import { VoiceTab } from './voice/VoiceTab';
  * deliberately: an operator moving between the two screens should not have to
  * learn a second vocabulary for the same jobs.
  *
- * Recording sits second because it is where a segment *begins*: a script is
- * loaded there, and what it puts on the queue is what the first tab then shows.
+ * Recording sits second because it is where a take *begins*: the script is
+ * loaded in the Queue tab just before, and record is pressed on this one.
  */
 type Tab =
   | 'queue'

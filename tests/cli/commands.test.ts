@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type ControlClient, ControlError } from '@/cli/client';
 import { point } from '@/cli/commands/body';
-import { vocab } from '@/cli/commands/inspect';
+import { state, vocab } from '@/cli/commands/inspect';
 import { tune } from '@/cli/commands/renderer';
-import { avatars, play } from '@/cli/commands/show';
-import { bloom as bloomCommand } from '@/cli/commands/staging';
+import { avatars, motions, play } from '@/cli/commands/show';
+import { bloom as bloomCommand, decks } from '@/cli/commands/staging';
 import { parseVoiceArgs, voice } from '@/cli/commands/voice';
 import { show } from '@/cli/output';
 import type { QueueResponse } from '@/protocol';
+import { snapshot } from '../mcp/harness';
 
 type FakeClient = Pick<ControlClient, 'command'>;
 
@@ -352,5 +353,54 @@ describe('ctl avatars', () => {
     await avatars(fake as unknown as ControlClient, []);
 
     expect(log).toHaveBeenCalledWith(expect.stringContaining('no avatars'));
+  });
+});
+
+describe('state', () => {
+  it('prints the server-owned fields beside the renderer state', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const fake = {
+      state: vi.fn(async () => snapshot({ connected: false, paused: true })),
+    } as unknown as ControlClient;
+
+    await state(fake, []);
+
+    const printed = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as Record<string, unknown>;
+    for (const key of ['paused', 'recording', 'speech', 'bgm', 'bloom', 'slides', 'queue']) {
+      expect(printed).toHaveProperty(key);
+    }
+    expect(printed.paused).toBe(true);
+    expect(typeof printed.queue).toBe('number');
+  });
+});
+
+describe('empty roster hints', () => {
+  const stateWith = (roots: Record<string, string> | undefined) =>
+    ({
+      decks: vi.fn(async () => ({ decks: [] })),
+      motions: vi.fn(async () => ({ motions: [], errors: [] })),
+      state: vi.fn(async () => snapshot({ roots: roots as never })),
+    }) as unknown as ControlClient;
+
+  it('names the directory the server reports', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const fake = stateWith({ slides: '/elsewhere/slides', motions: '/elsewhere/motions' });
+
+    await decks(fake, []);
+    await motions(fake, []);
+
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('/elsewhere/slides'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('/elsewhere/motions'));
+  });
+
+  it('names no fixed path when the server does not say', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const fake = stateWith(undefined);
+
+    await decks(fake, []);
+    await motions(fake, []);
+
+    const printed = log.mock.calls.map((call) => String(call[0])).join('\n');
+    expect(printed).not.toMatch(/show\/|\bslides\/\)/);
   });
 });

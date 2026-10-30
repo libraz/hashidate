@@ -13,6 +13,7 @@ import {
   type PostPipelineFactory,
   PostStage,
 } from '@/viewer/scene/post';
+import { buildRig } from '../helpers/scene';
 
 /** What each composer was handed, captured at construction. */
 const composers = vi.hoisted(
@@ -289,13 +290,15 @@ describe('PostStage finish', () => {
     const { stage, pipelines } = harness();
     stage.setFinish(FINISH);
     const centre = new THREE.Vector3(0, 1.2, 0.1);
-    stage.setFocus(centre, 0.8);
+    const avatar = new THREE.Group();
+    stage.setFocus(centre, 0.8, avatar);
     centre.set(9, 9, 9);
     stage.render(scene, camera);
 
     expect(pipelines[0].setFocus).toHaveBeenLastCalledWith({
       centre: new THREE.Vector3(0, 1.2, 0.1),
       radius: 0.8,
+      avatar,
     });
     stage.render(scene, camera);
     expect(pipelines[0].setFocus).toHaveBeenLastCalledWith(null);
@@ -350,7 +353,7 @@ describe('the post pipeline', () => {
   it('runs the blur and the grade for a finish, with the bloom pass off', () => {
     const stage = real();
     stage.setFinish(FINISH);
-    stage.setFocus(new THREE.Vector3(0, 1.3, 0), 0.6);
+    stage.setFocus(new THREE.Vector3(0, 1.3, 0), 0.6, new THREE.Group());
     stage.render(scene, camera);
 
     const { focus, bloom, output } = passes();
@@ -367,7 +370,7 @@ describe('the post pipeline', () => {
   it('does not blur a frame with no avatar to keep sharp', () => {
     const stage = real();
     stage.setFinish(FINISH);
-    stage.setFocus(new THREE.Vector3(0, 1.3, 0), 0.6);
+    stage.setFocus(new THREE.Vector3(0, 1.3, 0), 0.6, new THREE.Group());
     stage.render(scene, camera);
     stage.render(scene, camera);
     expect(passes().focus.enabled).toBe(false);
@@ -377,7 +380,7 @@ describe('the post pipeline', () => {
   it('leaves the blur and the grade out for bloom alone', () => {
     const stage = real();
     stage.setBloom({ enabled: true });
-    stage.setFocus(new THREE.Vector3(0, 1.3, 0), 0.6);
+    stage.setFocus(new THREE.Vector3(0, 1.3, 0), 0.6, new THREE.Group());
     stage.render(scene, camera);
 
     const { focus, bloom, output } = passes();
@@ -415,6 +418,141 @@ function neutral(c: [number, number, number], exposure: number): [number, number
     return scaled + (newPeak - scaled) * g;
   }) as [number, number, number];
 }
+
+describe('focus blur over blended avatar meshes', () => {
+  /** A blended material the scene pass draws without writing depth. */
+  const sheer = (map: THREE.Texture | null = null) =>
+    new THREE.MeshToonMaterial({ transparent: true, depthWrite: false, opacity: 0.7, map });
+
+  function staged() {
+    const rig = buildRig({ arkit: false });
+    const avatar = rig.root;
+    const sleeveMap = new THREE.Texture();
+    const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), sheer(sleeveMap));
+    avatar.add(sleeve);
+    // One group blended, one opaque: only the first may be drawn.
+    const cuff = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), [
+      sheer(),
+      new THREE.MeshToonMaterial(),
+    ]);
+    avatar.add(cuff);
+    const unworn = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), sheer());
+    unworn.visible = false;
+    avatar.add(unworn);
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), sheer());
+    hull.userData.outline = true;
+    sleeve.add(hull);
+    const scene = new THREE.Scene();
+    scene.add(avatar);
+    // A room's see-through finish writes no depth either, and has to keep blurring.
+    const glass = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 0.01), sheer());
+    scene.add(glass);
+    scene.updateMatrixWorld(true);
+    return { rig, avatar, sleeve, sleeveMap, cuff, unworn, hull, glass };
+  }
+
+  /** Records what the avatar depth draw would put on screen, and where. */
+  function recorder() {
+    let target: THREE.WebGLRenderTarget | null = null;
+    const draws: {
+      root: THREE.Object3D;
+      target: THREE.WebGLRenderTarget | null;
+      drawn: Map<THREE.Mesh, THREE.Material | THREE.Material[]>;
+    }[] = [];
+    const renderer = {
+      autoClear: true,
+      setRenderTarget: (t: THREE.WebGLRenderTarget | null) => {
+        target = t;
+      },
+      clear: vi.fn(),
+      render: (root: THREE.Object3D, camera: THREE.Camera) => {
+        const drawn = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
+        root.traverseVisible((o) => {
+          if (o instanceof THREE.Mesh && o.layers.test(camera.layers)) drawn.set(o, o.material);
+        });
+        draws.push({ root, target, drawn });
+      },
+    } as unknown as THREE.WebGLRenderer;
+    return { renderer, draws };
+  }
+
+  function run(avatar: THREE.Object3D) {
+    const pass = new FocusBlurPass();
+    const camera = new THREE.PerspectiveCamera(28, 16 / 9, 0.1, 50);
+    camera.position.set(0, 1.2, 3);
+    camera.updateMatrixWorld(true);
+    pass.aim(camera, { centre: new THREE.Vector3(0, 1, 0), radius: 0.8, avatar }, FINISH.blur);
+    pass.setSize(640, 360);
+    const { renderer, draws } = recorder();
+    const read = new THREE.WebGLRenderTarget(640, 360);
+    read.depthTexture = new THREE.DepthTexture(640, 360);
+    pass.render(renderer, new THREE.WebGLRenderTarget(640, 360), read);
+    return { pass, draws, renderer };
+  }
+
+  it("draws the depth of exactly the avatar's drawn blended meshes, colour off", () => {
+    const { avatar, sleeve, sleeveMap, cuff, unworn, hull, glass } = staged();
+    const { draws } = run(avatar);
+    const depth = draws.find((d) => d.root === avatar);
+    if (!depth) throw new Error('no avatar depth draw');
+
+    expect([...depth.drawn.keys()]).toEqual([sleeve, cuff]);
+    const sleeveDepth = depth.drawn.get(sleeve) as THREE.MeshDepthMaterial;
+    expect(sleeveDepth).toBeInstanceOf(THREE.MeshDepthMaterial);
+    expect(sleeveDepth.colorWrite).toBe(false);
+    expect(sleeveDepth.depthWrite).toBe(true);
+    // Its coverage follows the fabric's, so a cut-away edge stays the background's.
+    expect(sleeveDepth.map).toBe(sleeveMap);
+    expect(sleeveDepth.opacity).toBe(0.7);
+    expect(sleeveDepth.alphaTest).toBeGreaterThan(0);
+    const [blended, opaque] = depth.drawn.get(cuff) as THREE.Material[];
+    expect(blended).toBeInstanceOf(THREE.MeshDepthMaterial);
+    expect(opaque.visible).toBe(false);
+    expect(depth.drawn.has(unworn)).toBe(false);
+    expect(depth.drawn.has(hull)).toBe(false);
+    // The room is not the avatar: its see-through finish keeps reading as the wall.
+    expect(draws.some((d) => d.drawn.has(glass))).toBe(false);
+  });
+
+  it('reads the drawn depth in both the blur taps and the composite', () => {
+    const { avatar } = staged();
+    const { pass, draws } = run(avatar);
+    const depth = draws.find((d) => d.root === avatar);
+    const drawnInto = depth?.target?.depthTexture;
+    expect(drawnInto).toBeInstanceOf(THREE.DepthTexture);
+    const materials = pass as unknown as {
+      blurMaterial: THREE.ShaderMaterial;
+      compositeMaterial: THREE.ShaderMaterial;
+    };
+    for (const material of [materials.blurMaterial, materials.compositeMaterial]) {
+      expect(material.uniforms.tAvatarDepth.value).toBe(drawnInto);
+      expect(material.fragmentShader).toMatch(
+        /min\(texture2D\(tDepth, uv\)\.x, texture2D\(tAvatarDepth, uv\)\.x\)/,
+      );
+    }
+    pass.dispose();
+  });
+
+  it("puts the avatar's own materials and layers back after the draw", () => {
+    const { avatar, sleeve, cuff } = staged();
+    const sleeveMaterial = sleeve.material;
+    const cuffMaterials = cuff.material;
+    const sleeveLayers = sleeve.layers.mask;
+    run(avatar);
+    expect(sleeve.material).toBe(sleeveMaterial);
+    expect(cuff.material).toBe(cuffMaterials);
+    expect(sleeve.layers.mask).toBe(sleeveLayers);
+    expect(cuff.layers.mask).toBe(sleeveLayers);
+  });
+
+  it('clears the avatar depth even when nothing blended is worn', () => {
+    const rig = buildRig({ arkit: false });
+    const { draws, renderer } = run(rig.root);
+    // A stale depth from the last frame would keep a garment taken off sharp.
+    expect(renderer.clear).toHaveBeenCalledWith(false, true, false);
+    expect(draws.some((d) => d.root === rig.root)).toBe(false);
+  });
+});
 
 describe('background compensation', () => {
   const colors = [0x0f1115, 0x131a2a, 0x8e97a0, 0x000000, 0x010203, 0x202020, 0x050a30];

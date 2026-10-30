@@ -19,6 +19,7 @@ import {
   parseCommandRequest,
   parseStreamMessage,
   placementReportSchema,
+  queueAddSchema,
   queueResponseSchema,
   queueRewindSchema,
   RECORD_DEFAULTS,
@@ -659,9 +660,28 @@ describe('deckTextResponseSchema', () => {
   });
 });
 
+describe('queueAddSchema', () => {
+  const turn = { text: 'あ' };
+
+  it('refuses a body that carries both turn and turns, naming both', () => {
+    const result = queueAddSchema.safeParse({ turn, turns: [turn] });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('turn or turns');
+  });
+
+  it('queues the single line when turns beside it is empty', () => {
+    expect(queueAddSchema.safeParse({ turn, turns: [] }).data).toEqual({ turn });
+  });
+
+  it('still takes either form alone', () => {
+    expect(queueAddSchema.safeParse({ turn }).data).toEqual({ turn });
+    expect(queueAddSchema.safeParse({ turns: [turn] }).data).toEqual({ turns: [turn] });
+  });
+});
+
 describe('queueRewindSchema', () => {
-  it('takes a bare id and rewinds from there, which is what the word means', () => {
-    expect(queueRewindSchema.safeParse({ id: 'q1' }).data).toEqual({ id: 'q1', mode: 'from' });
+  it('refuses a rewind that does not say which of the two it is', () => {
+    expect(queueRewindSchema.safeParse({ id: 'q1' }).success).toBe(false);
   });
 
   it('carries the other mode, and the choice about the line on air', () => {

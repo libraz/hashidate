@@ -383,7 +383,7 @@ export class BrowserBgm {
     audio.onloadedmetadata = () => {
       if (!this.isCurrent(route)) return;
       this.duration = finiteDuration(audio.duration);
-      this.syncPosition(route, this.position);
+      this.syncPosition(route, this.projectPosition());
       this.emitReport();
     };
     audio.onerror = () => {
@@ -467,8 +467,12 @@ export class BrowserBgm {
     try {
       // A renderer can spend seconds behind autoplay policy while the
       // server-owned transport keeps moving. Seek from the canonical command
-      // clock again at the moment playback is actually allowed.
-      this.syncPosition(route, this.projectPosition());
+      // clock again at the moment playback is actually allowed, and anchor the
+      // timeline to that same value so the projection does not fall behind.
+      const position = this.projectPosition();
+      this.syncPosition(route, position);
+      this.position = position;
+      this.positionAt = this.now();
       await audio.play();
       if (
         !this.isCurrent(route) ||
@@ -492,7 +496,6 @@ export class BrowserBgm {
       }
       this.blocked = false;
       this.error = null;
-      this.positionAt = this.now();
       this.emitReport();
     } catch (reason) {
       if (
@@ -518,10 +521,9 @@ export class BrowserBgm {
 
   private async retryPlay(): Promise<void> {
     if (this.disposed || this.transport !== 'playing' || this.currentRoute === null) return;
-    if (this.currentRoute.started && !this.currentRoute.audio.paused) {
-      this.syncPosition(this.currentRoute, this.projectPosition());
-      return;
-    }
+    // A route already playing is left alone: seeking it on every gesture flushes
+    // the decoder and drops out a track that was sounding fine.
+    if (this.currentRoute.started && !this.currentRoute.audio.paused) return;
     await this.playCurrent(this.currentRoute, true);
   }
 
@@ -591,12 +593,12 @@ export class BrowserBgm {
     this.playGeneration += 1;
     this.clearTailTimer();
     if (tail === 0) {
-      this.chain.reset(this.currentRoute !== null);
+      this.chain.reset(true);
     } else {
       this.tailTimer = setTimeout(() => {
         this.tailTimer = null;
         if (!this.disposed && this.currentRoute === null) {
-          this.chain.reset(this.currentRoute !== null);
+          this.chain.reset(true);
         }
       }, outSeconds * 1000);
     }

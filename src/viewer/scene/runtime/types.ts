@@ -1,6 +1,7 @@
 import type * as THREE from 'three';
 import type { Director } from '@/engine/director';
 import type { MaterialSet, Wardrobe } from '@/engine/scene';
+import type { TransparentTriangleController } from '@/engine/scene/transparent-triangles';
 import type { Session } from '@/engine/session';
 import type { AvatarDescriptor, Profile } from '@/engine/types';
 import type { Rect, StageSize } from '../placement';
@@ -20,6 +21,7 @@ export interface LoadedAvatar {
   session: Session;
   wardrobe: Wardrobe;
   materials: MaterialSet;
+  transparentTriangles: TransparentTriangleController;
   /** Everything the profile, wardrobe or sway layer could not resolve. */
   problems: string[];
 }

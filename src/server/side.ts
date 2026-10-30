@@ -1,21 +1,10 @@
+import { parseLine } from '../engine/cues';
 import { performanceDef } from '../engine/performance';
 import type { TurnRequest } from '../engine/types';
 import type { Command, Side } from '../protocol';
 
 /** A source of numbers in [0, 1), `Math.random`'s shape, so a test can pin the draw. */
 export type Random = () => number;
-
-/**
- * Whether the movement a gesture or performance id names consults a side.
- *
- * Every gesture does: a one-handed one picks its hand and a two-handed one picks
- * which way the head turns. A performance does only if it names a gesture; one
- * the table does not know is assumed to, since a loaded one ignores the field.
- */
-const performUsesSide = (id: string): boolean => {
-  const def = performanceDef(id);
-  return def === null || def.gesture !== undefined;
-};
 
 /**
  * Draw the side once for every renderer that will play this movement.
@@ -32,7 +21,7 @@ export function withSide<T extends Command | TurnRequest>(item: T, random: Rando
   return { ...item, side };
 }
 
-type Movement = { gesture?: string | null; perform?: string | null; side?: Side };
+type Movement = { gesture?: string | null; perform?: string | null; text?: string; side?: Side };
 
 /** The movement a command names, in a turn's terms; null for a command with none. */
 function commandMovement(command: Command): Movement | null {
@@ -50,6 +39,25 @@ function commandMovement(command: Command): Movement | null {
   }
 }
 
-function movementUsesSide({ gesture, perform }: Movement): boolean {
-  return Boolean(gesture) || (Boolean(perform) && performUsesSide(perform as string));
+/**
+ * Whether anything the movement names consults a side.
+ *
+ * Every gesture does: a one-handed one picks its hand and a two-handed one picks
+ * which way the head turns. A performance does if it names a gesture or holds an
+ * attitude, whose yaw and roll are mirrored by it; one the table does not know
+ * is assumed to, since a loaded one ignores the field. A line's gesture and
+ * perform cues play under the line's side, so they count as the line's own.
+ */
+function movementUsesSide({ gesture, perform, text }: Movement): boolean {
+  const performs = (id: string): boolean => {
+    const def = performanceDef(id);
+    return def === null || def.gesture !== undefined || def.attitude !== undefined;
+  };
+  if (gesture || (perform && performs(perform))) return true;
+  if (!text) return false;
+  return parseLine(text).cues.some(({ action, perform: legacy }) => {
+    if (action?.kind === 'gesture') return true;
+    const id = action?.kind === 'perform' ? action.id : legacy;
+    return id !== undefined && performs(id);
+  });
 }

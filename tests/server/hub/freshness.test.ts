@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ReportBody } from '@/protocol';
 import { Hub, STATE_STALE_SECONDS } from '@/server/hub';
-import { EPOCH_MS, event, state, vocabulary } from './fixtures';
+import { bgm, EPOCH_MS, event, placement, state, vocabulary } from './fixtures';
 
 /**
  * Whether what the hub is holding is still true, and waiting until it is.
@@ -118,6 +119,66 @@ describe('state freshness', () => {
     expect(snapshot.state).toEqual({});
     expect(snapshot.vocabulary).toEqual(vocabulary());
     expect(snapshot.events).toHaveLength(1);
+  });
+});
+
+describe('several renderers reporting at once', () => {
+  /** Apply the same reports in the given order to a fresh hub and read the snapshot back. */
+  const snapshotAfter = (reports: readonly [string, ReportBody][]) => {
+    const fresh = new Hub();
+    for (const [rendererId, body] of reports) fresh.report(body, rendererId);
+    const { state: reported, placement: layout } = fresh.snapshot();
+    return { state: reported, placement: layout };
+  };
+
+  const stage: [string, ReportBody] = [
+    'stage',
+    {
+      state: state({ speaking: true, queued: 1 }),
+      bgm: bgm({ muted: false }),
+      placement: placement(),
+    },
+  ];
+  const preview: [string, ReportBody] = [
+    'preview',
+    {
+      state: state({ speaking: false, queued: 2 }),
+      bgm: bgm({ muted: true }),
+      placement: placement({
+        slide: { anchor: 'top-left', width: 0.5, height: 0.5, margin: 0, fit: 'cover' },
+      }),
+    },
+  ];
+
+  it('answers the same snapshot whichever renderer reported last', () => {
+    const forward = snapshotAfter([stage, preview]);
+    const backward = snapshotAfter([preview, stage]);
+
+    expect(forward).toEqual(backward);
+    expect(forward.state.speaking).toBe(true);
+    // The audible renderer is the one the rest of the snapshot is read from.
+    expect(forward.state.queued).toBe(1);
+    expect(forward.placement).toEqual(placement());
+  });
+
+  it('is speaking while any fresh renderer is, whichever disagrees', () => {
+    const silentStage: [string, ReportBody] = ['stage', { state: state({ speaking: false }) }];
+    const speakingPreview: [string, ReportBody] = ['preview', { state: state({ speaking: true }) }];
+
+    expect(snapshotAfter([silentStage, speakingPreview]).state.speaking).toBe(true);
+    expect(snapshotAfter([speakingPreview, silentStage]).state.speaking).toBe(true);
+  });
+
+  it('does not let one renderer erase what another fresher one holds', () => {
+    hub.report(stage[1], 'stage');
+    vi.advanceTimersByTime(STATE_STALE_SECONDS * 1000 + 1);
+    hub.report(preview[1], 'preview');
+    // The stage went quiet; the preview is the only fresh state left.
+    expect(hub.snapshot().state.speaking).toBe(false);
+
+    hub.report(stage[1], 'stage');
+    expect(hub.snapshot().state.speaking).toBe(true);
+    expect(hub.snapshot().placement).toEqual(placement());
   });
 });
 

@@ -215,3 +215,67 @@ describe('linesFrom and bloom', () => {
     expect(linesFrom(show, 3)[0]?.stage?.bloom).toBe(true);
   });
 });
+
+describe('linesFrom carries only where the music was left', () => {
+  const resume = (lines: string[], setup: unknown[] = []) =>
+    leadingBgm(
+      linesFrom(
+        script({ setup, lines: [...lines.map((text) => ({ text })), { text: 'ここから。' }] }),
+        lines.length,
+      )[0]?.text,
+    );
+
+  it('never carries the glide time of a volume change', () => {
+    const carried = resume(['[@bgm set {"volume": 0.5, "rampSeconds": 4}]あ。']);
+    expect(carried).toEqual({ volume: 0.5 });
+  });
+
+  it('stops the music when a later cue selects a different track without an action', () => {
+    const carried = resume(['[@bgm play a.mp3]あ。', '[@bgm set {"track": "b.mp3"}]い。']);
+    expect(carried).toEqual({ track: 'b.mp3', action: 'stop' });
+  });
+
+  it('lets an unload win over the play before it', () => {
+    const carried = resume([
+      '[@bgm play a.mp3]あ。',
+      '[@bgm set {"track": null, "action": "play"}]い。',
+    ]);
+    expect(carried).toEqual({ track: null, action: 'stop' });
+  });
+
+  it('keeps a play that came with its track selection', () => {
+    expect(resume(['[@bgm set {"track": "b.mp3", "action": "play"}]あ。'])).toEqual({
+      track: 'b.mp3',
+      action: 'play',
+    });
+  });
+});
+
+describe('linesFrom and the page setup leaves', () => {
+  const pageAfter = (setup: unknown[]) => {
+    const [first] = linesFrom(script({ setup, lines: [{ text: 'あ。' }, { text: 'い。' }] }), 1);
+    return first?.stage?.slide;
+  };
+
+  it('counts a relative or bare slide in setup like the renderer does', () => {
+    expect(
+      pageAfter([
+        { cmd: 'deck', id: 'talk' },
+        { cmd: 'slide', by: 2 },
+      ]),
+    ).toBe(3);
+    expect(pageAfter([{ cmd: 'deck', id: 'talk' }, { cmd: 'slide' }])).toBe(2);
+    expect(
+      pageAfter([
+        { cmd: 'deck', id: 'talk', page: 4 },
+        { cmd: 'slide', by: -1 },
+      ]),
+    ).toBe(3);
+    expect(
+      pageAfter([
+        { cmd: 'deck', id: 'talk' },
+        { cmd: 'slide', page: 5 },
+      ]),
+    ).toBe(5);
+  });
+});

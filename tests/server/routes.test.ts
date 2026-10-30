@@ -282,6 +282,88 @@ describe('command validation and stamping', () => {
     expect(body.completed).toBe(true);
   });
 
+  it('completes the wait when the awaited line is cut off rather than finished', async () => {
+    const { origin, hub } = await listenApi();
+    const pending = fetch(`${origin}/api/command?wait=5`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cmd: 'say', text: 'あ' }),
+    });
+    await vi.waitFor(() => expect(hub.queue.list()).toHaveLength(1));
+    const [entry] = hub.queue.list();
+
+    hub.report({ events: [{ type: 'turn.start', turn: entry.id }] });
+    hub.send({ type: 'command', commands: [{ cmd: 'interrupt' }] });
+    hub.report({ events: [{ type: 'turn.interrupted', turn: entry.id }] });
+    const body = (await (await pending).json()) as { completed: boolean };
+
+    expect(body.completed).toBe(true);
+  });
+
+  it('completes the wait when the awaited line is dropped before it started', async () => {
+    const { origin, hub } = await listenApi();
+    const pending = fetch(`${origin}/api/command?wait=5`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cmd: 'say', text: 'あ' }),
+    });
+    await vi.waitFor(() => expect(hub.queue.list()).toHaveLength(1));
+
+    const cleared = await fetch(`${origin}/api/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cmd: 'clear' }),
+    });
+    expect(cleared.status).toBe(200);
+    const body = (await (await pending).json()) as { completed: boolean };
+
+    expect(body.completed).toBe(true);
+  });
+
+  it('refuses the verbs only the server issues, alone or inside a batch', async () => {
+    const { origin } = await listenApi();
+    streamResponse = await openStream(origin);
+    const post = (body: unknown) =>
+      fetch(`${origin}/api/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+    for (const command of [
+      { cmd: 'record', on: true, session: 'forged' },
+      { cmd: 'idleAct', act: 'blank' },
+      { cmd: 'idleFace', draw: 0 },
+    ]) {
+      expect((await post(command)).status).toBe(400);
+    }
+
+    const delivered = nextStreamData(streamResponse);
+    const mixed = await post({
+      batch: [
+        { cmd: 'record', on: true, session: 'forged' },
+        { cmd: 'pause', on: true },
+      ],
+    });
+    expect(mixed.status).toBe(200);
+    expect(await mixed.json()).toMatchObject({ fates: ['delivered'] });
+    const frame = await delivered;
+    expect(frame).toContain('"cmd":"pause"');
+    expect(frame).not.toContain('"cmd":"record"');
+  });
+
+  it('refuses a server-only verb carried as the commands after a batch', async () => {
+    const { origin, hub } = await listenApi();
+    const response = await fetch(`${origin}/api/queue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ turn: { text: 'あ' }, after: [{ cmd: 'idleAct', act: 'blank' }] }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(hub.queue.list()).toEqual([]);
+  });
+
   it('answers 503 only for a command neither delivered nor kept', async () => {
     const { origin } = await listenApi();
     const post = (body: unknown) =>

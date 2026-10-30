@@ -544,30 +544,90 @@ type _TailDriveMatchesEngine = Expect<Equals<z.output<typeof tailDriveSchema>, T
 
 const range = z.tuple([finite, finite]);
 
-const jointDofSchema = z.strictObject({ label: localizedSchema, free: range, max: range });
+// Radians, as the engine holds them. The hard stop encloses the free band.
+const jointDofSchema = z
+  .strictObject({ label: localizedSchema, free: range, max: range })
+  .superRefine((dof, ctx) => {
+    if (dof.max[0] > dof.max[1]) {
+      ctx.addIssue({ code: 'custom', path: ['max'], message: 'max must run from low to high' });
+    }
+    if (dof.free[0] > dof.free[1]) {
+      ctx.addIssue({ code: 'custom', path: ['free'], message: 'free must run from low to high' });
+    }
+    if (dof.free[0] < dof.max[0] || dof.free[1] > dof.max[1]) {
+      ctx.addIssue({ code: 'custom', path: ['free'], message: 'free must lie inside max' });
+    }
+  });
 
 type _JointDofMatchesEngine = Expect<Equals<z.output<typeof jointDofSchema>, JointDof>>;
 
 const elevationRow = z.tuple([finite, finite, finite]);
+
+// The ceiling is interpolated by plane angle in degrees, so it needs rows that rise across the whole circle.
+const elevationRows = z.array(elevationRow).superRefine((rows, ctx) => {
+  const ascending = rows.every((row, i) => i === 0 || row[0] > rows[i - 1][0]);
+  if (rows.length < 2 || !ascending || rows[0][0] > -180 || rows[rows.length - 1][0] < 180) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'elevation needs at least two rows with strictly rising planes covering -180 to 180',
+    });
+  }
+});
 
 const jointFields = {
   label: localizedSchema,
   dofs: z.record(z.string(), jointDofSchema),
 };
 
-const jointSchema = z.strictObject({ ...jointFields, elevation: z.array(elevationRow).optional() });
+const jointSchema = z.strictObject({ ...jointFields, elevation: elevationRows.optional() });
 
 type _JointMatchesEngine = Expect<Equals<z.output<typeof jointSchema>, JointSpec>>;
 
-const jointTableSchema = z.strictObject({
-  shoulder: z.strictObject({ ...jointFields, elevation: z.array(elevationRow) }),
-  elbow: jointSchema,
-  wrist: jointSchema,
-  finger: jointSchema,
-  thumb: jointSchema,
-  neck: jointSchema,
-  spine: jointSchema,
-});
+/** The degrees of freedom the engine reads from each joint, by name. */
+const REQUIRED_DOFS = {
+  shoulder: ['rotation'],
+  elbow: ['flexion', 'rotation'],
+  wrist: ['flexion', 'deviation'],
+  finger: ['proximal', 'intermediate', 'distal'],
+  thumb: ['proximal', 'intermediate', 'distal'],
+} as const;
+
+const jointTableSchema = z
+  .strictObject({
+    shoulder: z.strictObject({ ...jointFields, elevation: elevationRows }),
+    elbow: jointSchema,
+    wrist: jointSchema,
+    finger: jointSchema,
+    thumb: jointSchema,
+    neck: jointSchema,
+    spine: jointSchema,
+  })
+  .superRefine((table, ctx) => {
+    for (const [joint, names] of Object.entries(REQUIRED_DOFS)) {
+      const dofs = table[joint as keyof typeof REQUIRED_DOFS].dofs;
+      for (const name of names) {
+        if (dofs[name] === undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [joint, 'dofs', name],
+            message: `${joint} needs a "${name}" degree of freedom`,
+          });
+        }
+      }
+    }
+    // The exact wrist inverse loses its palm-normal projection at a 90 degree combined bend.
+    const wrist = table.wrist.dofs;
+    if (wrist.flexion !== undefined && wrist.deviation !== undefined) {
+      const reach = (max: [number, number]) => Math.max(Math.abs(max[0]), Math.abs(max[1]));
+      if (Math.hypot(reach(wrist.flexion.max), reach(wrist.deviation.max)) >= Math.PI / 2) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['wrist', 'dofs'],
+          message: 'wrist hard ranges must stay inside a 90 degree combined bend',
+        });
+      }
+    }
+  });
 
 // The shoulder is an intersection on the engine side and a flat object here.
 type SimplifyMembers<T> = { [K in keyof T]: Simplify<T[K]> };

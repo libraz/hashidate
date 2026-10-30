@@ -7,7 +7,7 @@ import {
   performCommandSchema,
   pointCommandSchema,
 } from '../../protocol';
-import { build, extractNumbers, type Handler, toNumber } from '../args';
+import { build, extractNumbers, type Handler, takesAtMost, toNumber } from '../args';
 import { fail } from '../client';
 import { show } from '../output';
 
@@ -26,6 +26,7 @@ export const perform: Handler = async (client, args) => {
     options: { side: { type: 'string' } },
     allowPositionals: true,
   });
+  takesAtMost('perform', positionals, 1);
   show(
     await client.command(
       build(performCommandSchema, {
@@ -47,6 +48,7 @@ export const gesture: Handler = async (client, args) => {
     options: { side: { type: 'string' } },
     allowPositionals: true,
   });
+  takesAtMost('gesture', positionals, 1);
   show(
     await client.command(
       build(gestureCommandSchema, {
@@ -60,6 +62,7 @@ export const gesture: Handler = async (client, args) => {
 
 export const hop: Handler = async (client, args) => {
   const { positionals } = parseArgs({ args, allowPositionals: true });
+  takesAtMost('hop', positionals, 1);
   show(
     await client.command(
       build(hopCommandSchema, {
@@ -76,9 +79,8 @@ export const hop: Handler = async (client, args) => {
  */
 export const point: Handler = async (client, args) => {
   const { numbers, rest } = extractNumbers(args, ['--extent', '--side', '--finger']);
-  if (numbers.length > 2)
-    fail(`point takes at most two numeric positionals: ${numbers.slice(2).join(' ')}`);
-  const { values } = parseArgs({
+  takesAtMost('point', numbers, 2);
+  const { values, positionals } = parseArgs({
     args: rest,
     options: {
       extent: { type: 'string' },
@@ -87,6 +89,8 @@ export const point: Handler = async (client, args) => {
     },
     allowPositionals: true,
   });
+  // What is left is a word where a bearing belonged, which would read as a release.
+  if (positionals[0] !== undefined) fail(`point takes numbers: ${positionals.join(' ')}`);
   if (numbers.length === 0) {
     show(await client.command(build(pointCommandSchema, { cmd: 'point' })));
     return;
@@ -109,6 +113,7 @@ export const point: Handler = async (client, args) => {
 
 export const idle: Handler = async (client, args) => {
   const { positionals } = parseArgs({ args, allowPositionals: true });
+  takesAtMost('idle', positionals, 1);
   const on = positionals[0];
   if (on !== 'on' && on !== 'off') fail('idle on|off');
   show(await client.command(build(idleCommandSchema, { cmd: 'idle', on: on === 'on' })));
@@ -116,6 +121,7 @@ export const idle: Handler = async (client, args) => {
 
 export const look: Handler = async (client, args) => {
   const { positionals } = parseArgs({ args, allowPositionals: true });
+  takesAtMost('look', positionals, 1);
   if (positionals[0] === undefined) fail('look needs an amount in 0..1');
   show(
     await client.command(

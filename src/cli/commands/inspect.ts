@@ -1,5 +1,5 @@
 import type { Vocabulary } from '../../protocol';
-import type { Handler } from '../args';
+import { type Handler, takesNone } from '../args';
 import { localized, show } from '../output';
 
 /** Matches the server's own long-poll default, so `watch` never idles out. */
@@ -10,7 +10,8 @@ const WATCH_WAIT_SECONDS = 30;
  * doing, and what has happened.
  */
 
-export const vocab: Handler = async (client) => {
+export const vocab: Handler = async (client, args) => {
+  takesNone('vocab', args);
   const vocabulary = await client.vocabulary();
   if (Object.keys(vocabulary).length === 0) {
     console.log('no vocabulary (no viewer connected)');
@@ -67,14 +68,29 @@ export const vocab: Handler = async (client) => {
   }
 };
 
-export const state: Handler = async (client) => {
+export const state: Handler = async (client, args) => {
+  takesNone('state', args);
   const snapshot = await client.state();
   if (!snapshot.connected) console.log('no viewer connected');
-  show(snapshot.state);
+  // The server's own fields beside the renderer's, minus the bulky listings
+  // (`vocab` and `watch` print those).
+  show({
+    viewers: snapshot.viewers,
+    state: snapshot.state,
+    paused: snapshot.paused,
+    recording: snapshot.recording,
+    speech: snapshot.speech,
+    bgm: snapshot.bgm ?? null,
+    bloom: snapshot.bloom ?? null,
+    slides: snapshot.slides,
+    queue: snapshot.queue.length,
+    airing: snapshot.airing?.length,
+  });
 };
 
 /** Follow the event log. Useful to see how turns actually sequence. */
-export const watch: Handler = async (client) => {
+export const watch: Handler = async (client, args) => {
+  takesNone('watch', args);
   let since = (await client.state()).seq;
   console.log(`following from seq=${since} (Ctrl-C to stop)`);
   for (;;) {

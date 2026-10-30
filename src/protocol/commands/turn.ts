@@ -125,7 +125,8 @@ export const sayCommandSchema = z.object({
    *
    * One field for the line rather than one per field, because a turn plays one
    * movement — `gesture`'s, or the one `perform` names — and a hand stated
-   * twice could only ever disagree with itself.
+   * twice could only ever disagree with itself. The line's inline gesture and
+   * perform cues carry no side of their own and play under this one.
    */
   side: sideSchema.optional(),
   hold: z.boolean().optional(),

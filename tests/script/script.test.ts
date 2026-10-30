@@ -20,7 +20,20 @@ import { loadScript, outline, parseScript, ScriptError, scriptCandidates } from 
 
 const script = (body: string) => parseScript('test.yaml', body);
 
+/** Well-formed server-only commands, so a refusal is about the verb, not the shape. */
+const SERVER_COMMANDS = [
+  '{ cmd: record, on: true, session: x }',
+  '{ cmd: idleAct, act: hello }',
+  '{ cmd: idleFace, draw: 0.5 }',
+];
+
 describe('parseScript', () => {
+  it('refuses a top-level key it does not know instead of dropping it', () => {
+    expect(() => script('lines: [{ text: あ }]\nteardwon: [{ cmd: idle, on: true }]\n')).toThrow(
+      /teardwon/,
+    );
+  });
+
   it('reads a line as a turn, cues and staging included', () => {
     const parsed = script(`
 lines:
@@ -124,6 +137,13 @@ lines:
     ).toThrow(ScriptError);
   });
 
+  /** The server's own verbs: a scripted `record` would cut the take in flight. */
+  it.each(SERVER_COMMANDS)('refuses %s', (command) => {
+    expect(() => script(`setup:\n  - ${command}\nlines:\n  - text: x`)).toThrow(
+      /issued by the server/,
+    );
+  });
+
   it('refuses a verb that is not a command at all', () => {
     expect(() => script('setup:\n  - { cmd: sing }\nlines:\n  - text: x')).toThrow(ScriptError);
   });
@@ -140,6 +160,12 @@ describe('teardown', () => {
     expect(() =>
       script(`lines:\n  - text: x\nteardown:\n  - { cmd: ${cmd}, text: "x", turns: [] }`),
     ).toThrow(ScriptError);
+  });
+
+  it.each(SERVER_COMMANDS)('refuses %s', (command) => {
+    expect(() => script(`lines:\n  - text: x\nteardown:\n  - ${command}`)).toThrow(
+      /issued by the server/,
+    );
   });
 });
 

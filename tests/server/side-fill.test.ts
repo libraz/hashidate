@@ -40,6 +40,21 @@ describe('withSide', () => {
     expect(withSide({ text: 'a' }, () => 0.1)).not.toHaveProperty('side');
     expect(withSide({ text: 'a', perform: 'calm' }, () => 0.1)).not.toHaveProperty('side');
   });
+
+  it('fills a performance whose only movement is an attitude, wherever it is named', () => {
+    expect(withSide({ cmd: 'perform', id: 'wonder' }, () => 0.1)).toMatchObject({ side: 'L' });
+    expect(withSide({ cmd: 'idleAct', act: 'wonder' }, () => 0.9)).toMatchObject({ side: 'R' });
+    expect(withSide({ text: 'a', perform: 'wonder' }, () => 0.1)).toMatchObject({ side: 'L' });
+  });
+
+  it('fills a turn whose text cues a movement, and not one whose cues move nothing', () => {
+    for (const text of ['あ[@gesture peace]い', 'あ[@perform hello]い', 'あ[wonder]い']) {
+      expect(withSide({ text }, () => 0.1)).toMatchObject({ side: 'L' });
+    }
+    for (const text of ['あ[@camera full]い', 'あ[calm]い', 'あ[@hop bounce]い']) {
+      expect(withSide({ text }, () => 0.1)).not.toHaveProperty('side');
+    }
+  });
 });
 
 describe('the server draws the side once', () => {

@@ -11,6 +11,9 @@ import {
   type TurnRequest,
   turnSchema,
 } from '../protocol';
+import { SERVER_VERBS } from '../protocol/commands';
+import { BgmCoordinator } from '../server/bgm-state';
+import { Standing } from '../server/standing';
 
 /**
  * A script: a run of turns, written out in advance.
@@ -59,19 +62,27 @@ const MAX_BYTES = 1024 * 1024;
 /**
  * Setup and teardown refuse the run verbs (`RUN_VERBS`): a `say` in setup is a
  * line outside the list, a `clear` in teardown deletes whatever was queued after
- * the script. Stated as a refusal rather than a narrower union, so a command
- * added to the wire is available here the day it exists.
+ * the script. They refuse the server's own verbs (`SERVER_VERBS`) as every
+ * caller path does. Stated as a refusal rather than a narrower union, so a
+ * command added to the wire is available here the day it exists.
  */
-export const setupCommandSchema = commandSchema.refine((command) => !RUN_VERBS.has(command.cmd), {
-  error: 'setup takes the state a script assumes, not its lines — put those under `lines`',
-});
+const SERVER_VERB_REFUSAL = {
+  error: 'record, idleAct and idleFace are issued by the server, not by a script',
+};
 
-export const teardownCommandSchema = commandSchema.refine(
-  (command) => !RUN_VERBS.has(command.cmd),
-  { error: 'teardown takes the state a script leaves behind, not more lines' },
-);
+export const setupCommandSchema = commandSchema
+  .refine((command) => !RUN_VERBS.has(command.cmd), {
+    error: 'setup takes the state a script assumes, not its lines — put those under `lines`',
+  })
+  .refine((command) => !SERVER_VERBS.has(command.cmd), SERVER_VERB_REFUSAL);
 
-export const scriptSchema = z.object({
+export const teardownCommandSchema = commandSchema
+  .refine((command) => !RUN_VERBS.has(command.cmd), {
+    error: 'teardown takes the state a script leaves behind, not more lines',
+  })
+  .refine((command) => !SERVER_VERBS.has(command.cmd), SERVER_VERB_REFUSAL);
+
+export const scriptSchema = z.strictObject({
   /**
    * What the script is, for whoever opens the file and for `--check`.
    *
@@ -265,17 +276,18 @@ interface Reached {
 }
 
 /**
- * The music as the BGM cues of the lines walked so far left it: the last
- * transport verb, and every setting a `set` or a named `play` changed. The
- * playback position is not part of it — how far a track has run depends on how
- * long the skipped lines took to say, which a script cannot know.
+ * The music as the BGM cues of the lines walked so far left it, kept by the
+ * same coordinator that is the clock for every renderer. `touched` has the
+ * shape of every setting a cue named, so that only those are carried; the
+ * playback position is not, since how far a track has run depends on how long
+ * the skipped lines took to say.
  */
 interface ReachedBgm {
-  action?: 'play' | 'pause' | 'stop';
-  settings: Record<string, unknown>;
+  music: BgmCoordinator;
+  touched: Record<string, unknown>;
 }
 
-/** A settings patch folded into what came before it, nested objects field by field. */
+/** The shape of a settings patch folded into what came before it, nested objects field by field. */
 function foldSettings(base: Record<string, unknown>, patch: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(patch)) {
     const current = base[key];
@@ -288,22 +300,53 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+type BgmCommand = Extract<Command, { cmd: 'bgm' }>;
+
 function foldBgm(bgm: ReachedBgm, cue: Extract<InlineCueAction, { kind: 'bgm' }>): void {
-  if (cue.action === 'set') {
-    const { action, ...settings } = cue.settings;
-    if (action !== undefined) bgm.action = action;
-    foldSettings(bgm.settings, settings);
-    return;
-  }
-  bgm.action = cue.action;
-  if (cue.action === 'play' && cue.track !== undefined) bgm.settings.track = cue.track;
+  // The command a fired cue is turned into on the server.
+  const command: BgmCommand =
+    cue.action === 'set'
+      ? { cmd: 'bgm', ...cue.settings }
+      : {
+          cmd: 'bgm',
+          action: cue.action,
+          ...('track' in cue && cue.track !== undefined ? { track: cue.track } : {}),
+        };
+  bgm.music.apply(command);
+  const { cmd: _cmd, ...patch } = command;
+  foldSettings(bgm.touched, patch);
+  // Selecting a track decides the transport as well, whatever the cue said.
+  if (patch.track !== undefined) bgm.touched.action = true;
 }
 
+/** The values of the touched settings as the coordinator now holds them. */
+function reflect(
+  touched: Record<string, unknown>,
+  now: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(touched)) {
+    const reached = now[key];
+    if (isPlainObject(value) && isPlainObject(reached)) {
+      const inner = reflect(value, reached);
+      if (Object.keys(inner).length > 0) out[key] = inner;
+    } else if (reached !== undefined) {
+      out[key] = reached;
+    }
+  }
+  return out;
+}
+
+const TRANSPORT_ACTION = { playing: 'play', paused: 'pause', stopped: 'stop' } as const;
+
 /** One cue that puts the music where the skipped lines left it, or null if they never touched it. */
-function bgmCue(bgm: ReachedBgm): string | null {
-  if (bgm.action === undefined && Object.keys(bgm.settings).length === 0) return null;
-  const settings = { ...(bgm.action === undefined ? {} : { action: bgm.action }), ...bgm.settings };
-  return `[@bgm set ${JSON.stringify(settings)}]`;
+function bgmCue({ music, touched }: ReachedBgm): string | null {
+  const state = music.state();
+  const settings = reflect(touched, {
+    ...state,
+    action: state.transport === 'ended' ? 'stop' : TRANSPORT_ACTION[state.transport],
+  });
+  return Object.keys(settings).length === 0 ? null : `[@bgm set ${JSON.stringify(settings)}]`;
 }
 
 /** Two halves of a layout folded field by field, as `Standing` folds `place`. */
@@ -317,8 +360,15 @@ function foldPlace(base: Stage['place'], next: Stage['place']): Stage['place'] {
 }
 
 function afterSetup(setup: readonly Command[] | undefined): Reached {
-  const at: Reached = { deck: null, page: 1, lines: {}, bgm: { settings: {} } };
+  const standing = new Standing();
+  const music = new BgmCoordinator();
   for (const command of setup ?? []) {
+    standing.record(command);
+    if (command.cmd === 'bgm') music.apply(command);
+  }
+  // A `slide` the standing state keeps is absolute and newer than its `deck`.
+  const at: Reached = { deck: null, page: 1, lines: {}, bgm: { music, touched: {} } };
+  for (const command of standing.commands()) {
     if (command.cmd === 'deck') {
       at.deck = command.id ?? null;
       at.page = command.page ?? 1;
@@ -355,11 +405,9 @@ function walk(
 ): void {
   const at = afterSetup(script.setup);
   for (const [index, line] of script.lines.entries()) {
-    const before: Reached = {
-      ...at,
-      lines: { ...at.lines },
-      bgm: { ...at.bgm, settings: structuredClone(at.bgm.settings) },
-    };
+    // The music is shared, not copied: a caller that wants `before` stops the
+    // walk on this line, ahead of any cue in it.
+    const before: Reached = { ...at, lines: { ...at.lines } };
     applyStage(at, line.stage);
     if (visit(index, before, at)) return;
     // A cue turns the page or moves the camera part-way through the line, and

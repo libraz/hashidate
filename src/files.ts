@@ -82,12 +82,18 @@ export function isSafePath(result: SafePathResult): result is SafePath {
 
 /** Read a trusted root's direct entries, treating a missing optional root as empty. */
 export async function readSafeDirectory(root: string): Promise<string[] | null> {
+  const listed = await listDirectory(root);
+  return 'names' in listed ? listed.names : null;
+}
+
+/** A root's direct entries, or the true reason it cannot be listed; a missing root is empty. */
+async function listDirectory(root: string): Promise<{ names: string[] } | { error: string }> {
   const checked = await inspectDirectory(resolve(root));
-  if (!checked.ok) return checked.code === 'missing' ? [] : null;
+  if (!checked.ok) return checked.code === 'missing' ? { names: [] } : { error: checked.error };
   try {
-    return await readdir(resolve(root));
-  } catch {
-    return null;
+    return { names: await readdir(resolve(root)) };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -105,7 +111,8 @@ export interface ListSafeIdsOptions {
  *
  * The id is the NFC-composed stem. Two names that compose to one id are an
  * error for that id rather than a choice. Both lists are sorted by id; a
- * missing root is empty.
+ * missing root is empty, and a root that exists but cannot be listed is
+ * reported as an error under the root's own name.
  */
 export async function listSafeIds(
   root: string,
@@ -116,11 +123,16 @@ export async function listSafeIds(
 }> {
   const extensions = options.extensions.map(normaliseExtension);
   const noun = options.noun ?? 'file';
-  const names = (await readSafeDirectory(root)) ?? [];
   const entries: { id: string; file: string }[] = [];
   const errors: { id: string; error: string }[] = [];
+  const refuse = (id: string, error: string) => errors.push({ id, error });
+  const listed = await listDirectory(root);
+  if ('error' in listed) {
+    refuse(basename(resolve(root)), `cannot list ${noun} directory: ${listed.error}`);
+    return { entries, errors };
+  }
   const candidates = new Map<string, string[]>();
-  for (const name of names) {
+  for (const name of listed.names) {
     const extension = normaliseExtension(extname(name));
     if (!extensions.includes(extension)) continue;
     // Composed, for the same reason a document id is: a name with a Japanese
@@ -128,17 +140,17 @@ export async function listSafeIds(
     // everywhere else, and the two are one name except in a comparison.
     const id = basename(name, extname(name)).normalize('NFC');
     if (!isUsableId(id, options.maxIdLength)) {
-      errors.push({
-        id: name,
-        error: `not a usable ${noun} id (at most ${options.maxIdLength} characters, no control characters)`,
-      });
+      refuse(
+        name,
+        `not a usable ${noun} id (at most ${options.maxIdLength} characters, no control characters)`,
+      );
       continue;
     }
     candidates.set(id, [...(candidates.get(id) ?? []), name]);
   }
   for (const [id, matching] of candidates) {
     if (matching.length > 1) {
-      errors.push({ id, error: ambiguousMessage(matching) });
+      refuse(id, collisionMessage(matching));
       continue;
     }
     entries.push({ id, file: matching[0] });
@@ -550,6 +562,12 @@ async function readInspected(file: SafeFile, maxBytes: number): Promise<SafeRead
 
 function failure(code: SafeFileErrorCode, error: string): SafeFileError {
   return { ok: false, code, error };
+}
+
+/** Names sharing one stem in different extensions are a duplicate definition, not a spelling clash. */
+function collisionMessage(names: readonly string[]): string {
+  const stems = new Set(names.map((name) => basename(name, extname(name))));
+  return stems.size === 1 ? `defined more than once: ${names.join(', ')}` : ambiguousMessage(names);
 }
 
 function ambiguousMessage(names: readonly string[]): string {

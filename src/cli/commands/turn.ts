@@ -1,7 +1,17 @@
 import { parseArgs } from 'node:util';
 import { commandSchema, pauseCommandSchema, sayCommandSchema } from '../../protocol';
-import { build, expandGreedy, type Handler, normaliseWait, parseVec, toInteger } from '../args';
-import { fail } from '../client';
+import {
+  build,
+  expandGreedy,
+  type Handler,
+  normaliseWait,
+  parseVec,
+  requireText,
+  takesAtMost,
+  takesNone,
+  toInteger,
+  toWait,
+} from '../args';
 import { show } from '../output';
 
 /**
@@ -29,8 +39,9 @@ export const say: Handler = async (client, args) => {
     },
     allowPositionals: true,
   });
-  const text = positionals[0];
-  if (text === undefined) fail('say needs the text to be read out');
+  takesAtMost('say', positionals, 1);
+  const text = requireText('say', positionals[0]);
+  const wait = toWait(values.wait);
   // The shot, if any of it was named. Built as a whole or not at all, because
   // an empty object is a staging instruction that stages nothing — harmless,
   // but it would put a `stage: {}` on every line the wire ever carried.
@@ -72,7 +83,7 @@ export const say: Handler = async (client, args) => {
     hold: values.hold ? true : undefined,
     stage,
   });
-  show(await client.command(command, values.wait));
+  show(await client.command(command, wait));
 };
 
 /**
@@ -82,11 +93,13 @@ export const say: Handler = async (client, args) => {
  * movement and each is typed in a hurry. Neither touches the line being spoken:
  * that finishes, and nothing is discarded — `interrupt` cuts and `clear` drops.
  */
-export const hold: Handler = async (client) => {
+export const hold: Handler = async (client, args) => {
+  takesNone('hold', args);
   show(await client.command(build(pauseCommandSchema, { cmd: 'pause', on: true })));
 };
 
-export const resume: Handler = async (client) => {
+export const resume: Handler = async (client, args) => {
+  takesNone('resume', args);
   show(await client.command(build(pauseCommandSchema, { cmd: 'pause', on: false })));
 };
 
@@ -95,7 +108,8 @@ export const resume: Handler = async (client) => {
  * same schema by another name.
  */
 export function bare(cmd: 'reset' | 'interrupt' | 'clear'): Handler {
-  return async (client) => {
+  return async (client, args) => {
+    takesNone(cmd, args);
     show(await client.command(build(commandSchema, { cmd })));
   };
 }

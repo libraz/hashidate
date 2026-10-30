@@ -22,6 +22,7 @@ import type {
   TurnRequest,
   Vocabulary,
 } from '../protocol';
+import { NO_SUCH_ENTRY } from '../protocol/commands';
 import { projectQueue, projectStatus, queuedIds } from './project';
 import {
   type BgmInput,
@@ -491,9 +492,14 @@ export function createServer(control: Control): Server {
       queue: projectQueue(outcome.queue),
     };
     if (outcome.error === undefined) return report(payload);
+    // Only a missing entry is a stale id; any other refusal (the speech
+    // sidecar not ready, say) is passed through as the server worded it.
+    const reason =
+      outcome.error === NO_SUCH_ENTRY
+        ? 'That line has either started being said or been removed. '
+        : '';
     return refuse(
-      `revise (${call.action}) could not be applied: ${outcome.error}. ` +
-        'That line has either started being said or been removed. This is the queue as it stands:\n' +
+      `revise (${call.action}) could not be applied: ${outcome.error}. ${reason}This is the queue as it stands:\n` +
         JSON.stringify(payload),
     );
   }

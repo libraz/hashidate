@@ -59,6 +59,11 @@ export const WARDROBE: WardrobeTable = {
   presets: { bare: { label: same('素'), set: { top: null } } },
 };
 
+/** Every mesh a wardrobe table dresses, so the rig carries one of each. */
+function garmentsOf(table: WardrobeTable): string[] {
+  return Object.values(table.slots).flatMap((slot) => slot.items.flatMap((item) => item.meshes));
+}
+
 export interface Harness {
   session: Session;
   director: Director;
@@ -79,7 +84,8 @@ export function build({
   slides,
   composition,
 }: {
-  wardrobe?: boolean;
+  /** `true` for `WARDROBE`, or a table of the test's own. */
+  wardrobe?: boolean | WardrobeTable;
   idle?: boolean;
   /** Handed the harness's own clock, so a fake take can run on simulated time. */
   voice?: (now: () => number) => Voice;
@@ -90,23 +96,24 @@ export function build({
   slides?: Slides;
   composition?: Composition;
 } = {}) {
+  const table = wardrobe === false ? null : wardrobe === true ? WARDROBE : wardrobe;
   const rig = buildRig({
     groups: [
       ['Face', FACES],
       ['FX', EFFECTS],
     ],
-    garments: ['Shirt'],
+    garments: table ? garmentsOf(table) : ['Shirt'],
   });
   const profile = buildProfile(rig.root, {
     ...rig.descriptor,
     presets: { group: 'Face', emotion: { joy: 'F_DOYA' } },
     overlays: { group: 'FX' },
-    ...(wardrobe ? { wardrobe: WARDROBE } : {}),
+    ...(table ? { wardrobe: table } : {}),
   });
   const director = new Director(profile);
   let clock = 0;
   const session = new Session(director, {
-    wardrobe: wardrobe ? new Wardrobe(rig.root, profile, WARDROBE) : null,
+    wardrobe: table ? new Wardrobe(rig.root, profile, table) : null,
     idle,
     voice: voice?.(() => clock),
     camera,

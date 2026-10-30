@@ -407,6 +407,8 @@ export class TurnQueue {
     this.queue.length = 0;
     this.d.mouth.stop();
     this.d.body.stopGesture();
+    // The hop in the air lands; the rest of its run does not start.
+    this.d.body.finishHop();
     // A line cut off ends its run: whatever is said next is a new turn.
     this._runEndAt = null;
     if (this.turn) {
@@ -643,9 +645,11 @@ export class TurnQueue {
       const scheduled = this._cues.shift() as { cue: Cue; t: number; ordinal: number };
       const action = cueAction(scheduled.cue);
       if (action === null) continue;
+      // A cue's movement plays under the line's side, which the server drew once for every renderer.
+      const side = this.turn?.side;
       switch (action.kind) {
         case 'perform':
-          this.d.perform(action.id);
+          this.d.perform(action.id, side);
           this._performing = action.id;
           this.reportCue(action, scheduled.ordinal);
           if (this.d.leadBound('perform', action.id) > 0) this.chain(now);
@@ -655,7 +659,7 @@ export class TurnQueue {
           this._cuedExpression = action.id;
           break;
         case 'gesture':
-          this.d.gesture(action.id);
+          this.d.gesture(action.id, side);
           if (this.d.leadBound('gesture', action.id) > 0) this.chain(now);
           break;
         case 'hop':

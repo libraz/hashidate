@@ -119,9 +119,9 @@ interface ReaderSinks {
  *
  * A request arriving while a read is in flight does not start another: it asks
  * for one follow-up read, so a burst of mutations costs one extra round trip
- * rather than a fan-out whose answers land in any order. A snapshot older than
- * the one shown is dropped; after a failure the floor is forgotten, because a
- * restarted server counts from zero again.
+ * rather than a fan-out whose answers land in any order. Reads never overlap,
+ * so the last answer is the newest, and a lower `seq` can only mean a restarted
+ * server counting from zero again.
  */
 export function singleFlight(
   read: () => Promise<Snapshot | Failure>,
@@ -129,16 +129,13 @@ export function singleFlight(
 ): () => Promise<void> {
   let inFlight: Promise<void> | null = null;
   let again = false;
-  let shown = -1;
 
   const once = async (): Promise<void> => {
     const result = await read();
     if (!sinks.alive()) return;
     if (isFailure(result)) {
-      shown = -1;
       sinks.onFailure(result.error);
-    } else if (result.seq >= shown) {
-      shown = result.seq;
+    } else {
       sinks.onSnapshot(result);
     }
   };

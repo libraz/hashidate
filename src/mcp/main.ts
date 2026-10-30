@@ -1,4 +1,5 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { takeBase } from '../cli/args';
 import { ControlClient } from '../control/client';
 import { createServer } from './server';
 
@@ -21,17 +22,12 @@ import { createServer } from './server';
 
 /**
  * `--base` names a control server somewhere other than the default, spelled the
- * same way the CLI spells it. The MCP client's own configuration is the only
- * place it can be said — there is no prompt here to type it at.
+ * same way the CLI spells it and read by the same code. The MCP client's own
+ * configuration is the only place it can be said — there is no prompt here to
+ * type it at.
  */
-function base(argv: string[]): string | undefined {
-  const flagged = argv.indexOf('--base');
-  if (flagged !== -1) return argv[flagged + 1];
-  return argv.find((token) => token.startsWith('--base='))?.slice('--base='.length);
-}
-
 async function main(): Promise<void> {
-  const control = new ControlClient(base(process.argv.slice(2)));
+  const control = new ControlClient(takeBase(process.argv.slice(2)).base);
   await createServer(control).connect(new StdioServerTransport());
 }
 

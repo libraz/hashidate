@@ -38,14 +38,15 @@ describe('singleFlight', () => {
     expect(h.shown).toEqual([1, 2]);
   });
 
-  it('drops a snapshot older than the one shown', async () => {
-    const h = harness([Promise.resolve(snap(5)), Promise.resolve(snap(4))]);
+  it('shows a lower seq with no failure in between, as a restarted server counts again', async () => {
+    const h = harness([Promise.resolve(snap(9)), Promise.resolve(snap(1))]);
     await h.poll();
     await h.poll();
-    expect(h.shown).toEqual([5]);
+    expect(h.errors).toEqual([]);
+    expect(h.shown).toEqual([9, 1]);
   });
 
-  it('accepts a lower seq after a failure, as a restarted server counts again', async () => {
+  it('shows a lower seq after a failure too', async () => {
     const h = harness([
       Promise.resolve(snap(9)),
       Promise.resolve({ error: 'down' }),

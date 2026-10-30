@@ -1,8 +1,8 @@
-import { mkdtemp, rm, symlink, truncate, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { resolveSafeFile } from '@/files';
+import { listSafeIds, resolveSafeFile } from '@/files';
 import { loadScript } from '@/script';
 import { Decks } from '@/server/decks';
 import { Scripts } from '@/server/scripts';
@@ -166,5 +166,49 @@ describe('logical file ids with extension-like suffixes', () => {
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
+  });
+});
+
+describe('listSafeIds refusals', () => {
+  const options = { extensions: ['.yaml', '.yml'], maxIdLength: 32, noun: 'motion' } as const;
+
+  it('names both files when two extensions define one id', async () => {
+    await writeFile(join(root, 'wave.yaml'), 'a');
+    await writeFile(join(root, 'wave.yml'), 'b');
+    const listed = await listSafeIds(root, options);
+    expect(listed.entries).toEqual([]);
+    expect(listed.errors).toHaveLength(1);
+    expect(listed.errors[0].id).toBe('wave');
+    expect(listed.errors[0].error).toContain('defined more than once');
+    expect(listed.errors[0].error).toContain('wave.yaml');
+    expect(listed.errors[0].error).toContain('wave.yml');
+  });
+
+  it('keeps the normalization message for names that differ only in composition', async () => {
+    const id = '台本ダ';
+    await writeFile(join(root, `${id}.yaml`), 'a');
+    await writeFile(join(root, `${id.normalize('NFD')}.yml`), 'b');
+    const listed = await listSafeIds(root, options);
+    if (listed.errors.length === 0) return; // filesystem folded the two names into one
+    expect(listed.errors[0].error).toContain('normalization-equivalent');
+  });
+
+  it('reports a root that is a file or a symlink instead of listing it as empty', async () => {
+    const file = join(root, 'plain.txt');
+    await writeFile(file, 'x');
+    const real = join(root, 'real');
+    await mkdir(real);
+    const link = join(root, 'link');
+    await symlink(real, link);
+    for (const bad of [file, link]) {
+      const listed = await listSafeIds(bad, options);
+      expect(listed.entries).toEqual([]);
+      expect(listed.errors).toHaveLength(1);
+      expect(listed.errors[0].error).toContain('cannot list motion directory');
+    }
+  });
+
+  it('still lists a missing root as empty', async () => {
+    expect(await listSafeIds(join(root, 'absent'), options)).toEqual({ entries: [], errors: [] });
   });
 });

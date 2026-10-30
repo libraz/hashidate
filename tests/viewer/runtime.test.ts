@@ -2,6 +2,7 @@
 
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
+import { TransparentTriangleController } from '@/engine/scene/transparent-triangles';
 import type { AvatarDescriptor } from '@/engine/types';
 import { same } from '@/i18n/locale';
 import { FULL_AVATAR, FULL_SLIDE } from '@/viewer/scene/placement';
@@ -57,6 +58,7 @@ function bareRuntime(loader: { loadAsync: (url: string) => Promise<unknown> }): 
     renderer: {
       setAnimationLoop: vi.fn(),
       dispose: vi.fn(),
+      forceContextLoss: vi.fn(),
       domElement: { remove: vi.fn(), removeEventListener: vi.fn() },
     },
     resizeObserver: { disconnect: vi.fn() },
@@ -173,6 +175,24 @@ describe('avatar load teardown', () => {
   });
 });
 
+describe('runtime context teardown', () => {
+  it('loses the WebGL context after the renderer is disposed, not at collection', () => {
+    const runtime = bareRuntime({ loadAsync: () => new Promise(() => {}) });
+    const order: string[] = [];
+    const renderer = (runtime as unknown as { renderer: Record<string, unknown> }).renderer;
+    const postStage = (runtime as unknown as { postStage: { dispose: () => void } }).postStage;
+    postStage.dispose = () => order.push('targets');
+    renderer.dispose = () => order.push('renderer');
+    renderer.forceContextLoss = () => order.push('context');
+    (renderer.domElement as { remove: () => void }).remove = () => order.push('canvas');
+
+    runtime.dispose();
+    runtime.dispose();
+
+    expect(order).toEqual(['targets', 'renderer', 'context', 'canvas']);
+  });
+});
+
 describe('avatar mount failure', () => {
   it('releases the root, reports the failure and starts the queued load', async () => {
     const calls: string[] = [];
@@ -240,5 +260,85 @@ describe('AvatarRuntime placement', () => {
     Object.assign(runtime as object, { slides: { slidePlacement: FULL_SLIDE } });
     runtime.setPlacement({ avatar: { visible: false, shift: 0.25 } });
     expect(runtime.placement.avatar).toEqual({ ...FULL_AVATAR, visible: false, shift: 0.25 });
+  });
+});
+
+describe('transparent triangle runtime draw', () => {
+  it('sorts after the director and world matrices, wraps PostStage, then restores source refs', () => {
+    const order: string[] = [];
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute([-0.5, -0.5, -1, 0.5, -0.5, -2, 0, 0.5, -3], 3),
+    );
+    geometry.setIndex([0, 1, 2]);
+    const material = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0.5,
+      side: THREE.DoubleSide,
+      depthTest: true,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    const root = new THREE.Group().add(mesh);
+    const scene = new THREE.Scene().add(root);
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+    camera.position.z = 8;
+    scene.add(camera);
+    const controller = new TransparentTriangleController();
+    controller.reconcile([{ key: 'node:0:primitive:0', mesh }]);
+    const drawSorted = controller.withDraw.bind(controller);
+    vi.spyOn(controller, 'withDraw').mockImplementation((drawCamera, draw) => {
+      order.push('sort');
+      expect(root.matrixWorld.elements[12]).toBe(5);
+      expect(drawCamera.matrixWorldInverse.elements[14]).not.toBe(0);
+      return drawSorted(drawCamera, draw);
+    });
+    const runtime = Object.create(AvatarRuntime.prototype) as AvatarRuntime;
+    const current = {
+      root,
+      session: { update: () => order.push('session') },
+      director: {
+        update: () => {
+          order.push('director');
+          root.position.x = 5;
+        },
+      },
+      transparentTriangles: controller,
+    };
+    Object.assign(runtime as object, {
+      disposed: false,
+      timer: { update: () => {}, getDelta: () => 0.016 },
+      shotCamera: { update: () => {}, camera, takeCut: () => false },
+      slides: { up: false },
+      documentUp: false,
+      backdrop: { update: () => {} },
+      fpsAcc: 0,
+      fpsFrames: 0,
+      current,
+      avatarPlacement: FULL_AVATAR,
+      hudAcc: 0,
+      hudListeners: new Set(),
+      camWorld: new THREE.Vector3(),
+      scene,
+      focusSphere: null,
+      postStage: {
+        target: null,
+        render: () => {
+          order.push('render');
+          expect(mesh.geometry).not.toBe(geometry);
+          expect(mesh.material).not.toBe(material);
+        },
+      },
+      warmedTarget: null,
+      frameListeners: new Set(),
+    });
+
+    (runtime as unknown as { tick: () => void }).tick();
+
+    expect(order).toEqual(['session', 'director', 'sort', 'render']);
+    expect(mesh.geometry).toBe(geometry);
+    expect(mesh.material).toBe(material);
+    controller.dispose();
   });
 });

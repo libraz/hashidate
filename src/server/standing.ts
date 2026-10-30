@@ -1,4 +1,5 @@
 import { performanceDef } from '../engine/performance';
+import { avatarReplaces, foldVoiceChain, wearStep } from '../engine/session/folds';
 import type { Command, TurnRequest } from '../protocol';
 import type { InlineCueAction } from '../protocol/cues';
 
@@ -141,12 +142,11 @@ function isPlain(value: unknown): value is Record<string, unknown> {
 /**
  * Fold one patch onto another, two levels down.
  *
- * `tune` and `voice` are both stated as partials that land on top of what the
- * renderer is already running, so keeping only the last one sent would throw
- * away every earlier knob: a panel that sends `{eq:{airDb:2}}` after
- * `{retune:{semitones:3}}` means both, and a replay of only the second would
- * quietly undo the first. Two levels is exactly as deep as either of those
- * shapes goes.
+ * `tune` is stated as a partial that lands on top of what the renderer is
+ * already running, so keeping only the last one sent would throw away every
+ * earlier knob: a panel that sends `{idle:{blink:false}}` after
+ * `{idle:{breathDepth:1.4}}` means both, and a replay of only the second would
+ * quietly undo the first. Two levels is exactly as deep as that shape goes.
  */
 function fold<T extends object>(base: T | undefined, next: T | undefined): T | undefined {
   if (!base) return next;
@@ -170,8 +170,9 @@ export class Standing {
    * Every other verb here says one thing and the newest statement of it wins.
    * A `wear` says one *slot*, so two of them are usually not the same
    * instruction at all — a hat and a jacket are both still on. They are kept in
-   * the order they were sent, with a repeat of a slot replacing the earlier one
-   * and a whole-outfit preset starting the list over.
+   * the order they were sent, with a repeat of a slot or of an outfit replacing
+   * the earlier one. An outfit does not start the list over: the renderer lays
+   * it over the slots it names and leaves the rest as they were.
    */
   private wardrobe: Of<'wear'>[] = [];
 
@@ -195,7 +196,7 @@ export class Standing {
       case 'wear':
         this.dress(command);
         return true;
-      // Both are partials that merge in the renderer, so they merge here too.
+      // A partial that merges in the renderer, so it merges here too.
       // The correlation id is dropped: it belongs to the request that carried
       // the command, not to the state it left behind, and replaying it would
       // hand a renderer an id a caller is no longer listening for.
@@ -207,10 +208,12 @@ export class Standing {
         this.last.set('tune', { cmd: 'tune', ...fold(stripped(base), next) });
         return true;
       }
+      // Not `fold`: the renderer's chain clears on a bypass and merges one
+      // section deep, and the replay has to land on the chain it holds.
       case 'voice': {
-        const base = this.last.get('voice') as Of<'voice'> | undefined;
+        const base = stripped(this.last.get('voice') as Of<'voice'> | undefined) ?? {};
         const { cmd: _cmd, id: _id, ...next } = command;
-        this.last.set('voice', { cmd: 'voice', ...fold(stripped(base), next) });
+        this.last.set('voice', { cmd: 'voice', ...foldVoiceChain(base, next) });
         return true;
       }
       case 'bloom': {
@@ -261,10 +264,17 @@ export class Standing {
       // A different body: the slot names and the garments both belonged to the
       // avatar that is being replaced, so the outfit does not carry over. The
       // tuning does — it is scales and multipliers rather than model data.
-      case 'avatar':
-        this.wardrobe = [];
+      // Restating the avatar already standing replaces nothing, so the outfit
+      // stays, as it does on the renderers. Two cases stay unknowable here: an
+      // id missing from a renderer's roster, which it refuses and keeps its
+      // outfit through, and a renderer whose first avatar it remembered rather
+      // than was sent.
+      case 'avatar': {
+        const current = (this.last.get('avatar') as Of<'avatar'> | undefined)?.id;
+        if (avatarReplaces(current, command.id)) this.wardrobe = [];
         this.last.set('avatar', command);
         return true;
+      }
       // Spelled out rather than caught by a default, so that a verb added to
       // `ORDER` without a decision about how it folds is a compile error here
       // instead of a last-one-wins guess.
@@ -346,14 +356,18 @@ export class Standing {
   }
 
   private dress(command: Of<'wear'>): void {
-    // A whole outfit is a fresh start: it sets every slot it names and is the
-    // only thing here that can undo an earlier one.
-    if (command.preset) {
-      this.wardrobe = [command];
-      return;
-    }
-    if (!command.slot) return;
-    this.wardrobe = this.wardrobe.filter((worn) => worn.slot !== command.slot);
+    // What the session would do with it, so a no-op is not kept as a removal.
+    const step = wearStep(command);
+    if (step === null) return;
+    // Only a later statement of the same slot, or the same outfit, writes every
+    // slot an earlier one did. The server does not know which slots an outfit
+    // names, so nothing else may be dropped.
+    this.wardrobe = this.wardrobe.filter((worn) => {
+      const earlier = wearStep(worn);
+      if (earlier === null) return false;
+      if ('preset' in step) return !('preset' in earlier) || earlier.preset !== step.preset;
+      return !('slot' in earlier) || earlier.slot !== step.slot;
+    });
     this.wardrobe.push(command);
   }
 

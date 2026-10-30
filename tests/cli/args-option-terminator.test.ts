@@ -59,15 +59,7 @@ describe('option terminator', () => {
       const address = server.address();
       if (address === null || typeof address === 'string') throw new Error('server did not bind');
       const base = `http://127.0.0.1:${address.port}/api`;
-      const { base: selectedBase, rest } = takeBase([
-        '--base',
-        base,
-        'say',
-        '--',
-        '--wait',
-        `--base=${base}`,
-        '--emotion',
-      ]);
+      const { base: selectedBase, rest } = takeBase(['--base', base, 'say', '--', '--wait']);
       vi.spyOn(console, 'log').mockImplementation(() => {});
 
       await say(new ControlClient(selectedBase), rest.slice(1));

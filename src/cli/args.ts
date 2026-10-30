@@ -34,13 +34,14 @@ export function takeBase(argv: string[]): { base: string; rest: string[] } {
     }
     if (token === '--base') {
       const value = argv[i + 1];
-      if (value === undefined) fail('--base needs a URL');
+      if (value === undefined || value === '') fail('--base needs a URL');
       base = value;
       i += 1;
       continue;
     }
     if (token.startsWith('--base=')) {
       base = token.slice('--base='.length);
+      if (base === '') fail('--base needs a URL');
       continue;
     }
     rest.push(token);
@@ -113,7 +114,36 @@ export function extractNumbers(
   return { numbers, rest };
 }
 
+// --- arity ------------------------------------------------------------------
+
+/** A verb with no arguments: any argument or flag after it is refused, and nothing is sent. */
+export function takesNone(verb: string, args: string[]): void {
+  if (args.length > 0) fail(`${verb} takes no arguments: ${args.join(' ')}`);
+}
+
+/** At most `max` positionals; the surplus is named rather than dropped. */
+export function takesAtMost(verb: string, positionals: string[], max: number): void {
+  if (positionals.length <= max) return;
+  const allowed = max === 1 ? 'one argument' : `${max} arguments`;
+  fail(`${verb} takes at most ${allowed}: ${positionals.slice(max).join(' ')}`);
+}
+
+/** The text of a line: present and not blank, since a blank one is read out as nothing. */
+export function requireText(verb: string, text: string | undefined): string {
+  if (text === undefined || text.trim() === '') fail(`${verb} needs the text to be read out`);
+  return text;
+}
+
 // --- values -----------------------------------------------------------------
+
+/** A `--wait` value, kept as written for the query string: a positive number of seconds. */
+export function toWait(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  if (!NUMBER.test(raw) || Number.parseFloat(raw) <= 0) {
+    fail(`--wait takes a positive number of seconds: ${raw}`);
+  }
+  return raw;
+}
 
 export function toNumber(raw: string | undefined, fallback: number, label: string): number {
   if (raw === undefined) return fallback;

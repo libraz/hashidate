@@ -63,11 +63,13 @@ export interface TurnRequest {
    * Which hand the turn's movement uses, pinning what the gesture layer would
    * otherwise draw at random. Applies to whichever gesture the turn plays —
    * `gesture`'s, or the one `perform` names — because a line has one movement
-   * in it and stating the hand twice could only ever disagree with itself.
+   * in it and stating the hand twice could only ever disagree with itself. The
+   * line's inline gesture and perform cues play under it too.
    *
    * Absent is the ordinary case and stays random: the table is authored so that
    * either hand reads, and a character that always waves with the same arm
-   * reads as a mechanism. A line pins it when the shot gives it a reason — the
+   * reads as a mechanism. The server draws it once per line, so every renderer
+   * plays the same hand. A line pins it when the shot gives it a reason — the
    * hand away from the slide, or the one the line before used.
    */
   side?: Side;

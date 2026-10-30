@@ -444,6 +444,9 @@ describe('BrowserBgm', () => {
 
   it('seeks to the canonical clock when autoplay is unlocked later', async () => {
     const h = harness();
+    const ensureRunning = h.output.ensureRunning;
+    // The first start is refused by autoplay policy; only the gesture lets it through.
+    h.output.ensureRunning = async () => null as never;
     h.bgm.apply({
       cmd: 'bgm',
       revision: 1,
@@ -455,10 +458,128 @@ describe('BrowserBgm', () => {
       at: 100,
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.bgm.isBlocked).toBe(true);
+    expect(h.audios[0].paused).toBe(true);
+    h.output.ensureRunning = ensureRunning;
     h.advance(5);
     h.unlock();
     await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.audios[0].paused).toBe(false);
     expect(h.audios[0].currentTime).toBe(5);
+    h.bgm.dispose();
+  });
+
+  it('leaves a healthy playing route alone on a gesture', async () => {
+    const h = harness();
+    h.bgm.apply({
+      cmd: 'bgm',
+      revision: 1,
+      track: 'one.mp3',
+      action: 'play',
+      transport: 'playing',
+      position: 0,
+      at: 100,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.audios[0].paused).toBe(false);
+    let seeks = 0;
+    let time = 3;
+    Object.defineProperty(h.audios[0], 'currentTime', {
+      get: () => time,
+      set: (value: number) => {
+        seeks += 1;
+        time = value;
+      },
+    });
+    h.advance(5);
+    h.unlock();
+    h.unlock();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(seeks).toBe(0);
+    expect(h.audios[0].playCalls).toBe(1);
+    h.bgm.dispose();
+  });
+
+  it('keeps the projected position on the server timeline after a delayed start', async () => {
+    const h = harness();
+    const gate = deferred();
+    const ensureRunning = h.output.ensureRunning;
+    h.output.ensureRunning = async () => {
+      await gate.promise;
+      return ensureRunning();
+    };
+    h.bgm.apply({
+      cmd: 'bgm',
+      revision: 1,
+      track: 'one.mp3',
+      loop: false,
+      action: 'play',
+      transport: 'playing',
+      position: 2,
+      at: 100,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    h.advance(5);
+    gate.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.audios[0].paused).toBe(false);
+    expect(h.audios[0].currentTime).toBe(7);
+    // With no element clock to read, the report falls back to the projection.
+    h.audios[0].currentTime = Number.NaN;
+    expect(h.bgm.report().position).toBe(7);
+    h.advance(3);
+    expect(h.bgm.report().position).toBe(10);
+    // Metadata that arrives late seeks to where the timeline is now.
+    h.audios[0].onloadedmetadata?.();
+    expect(h.audios[0].currentTime).toBe(10);
+    h.bgm.dispose();
+  });
+
+  it('rebuilds the effects node after a hard stop without waiting for the next play', async () => {
+    const h = harness();
+    h.bgm.apply({
+      cmd: 'bgm',
+      revision: 1,
+      track: 'one.mp3',
+      action: 'play',
+      fade: { inSeconds: 0, outSeconds: 0 },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.nodes).toHaveLength(1);
+    h.bgm.apply({ cmd: 'bgm', revision: 2, action: 'stop', transport: 'stopped', position: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.nodes).toHaveLength(2);
+    h.bgm.dispose();
+  });
+
+  it('rebuilds the effects node once the stop tail has ended', async () => {
+    const h = harness();
+    h.bgm.apply({
+      cmd: 'bgm',
+      revision: 1,
+      track: 'one.mp3',
+      action: 'play',
+      fade: { inSeconds: 0, outSeconds: 0.02 },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.nodes).toHaveLength(1);
+    h.bgm.apply({ cmd: 'bgm', revision: 2, action: 'stop', transport: 'stopped', position: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The tail is still processed by the node it started on.
+    expect(h.nodes).toHaveLength(1);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(h.nodes).toHaveLength(2);
+    h.bgm.dispose();
+  });
+
+  it('does not reinstall the effects node after an unload', async () => {
+    const h = harness();
+    h.bgm.apply({ cmd: 'bgm', revision: 1, track: 'one.mp3', action: 'play' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.nodes).toHaveLength(1);
+    h.bgm.apply({ cmd: 'bgm', revision: 2, track: null, transport: 'stopped' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.nodes).toHaveLength(1);
     h.bgm.dispose();
   });
 

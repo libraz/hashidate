@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Director } from '@/engine/director';
-import { build, types } from './harness';
+import { HOPS } from '@/engine/motion/jump';
+import type { TurnRequest } from '@/engine/types';
+import { withSide } from '@/server/side';
+import { build, type Harness, types } from './harness';
 
 /**
  * One turn, and what it leaves behind when it ends.
@@ -60,6 +63,36 @@ describe('what a turn leaves behind', () => {
       expect(director.pickedExpression).toBe('F_DOYA');
     },
   );
+
+  it('lets an interrupted hop run land the hop in the air and start no more', () => {
+    /** Frames until the hop run is over, from the frame `start` begins it. */
+    const airborne = (start: (h: Harness) => void, cut: number | null): number => {
+      const harness = build();
+      const { session, director, step } = harness;
+      start(harness);
+      step(1);
+      expect(director.body.jumping).toBe(true);
+      if (cut !== null) {
+        step(cut);
+        session.interrupt();
+      }
+      let frames = 1 + (cut ?? 0);
+      while (director.body.jumping && frames < 600) {
+        step(1);
+        frames += 1;
+      }
+      return frames;
+    };
+    const cue = ({ session }: Harness) =>
+      session.say({ id: 'a', text: '[@hop bounce]あいうえおかき' });
+    const single = airborne(
+      ({ director }) => director.body.hop({ ...HOPS.bounce, count: 1 }),
+      null,
+    );
+    // Left alone the bounce's second hop follows; cut during the first, only that one lands.
+    expect(airborne(cue, null)).toBeGreaterThan(single + 5);
+    expect(airborne(cue, 2)).toBe(single);
+  });
 
   it('releases a cued expression by its pick during a crossfade', () => {
     const { session, director, step, runUntil } = build();
@@ -137,6 +170,33 @@ describe('the hand a caller names', () => {
       expect(director.body.gesture?.id).toBe(id);
       expect(acting(director)).toBe(expected);
     }
+  });
+
+  it('agrees across renderers on the hand and the tilt of a movement cued mid-line', () => {
+    // The server draws one side for the line; each renderer then draws from its own random.
+    const line = withSide<TurnRequest>(
+      { id: 'a', text: 'あい[@gesture peace]うえお[wonder]かき' },
+      () => 0.1,
+    );
+    expect(line.side).toBe('L');
+    const play = (draw: number): { hand?: number; tilt?: string } => {
+      const random = vi.spyOn(Math, 'random').mockReturnValue(draw);
+      try {
+        const harness: Harness = build();
+        const { session, director, runUntil } = harness;
+        session.say(line);
+        runUntil(() => director.body.gesture?.id === 'peace');
+        const hand = acting(director);
+        runUntil(() => director.performance === 'wonder');
+        return { hand, tilt: director.body.attitude?.side };
+      } finally {
+        random.mockRestore();
+      }
+    };
+    const low = play(0.1);
+    const high = play(0.9);
+    expect(low).toEqual({ hand: -1, tilt: 'L' });
+    expect(high).toEqual(low);
   });
 
   it('survives the in-place update a queue replacement makes', () => {

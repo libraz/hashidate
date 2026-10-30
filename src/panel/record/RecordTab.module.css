@@ -6,6 +6,13 @@
  * a room is "is it rolling", and the answer to that has always been a red dot.
  */
 
+.group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 .transport {
   display: flex;
   align-items: center;

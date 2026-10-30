@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import type { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { WornState } from '@/engine/scene';
+import { drawnBounds } from '@/engine/scene/drawn';
 import { Session } from '@/engine/session';
 import type {
   AvatarDescriptor,
@@ -44,6 +45,7 @@ import { buildHud, HUD_INTERVAL, type Hud } from './hud';
 import { disposeAvatar, disposeRawAvatar, type Mounted, mountAvatar } from './mount';
 import { bloomPort, sceneryPort, shadingPort } from './ports';
 import { loadToonTextures } from './toon-textures';
+import { createAvatarLoader } from './transparent-triangle-policy';
 import type { Listener, LoadedAvatar, RuntimeStatus, StageFrame } from './types';
 
 export { FOV } from './camera';
@@ -94,11 +96,14 @@ export class AvatarRuntime {
   private warmedTarget: THREE.WebGLRenderTarget | null = null;
   /**
    * The avatar's bounding sphere, which the room's background blur keeps sharp.
-   * Measured once after mount, with the centre held in the root's local space
-   * so it follows the root wherever the frame moves it.
+   * Measured after mount and again whenever the worn set changes, with the
+   * centre held in the root's local space so it follows the root wherever the
+   * frame moves it.
    */
   private focusSphere: { centre: THREE.Vector3; radius: number } | null = null;
   private readonly focusWorld = new THREE.Vector3();
+  /** The worn set the shots and the focus were measured over, and the pose they were measured in. */
+  private measured: { worn: WornState; atRest: (measure: () => void) => void } | null = null;
   /**
    * The flat background, held rather than built where it is set.
    *
@@ -226,7 +231,7 @@ export class AvatarRuntime {
   private disposed = false;
   private loadGeneration = 0;
 
-  constructor(host: HTMLElement, { loader = new GLTFLoader() }: AvatarRuntimeOptions = {}) {
+  constructor(host: HTMLElement, { loader = createAvatarLoader() }: AvatarRuntimeOptions = {}) {
     this.host = host;
     this.loader = loader;
 
@@ -400,11 +405,6 @@ export class AvatarRuntime {
   ): void {
     if (on) void this.recorder.start(take);
     else void this.recorder.stop(take.session);
-  }
-
-  /** Why the last take would not start, or null. Rides on the report. */
-  get recordingError(): string | null {
-    return this.recorder.error;
   }
 
   /** Apply a server-canonical BGM command without involving the avatar session. */
@@ -765,7 +765,7 @@ export class AvatarRuntime {
         toonTextures,
         worn,
       );
-      const { profile, director, wardrobe, materials, problems } = mounted;
+      const { profile, director, wardrobe, materials, transparentTriangles, problems } = mounted;
       wardrobe.onPoseChange = (state) => void this.load(avatar, state);
 
       this.shotCamera.rebuild(buildFramings(root, profile, FOV));
@@ -803,15 +803,28 @@ export class AvatarRuntime {
         },
       });
 
-      this.current = { avatar, root, profile, director, session, wardrobe, materials, problems };
+      this.current = {
+        avatar,
+        root,
+        profile,
+        director,
+        session,
+        wardrobe,
+        materials,
+        transparentTriangles,
+        problems,
+      };
       this.focusSphere = measureFocus(root);
+      this.measured = { worn: { ...wardrobe.state }, atRest: restPose(root) };
     } catch (e) {
       // Nothing is published yet: take the half-built avatar back out so the
       // queue can move on instead of waiting on a load that already ended.
       this.scene.remove(root);
       // A mounted material set owns the toon textures; before that, nothing does.
-      if (mounted) mounted.materials.dispose();
-      else toonTextures.dispose();
+      if (mounted) {
+        mounted.transparentTriangles.dispose();
+        mounted.materials.dispose();
+      } else toonTextures.dispose();
       disposeRawAvatar(root);
       this.failLoad(avatar, e);
       return;
@@ -835,18 +848,43 @@ export class AvatarRuntime {
    * rather than on the frame it happens, for both material sets so the shading
    * toggle does not compile either. A failed warm-up costs only that hitch.
    *
-   * `BackdropStage.prewarm` starts compiling inside the call, so the other set
-   * is only on the avatar for that long.
+   * `BackdropStage.prewarm` starts compiling inside the call. Each material set
+   * is installed only for that synchronous start; the selected set is restored
+   * before either compile promise is awaited.
    */
   private async prewarm(): Promise<void> {
     if (this.disposed) return;
     const target = this.postStage.target;
-    const compiles = [this.backdrop.prewarm(this.camera, target)];
-    const materials = this.current?.materials;
-    if (materials) {
-      materials.apply(!this.toon);
-      compiles.push(this.backdrop.prewarm(this.camera, target));
-      materials.apply(this.toon);
+    const compile = (): Promise<void> => {
+      const cur = this.current;
+      if (!cur) return this.backdrop.prewarm(this.camera, target);
+      const wasVisible = cur.root.visible;
+      cur.root.visible = true;
+      this.scene.updateMatrixWorld(true);
+      this.camera.updateMatrixWorld(true);
+      try {
+        return cur.transparentTriangles.withDraw(this.camera, () =>
+          this.backdrop.prewarm(this.camera, target),
+        );
+      } finally {
+        cur.root.visible = wasVisible;
+      }
+    };
+    const compiles: Promise<void>[] = [];
+    try {
+      compiles.push(compile());
+      const materials = this.current?.materials;
+      if (materials) {
+        try {
+          materials.apply(!this.toon);
+          compiles.push(compile());
+        } finally {
+          materials.apply(this.toon);
+        }
+      }
+    } catch {
+      // Synchronous renderer failures are best-effort too; compile promises
+      // already started below still get their rejection handler.
     }
     await Promise.all(compiles).catch(() => {});
   }
@@ -903,6 +941,7 @@ export class AvatarRuntime {
     disposeAvatar(cur);
     this.current = null;
     this.focusSphere = null;
+    this.measured = null;
   }
 
   dispose(): void {
@@ -938,6 +977,9 @@ export class AvatarRuntime {
     this.shotCamera.dispose();
     this.postStage.dispose();
     this.renderer.dispose();
+    // Lose the context now rather than at garbage collection; a page that
+    // remounts would otherwise hold one per mount until the browser evicts one.
+    this.renderer.forceContextLoss();
     this.renderer.domElement.remove();
     this.statusListeners.clear();
     this.hudListeners.clear();
@@ -975,6 +1017,15 @@ export class AvatarRuntime {
       // Before the director: a turn started this frame has to have its emotion
       // and gesture in place before the director composes the frame.
       cur.session.update(dt);
+      // A garment put on or taken off changes what the shots and the focus have to cover.
+      const measured = this.measured;
+      if (measured && !sameWorn(cur.wardrobe.state, measured.worn)) {
+        measured.worn = { ...cur.wardrobe.state };
+        measured.atRest(() => {
+          this.shotCamera.rebuild(buildFramings(cur.root, cur.profile, FOV));
+          this.focusSphere = measureFocus(cur.root);
+        });
+      }
       // After the session, whose camera cue may have just cut to this shot.
       this.camera.getWorldPosition(this.camWorld);
       cur.director.update(dt, {
@@ -993,10 +1044,17 @@ export class AvatarRuntime {
     const focus = this.focusSphere;
     if (cur && focus) {
       this.focusWorld.copy(focus.centre).applyMatrix4(cur.root.matrixWorld);
-      this.postStage.setFocus(this.focusWorld, focus.radius);
+      this.postStage.setFocus(this.focusWorld, focus.radius, cur.root);
       this.defaultRig.fitShadow(this.focusWorld, focus.radius);
     }
-    this.postStage.render(this.scene, this.camera);
+    const draw = () => this.postStage.render(this.scene, this.camera);
+    if (cur) {
+      this.scene.updateMatrixWorld(true);
+      this.camera.updateMatrixWorld(true);
+      cur.transparentTriangles.withDraw(this.camera, draw);
+    } else {
+      draw();
+    }
     // The composer exists from the first frame bloom or a finish is on, and its
     // target is what the scene's programs are keyed on, so warm again when it
     // appears or goes.
@@ -1017,13 +1075,66 @@ export class AvatarRuntime {
 }
 
 /**
- * The avatar's bounding sphere with its centre in the root's own space, or null
- * for a root with nothing in it to measure.
+ * The bounding sphere of what the avatar draws, with its centre in the root's
+ * own space, or null for a root with nothing in it to measure.
  */
 function measureFocus(root: THREE.Object3D): { centre: THREE.Vector3; radius: number } | null {
   root.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(root);
+  const box = drawnBounds(root);
   if (box.isEmpty()) return null;
   const sphere = box.getBoundingSphere(new THREE.Sphere());
   return { centre: root.worldToLocal(sphere.center), radius: sphere.radius };
+}
+
+/** Whether two worn sets wear the same item in every slot; compared every frame, so by slot rather than through a serialised copy. */
+function sameWorn(a: WornState, b: WornState): boolean {
+  for (const slot in a) if (a[slot] !== b[slot]) return false;
+  for (const slot in b) if (!(slot in a)) return false;
+  return true;
+}
+
+/**
+ * Hold the skeleton as it stands now, the pose the avatar is first measured in,
+ * and return a runner that measures in it again and puts the live pose back.
+ */
+function restPose(root: THREE.Object3D): (measure: () => void) => void {
+  type Pose = { position: THREE.Vector3; quaternion: THREE.Quaternion; scale: THREE.Vector3 };
+  const bones: THREE.Bone[] = [];
+  root.traverse((o) => {
+    if ((o as THREE.Bone).isBone) bones.push(o as THREE.Bone);
+  });
+  const hold = (b: THREE.Bone, into: Pose) => {
+    into.position.copy(b.position);
+    into.quaternion.copy(b.quaternion);
+    into.scale.copy(b.scale);
+  };
+  const put = (b: THREE.Bone, from: Pose) => {
+    b.position.copy(from.position);
+    b.quaternion.copy(from.quaternion);
+    b.scale.copy(from.scale);
+  };
+  const blank = (): Pose => ({
+    position: new THREE.Vector3(),
+    quaternion: new THREE.Quaternion(),
+    scale: new THREE.Vector3(),
+  });
+  const rest = bones.map((b) => {
+    const pose = blank();
+    hold(b, pose);
+    return pose;
+  });
+  const live = bones.map(blank);
+  return (measure) => {
+    for (let i = 0; i < bones.length; i++) {
+      hold(bones[i], live[i]);
+      put(bones[i], rest[i]);
+    }
+    root.updateMatrixWorld(true);
+    try {
+      measure();
+    } finally {
+      for (let i = 0; i < bones.length; i++) put(bones[i], live[i]);
+      root.updateMatrixWorld(true);
+    }
+  };
 }

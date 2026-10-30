@@ -5,7 +5,7 @@ import {
   tuneCommandSchema,
   wearCommandSchema,
 } from '../../protocol';
-import { build, type Handler, NUMBER, splitOnce } from '../args';
+import { build, type Handler, NUMBER, splitOnce, takesAtMost } from '../args';
 import { fail } from '../client';
 import { show } from '../output';
 
@@ -29,8 +29,9 @@ export const wear: Handler = async (client, args) => {
     },
     allowPositionals: true,
   });
-  if (positionals.length > 1 || (positionals.length > 0 && values.item !== undefined)) {
-    fail(`wear takes one item, after the slot or as --item: ${positionals.join(' ')}`);
+  takesAtMost('wear', positionals, 1);
+  if (positionals[0] !== undefined && values.item !== undefined) {
+    fail(`wear was given an item twice, after the slot and as --item: ${positionals.join(' ')}`);
   }
   const named = values.item ?? positionals[0];
   if (named !== undefined && values.slot === undefined) {
@@ -51,6 +52,7 @@ export const wear: Handler = async (client, args) => {
 /** One positional, and no default: there is no such thing as no avatar. */
 export const avatar: Handler = async (client, args) => {
   const { positionals } = parseArgs({ args, allowPositionals: true });
+  takesAtMost('avatar', positionals, 1);
   show(await client.command(build(avatarCommandSchema, { cmd: 'avatar', id: positionals[0] })));
 };
 
@@ -104,6 +106,7 @@ export const tune: Handler = async (client, args) => {
  */
 export const debug: Handler = async (client, args) => {
   const { positionals } = parseArgs({ args, allowPositionals: true });
+  takesAtMost('debug', positionals, 1);
   const on = positionals[0] ?? 'on';
   if (on !== 'on' && on !== 'off') fail('debug [on|off]');
   show(await client.command(build(debugCommandSchema, { cmd: 'debug', on: on === 'on' })));

@@ -56,6 +56,7 @@ import type {
   VoiceChainRequest,
 } from '../types';
 import { SessionEvents, type SessionListener } from './events';
+import { wearStep } from './folds';
 import { describe, snapshot } from './introspection';
 import { Stage } from './stage';
 import { TuningControl } from './tuning';
@@ -399,18 +400,14 @@ export class Session {
     this._stage.setVoiceChain(request);
   }
 
-  wear({ slot, item, preset }: WearRequest): boolean {
+  wear(request: WearRequest): boolean {
     if (!this.wardrobe) return false;
-    if (preset) {
-      this.wardrobe.applyPreset(preset);
-      return true;
-    }
-    // Absent and null differ: only `item: null` takes the garment off.
-    if (slot && item !== undefined) {
-      this.wardrobe.set(slot, item);
-      return true;
-    }
-    return false;
+    // Shared with the standing state, so a late renderer dresses the same way.
+    const step = wearStep(request);
+    if (step === null) return false;
+    if ('preset' in step) this.wardrobe.applyPreset(step.preset);
+    else this.wardrobe.set(step.slot, step.item);
+    return true;
   }
 
   /** Move part of the set-once layer. See `TuningControl.apply`. */

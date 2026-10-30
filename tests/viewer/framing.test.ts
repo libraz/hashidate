@@ -114,6 +114,48 @@ describe('buildFramings', () => {
     expect(f.bust.halfWidth).toBeGreaterThan(Math.abs(at('upperArm.L')));
   });
 
+  it('measures only what the worn state draws', () => {
+    const { rig, framings: before } = framings();
+    const profile = buildProfile(rig.root, rig.descriptor);
+    const tall = () => {
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.2, 0.2, 0.2),
+        new THREE.MeshBasicMaterial(),
+      );
+      mesh.position.set(0, 3, 0);
+      return mesh;
+    };
+    // An unworn hat: the wardrobe hides the mesh itself.
+    const hat = tall();
+    hat.visible = false;
+    rig.root.add(hat);
+    // An unworn garment hidden by its node, with a mesh under it still marked visible.
+    const node = new THREE.Group();
+    node.visible = false;
+    const boot = tall();
+    boot.position.set(0, -2, 0);
+    node.add(boot);
+    rig.root.add(node);
+    // An outline hull is a shell around a mesh already counted.
+    const hull = tall();
+    hull.userData.outline = true;
+    rig.root.add(hull);
+
+    const after = buildFramings(rig.root, profile, FOV);
+    for (const frame of ['face', 'bust', 'upper', 'full'] as const) {
+      expect(after[frame].target.toArray()).toEqual(before[frame].target.toArray());
+      expect(after[frame].position.toArray()).toEqual(before[frame].position.toArray());
+      expect(after[frame].height).toBe(before[frame].height);
+    }
+
+    // Worn, the same hat does raise the crown.
+    hat.visible = true;
+    const worn = buildFramings(rig.root, profile, FOV);
+    expect(worn.bust.target.y + worn.bust.height / 2).toBeGreaterThan(
+      before.bust.target.y + before.bust.height / 2,
+    );
+  });
+
   it('carries the same width at every framing', () => {
     // Erring wide costs a little of the hug; erring narrow puts a shoulder off
     // the edge of the frame. A face shot is the one that errs wide, and that is
