@@ -10,6 +10,7 @@ import { Decks } from './decks';
 import { refuseForeign } from './guard';
 import { Hub } from './hub';
 import { Motions } from './motions';
+import { serverPort } from './port';
 import { Recordings } from './recordings';
 import { handleApi } from './routes';
 import { Scripts } from './scripts';
@@ -42,7 +43,6 @@ import { serveStatic } from './static';
  */
 
 const BIND = '127.0.0.1'; // do not change; see the module docstring
-const DEFAULT_PORT = 8765;
 const DEFAULT_ROOT = 'dist';
 const SHELL_POLL_MS = 2_000;
 
@@ -158,8 +158,8 @@ function main(): void {
     },
   });
 
-  const port = values.port === undefined ? DEFAULT_PORT : Number.parseInt(values.port, 10);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  const port = serverPort(values.port);
+  if (port === null) {
     console.error(`--port takes an integer between 1 and 65535: ${values.port}`);
     process.exit(2);
   }

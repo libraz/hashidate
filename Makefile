@@ -11,11 +11,12 @@ PACKS    = packs
 
 # The two ports `make dev` brings up, named once so that `help` and `stop`
 # cannot drift apart. Control honours the same environment variable the runtime
-# reads, so moving it moves `stop` with it; the number here is only the
-# fallback, and mirrors the default in src/server. The viewer's is vite's own
-# and is not configurable.
+# reads, by the same rule as `controlPort` in src/shell/config.ts: its leading
+# digits, if they are a port, else 8765. The viewer's is vite's own and is not
+# configurable.
 VIEWER_PORT  = 5173
-CONTROL_PORT = $(if $(HASHIDATE_CONTROL_PORT),$(HASHIDATE_CONTROL_PORT),8765)
+CONTROL_PORT := $(shell p=$$(expr "$(strip $(HASHIDATE_CONTROL_PORT))" : '\([0-9]*\)'); \
+	if [ -n "$$p" ] && [ "$$p" -ge 1 ] 2>/dev/null && [ "$$p" -le 65535 ]; then expr "$$p" + 0; else echo 8765; fi)
 
 TTS      = tools/tts
 # Speech is the third thing `make dev` starts and the one that opens no port:

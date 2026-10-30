@@ -1,8 +1,10 @@
 import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
+import { controlPort } from './src/shell/config';
 
-const CONTROL_PORT = Number(process.env.HASHIDATE_CONTROL_PORT ?? 8765);
+// The same rule the control server reads its port by. See `serverPort`.
+const CONTROL_PORT = controlPort();
 
 /**
  * Print the other two entry points next to the viewer's on startup.
