@@ -3,7 +3,7 @@
 use hashidate_core::math::corpus::corpus_hash;
 
 /// Shared with `tests/core/math-parity.test.ts`; both builds must produce it.
-const EXPECTED: u64 = 0x3c38_dd49_d0d1_8fb7;
+const EXPECTED: u64 = 0x95cf_1000_b3f4_98cf;
 
 #[test]
 fn corpus_hash_is_fixed() {

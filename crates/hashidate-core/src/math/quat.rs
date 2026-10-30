@@ -1,5 +1,6 @@
 //! `THREE.Quaternion`, without the change callback (Euler sync stays in three).
 
+use super::clamp;
 use super::f::{acos, cos, sin, sqrt};
 use super::mat4::Mat4;
 use super::vec3::Vec3;
@@ -110,6 +111,33 @@ impl Quat {
     // three r186 Quaternion.dot
     pub fn dot(&self, v: &Quat) -> f64 {
         self.x * v.x + self.y * v.y + self.z * v.z + self.w * v.w
+    }
+
+    // three r186 Quaternion.angleTo
+    pub fn angle_to(&self, q: &Quat) -> f64 {
+        2.0 * acos(clamp(self.dot(q), -1.0, 1.0).abs())
+    }
+
+    // three r186 Quaternion.equals
+    pub fn equals(&self, q: &Quat) -> bool {
+        q.x == self.x && q.y == self.y && q.z == self.z && q.w == self.w
+    }
+
+    // three r186 Quaternion.setFromEuler, order 'XYZ'
+    pub fn set_from_euler_xyz(&mut self, x: f64, y: f64, z: f64) -> &mut Self {
+        let c1 = cos(x / 2.0);
+        let c2 = cos(y / 2.0);
+        let c3 = cos(z / 2.0);
+
+        let s1 = sin(x / 2.0);
+        let s2 = sin(y / 2.0);
+        let s3 = sin(z / 2.0);
+
+        self.x = s1 * c2 * c3 + c1 * s2 * s3;
+        self.y = c1 * s2 * c3 - s1 * c2 * s3;
+        self.z = c1 * c2 * s3 + s1 * s2 * c3;
+        self.w = c1 * c2 * c3 - s1 * s2 * s3;
+        self
     }
 
     // three r186 Quaternion.setFromAxisAngle

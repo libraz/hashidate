@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { float64FromBits } from '../../core/math';
 import { type ArmAnatomy, contactCost } from '../anatomy';
 import type { Profile, Side } from '../types';
 import { type ArmSolution, type ReachLinks, reachRef, swivelOf } from './reach';
@@ -30,9 +31,10 @@ import { type ArmSolution, type ReachLinks, reachRef, swivelOf } from './reach';
 const SWIVEL_SAMPLES = 24;
 
 /** How far the elbow moves toward its answer each frame. See `search`. */
-const SWIVEL_TRACK = 0.25;
+export const SWIVEL_TRACK = 0.25;
 /** `SWIVEL_TRACK` as a per-second rate at the 60 Hz it was set at, so tracking depends on time rather than call count. */
-const SWIVEL_RATE = -60 * Math.log(1 - SWIVEL_TRACK);
+// The logarithm of 1 - SWIVEL_TRACK, as the bits V8 and the core agree on.
+const SWIVEL_RATE = -60 * float64FromBits(0xbfd269621134db92n);
 
 /**
  * How close the elbow has to get before it is simply put there, in radians.

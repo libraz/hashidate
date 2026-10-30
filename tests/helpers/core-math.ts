@@ -1,10 +1,42 @@
-import { acos, asin, atan2, cos, sin } from '@/core/math';
+import {
+  acos,
+  asin,
+  atan2,
+  cbrt,
+  cos,
+  exp,
+  expm1,
+  hypot2,
+  hypot3,
+  log,
+  sin,
+  tanh,
+} from '@/core/math';
+
+/** `Math.hypot` answered by the core, which has an implementation for two and three arguments. */
+function hypot(...args: number[]): number {
+  if (args.length === 2) return hypot2(args[0], args[1]);
+  if (args.length === 3) return hypot3(args[0], args[1], args[2]);
+  throw new Error(`Math.hypot called with ${args.length} arguments inside withCoreMath`);
+}
 
 /** Replaced with the core's implementation for the scope. */
-const CORE = { sin, cos, acos, asin, atan2 } as const;
+const CORE = { sin, cos, acos, asin, atan2, tanh, expm1, exp, log, cbrt, hypot } as const;
 
 /** Must not be reached inside the scope: the core has no fixed implementation of them. */
-const FORBIDDEN = ['exp', 'log', 'tanh', 'cbrt', 'expm1', 'tan', 'atan', 'pow', 'hypot'] as const;
+const FORBIDDEN = [
+  'tan',
+  'atan',
+  'pow',
+  'sinh',
+  'cosh',
+  'asinh',
+  'acosh',
+  'atanh',
+  'log1p',
+  'log2',
+  'log10',
+] as const;
 
 let calls = 0;
 let active = false;
@@ -15,8 +47,9 @@ export function coreMathCalls(): number {
 }
 
 /**
- * Run `fn` synchronously with `Math.sin/cos/acos/asin/atan2` answered by the core and the
- * transcendentals the core does not fix made to throw. Every property is restored afterwards.
+ * Run `fn` synchronously with the transcendentals the core fixes (`sin`, `cos`, `acos`, `asin`,
+ * `atan2`, `tanh`, `expm1`, `exp`, `log`, `cbrt`, `hypot`) answered by the core and the ones it
+ * does not fix made to throw. Every property is restored afterwards.
  */
 export function withCoreMath<T>(fn: () => T): T {
   if (active) throw new Error('withCoreMath does not nest');

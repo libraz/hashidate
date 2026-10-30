@@ -1,0 +1,6 @@
+disallowed-methods = [
+    { path = "f64::min", reason = "NaN and signed zeros differ from Math.min; use math::f::js_min" },
+    { path = "f64::max", reason = "NaN and signed zeros differ from Math.max; use math::f::js_max" },
+    { path = "f64::round", reason = "ties round away from zero, unlike Math.round; use math::f::js_round" },
+    { path = "f64::signum", reason = "signum(0.0) is 1.0 and NaN keeps its sign, unlike Math.sign; use math::f::js_sign" },
+]

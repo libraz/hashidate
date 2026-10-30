@@ -491,7 +491,8 @@ export class GroundedLegs {
     this.intervalV.copy(state.hipMetric).sub(state.targetMetric);
     const a = this.metricUp.lengthSq();
     const b = this.intervalV.dot(this.metricUp);
-    const c = this.intervalV.lengthSq() - (state.upperLength + state.lowerLength) ** 2;
+    const reach = state.upperLength + state.lowerLength;
+    const c = this.intervalV.lengthSq() - reach * reach;
     const discriminant = b * b - a * c;
     const scale = Math.max(1, b * b, Math.abs(a * c));
     if (discriminant < -GroundedLegs.EPS * scale) return false;

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { float64FromBits } from '../../core/math';
 import { HAND_CONTACT, TORSO_ARM_START, TORSO_SAMPLES } from '../anatomy/joints';
 import { elevationCeiling } from '../anatomy/strain';
 import type { FingerSpec } from '../types';
@@ -29,8 +30,16 @@ const MAX_ENVIRONMENT_BATCHES = 96;
  * its distance gradient, so aiming at exactly zero only approaches the surface.
  */
 const RESTORE_MARGIN = 1e-6;
-const DIFFERENCE_SCALE = Math.cbrt(Number.EPSILON);
-const LEXICAL_EPSILON = Number.EPSILON ** (2 / 3);
+// cbrt(Number.EPSILON) and EPSILON^(2/3), as the bits V8 and the core agree on.
+const DIFFERENCE_SCALE = float64FromBits(0x3ed965fea53d6e3dn);
+const LEXICAL_EPSILON = float64FromBits(0x3dc428a2f98d7292n);
+
+/** Two to the minus `line` for a whole `line`: 0.5 multiplied in `line` times, which is exact. */
+function halvings(line: number): number {
+  let alpha = 1;
+  for (let i = 0; i < line; i++) alpha *= 0.5;
+  return alpha;
+}
 const FULL_TURN = 2 * Math.PI;
 const SETTLED_POSITION_FRACTION = 1e-6;
 const SETTLED_ORIENTATION = 1e-5;
@@ -743,7 +752,7 @@ export class ArmStepSolver {
             // A successful QP owns the remaining dyadic line sequence for this GN iteration.
             while (lineCandidates < MAX_LINE_SEARCHES) {
               const line = lineCandidates++;
-              const alpha = 2 ** -line;
+              const alpha = halvings(line);
               lineEvaluated = true;
               if (
                 !(
@@ -1040,7 +1049,7 @@ export class ArmStepSolver {
 
         while (lineCandidates < MAX_LINE_SEARCHES) {
           const line = lineCandidates++;
-          const alpha = 2 ** -line;
+          const alpha = halvings(line);
           if (!this.writeBoundedTrial(this.current.q, this.qpDelta, alpha, bounds)) continue;
           this.candidate.q.set(this.trialQ);
           if (!this.evaluateGeometry(this.candidate, context, bounds)) {
@@ -1978,7 +1987,10 @@ export class ArmStepSolver {
     let largest = 0;
     for (let row = 0; row < rowCount; row++) {
       let norm = 0;
-      for (let dof = 0; dof < DOFS; dof++) norm += this.jacobian[row * DOFS + dof] ** 2;
+      for (let dof = 0; dof < DOFS; dof++) {
+        const entry = this.jacobian[row * DOFS + dof];
+        norm += entry * entry;
+      }
       largest = Math.max(largest, Math.sqrt(norm));
     }
     const threshold = DIFFERENCE_SCALE * largest;
@@ -1997,7 +2009,10 @@ export class ArmStepSolver {
         }
       }
       let norm = 0;
-      for (let dof = 0; dof < DOFS; dof++) norm += this.secondaryVector[dof] ** 2;
+      for (let dof = 0; dof < DOFS; dof++) {
+        const entry = this.secondaryVector[dof];
+        norm += entry * entry;
+      }
       norm = Math.sqrt(norm);
       if (norm <= threshold) continue;
       const offset = basisCount++ * DOFS;
@@ -2143,7 +2158,13 @@ export class ArmStepSolver {
     n.multiplyScalar(1 / d);
     const center = this.retractionCenter
       .copy(context.shoulder)
-      .addScaledVector(n, (context.upperLength ** 2 - context.lowerLength ** 2 + d * d) / (2 * d));
+      .addScaledVector(
+        n,
+        (context.upperLength * context.upperLength -
+          context.lowerLength * context.lowerLength +
+          d * d) /
+          (2 * d),
+      );
     const radius = primary.forward.elbow.distanceTo(center);
     if (!(radius > this.roundoffTolerance)) return false;
     const elbow = this.retractionElbow.subVectors(hierarchical.forward.elbow, center);
@@ -2230,14 +2251,18 @@ export class ArmStepSolver {
 
   private configurationDisplacement(a: Float64Array, b: Float64Array): number {
     let result = 0;
-    for (let i = 0; i < DOFS; i++) result += (a[i] - b[i]) ** 2;
+    for (let i = 0; i < DOFS; i++) {
+      const delta = a[i] - b[i];
+      result += delta * delta;
+    }
     return result;
   }
 
   private isSettled(state: PathState): boolean {
     return (
       this.isPrimarySettled(state) &&
-      (!this.requestHasElbow || state.secondaryError <= SETTLED_POSITION_FRACTION ** 2)
+      (!this.requestHasElbow ||
+        state.secondaryError <= SETTLED_POSITION_FRACTION * SETTLED_POSITION_FRACTION)
     );
   }
 

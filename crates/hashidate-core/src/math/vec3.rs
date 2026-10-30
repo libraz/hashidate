@@ -1,6 +1,8 @@
 //! `THREE.Vector3`.
 
-use super::f::{js_max, js_min, sqrt};
+use super::clamp;
+use super::f::{acos, js_max, js_min, sqrt};
+use super::mat3::Mat3;
 use super::mat4::Mat4;
 use super::quat::Quat;
 
@@ -129,6 +131,12 @@ impl Vec3 {
         self.x * v.x + self.y * v.y + self.z * v.z
     }
 
+    // three r186 Vector3.cross
+    pub fn cross(&mut self, v: &Vec3) -> &mut Self {
+        let a = *self;
+        self.cross_vectors(&a, v)
+    }
+
     // three r186 Vector3.crossVectors
     pub fn cross_vectors(&mut self, a: &Vec3, b: &Vec3) -> &mut Self {
         let (ax, ay, az) = (a.x, a.y, a.z);
@@ -148,6 +156,14 @@ impl Vec3 {
     pub fn distance_to_squared(&self, v: &Vec3) -> f64 {
         let (dx, dy, dz) = (self.x - v.x, self.y - v.y, self.z - v.z);
         dx * dx + dy * dy + dz * dz
+    }
+
+    // three r186 Vector3.lerp
+    pub fn lerp(&mut self, v: &Vec3, alpha: f64) -> &mut Self {
+        self.x += (v.x - self.x) * alpha;
+        self.y += (v.y - self.y) * alpha;
+        self.z += (v.z - self.z) * alpha;
+        self
     }
 
     // three r186 Vector3.lerpVectors
@@ -171,6 +187,22 @@ impl Vec3 {
         self
     }
 
+    // three r186 Vector3.applyAxisAngle
+    pub fn apply_axis_angle(&mut self, axis: &Vec3, angle: f64) -> &mut Self {
+        let q = *Quat::default().set_from_axis_angle(axis, angle);
+        self.apply_quaternion(&q)
+    }
+
+    // three r186 Vector3.applyMatrix3
+    pub fn apply_matrix3(&mut self, m: &Mat3) -> &mut Self {
+        let (x, y, z) = (self.x, self.y, self.z);
+        let e = &m.elements;
+        self.x = e[0] * x + e[3] * y + e[6] * z;
+        self.y = e[1] * x + e[4] * y + e[7] * z;
+        self.z = e[2] * x + e[5] * y + e[8] * z;
+        self
+    }
+
     // three r186 Vector3.applyMatrix4
     pub fn apply_matrix4(&mut self, m: &Mat4) -> &mut Self {
         let (x, y, z) = (self.x, self.y, self.z);
@@ -180,6 +212,16 @@ impl Vec3 {
         self.y = (e[1] * x + e[5] * y + e[9] * z + e[13]) * w;
         self.z = (e[2] * x + e[6] * y + e[10] * z + e[14]) * w;
         self
+    }
+
+    // three r186 Vector3.transformDirection
+    pub fn transform_direction(&mut self, m: &Mat4) -> &mut Self {
+        let (x, y, z) = (self.x, self.y, self.z);
+        let e = &m.elements;
+        self.x = e[0] * x + e[4] * y + e[8] * z;
+        self.y = e[1] * x + e[5] * y + e[9] * z;
+        self.z = e[2] * x + e[6] * y + e[10] * z;
+        self.normalize()
     }
 
     // three r186 Vector3.setFromMatrixPosition
@@ -194,6 +236,22 @@ impl Vec3 {
     // three r186 Vector3.setFromMatrixColumn
     pub fn set_from_matrix_column(&mut self, m: &Mat4, index: usize) -> &mut Self {
         self.from_array(&m.elements, index * 4)
+    }
+
+    // three r186 Vector3.angleTo
+    pub fn angle_to(&self, v: &Vec3) -> f64 {
+        let denominator = sqrt(self.length_sq() * v.length_sq());
+        if denominator == 0.0 {
+            return std::f64::consts::FRAC_PI_2;
+        }
+        let theta = self.dot(v) / denominator;
+        // clamp, to handle numerical problems
+        acos(clamp(theta, -1.0, 1.0))
+    }
+
+    // three r186 Vector3.equals
+    pub fn equals(&self, v: &Vec3) -> bool {
+        v.x == self.x && v.y == self.y && v.z == self.z
     }
 
     // three r186 Vector3.min

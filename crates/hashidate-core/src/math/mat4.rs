@@ -1,5 +1,6 @@
 //! `THREE.Matrix4`, column-major like three's `elements`.
 
+use super::f::{cos, sin};
 use super::quat::Quat;
 use super::vec3::Vec3;
 
@@ -70,6 +71,21 @@ impl Mat4 {
     pub fn identity(&mut self) -> &mut Self {
         self.set(
             1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        )
+    }
+
+    // three r186 Matrix4.makeTranslation
+    pub fn make_translation(&mut self, x: f64, y: f64, z: f64) -> &mut Self {
+        self.set(
+            1.0, 0.0, 0.0, x, 0.0, 1.0, 0.0, y, 0.0, 0.0, 1.0, z, 0.0, 0.0, 0.0, 1.0,
+        )
+    }
+
+    // three r186 Matrix4.makeRotationY
+    pub fn make_rotation_y(&mut self, theta: f64) -> &mut Self {
+        let (c, s) = (cos(theta), sin(theta));
+        self.set(
+            c, 0.0, s, 0.0, 0.0, 1.0, 0.0, 0.0, -s, 0.0, c, 0.0, 0.0, 0.0, 0.0, 1.0,
         )
     }
 

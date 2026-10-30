@@ -1,11 +1,13 @@
+import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { core, views } from '@/core';
 import { MATH_BATCHES, type MathBatchName } from '@/core/abi/math';
+import { SWIVEL_TRACK } from '@/engine/rig/elbow';
 import { coreMathCalls, withCoreMath } from '../helpers/core-math';
 
 /** Shared with `crates/hashidate-core/tests/math_corpus.rs`. */
-const CORPUS_HASH = 0x3c38_dd49_d0d1_8fb7n;
+const CORPUS_HASH = 0x95cf_1000_b3f4_98cfn;
 
 const SEED = 0x6861_7368_6964_6174n;
 const COUNT = 20_000;
@@ -64,6 +66,7 @@ const POOL = (() => {
 const v3 = (i: number[], o = 0) => new THREE.Vector3(i[o], i[o + 1], i[o + 2]);
 const v4 = (i: number[], o = 0) => new THREE.Vector4(i[o], i[o + 1], i[o + 2], i[o + 3]);
 const q = (i: number[], o = 0) => new THREE.Quaternion(i[o], i[o + 1], i[o + 2], i[o + 3]);
+const m3 = (i: number[], o = 0) => new THREE.Matrix3().fromArray(i, o);
 const m4 = (i: number[], o = 0) => new THREE.Matrix4().fromArray(i, o);
 const vq = (x: THREE.Quaternion) => [x.x, x.y, x.z, x.w];
 
@@ -126,6 +129,37 @@ function slerpEdges(): number[][] {
   out.push([0, 0, 0, 1, 0, 0, 0, -1, 0.5]);
   out.push([0, 0, 0, 1, 1, 0, 0, 0, 0.5]);
   return out;
+}
+
+/** Pairs that are parallel, opposite or nearly so, where `angleTo` clamps. */
+function parallelPair(i: number[], k: number): void {
+  if (k % 4 === 0) return;
+  unitVec(i, 0);
+  if (k % 4 === 1) i.splice(3, 3, i[0], i[1], i[2]);
+  else if (k % 4 === 2) i.splice(3, 3, -i[0] * 3, -i[1] * 3, -i[2] * 3);
+  else i.splice(3, 3, i[0] * (1 + 1e-15), i[1], i[2]);
+}
+
+/** Matrices whose determinant is zero or close to it. */
+function singularMatrices3(): number[][] {
+  return [
+    [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [1, 2, 3, 2, 4, 6, 0, 0, 1],
+    [1, 0, 0, 0, 1, 0, 0, 0, 1e-300],
+    [-0, 0, 0, 0, -0, 0, 0, 0, -0],
+  ];
+}
+
+/** Ties, near-ties and signed zeros for `Math.round`. */
+function roundEdges(): number[][] {
+  const out = [0.5, 1.5, 2.5, 0.49999999999999994, 4503599627370495.5, 4503599627370497, 2 ** 53];
+  for (let k = -40; k <= 40; k++) out.push(k / 4, k / 2);
+  return [...out, ...out.map((x) => -x), ...SPECIALS].map((x) => [x]);
+}
+
+/** Every ordered pair of the special values. */
+function specialPairs(): number[][] {
+  return SPECIALS.flatMap((a) => SPECIALS.map((b) => [a, b]));
 }
 
 interface Op {
@@ -194,6 +228,44 @@ const OPS: Op[] = [
     extra: () => edgeMatrices().map((m) => [1.5, -2, 0.25, ...m]),
   },
   {
+    name: 'hd_math_vector3_cross',
+    three: (i) => v3(i).cross(v3(i, 3)).toArray(),
+  },
+  { name: 'hd_math_vector3_lerp', three: (i) => v3(i).lerp(v3(i, 3), i[6]).toArray() },
+  {
+    name: 'hd_math_vector3_angle_to',
+    three: (i) => [v3(i).angleTo(v3(i, 3))],
+    transcendental: true,
+    shape: (i, k) => parallelPair(i, k),
+    extra: () => [
+      [0, 0, 0, 1, 2, 3],
+      [1, 0, 0, 1, 0, 0],
+      [1, 0, 0, -1, 0, 0],
+      [1e200, 1e200, 0, 1e200, 1e200, 0],
+    ],
+  },
+  {
+    name: 'hd_math_vector3_equals',
+    three: (i) => [v3(i).equals(v3(i, 3)) ? 1 : 0],
+    shape: (i, k) => k % 3 === 1 && i.splice(3, 3, i[0], i[1], i[2]),
+    extra: () => [[0, 0, 0, -0, -0, -0]],
+  },
+  {
+    name: 'hd_math_vector3_apply_axis_angle',
+    three: (i) => v3(i).applyAxisAngle(v3(i, 3), i[6]).toArray(),
+    transcendental: true,
+    shape: (i, k) => k % 2 === 1 && unitVec(i, 3),
+  },
+  {
+    name: 'hd_math_vector3_apply_matrix3',
+    three: (i) => v3(i).applyMatrix3(m3(i, 3)).toArray(),
+  },
+  {
+    name: 'hd_math_vector3_transform_direction',
+    three: (i) => v3(i).transformDirection(m4(i, 3)).toArray(),
+    extra: () => edgeMatrices().map((m) => [1.5, -2, 0.25, ...m]),
+  },
+  {
     name: 'hd_math_vector3_set_from_matrix_position',
     three: (i) => new THREE.Vector3().setFromMatrixPosition(m4(i)).toArray(),
   },
@@ -239,6 +311,28 @@ const OPS: Op[] = [
   },
   { name: 'hd_math_quaternion_length', three: (i) => [q(i).length()] },
   { name: 'hd_math_quaternion_dot', three: (i) => [q(i).dot(q(i, 4))] },
+  {
+    name: 'hd_math_quaternion_angle_to',
+    three: (i) => [q(i).angleTo(q(i, 4))],
+    transcendental: true,
+    shape: (i, k) => {
+      if (k % 2 === 0) return;
+      unitQuat(i, 0);
+      if (k % 4 === 1)
+        i.splice(4, 4, ...(k % 8 === 1 ? i.slice(0, 4) : i.slice(0, 4).map((c) => -c)));
+      else unitQuat(i, 4);
+    },
+  },
+  {
+    name: 'hd_math_quaternion_equals',
+    three: (i) => [q(i).equals(q(i, 4)) ? 1 : 0],
+    shape: (i, k) => k % 3 === 1 && i.splice(4, 4, i[0], i[1], i[2], i[3]),
+  },
+  {
+    name: 'hd_math_quaternion_set_from_euler',
+    three: (i) => vq(new THREE.Quaternion().setFromEuler(new THREE.Euler(i[0], i[1], i[2], 'XYZ'))),
+    transcendental: true,
+  },
   {
     name: 'hd_math_quaternion_set_from_axis_angle',
     three: (i) => vq(new THREE.Quaternion().setFromAxisAngle(v3(i), i[3])),
@@ -334,6 +428,26 @@ const OPS: Op[] = [
     extra: edgeMatrices,
   },
   {
+    name: 'hd_math_matrix4_make_translation',
+    three: (i) => new THREE.Matrix4().makeTranslation(i[0], i[1], i[2]).toArray(),
+  },
+  {
+    name: 'hd_math_matrix4_make_rotation_y',
+    three: (i) => new THREE.Matrix4().makeRotationY(i[0]).toArray(),
+    transcendental: true,
+  },
+  {
+    name: 'hd_math_matrix3_set_from_matrix4',
+    three: (i) => new THREE.Matrix3().setFromMatrix4(m4(i)).toArray(),
+  },
+  { name: 'hd_math_matrix3_determinant', three: (i) => [m3(i).determinant()] },
+  {
+    name: 'hd_math_matrix3_invert',
+    three: (i) => m3(i).invert().toArray(),
+    extra: singularMatrices3,
+  },
+  { name: 'hd_math_matrix3_transpose', three: (i) => m3(i).transpose().toArray() },
+  {
     name: 'hd_math_object3d_update_matrix',
     three: (i) => {
       const o = new THREE.Object3D();
@@ -361,6 +475,30 @@ const OPS: Op[] = [
       [5, 0, -0],
       [Number.NaN, 0, 1],
     ],
+  },
+  {
+    name: 'hd_math_lerp',
+    three: (i) => [THREE.MathUtils.lerp(i[0], i[1], i[2])],
+  },
+  {
+    name: 'hd_math_js_round',
+    three: (i) => [Math.round(i[0])],
+    extra: roundEdges,
+  },
+  {
+    name: 'hd_math_js_sign',
+    three: (i) => [Math.sign(i[0])],
+    extra: () => SPECIALS.map((x) => [x]),
+  },
+  {
+    name: 'hd_math_js_min',
+    three: (i) => [Math.min(i[0], i[1])],
+    extra: specialPairs,
+  },
+  {
+    name: 'hd_math_js_max',
+    three: (i) => [Math.max(i[0], i[1])],
+    extra: specialPairs,
   },
   {
     name: 'hd_math_box3_set_from_points',
@@ -469,7 +607,20 @@ describe('core math against three r186', () => {
     });
   }
 
-  it('hypot3 matches the host Math.hypot', () => {
+  it('hypot matches the host Math.hypot for two and three arguments', () => {
+    const exports = core();
+    const pairs: [number, number][] = [];
+    for (const a of SPECIALS) for (const b of SPECIALS) pairs.push([a, b]);
+    for (let j = 0; j < COUNT; j++) pairs.push([POOL[2 * j], POOL[2 * j + 1]]);
+    for (let j = 0; j < 2000; j++) {
+      const scale = 2 ** ((j % 41) * 50 - 1000);
+      pairs.push([POOL[2 * j] * scale, POOL[2 * j + 1]]);
+    }
+    const badPairs = pairs
+      .filter(([a, b]) => !Object.is(exports.hd_math_hypot2(a, b), Math.hypot(a, b)))
+      .slice(0, 5);
+    expect(badPairs).toEqual([]);
+
     const triples: [number, number, number][] = [];
     for (const a of SPECIALS)
       for (const b of SPECIALS) for (const c of SPECIALS) triples.push([a, b, c]);
@@ -478,10 +629,10 @@ describe('core math against three r186', () => {
       const scale = 2 ** ((j % 41) * 50 - 1000);
       triples.push([POOL[3 * j] * scale, POOL[3 * j + 1], POOL[3 * j + 2] * scale]);
     }
-    const bad = triples
-      .filter(([a, b, c]) => !Object.is(core().hd_math_hypot3(a, b, c), Math.hypot(a, b, c)))
+    const badTriples = triples
+      .filter(([a, b, c]) => !Object.is(exports.hd_math_hypot3(a, b, c), Math.hypot(a, b, c)))
       .slice(0, 5);
-    expect(bad).toEqual([]);
+    expect(badTriples).toEqual([]);
   });
 
   it('hashes the corpus to the same constant as the native build', () => {
@@ -501,17 +652,111 @@ describe('core math against three r186', () => {
 });
 
 describe('withCoreMath', () => {
+  const REPLACED = [
+    'sin',
+    'cos',
+    'acos',
+    'asin',
+    'atan2',
+    'tanh',
+    'expm1',
+    'exp',
+    'log',
+    'cbrt',
+    'hypot',
+  ] as const;
+  const FORBIDDEN = [
+    'tan',
+    'atan',
+    'pow',
+    'sinh',
+    'cosh',
+    'asinh',
+    'acosh',
+    'atanh',
+    'log1p',
+    'log2',
+    'log10',
+  ] as const;
+  const math = Math as unknown as Record<string, (...args: number[]) => number>;
+  const host = Object.fromEntries([...REPLACED, ...FORBIDDEN].map((n) => [n, math[n]]));
+
   it('answers with the core, forbids the unfixed functions and restores everything', () => {
-    const { sin, exp, hypot } = Math;
     const x = 0.7853981633974483;
-    const inside = withCoreMath(() => {
-      expect(() => Math.exp(1)).toThrow(/Math\.exp/);
-      expect(() => Math.hypot(1, 2)).toThrow(/Math\.hypot/);
-      return Math.sin(x);
+    const exports = core();
+    const core1 = {
+      sin: exports.hd_math_sin,
+      cos: exports.hd_math_cos,
+      acos: exports.hd_math_acos,
+      asin: exports.hd_math_asin,
+      tanh: exports.hd_math_tanh,
+      expm1: exports.hd_math_expm1,
+      exp: exports.hd_math_exp,
+      log: exports.hd_math_log,
+      cbrt: exports.hd_math_cbrt,
+    };
+    const before = coreMathCalls();
+    withCoreMath(() => {
+      for (const [name, fn] of Object.entries(core1)) {
+        expect(math[name]).not.toBe(host[name]);
+        expect(math[name](x)).toBe(fn(x));
+      }
+      expect(Math.atan2(x, 2)).toBe(exports.hd_math_atan2(x, 2));
+      expect(Math.hypot(x, 2)).toBe(exports.hd_math_hypot2(x, 2));
+      expect(Math.hypot(x, 2, 3)).toBe(exports.hd_math_hypot3(x, 2, 3));
+      for (const args of [[], [1], [1, 2, 3, 4]]) {
+        expect(() => Math.hypot(...args)).toThrow(/hypot called with/);
+      }
+      for (const name of FORBIDDEN) {
+        expect(() => math[name](1)).toThrow(new RegExp(`Math\\.${name}`));
+      }
     });
-    expect(inside).toBe(core().hd_math_sin(x));
-    expect(Math.sin).toBe(sin);
-    expect(Math.exp).toBe(exp);
-    expect(Math.hypot).toBe(hypot);
+    expect(coreMathCalls() - before).toBeGreaterThanOrEqual(REPLACED.length);
+    for (const name of [...REPLACED, ...FORBIDDEN]) expect(math[name]).toBe(host[name]);
+  });
+});
+
+describe('what the rig relies on', () => {
+  const EPSILON = Number.EPSILON;
+  /** The bit patterns the TS rig spells out, from V8 and `libm` agreeing on them. */
+  const P5 = {
+    log075: 0xbfd269621134db92n,
+    cbrtEpsilon: 0x3ed965fea53d6e3dn,
+    epsilon23: 0x3dc428a2f98d7292n,
+  };
+
+  it('x ** 2 is x * x on the host', () => {
+    const values = [...SPECIALS, ...POOL.subarray(0, COUNT)];
+    for (let j = 0; j < COUNT; j++) values.push(POOL[j] * 2 ** ((j % 61) - 30));
+    const bad = values.filter((x) => !Object.is(x ** 2, x * x)).slice(0, 5);
+    expect(bad).toEqual([]);
+  });
+
+  it('2 ** -n is 0.5 multiplied in n times on the host', () => {
+    let halved = 1;
+    for (let n = 0; n <= 1074; n++) {
+      if (!Object.is(2 ** -n, halved)) throw new Error(`2 ** -${n} differs`);
+      halved *= 0.5;
+    }
+  });
+
+  it('puts the rig constants at the recorded bits, in the core and in the TS rig', () => {
+    const exports = core();
+    expect(bitsOf(Math.log(1 - SWIVEL_TRACK))).toBe(P5.log075);
+    expect(bitsOf(Math.cbrt(EPSILON))).toBe(P5.cbrtEpsilon);
+    expect(bitsOf(EPSILON ** (2 / 3))).toBe(P5.epsilon23);
+    expect(bitsOf(exports.hd_math_rig_constant(0))).toBe(bitsOf(-60 * fromBits(P5.log075)));
+    expect(bitsOf(exports.hd_math_rig_constant(0))).toBe(bitsOf(-60 * Math.log(1 - SWIVEL_TRACK)));
+    expect(bitsOf(exports.hd_math_rig_constant(1))).toBe(P5.cbrtEpsilon);
+    expect(bitsOf(exports.hd_math_rig_constant(2))).toBe(P5.epsilon23);
+    expect(exports.hd_math_rig_constant(3)).toBeNaN();
+
+    const source = (file: string) => readFileSync(`src/engine/rig/${file}`, 'utf8');
+    const hex = (bits: bigint) => `0x${bits.toString(16)}n`;
+    expect(source('elbow.ts')).toContain(hex(P5.log075));
+    expect(source('arm-path.ts')).toContain(hex(P5.cbrtEpsilon));
+    expect(source('arm-path.ts')).toContain(hex(P5.epsilon23));
+    expect(source('elbow.ts')).not.toMatch(/Math\.log/);
+    expect(source('arm-path.ts')).not.toMatch(/Math\.cbrt|EPSILON \*\*/);
   });
 });

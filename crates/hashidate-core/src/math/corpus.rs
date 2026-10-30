@@ -4,8 +4,10 @@
 //! shows the two builds produce identical bits. Inputs come from splitmix64; each output is fed to
 //! FNV-1a 64 as little-endian `to_bits()` with every NaN canonicalised.
 
-use super::f::{acos, asin, atan2, cos, hypot3, sin};
-use super::{Mat4, Quat, Vec3, Vec4};
+use super::f::{
+    acos, asin, atan2, cbrt, cos, exp, expm1, hypot, hypot3, js_round, js_sign, log, sin, tanh,
+};
+use super::{Mat3, Mat4, Quat, Vec3, Vec4, lerp};
 
 const SEED: u64 = 0x6861_7368_6964_6174;
 const COUNT: usize = 20_000;
@@ -290,6 +292,138 @@ pub fn corpus_hash() -> u64 {
         },
     ) {
         h.quat(Quat::default().set_from_rotation_matrix(&m));
+    }
+
+    for f in [tanh, expm1, exp, log, cbrt] {
+        h.feed_all(&s.map(f));
+        for _ in 0..COUNT {
+            h.feed(f(rng.wide()));
+        }
+    }
+
+    for &a in &s {
+        for &b in &s {
+            h.feed(hypot(&[a, b]));
+        }
+    }
+    for _ in 0..COUNT {
+        let [a, b] = rng.array();
+        h.feed(hypot(&[a, b]));
+    }
+
+    // Halves and quarters put the rounding ties in the draw.
+    for f in [js_round, js_sign] {
+        h.feed_all(&s.map(f));
+        for k in 0..COUNT {
+            let x = rng.wide();
+            h.feed(f(x));
+            if k % 4 == 0 {
+                h.feed(f((x * 4.0).floor() / 4.0));
+                h.feed(f(-0.5 + (k % 3) as f64));
+            }
+        }
+    }
+
+    for (a, b, t) in cases(
+        &mut rng,
+        |v| (v, v, v),
+        |r, _| (r.wide(), r.wide(), r.unit()),
+    ) {
+        h.feed(lerp(a, b, t));
+    }
+
+    for m in cases(
+        &mut rng,
+        |v| Mat4::from_elements([v; 16]),
+        |r, i| {
+            if i % 2 == 0 {
+                r.mat4()
+            } else {
+                let (p, q, sc) = (r.vec3(), unit_quat(r), r.vec3());
+                *Mat4::default().compose(&p, &q, &sc)
+            }
+        },
+    ) {
+        let mut linear = Mat3::default();
+        linear.set_from_matrix4(&m);
+        h.feed(linear.determinant());
+        let mut inverse = linear;
+        inverse.invert();
+        h.feed_all(&inverse.elements);
+        h.feed_all(&inverse.transpose().elements);
+    }
+
+    for (mut v, m) in cases(
+        &mut rng,
+        |v| (Vec3::new(v, v, v), Mat3::from_elements([v; 9])),
+        |r, _| (r.vec3(), Mat3::from_elements(r.array())),
+    ) {
+        h.vec3(v.apply_matrix3(&m));
+    }
+
+    for (mut v, m) in cases(
+        &mut rng,
+        |v| (Vec3::new(v, v, v), Mat4::from_elements([v; 16])),
+        |r, _| (r.vec3(), r.mat4()),
+    ) {
+        h.vec3(v.transform_direction(&m));
+    }
+
+    for (mut v, axis, angle) in cases(
+        &mut rng,
+        |v| (Vec3::new(v, v, v), Vec3::new(v, v, v), v),
+        |r, _| (r.vec3(), *r.vec3().normalize(), r.wide()),
+    ) {
+        h.vec3(v.apply_axis_angle(&axis, angle));
+    }
+
+    for (a, b) in cases(
+        &mut rng,
+        |v| (Vec3::new(v, v, v), Vec3::new(v, v, v)),
+        |r, i| {
+            let a = r.vec3();
+            // Parallel and opposite pairs reach the clamp in angleTo.
+            let b = match i % 4 {
+                1 => a,
+                2 => *Vec3::new(-a.x, -a.y, -a.z).multiply_scalar(2.0),
+                _ => r.vec3(),
+            };
+            (a, b)
+        },
+    ) {
+        h.vec3(Vec3::default().cross_vectors(&a, &b));
+        h.vec3(Vec3::default().copy(&a).lerp(&b, 0.375));
+        h.feed(a.angle_to(&b));
+    }
+
+    for (a, b) in cases(
+        &mut rng,
+        |v| (Quat::new(v, v, v, v), Quat::new(v, v, v, v)),
+        |r, i| {
+            let a = unit_quat(r);
+            (a, if i % 3 == 0 { a } else { unit_quat(r) })
+        },
+    ) {
+        h.feed(a.angle_to(&b));
+    }
+
+    for (x, y, z) in cases(
+        &mut rng,
+        |v| (v, v, v),
+        |r, _| (r.wide(), r.wide(), r.wide()),
+    ) {
+        h.quat(Quat::default().set_from_euler_xyz(x, y, z));
+    }
+
+    for theta in cases(&mut rng, |v| v, |r, _| r.wide()) {
+        h.feed_all(&Mat4::default().make_rotation_y(theta).elements);
+    }
+    for (x, y, z) in cases(
+        &mut rng,
+        |v| (v, v, v),
+        |r, _| (r.wide(), r.wide(), r.wide()),
+    ) {
+        h.feed_all(&Mat4::default().make_translation(x, y, z).elements);
     }
 
     h.0

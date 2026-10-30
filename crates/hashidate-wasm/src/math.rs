@@ -4,7 +4,7 @@
 //! three.js operation to `count` packed items so the parity test can compare them against three;
 //! the per-item layouts are tabled in `src/core/abi/math.ts`.
 
-use hashidate_core::math::{Box3, Mat4, Quat, Vec3, Vec4, clamp, corpus, f, object3d};
+use hashidate_core::math::{Box3, Mat3, Mat4, Quat, Vec3, Vec4, clamp, corpus, f, lerp, object3d};
 
 /// `sin`, fixed across hosts.
 #[unsafe(no_mangle)]
@@ -36,10 +36,58 @@ pub extern "C" fn hd_math_atan2(y: f64, x: f64) -> f64 {
     f::atan2(y, x)
 }
 
+/// `tanh`, fixed across hosts.
+#[unsafe(no_mangle)]
+pub extern "C" fn hd_math_tanh(x: f64) -> f64 {
+    f::tanh(x)
+}
+
+/// `expm1`, fixed across hosts.
+#[unsafe(no_mangle)]
+pub extern "C" fn hd_math_expm1(x: f64) -> f64 {
+    f::expm1(x)
+}
+
+/// `exp`, fixed across hosts.
+#[unsafe(no_mangle)]
+pub extern "C" fn hd_math_exp(x: f64) -> f64 {
+    f::exp(x)
+}
+
+/// Natural `log`, fixed across hosts.
+#[unsafe(no_mangle)]
+pub extern "C" fn hd_math_log(x: f64) -> f64 {
+    f::log(x)
+}
+
+/// `cbrt`, fixed across hosts.
+#[unsafe(no_mangle)]
+pub extern "C" fn hd_math_cbrt(x: f64) -> f64 {
+    f::cbrt(x)
+}
+
+/// `Math.hypot(a, b)` as V8 computes it.
+#[unsafe(no_mangle)]
+pub extern "C" fn hd_math_hypot2(a: f64, b: f64) -> f64 {
+    f::hypot(&[a, b])
+}
+
 /// `Math.hypot(a, b, c)` as V8 computes it.
 #[unsafe(no_mangle)]
 pub extern "C" fn hd_math_hypot3(a: f64, b: f64, c: f64) -> f64 {
     f::hypot3(a, b, c)
+}
+
+/// A named rig constant: 0 `SWIVEL_RATE`, 1 `CBRT_EPSILON`, 2 `EPSILON_2_3`; NaN for any other
+/// index.
+#[unsafe(no_mangle)]
+pub extern "C" fn hd_math_rig_constant(index: u32) -> f64 {
+    match index {
+        0 => f::SWIVEL_RATE,
+        1 => f::CBRT_EPSILON,
+        2 => f::EPSILON_2_3,
+        _ => f64::NAN,
+    }
 }
 
 /// The math corpus hash; equal to the native build's or one of them is wrong.
@@ -50,6 +98,12 @@ pub extern "C" fn hd_math_corpus_hash() -> u64 {
 
 fn v3(s: &[f64]) -> Vec3 {
     Vec3::new(s[0], s[1], s[2])
+}
+
+fn m3(s: &[f64]) -> Mat3 {
+    let mut elements = [0.0; 9];
+    elements.copy_from_slice(&s[..9]);
+    Mat3::from_elements(elements)
 }
 
 fn v4(s: &[f64]) -> Vec4 {
@@ -76,6 +130,10 @@ fn put_v4(o: &mut [f64], v: &Vec4) {
 
 fn put_q(o: &mut [f64], q: &Quat) {
     o[..4].copy_from_slice(&[q.x, q.y, q.z, q.w]);
+}
+
+fn put_m3(o: &mut [f64], m: &Mat3) {
+    o[..9].copy_from_slice(&m.elements);
 }
 
 fn put_m4(o: &mut [f64], m: &Mat4) {
@@ -129,6 +187,15 @@ batch! {
         |i, o| put_v3(o, Vec3::default().lerp_vectors(&v3(i), &v3(&i[3..]), i[6]));
     hd_math_vector3_apply_quaternion: 7 => 3, |i, o| put_v3(o, v3(i).apply_quaternion(&q(&i[3..])));
     hd_math_vector3_apply_matrix4: 19 => 3, |i, o| put_v3(o, v3(i).apply_matrix4(&m4(&i[3..])));
+    hd_math_vector3_cross: 6 => 3, |i, o| put_v3(o, v3(i).cross(&v3(&i[3..])));
+    hd_math_vector3_lerp: 7 => 3, |i, o| put_v3(o, v3(i).lerp(&v3(&i[3..]), i[6]));
+    hd_math_vector3_angle_to: 6 => 1, |i, o| o[0] = v3(i).angle_to(&v3(&i[3..]));
+    hd_math_vector3_equals: 6 => 1, |i, o| o[0] = f64::from(u8::from(v3(i).equals(&v3(&i[3..]))));
+    hd_math_vector3_apply_axis_angle: 7 => 3,
+        |i, o| put_v3(o, v3(i).apply_axis_angle(&v3(&i[3..]), i[6]));
+    hd_math_vector3_apply_matrix3: 12 => 3, |i, o| put_v3(o, v3(i).apply_matrix3(&m3(&i[3..])));
+    hd_math_vector3_transform_direction: 19 => 3,
+        |i, o| put_v3(o, v3(i).transform_direction(&m4(&i[3..])));
     hd_math_vector3_set_from_matrix_position: 16 => 3,
         |i, o| put_v3(o, Vec3::default().set_from_matrix_position(&m4(i)));
     hd_math_vector3_set_from_matrix_column: 17 => 3,
@@ -149,6 +216,11 @@ batch! {
     hd_math_quaternion_normalize: 4 => 4, |i, o| put_q(o, q(i).normalize());
     hd_math_quaternion_length: 4 => 1, |i, o| o[0] = q(i).length();
     hd_math_quaternion_dot: 8 => 1, |i, o| o[0] = q(i).dot(&q(&i[4..]));
+    hd_math_quaternion_angle_to: 8 => 1, |i, o| o[0] = q(i).angle_to(&q(&i[4..]));
+    hd_math_quaternion_equals: 8 => 1,
+        |i, o| o[0] = f64::from(u8::from(q(i).equals(&q(&i[4..]))));
+    hd_math_quaternion_set_from_euler: 3 => 4,
+        |i, o| put_q(o, Quat::default().set_from_euler_xyz(i[0], i[1], i[2]));
     hd_math_quaternion_set_from_axis_angle: 4 => 4,
         |i, o| put_q(o, Quat::default().set_from_axis_angle(&v3(i), i[3]));
     hd_math_quaternion_set_from_unit_vectors: 6 => 4,
@@ -163,6 +235,10 @@ batch! {
     hd_math_matrix4_premultiply: 32 => 16, |i, o| put_m4(o, m4(i).premultiply(&m4(&i[16..])));
     hd_math_matrix4_multiply_matrices: 32 => 16,
         |i, o| put_m4(o, Mat4::default().multiply_matrices(&m4(i), &m4(&i[16..])));
+    hd_math_matrix4_make_translation: 3 => 16,
+        |i, o| put_m4(o, Mat4::default().make_translation(i[0], i[1], i[2]));
+    hd_math_matrix4_make_rotation_y: 1 => 16,
+        |i, o| put_m4(o, Mat4::default().make_rotation_y(i[0]));
     hd_math_matrix4_extract_rotation: 16 => 16,
         |i, o| put_m4(o, Mat4::default().extract_rotation(&m4(i)));
     hd_math_matrix4_compose: 10 => 16,
@@ -178,6 +254,12 @@ batch! {
     hd_math_matrix4_determinant_affine: 16 => 1, |i, o| o[0] = m4(i).determinant_affine();
     hd_math_matrix4_invert: 16 => 16, |i, o| put_m4(o, m4(i).invert());
 
+    hd_math_matrix3_set_from_matrix4: 16 => 9,
+        |i, o| put_m3(o, Mat3::default().set_from_matrix4(&m4(i)));
+    hd_math_matrix3_determinant: 9 => 1, |i, o| o[0] = m3(i).determinant();
+    hd_math_matrix3_invert: 9 => 9, |i, o| put_m3(o, m3(i).invert());
+    hd_math_matrix3_transpose: 9 => 9, |i, o| put_m3(o, m3(i).transpose());
+
     hd_math_object3d_update_matrix: 14 => 16, |i, o| {
         let mut m = Mat4::default();
         let pivot = v3(&i[10..]);
@@ -186,6 +268,11 @@ batch! {
         put_m4(o, &m);
     };
     hd_math_clamp: 3 => 1, |i, o| o[0] = clamp(i[0], i[1], i[2]);
+    hd_math_lerp: 3 => 1, |i, o| o[0] = lerp(i[0], i[1], i[2]);
+    hd_math_js_round: 1 => 1, |i, o| o[0] = f::js_round(i[0]);
+    hd_math_js_sign: 1 => 1, |i, o| o[0] = f::js_sign(i[0]);
+    hd_math_js_min: 2 => 1, |i, o| o[0] = f::js_min(i[0], i[1]);
+    hd_math_js_max: 2 => 1, |i, o| o[0] = f::js_max(i[0], i[1]);
     hd_math_box3_set_from_points: 12 => 9, |i, o| {
         let points = [v3(i), v3(&i[3..]), v3(&i[6..]), v3(&i[9..])];
         let mut b = Box3::default();
