@@ -18,7 +18,6 @@
 //! [`FaceSkin`]. The hash TS keeps in a `Map` is a sorted key table here, each cell's vertices in
 //! the order the map received them, so every query visits them in the same order.
 
-use super::{world_position, world_quaternion};
 use crate::math::f::{js_max, js_min, sqrt};
 use crate::math::{Mat4, Quat, Vec3};
 use crate::profile::FaceSkin;
@@ -151,8 +150,8 @@ impl FaceSurface {
     // Follow the head to where it is posed now. Call before a run of face queries.
     pub fn refresh(&mut self, graph: &mut Graph) {
         graph.update_world_matrix(self.bone, true, false, false);
-        self.turn = world_quaternion(graph, self.bone);
-        let at = world_position(graph, self.bone);
+        self.turn = graph.world_quaternion(self.bone);
+        let at = graph.world_position(self.bone);
         self.to_head.compose(&at, &self.turn, &ONE).invert();
     }
 
@@ -548,7 +547,7 @@ pub(crate) mod tests {
     fn set_euler(graph: &mut Graph, node: usize, x: f64, y: f64, z: f64) {
         let mut q = Quat::default();
         q.set_from_euler_xyz(x, y, z);
-        graph.quaternion[4 * node..4 * node + 4].copy_from_slice(&[q.x, q.y, q.z, q.w]);
+        graph.set_local_quaternion(node as u32, &q);
     }
 
     fn posed(shape: Shape3) -> Fixture {
@@ -563,8 +562,8 @@ pub(crate) mod tests {
 
     fn world_point(f: &mut Fixture, local: [f64; 3]) -> Vec3 {
         f.graph.update_matrix_world(0, true);
-        let q = world_quaternion(&mut f.graph, 1);
-        let at = world_position(&mut f.graph, 1);
+        let q = f.graph.world_quaternion(1);
+        let at = f.graph.world_position(1);
         let mut p = v(local);
         p.apply_quaternion(&q).add(&at);
         p

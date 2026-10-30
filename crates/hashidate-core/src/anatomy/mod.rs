@@ -19,44 +19,10 @@ pub mod strain;
 pub mod surface;
 pub mod volumes;
 
-use crate::math::{Mat4, Quat, Vec3};
-use crate::scene::graph::Graph;
-
-fn matrix_world(graph: &Graph, i: u32) -> Mat4 {
-    let n = 16 * i as usize;
-    let mut elements = [0.0; 16];
-    elements.copy_from_slice(&graph.matrix_world[n..n + 16]);
-    Mat4::from_elements(elements)
-}
-
-// three r186 Object3D.getWorldPosition
-pub(crate) fn world_position(graph: &mut Graph, i: u32) -> Vec3 {
-    graph.update_world_matrix(i, true, false, false);
-    let mut out = Vec3::default();
-    out.set_from_matrix_position(&matrix_world(graph, i));
-    out
-}
-
-// three r186 Object3D.getWorldQuaternion
-pub(crate) fn world_quaternion(graph: &mut Graph, i: u32) -> Quat {
-    graph.update_world_matrix(i, true, false, false);
-    let mut position = Vec3::default();
-    let mut out = Quat::default();
-    let mut scale = Vec3::default();
-    matrix_world(graph, i).decompose(&mut position, &mut out, &mut scale);
-    out
-}
-
-/// The node's `matrixWorld` as it stands, without updating it.
-pub(crate) fn current_matrix_world(graph: &Graph, i: u32) -> Mat4 {
-    matrix_world(graph, i)
-}
-
 /// The base avatar with its anatomy built, as `tests/anatomy/*.test.ts` build theirs.
 #[cfg(test)]
 pub(crate) mod testkit {
     use super::arm::ArmAnatomy;
-    use super::world_position;
     use crate::math::{Quat, Vec3};
     use crate::profile::{BoneSlot, Finger, Profile, Side, base};
     use crate::scene::graph::Graph;
@@ -104,7 +70,7 @@ pub(crate) mod testkit {
         graph.update_world_matrix(bone, true, false, false);
         let limb = &p.limb[side as usize];
         (
-            world_position(graph, bone),
+            graph.world_position(bone),
             limb.upper.unwrap(),
             limb.lower.unwrap(),
             limb.tip[Finger::Middle as usize].unwrap() * 0.35,
@@ -117,7 +83,7 @@ pub(crate) mod testkit {
         if yaw != 0.0 {
             let mut q = Quat::default();
             q.set_from_euler_xyz(0.0, yaw, 0.0);
-            graph.quaternion[0..4].copy_from_slice(&[q.x, q.y, q.z, q.w]);
+            graph.set_local_quaternion(0, &q);
         }
         for s in &mut graph.scale[0..3] {
             *s *= scale;

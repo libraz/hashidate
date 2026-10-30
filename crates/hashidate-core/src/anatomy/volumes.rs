@@ -23,7 +23,6 @@
 use super::face::FaceSurface;
 use super::joints::{TORSO_ARM_START, TORSO_BANDS, TORSO_PASSES, TORSO_SAMPLES, TORSO_SECTORS};
 use super::surface::{MeasuredVolume, SurfaceGradient, surface_of};
-use super::{world_position, world_quaternion};
 use crate::math::f::{atan2, js_min};
 use crate::math::{Quat, Vec3};
 use crate::profile::{BodyFrame, BoneSlot, Profile};
@@ -269,16 +268,16 @@ impl BodyVolumes {
     // frame — it turns and tips under the chest, so its surface has to be queried
     // in axes that turn with it.
     pub fn update(&mut self, graph: &mut Graph, chest: u32) {
-        self.trunk.o = world_position(graph, chest);
+        self.trunk.o = graph.world_position(chest);
         let Some(h) = &mut self.head else {
             return;
         };
         graph.update_world_matrix(h.bone, true, false, false);
-        let hq = world_quaternion(graph, h.bone);
+        let hq = graph.world_quaternion(h.bone);
         h.frame.up = rotated(&h.local_up, &hq);
         h.frame.fwd = rotated(&h.local_forward, &hq);
         h.frame.right = rotated(&h.local_right, &hq);
-        h.frame.o = world_position(graph, h.bone);
+        h.frame.o = graph.world_position(h.bone);
     }
 
     // volumes.ts BodyVolumes.captureVolumeFrame
@@ -745,12 +744,12 @@ impl BodyVolumes {
         let (Some(chest), Some(sl), Some(sr), Some(frame)) = (chest, sl, sr, frame) else {
             return None;
         };
-        let q = world_quaternion(graph, chest);
+        let q = graph.world_quaternion(chest);
         let up = rotated(&frame.up, &q);
-        let o = world_position(graph, chest);
+        let o = graph.world_position(chest);
         // Horizontal distance from the trunk axis to each shoulder.
         let mut off = |b: u32| {
-            let mut v = world_position(graph, b);
+            let mut v = graph.world_position(b);
             v.sub(&o);
             let along = -v.dot(&up);
             v.add_scaled_vector(&up, along);
@@ -760,12 +759,12 @@ impl BodyVolumes {
         // Only between the hips and the shoulders is there a trunk to hit.
         let hips = match p.bone(BoneSlot::Hips) {
             Some(hips) => {
-                let mut v = world_position(graph, hips);
+                let mut v = graph.world_position(hips);
                 v.sub(&o).dot(&up)
             }
             None => -radius * 3.0,
         };
-        let mut top = world_position(graph, sr);
+        let mut top = graph.world_position(sr);
         let top = top.sub(&o).dot(&up);
         (radius > 1e-6).then(|| MeasuredVolume {
             r: None,
@@ -814,12 +813,12 @@ impl BodyVolumes {
         let (Some(base), Some(frame), Some(chest)) = (base, frame, chest) else {
             return (None, None);
         };
-        let q = world_quaternion(graph, chest);
+        let q = graph.world_quaternion(chest);
         let measured_in = VolumeFrame {
             up: rotated(&frame.up, &q),
             right: rotated(&frame.right, &q),
             fwd: rotated(&frame.forward, &q),
-            o: world_position(graph, chest),
+            o: graph.world_position(chest),
         };
         // The height range is fixed rather than taken from the vertices: the trunk
         // has to stop at the shoulders, or the neck stub raises its top and an arm
@@ -858,7 +857,7 @@ impl BodyVolumes {
         let (Some(head), Some(face)) = (p.bone(BoneSlot::Head), p.face.as_ref()) else {
             return (None, None);
         };
-        let q = world_quaternion(graph, head);
+        let q = graph.world_quaternion(head);
         let normalized = |v: &Vec3| {
             let mut out = rotated(v, &q);
             out.normalize();
@@ -868,7 +867,7 @@ impl BodyVolumes {
             up: normalized(&face.up),
             right: normalized(&face.right),
             fwd: normalized(&face.forward),
-            o: world_position(graph, head),
+            o: graph.world_position(head),
         };
         let Some(vol) = &p.measured.head else {
             return (None, Some(measured_in));
@@ -876,8 +875,8 @@ impl BodyVolumes {
         let skin = p.measured.face.as_ref().map(|skin| {
             // face.ts headFrame, which `FaceSurface.measure` reads the skin in.
             graph.update_world_matrix(head, true, false, false);
-            world_position(graph, head);
-            world_quaternion(graph, head);
+            graph.world_position(head);
+            graph.world_quaternion(head);
             FaceSurface::new(head, skin)
         });
         let volume = HeadVolume {

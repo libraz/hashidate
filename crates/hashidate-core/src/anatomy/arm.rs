@@ -7,7 +7,6 @@ use super::joints::JointTable;
 use super::palm_frame::rest_palm_normals;
 use super::strain::{clamp_dof, elevation_ceiling};
 use super::volumes::{BodyClearance, BodyVolumeFrame, BodyVolumes};
-use super::{world_position, world_quaternion};
 use crate::math::f::{acos, atan2, cos, hypot, js_max, js_min, sin};
 use crate::math::{Vec3, clamp};
 use crate::profile::{ArmSlot, BodyFrame, BoneSlot, Finger, Profile, Side};
@@ -122,10 +121,10 @@ impl ArmAnatomy {
                 continue;
             };
             graph.update_world_matrix(hand, true, false, false);
-            let mut along = world_position(graph, middle);
-            along.sub(&world_position(graph, hand)).normalize();
-            let mut across = world_position(graph, index);
-            across.sub(&world_position(graph, little)).normalize(); // toward the thumb
+            let mut along = graph.world_position(middle);
+            along.sub(&graph.world_position(hand)).normalize();
+            let mut across = graph.world_position(index);
+            across.sub(&graph.world_position(little)).normalize(); // toward the thumb
             let mut n = Vec3::default();
             n.cross_vectors(&palm, &along);
             radial_sign[side as usize] = if n.dot(&across) >= 0.0 { 1.0 } else { -1.0 };
@@ -141,7 +140,7 @@ impl ArmAnatomy {
             return false;
         };
         graph.update_world_matrix(chest, true, false, false);
-        let q = world_quaternion(graph, chest);
+        let q = graph.world_quaternion(chest);
         let mut up = frame.up;
         up.apply_quaternion(&q);
         let mut fwd = frame.forward;
@@ -1123,7 +1122,7 @@ mod tests {
         assert!(up.dot(&fwd).abs() < 1e-12 && up.dot(&right).abs() < 1e-12);
         // The trunk origin is the chest's world position.
         let chest = b.chest();
-        let at = super::super::world_position(&mut b.graph, chest);
+        let at = b.graph.world_position(chest);
         assert_eq!(*b.anat.axis_o(), at);
         assert_eq!(rotation_trust(0.26), 0.0);
         assert_eq!(rotation_trust(0.78), 1.0);

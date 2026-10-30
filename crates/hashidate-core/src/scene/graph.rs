@@ -428,6 +428,86 @@ impl Graph {
         }
     }
 
+    /// The node's `matrixWorld` as it stands, without updating it.
+    pub fn current_matrix_world(&self, i: u32) -> Mat4 {
+        mat4(&self.matrix_world, i as usize)
+    }
+
+    /// The node's `matrix` as it stands, without updating it.
+    pub fn local_matrix(&self, i: u32) -> Mat4 {
+        mat4(&self.matrix, i as usize)
+    }
+
+    // three r186 Object3D.getWorldPosition
+    pub fn world_position(&mut self, i: u32) -> Vec3 {
+        self.update_world_matrix(i, true, false, false);
+        let mut out = Vec3::default();
+        out.set_from_matrix_position(&self.current_matrix_world(i));
+        out
+    }
+
+    // three r186 Object3D.getWorldQuaternion
+    pub fn world_quaternion(&mut self, i: u32) -> Quat {
+        self.update_world_matrix(i, true, false, false);
+        let mut position = Vec3::default();
+        let mut out = Quat::default();
+        let mut scale = Vec3::default();
+        self.current_matrix_world(i)
+            .decompose(&mut position, &mut out, &mut scale);
+        out
+    }
+
+    // three r186 Object3D.getWorldScale
+    pub fn world_scale(&mut self, i: u32) -> Vec3 {
+        self.update_world_matrix(i, true, false, false);
+        let mut position = Vec3::default();
+        let mut quaternion = Quat::default();
+        let mut out = Vec3::default();
+        self.current_matrix_world(i)
+            .decompose(&mut position, &mut quaternion, &mut out);
+        out
+    }
+
+    /// The node's parent, or none for the root.
+    pub fn parent_of(&self, i: u32) -> Option<u32> {
+        let p = self.parent[i as usize];
+        (p != NO_NODE).then_some(p)
+    }
+
+    /// The node's local `position`.
+    pub fn local_position(&self, i: u32) -> Vec3 {
+        let n = 3 * i as usize;
+        Vec3::new(self.position[n], self.position[n + 1], self.position[n + 2])
+    }
+
+    pub fn set_local_position(&mut self, i: u32, v: &Vec3) {
+        let n = 3 * i as usize;
+        self.position[n..n + 3].copy_from_slice(&[v.x, v.y, v.z]);
+    }
+
+    /// The node's local `quaternion`.
+    pub fn local_quaternion(&self, i: u32) -> Quat {
+        let n = 4 * i as usize;
+        let q = &self.quaternion[n..n + 4];
+        Quat::new(q[0], q[1], q[2], q[3])
+    }
+
+    pub fn set_local_quaternion(&mut self, i: u32, q: &Quat) {
+        let n = 4 * i as usize;
+        self.quaternion[n..n + 4].copy_from_slice(&[q.x, q.y, q.z, q.w]);
+    }
+
+    /// The node's local `scale`.
+    pub fn local_scale(&self, i: u32) -> Vec3 {
+        let n = 3 * i as usize;
+        Vec3::new(self.scale[n], self.scale[n + 1], self.scale[n + 2])
+    }
+
+    pub fn set_local_scale(&mut self, i: u32, v: &Vec3) {
+        let n = 3 * i as usize;
+        self.scale[n..n + 3].copy_from_slice(&[v.x, v.y, v.z]);
+    }
+
     fn assert_built(&self) {
         assert!(self.built, "graph used before build");
     }

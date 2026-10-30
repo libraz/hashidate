@@ -1,6 +1,5 @@
 //! `anatomy/palm-frame.ts`: signed rest-pose palm normals.
 
-use super::{current_matrix_world, world_position};
 use crate::math::Vec3;
 use crate::profile::{ArmSlot, BoneSlot, Finger, Profile, Side};
 use crate::scene::graph::Graph;
@@ -22,7 +21,7 @@ pub fn rest_palm_normals(p: &Profile, graph: &mut Graph) -> [Option<Vec3>; 2] {
     let chest = p.chest();
     if let (Some(body), Some(chest)) = (&p.body, chest) {
         graph.update_world_matrix(chest, true, false, false);
-        let world = current_matrix_world(graph, chest);
+        let world = graph.current_matrix_world(chest);
         // The full matrix rather than its rotation, so a mirrored armature keeps
         // its handedness.
         up.copy(&body.up).transform_direction(&world);
@@ -48,10 +47,10 @@ pub fn rest_palm_normals(p: &Profile, graph: &mut Graph) -> [Option<Vec3>; 2] {
             continue;
         };
         graph.update_world_matrix(hand, true, false, false);
-        let mut across = world_position(graph, little);
-        across.sub(&world_position(graph, index)).normalize();
-        let mut along = world_position(graph, middle);
-        along.sub(&world_position(graph, hand)).normalize();
+        let mut across = graph.world_position(little);
+        across.sub(&graph.world_position(index)).normalize();
+        let mut along = graph.world_position(middle);
+        along.sub(&graph.world_position(hand)).normalize();
         let mut normal = Vec3::default();
         normal.cross_vectors(&along, &across).normalize();
         lateral.copy(&right);
@@ -80,7 +79,7 @@ mod tests {
         assert!((l.length() - 1.0).abs() < 1e-12);
         assert!((r.length() - 1.0).abs() < 1e-12);
         // Mirrored across the body's sagittal plane: the lateral components cancel, the rest agree.
-        let world = current_matrix_world(&graph, p.chest().unwrap());
+        let world = graph.current_matrix_world(p.chest().unwrap());
         let mut right = p.body.unwrap().right;
         right.transform_direction(&world);
         assert!((l.dot(&right) + r.dot(&right)).abs() < 1e-9);
