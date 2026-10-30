@@ -1,0 +1,24 @@
+{
+ "fn": "rollRoom",
+ "cases": 500,
+ "in": [
+  {
+   "name": "used",
+   "len": 1
+  },
+  {
+   "name": "d.free",
+   "len": 2
+  },
+  {
+   "name": "d.max",
+   "len": 2
+  }
+ ],
+ "out": [
+  {
+   "name": "return",
+   "len": 2
+  }
+ ]
+}

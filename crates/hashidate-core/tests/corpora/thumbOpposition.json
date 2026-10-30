@@ -1,0 +1,16 @@
+{
+ "fn": "thumbOpposition",
+ "cases": 500,
+ "in": [
+  {
+   "name": "amount",
+   "len": 1
+  }
+ ],
+ "out": [
+  {
+   "name": "return",
+   "len": 1
+  }
+ ]
+}

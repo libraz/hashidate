@@ -1,0 +1,72 @@
+{
+ "fn": "surfaceOf",
+ "cases": 123,
+ "in": [
+  {
+   "name": "t.r.present",
+   "len": 1
+  },
+  {
+   "name": "t.r",
+   "len": 192
+  },
+  {
+   "name": "t.bands",
+   "len": 1
+  },
+  {
+   "name": "t.sectors",
+   "len": 1
+  },
+  {
+   "name": "t.top",
+   "len": 1
+  },
+  {
+   "name": "t.bottom",
+   "len": 1
+  },
+  {
+   "name": "t.radius",
+   "len": 1
+  },
+  {
+   "name": "h",
+   "len": 1
+  },
+  {
+   "name": "theta",
+   "len": 1
+  },
+  {
+   "name": "gradient.present",
+   "len": 1
+  },
+  {
+   "name": "gradient.height",
+   "len": 1
+  },
+  {
+   "name": "gradient.bearing",
+   "len": 1
+  }
+ ],
+ "out": [
+  {
+   "name": "return",
+   "len": 1
+  },
+  {
+   "name": "gradient.present",
+   "len": 1
+  },
+  {
+   "name": "gradient.height",
+   "len": 1
+  },
+  {
+   "name": "gradient.bearing",
+   "len": 1
+  }
+ ]
+}

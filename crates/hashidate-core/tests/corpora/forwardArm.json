@@ -1,0 +1,452 @@
+{
+ "fn": "forwardArm",
+ "cases": 90,
+ "in": [
+  {
+   "name": "configuration.shoulderPlane",
+   "len": 1
+  },
+  {
+   "name": "configuration.shoulderLift",
+   "len": 1
+  },
+  {
+   "name": "configuration.humeralRotation",
+   "len": 1
+  },
+  {
+   "name": "configuration.elbowFlex",
+   "len": 1
+  },
+  {
+   "name": "configuration.forearmRoll",
+   "len": 1
+  },
+  {
+   "name": "configuration.wristFlex",
+   "len": 1
+  },
+  {
+   "name": "configuration.wristDev",
+   "len": 1
+  },
+  {
+   "name": "calibration.upper.axis",
+   "len": 3
+  },
+  {
+   "name": "calibration.upper.rest",
+   "len": 4
+  },
+  {
+   "name": "calibration.upper.front",
+   "len": 3
+  },
+  {
+   "name": "calibration.lower.axis",
+   "len": 3
+  },
+  {
+   "name": "calibration.lower.rest",
+   "len": 4
+  },
+  {
+   "name": "calibration.hand.axis",
+   "len": 3
+  },
+  {
+   "name": "calibration.hand.rest",
+   "len": 4
+  },
+  {
+   "name": "calibration.hand.palm",
+   "len": 3
+  },
+  {
+   "name": "calibration.radialSign",
+   "len": 1
+  },
+  {
+   "name": "calibration.joints.shoulder.dofs.rotation.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.shoulder.dofs.rotation.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation.len",
+   "len": 1
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[0]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[1]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[2]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[3]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[4]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[5]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[6]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[7]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[8]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.elbow.dofs.flexion.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.elbow.dofs.flexion.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.elbow.dofs.rotation.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.elbow.dofs.rotation.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.elbow.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "calibration.joints.wrist.dofs.flexion.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.wrist.dofs.flexion.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.wrist.dofs.deviation.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.wrist.dofs.deviation.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.wrist.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "calibration.joints.finger.dofs.proximal.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.finger.dofs.proximal.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.finger.dofs.intermediate.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.finger.dofs.intermediate.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.finger.dofs.distal.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.finger.dofs.distal.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.finger.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "calibration.joints.thumb.dofs.proximal.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.thumb.dofs.proximal.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.thumb.dofs.intermediate.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.thumb.dofs.intermediate.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.thumb.dofs.distal.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.thumb.dofs.distal.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.thumb.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "calibration.joints.neck.dofs.pitch.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.neck.dofs.pitch.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.neck.dofs.yaw.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.neck.dofs.yaw.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.neck.dofs.roll.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.neck.dofs.roll.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.neck.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "calibration.joints.spine.dofs.pitch.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.spine.dofs.pitch.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.spine.dofs.yaw.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.spine.dofs.yaw.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.spine.dofs.roll.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.spine.dofs.roll.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.spine.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "context.side",
+   "len": 1
+  },
+  {
+   "name": "context.shoulder",
+   "len": 3
+  },
+  {
+   "name": "context.upperLength",
+   "len": 1
+  },
+  {
+   "name": "context.lowerLength",
+   "len": 1
+  },
+  {
+   "name": "context.up",
+   "len": 3
+  },
+  {
+   "name": "context.right",
+   "len": 3
+  },
+  {
+   "name": "context.forward",
+   "len": 3
+  },
+  {
+   "name": "context.upperParentWorld",
+   "len": 4
+  },
+  {
+   "name": "out.u",
+   "len": 3
+  },
+  {
+   "name": "out.l",
+   "len": 3
+  },
+  {
+   "name": "out.h",
+   "len": 3
+  },
+  {
+   "name": "out.palm",
+   "len": 3
+  },
+  {
+   "name": "out.elbow",
+   "len": 3
+  },
+  {
+   "name": "out.wrist",
+   "len": 3
+  },
+  {
+   "name": "out.upperWorld",
+   "len": 4
+  },
+  {
+   "name": "out.lowerWorld",
+   "len": 4
+  },
+  {
+   "name": "out.handWorld",
+   "len": 4
+  },
+  {
+   "name": "out.upperLocal",
+   "len": 4
+  },
+  {
+   "name": "out.lowerLocal",
+   "len": 4
+  },
+  {
+   "name": "out.handLocal",
+   "len": 4
+  }
+ ],
+ "out": [
+  {
+   "name": "return.u",
+   "len": 3
+  },
+  {
+   "name": "return.l",
+   "len": 3
+  },
+  {
+   "name": "return.h",
+   "len": 3
+  },
+  {
+   "name": "return.palm",
+   "len": 3
+  },
+  {
+   "name": "return.elbow",
+   "len": 3
+  },
+  {
+   "name": "return.wrist",
+   "len": 3
+  },
+  {
+   "name": "return.upperWorld",
+   "len": 4
+  },
+  {
+   "name": "return.lowerWorld",
+   "len": 4
+  },
+  {
+   "name": "return.handWorld",
+   "len": 4
+  },
+  {
+   "name": "return.upperLocal",
+   "len": 4
+  },
+  {
+   "name": "return.lowerLocal",
+   "len": 4
+  },
+  {
+   "name": "return.handLocal",
+   "len": 4
+  },
+  {
+   "name": "out.u",
+   "len": 3
+  },
+  {
+   "name": "out.l",
+   "len": 3
+  },
+  {
+   "name": "out.h",
+   "len": 3
+  },
+  {
+   "name": "out.palm",
+   "len": 3
+  },
+  {
+   "name": "out.elbow",
+   "len": 3
+  },
+  {
+   "name": "out.wrist",
+   "len": 3
+  },
+  {
+   "name": "out.upperWorld",
+   "len": 4
+  },
+  {
+   "name": "out.lowerWorld",
+   "len": 4
+  },
+  {
+   "name": "out.handWorld",
+   "len": 4
+  },
+  {
+   "name": "out.upperLocal",
+   "len": 4
+  },
+  {
+   "name": "out.lowerLocal",
+   "len": 4
+  },
+  {
+   "name": "out.handLocal",
+   "len": 4
+  }
+ ]
+}

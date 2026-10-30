@@ -9,6 +9,8 @@ import { configDefaults, defineConfig } from 'vitest/config';
  * do not, so they run in a project of their own, outside the coverage pass.
  */
 const SWEEPS = [
+  'tests/engine/director-parity.test.ts',
+  'tests/parity/record-corpora.test.ts',
   'tests/motion/body/arm-budget.test.ts',
   'tests/motion/body/cute.test.ts',
   'tests/motion/body/entrance.test.ts',

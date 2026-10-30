@@ -1,0 +1,92 @@
+{
+ "fn": "solveDualActiveSet",
+ "cases": 10,
+ "in": [
+  {
+   "name": "A",
+   "len": 917
+  },
+  {
+   "name": "b",
+   "len": 131
+  },
+  {
+   "name": "Z",
+   "len": 917
+  },
+  {
+   "name": "count",
+   "len": 1
+  },
+  {
+   "name": "u",
+   "len": 7
+  },
+  {
+   "name": "delta",
+   "len": 7
+  },
+  {
+   "name": "lambda",
+   "len": 131
+  },
+  {
+   "name": "scratch.working",
+   "len": 7
+  },
+  {
+   "name": "scratch.gram",
+   "len": 49
+  },
+  {
+   "name": "scratch.gramFactor",
+   "len": 49
+  },
+  {
+   "name": "scratch.r",
+   "len": 7
+  },
+  {
+   "name": "scratch.d",
+   "len": 7
+  }
+ ],
+ "out": [
+  {
+   "name": "return",
+   "len": 1
+  },
+  {
+   "name": "u",
+   "len": 7
+  },
+  {
+   "name": "delta",
+   "len": 7
+  },
+  {
+   "name": "lambda",
+   "len": 131
+  },
+  {
+   "name": "scratch.working",
+   "len": 7
+  },
+  {
+   "name": "scratch.gram",
+   "len": 49
+  },
+  {
+   "name": "scratch.gramFactor",
+   "len": 49
+  },
+  {
+   "name": "scratch.r",
+   "len": 7
+  },
+  {
+   "name": "scratch.d",
+   "len": 7
+  }
+ ]
+}

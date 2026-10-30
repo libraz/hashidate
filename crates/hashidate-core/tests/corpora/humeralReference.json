@@ -1,0 +1,32 @@
+{
+ "fn": "humeralReference",
+ "cases": 500,
+ "in": [
+  {
+   "name": "u",
+   "len": 3
+  },
+  {
+   "name": "up",
+   "len": 3
+  },
+  {
+   "name": "forward",
+   "len": 3
+  },
+  {
+   "name": "out",
+   "len": 3
+  }
+ ],
+ "out": [
+  {
+   "name": "return",
+   "len": 3
+  },
+  {
+   "name": "out",
+   "len": 3
+  }
+ ]
+}

@@ -1,0 +1,16 @@
+{
+ "fn": "validationSamples",
+ "cases": 500,
+ "in": [
+  {
+   "name": "dt",
+   "len": 1
+  }
+ ],
+ "out": [
+  {
+   "name": "return",
+   "len": 1
+  }
+ ]
+}

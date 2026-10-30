@@ -1,0 +1,5236 @@
+{
+ "fn": "makeArmPathPlanOutput",
+ "cases": 12,
+ "in": [
+  {
+   "name": "calibration.upper.axis",
+   "len": 3
+  },
+  {
+   "name": "calibration.upper.rest",
+   "len": 4
+  },
+  {
+   "name": "calibration.upper.front",
+   "len": 3
+  },
+  {
+   "name": "calibration.lower.axis",
+   "len": 3
+  },
+  {
+   "name": "calibration.lower.rest",
+   "len": 4
+  },
+  {
+   "name": "calibration.hand.axis",
+   "len": 3
+  },
+  {
+   "name": "calibration.hand.rest",
+   "len": 4
+  },
+  {
+   "name": "calibration.hand.palm",
+   "len": 3
+  },
+  {
+   "name": "calibration.radialSign",
+   "len": 1
+  },
+  {
+   "name": "calibration.joints.shoulder.dofs.rotation.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.shoulder.dofs.rotation.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation.len",
+   "len": 1
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[0]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[1]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[2]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[3]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[4]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[5]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[6]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[7]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.shoulder.elevation[8]",
+   "len": 3
+  },
+  {
+   "name": "calibration.joints.elbow.dofs.flexion.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.elbow.dofs.flexion.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.elbow.dofs.rotation.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.elbow.dofs.rotation.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.elbow.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "calibration.joints.wrist.dofs.flexion.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.wrist.dofs.flexion.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.wrist.dofs.deviation.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.wrist.dofs.deviation.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.wrist.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "calibration.joints.finger.dofs.proximal.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.finger.dofs.proximal.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.finger.dofs.intermediate.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.finger.dofs.intermediate.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.finger.dofs.distal.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.finger.dofs.distal.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.finger.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "calibration.joints.thumb.dofs.proximal.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.thumb.dofs.proximal.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.thumb.dofs.intermediate.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.thumb.dofs.intermediate.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.thumb.dofs.distal.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.thumb.dofs.distal.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.thumb.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "calibration.joints.neck.dofs.pitch.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.neck.dofs.pitch.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.neck.dofs.yaw.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.neck.dofs.yaw.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.neck.dofs.roll.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.neck.dofs.roll.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.neck.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "calibration.joints.spine.dofs.pitch.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.spine.dofs.pitch.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.spine.dofs.yaw.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.spine.dofs.yaw.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.spine.dofs.roll.free",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.spine.dofs.roll.max",
+   "len": 2
+  },
+  {
+   "name": "calibration.joints.spine.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.handPresent.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.handPresent",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.metricScale",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.joints.shoulder.dofs.rotation.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.shoulder.dofs.rotation.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.shoulder.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.joints.shoulder.elevation.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.joints.shoulder.elevation[0]",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.joints.shoulder.elevation[1]",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.joints.shoulder.elevation[2]",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.joints.shoulder.elevation[3]",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.joints.shoulder.elevation[4]",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.joints.shoulder.elevation[5]",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.joints.shoulder.elevation[6]",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.joints.shoulder.elevation[7]",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.joints.shoulder.elevation[8]",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.joints.elbow.dofs.flexion.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.elbow.dofs.flexion.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.elbow.dofs.rotation.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.elbow.dofs.rotation.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.elbow.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.joints.wrist.dofs.flexion.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.wrist.dofs.flexion.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.wrist.dofs.deviation.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.wrist.dofs.deviation.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.wrist.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.joints.finger.dofs.proximal.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.finger.dofs.proximal.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.finger.dofs.intermediate.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.finger.dofs.intermediate.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.finger.dofs.distal.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.finger.dofs.distal.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.finger.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.joints.thumb.dofs.proximal.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.thumb.dofs.proximal.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.thumb.dofs.intermediate.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.thumb.dofs.intermediate.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.thumb.dofs.distal.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.thumb.dofs.distal.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.thumb.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.joints.neck.dofs.pitch.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.neck.dofs.pitch.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.neck.dofs.yaw.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.neck.dofs.yaw.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.neck.dofs.roll.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.neck.dofs.roll.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.neck.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.joints.spine.dofs.pitch.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.spine.dofs.pitch.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.spine.dofs.yaw.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.spine.dofs.yaw.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.spine.dofs.roll.free",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.spine.dofs.roll.max",
+   "len": 2
+  },
+  {
+   "name": "handGeometry.joints.spine.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[0].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[0].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[0].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[0].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[0].nodes.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[0].nodes[0].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[0].nodes[0].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[0].nodes[0].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[0].nodes[0].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[0].nodes[0].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[0].nodes[0].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[0].nodes[0].splayAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[0].nodes[0].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[0].nodes[0].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[0].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[0].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[1].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[1].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[1].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[1].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[1].nodes.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[1].nodes[0].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[1].nodes[0].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[1].nodes[0].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[1].nodes[0].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[1].nodes[0].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[1].nodes[0].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[1].nodes[0].splayAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[1].nodes[0].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[1].nodes[0].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[1].nodes[1].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[1].nodes[1].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[1].nodes[1].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[1].nodes[1].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[1].nodes[1].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[1].nodes[1].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[1].nodes[1].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[1].nodes[1].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[1].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[1].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].nodes.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].nodes[0].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[2].nodes[0].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[2].nodes[0].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[2].nodes[0].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].nodes[0].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[2].nodes[0].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].nodes[0].splayAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[2].nodes[0].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].nodes[0].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].nodes[1].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[2].nodes[1].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[2].nodes[1].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[2].nodes[1].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].nodes[1].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[2].nodes[1].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].nodes[1].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].nodes[1].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].nodes[2].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[2].nodes[2].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[2].nodes[2].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[2].nodes[2].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].nodes[2].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[2].nodes[2].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].nodes[2].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].nodes[2].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[2].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[3].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[3].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[3].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[3].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[3].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[3].previousPoint",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[3].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[3].lastPoint",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[4].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[4].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[4].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[4].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[4].nodes.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[4].nodes[0].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[4].nodes[0].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[4].nodes[0].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[4].nodes[0].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[4].nodes[0].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[4].nodes[0].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[4].nodes[0].splayAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[4].nodes[0].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[4].nodes[0].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[4].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[4].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[5].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[5].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[5].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[5].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[5].nodes.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[5].nodes[0].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[5].nodes[0].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[5].nodes[0].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[5].nodes[0].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[5].nodes[0].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[5].nodes[0].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[5].nodes[0].splayAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[5].nodes[0].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[5].nodes[0].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[5].nodes[1].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[5].nodes[1].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[5].nodes[1].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[5].nodes[1].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[5].nodes[1].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[5].nodes[1].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[5].nodes[1].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[5].nodes[1].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[5].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[5].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].nodes.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].nodes[0].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[6].nodes[0].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[6].nodes[0].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[6].nodes[0].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].nodes[0].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[6].nodes[0].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].nodes[0].splayAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[6].nodes[0].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].nodes[0].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].nodes[1].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[6].nodes[1].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[6].nodes[1].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[6].nodes[1].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].nodes[1].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[6].nodes[1].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].nodes[1].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].nodes[1].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].nodes[2].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[6].nodes[2].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[6].nodes[2].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[6].nodes[2].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].nodes[2].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[6].nodes[2].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].nodes[2].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].nodes[2].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[6].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[7].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[7].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[7].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[7].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[7].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[7].previousPoint",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[7].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[7].lastPoint",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[8].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[8].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[8].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[8].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[8].nodes.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[8].nodes[0].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[8].nodes[0].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[8].nodes[0].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[8].nodes[0].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[8].nodes[0].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[8].nodes[0].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[8].nodes[0].splayAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[8].nodes[0].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[8].nodes[0].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[8].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[8].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[9].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[9].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[9].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[9].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[9].nodes.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[9].nodes[0].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[9].nodes[0].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[9].nodes[0].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[9].nodes[0].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[9].nodes[0].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[9].nodes[0].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[9].nodes[0].splayAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[9].nodes[0].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[9].nodes[0].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[9].nodes[1].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[9].nodes[1].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[9].nodes[1].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[9].nodes[1].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[9].nodes[1].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[9].nodes[1].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[9].nodes[1].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[9].nodes[1].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[9].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[9].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].nodes.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].nodes[0].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[10].nodes[0].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[10].nodes[0].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[10].nodes[0].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].nodes[0].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[10].nodes[0].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].nodes[0].splayAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[10].nodes[0].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].nodes[0].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].nodes[1].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[10].nodes[1].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[10].nodes[1].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[10].nodes[1].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].nodes[1].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[10].nodes[1].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].nodes[1].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].nodes[1].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].nodes[2].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[10].nodes[2].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[10].nodes[2].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[10].nodes[2].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].nodes[2].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[10].nodes[2].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].nodes[2].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].nodes[2].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[10].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[11].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[11].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[11].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[11].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[11].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[11].previousPoint",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[11].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[11].lastPoint",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[12].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[12].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[12].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[12].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[12].nodes.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[12].nodes[0].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[12].nodes[0].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[12].nodes[0].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[12].nodes[0].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[12].nodes[0].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[12].nodes[0].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[12].nodes[0].splayAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[12].nodes[0].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[12].nodes[0].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[12].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[12].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[13].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[13].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[13].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[13].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[13].nodes.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[13].nodes[0].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[13].nodes[0].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[13].nodes[0].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[13].nodes[0].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[13].nodes[0].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[13].nodes[0].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[13].nodes[0].splayAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[13].nodes[0].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[13].nodes[0].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[13].nodes[1].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[13].nodes[1].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[13].nodes[1].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[13].nodes[1].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[13].nodes[1].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[13].nodes[1].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[13].nodes[1].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[13].nodes[1].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[13].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[13].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].nodes.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].nodes[0].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[14].nodes[0].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[14].nodes[0].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[14].nodes[0].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].nodes[0].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[14].nodes[0].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].nodes[0].splayAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[14].nodes[0].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].nodes[0].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].nodes[1].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[14].nodes[1].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[14].nodes[1].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[14].nodes[1].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].nodes[1].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[14].nodes[1].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].nodes[1].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].nodes[1].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].nodes[2].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[14].nodes[2].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[14].nodes[2].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[14].nodes[2].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].nodes[2].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[14].nodes[2].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].nodes[2].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].nodes[2].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[14].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[15].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[15].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[15].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[15].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[15].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[15].previousPoint",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[15].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[15].lastPoint",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[16].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[16].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[16].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[16].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[16].nodes.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[16].nodes[0].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[16].nodes[0].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[16].nodes[0].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[16].nodes[0].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[16].nodes[0].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[16].nodes[0].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[16].nodes[0].splayAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[16].nodes[0].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[16].nodes[0].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[16].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[16].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[17].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[17].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[17].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[17].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[17].nodes.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[17].nodes[0].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[17].nodes[0].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[17].nodes[0].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[17].nodes[0].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[17].nodes[0].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[17].nodes[0].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[17].nodes[0].splayAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[17].nodes[0].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[17].nodes[0].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[17].nodes[1].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[17].nodes[1].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[17].nodes[1].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[17].nodes[1].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[17].nodes[1].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[17].nodes[1].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[17].nodes[1].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[17].nodes[1].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[17].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[17].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].nodes.len",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].nodes[0].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[18].nodes[0].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[18].nodes[0].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[18].nodes[0].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].nodes[0].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[18].nodes[0].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].nodes[0].splayAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[18].nodes[0].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].nodes[0].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].nodes[1].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[18].nodes[1].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[18].nodes[1].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[18].nodes[1].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].nodes[1].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[18].nodes[1].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].nodes[1].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].nodes[1].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].nodes[2].position",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[18].nodes[2].rest",
+   "len": 4
+  },
+  {
+   "name": "handGeometry.points[18].nodes[2].scale",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[18].nodes[2].curlAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].nodes[2].curlAxis",
+   "len": 3
+  },
+  {
+   "name": "handGeometry.points[18].nodes[2].splayAxis.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].nodes[2].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].nodes[2].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[18].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[19].finger",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[19].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[19].tip",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[19].nodes.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[19].previousPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[19].previousPoint",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[19].lastPoint.present",
+   "len": 1
+  },
+  {
+   "name": "handGeometry.points[19].lastPoint",
+   "len": 1
+  },
+  {
+   "name": "rowCount",
+   "len": 1
+  }
+ ],
+ "out": [
+  {
+   "name": "return.q",
+   "len": 7
+  },
+  {
+   "name": "return.configuration.shoulderPlane",
+   "len": 1
+  },
+  {
+   "name": "return.configuration.shoulderLift",
+   "len": 1
+  },
+  {
+   "name": "return.configuration.humeralRotation",
+   "len": 1
+  },
+  {
+   "name": "return.configuration.elbowFlex",
+   "len": 1
+  },
+  {
+   "name": "return.configuration.forearmRoll",
+   "len": 1
+  },
+  {
+   "name": "return.configuration.wristFlex",
+   "len": 1
+  },
+  {
+   "name": "return.configuration.wristDev",
+   "len": 1
+  },
+  {
+   "name": "return.forward.u",
+   "len": 3
+  },
+  {
+   "name": "return.forward.l",
+   "len": 3
+  },
+  {
+   "name": "return.forward.h",
+   "len": 3
+  },
+  {
+   "name": "return.forward.palm",
+   "len": 3
+  },
+  {
+   "name": "return.forward.elbow",
+   "len": 3
+  },
+  {
+   "name": "return.forward.wrist",
+   "len": 3
+  },
+  {
+   "name": "return.forward.upperWorld",
+   "len": 4
+  },
+  {
+   "name": "return.forward.lowerWorld",
+   "len": 4
+  },
+  {
+   "name": "return.forward.handWorld",
+   "len": 4
+  },
+  {
+   "name": "return.forward.upperLocal",
+   "len": 4
+  },
+  {
+   "name": "return.forward.lowerLocal",
+   "len": 4
+  },
+  {
+   "name": "return.forward.handLocal",
+   "len": 4
+  },
+  {
+   "name": "return.points.len",
+   "len": 1
+  },
+  {
+   "name": "return.points[0].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[0].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[0].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[0].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[0].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[0].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[1].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[1].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[1].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[1].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[1].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[1].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[2].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[2].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[2].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[2].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[2].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[2].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[3].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[3].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[3].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[3].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[3].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[3].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[4].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[4].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[4].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[4].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[4].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[4].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[5].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[5].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[5].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[5].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[5].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[5].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[6].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[6].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[6].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[6].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[6].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[6].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[7].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[7].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[7].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[7].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[7].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[7].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[8].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[8].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[8].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[8].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[8].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[8].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[9].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[9].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[9].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[9].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[9].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[9].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[10].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[10].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[10].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[10].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[10].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[10].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[11].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[11].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[11].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[11].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[11].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[11].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[12].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[12].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[12].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[12].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[12].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[12].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[13].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[13].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[13].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[13].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[13].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[13].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[14].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[14].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[14].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[14].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[14].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[14].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[15].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[15].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[15].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[15].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[15].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[15].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[16].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[16].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[16].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[16].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[16].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[16].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[17].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[17].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[17].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[17].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[17].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[17].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[18].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[18].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[18].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[18].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[18].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[18].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[19].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[19].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[19].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[19].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[19].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[19].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[19].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[19].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[19].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[20].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[20].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[20].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[20].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[20].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[20].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[20].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[20].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[20].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[21].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[21].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[21].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[21].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[21].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[21].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[21].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[21].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[21].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[22].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[22].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[22].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[22].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[22].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[22].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[22].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[22].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[22].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[23].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[23].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[23].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[23].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[23].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[23].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[23].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[23].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[23].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[24].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[24].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[24].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[24].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[24].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[24].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[24].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[24].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[24].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[25].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[25].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[25].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[25].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[25].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[25].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[25].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[25].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[25].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[26].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[26].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[26].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[26].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[26].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[26].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[26].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[26].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[26].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[27].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[27].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[27].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[27].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[27].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[27].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[27].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[27].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[27].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[28].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[28].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[28].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[28].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[28].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[28].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[28].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[28].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[28].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[29].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[29].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[29].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[29].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[29].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[29].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[29].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[29].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[29].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[30].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[30].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[30].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[30].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[30].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[30].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[30].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[30].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[30].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[31].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[31].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[31].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[31].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[31].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[31].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[31].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[31].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[31].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[32].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[32].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[32].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[32].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[32].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[32].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[32].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[32].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[32].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[33].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[33].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[33].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[33].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[33].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[33].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[33].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[33].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[33].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[34].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[34].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[34].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[34].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[34].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[34].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[34].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[34].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[34].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[35].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[35].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[35].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[35].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[35].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[35].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[35].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[35].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[35].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[36].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[36].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[36].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[36].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[36].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[36].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[36].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[36].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[36].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[37].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[37].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[37].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[37].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[37].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[37].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[37].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[37].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[37].position",
+   "len": 3
+  },
+  {
+   "name": "return.points[38].kind",
+   "len": 1
+  },
+  {
+   "name": "return.points[38].index",
+   "len": 1
+  },
+  {
+   "name": "return.points[38].finger.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[38].finger",
+   "len": 1
+  },
+  {
+   "name": "return.points[38].jointIndex.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[38].jointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.points[38].tip.present",
+   "len": 1
+  },
+  {
+   "name": "return.points[38].tip",
+   "len": 1
+  },
+  {
+   "name": "return.points[38].position",
+   "len": 3
+  },
+  {
+   "name": "return.clearances.len",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[0].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[0].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[0].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[0].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[1].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[1].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[1].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[1].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[2].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[2].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[2].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[2].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[3].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[3].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[3].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[3].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[4].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[4].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[4].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[4].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[5].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[5].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[5].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[5].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[6].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[6].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[6].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[6].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[7].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[7].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[7].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[7].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[8].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[8].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[8].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[8].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[9].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[9].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[9].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[9].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[10].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[10].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[10].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[10].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[11].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[11].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[11].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[11].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[12].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[12].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[12].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[12].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[13].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[13].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[13].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[13].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[14].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[14].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[14].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[14].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[15].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[15].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[15].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[15].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[16].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[16].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[16].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[16].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[17].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[17].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[17].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[17].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[18].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[18].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[18].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[18].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[19].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[19].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[19].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[19].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[20].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[20].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[20].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[20].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[21].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[21].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[21].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[21].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[22].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[22].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[22].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[22].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[23].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[23].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[23].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[23].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[24].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[24].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[24].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[24].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[25].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[25].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[25].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[25].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[26].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[26].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[26].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[26].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[27].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[27].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[27].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[27].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[28].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[28].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[28].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[28].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[29].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[29].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[29].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[29].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[30].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[30].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[30].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[30].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[31].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[31].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[31].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[31].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[32].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[32].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[32].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[32].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[33].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[33].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[33].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[33].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[34].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[34].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[34].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[34].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[35].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[35].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[35].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[35].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[36].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[36].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[36].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[36].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[37].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[37].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[37].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[37].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[38].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[38].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[38].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[38].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[39].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[39].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[39].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[39].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[40].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[40].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[40].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[40].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[41].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[41].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[41].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[41].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[42].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[42].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[42].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[42].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[43].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[43].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[43].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[43].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[44].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[44].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[44].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[44].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[45].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[45].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[45].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[45].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[46].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[46].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[46].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[46].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[47].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[47].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[47].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[47].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[48].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[48].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[48].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[48].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[49].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[49].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[49].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[49].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[50].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[50].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[50].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[50].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[51].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[51].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[51].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[51].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[52].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[52].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[52].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[52].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[53].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[53].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[53].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[53].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[54].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[54].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[54].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[54].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[55].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[55].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[55].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[55].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[56].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[56].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[56].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[56].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[57].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[57].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[57].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[57].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[58].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[58].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[58].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[58].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[59].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[59].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[59].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[59].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[60].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[60].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[60].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[60].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[61].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[61].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[61].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[61].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[62].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[62].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[62].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[62].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[63].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[63].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[63].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[63].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[64].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[64].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[64].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[64].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[65].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[65].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[65].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[65].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[66].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[66].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[66].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[66].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[67].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[67].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[67].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[67].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[68].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[68].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[68].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[68].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[69].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[69].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[69].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[69].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[70].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[70].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[70].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[70].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[71].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[71].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[71].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[71].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[72].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[72].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[72].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[72].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[73].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[73].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[73].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[73].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[74].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[74].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[74].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[74].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[75].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[75].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[75].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[75].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[76].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[76].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[76].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[76].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[77].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[77].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[77].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[77].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[78].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[78].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[78].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[78].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[79].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[79].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[79].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[79].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[80].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[80].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[80].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[80].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[81].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[81].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[81].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[81].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[82].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[82].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[82].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[82].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[83].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[83].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[83].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[83].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[84].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[84].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[84].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[84].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[85].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[85].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[85].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[85].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[86].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[86].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[86].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[86].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[87].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[87].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[87].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[87].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[88].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[88].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[88].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[88].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[89].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[89].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[89].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[89].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[90].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[90].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[90].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[90].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[91].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[91].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[91].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[91].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[92].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[92].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[92].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[92].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[93].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[93].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[93].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[93].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[94].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[94].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[94].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[94].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[95].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[95].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[95].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[95].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[96].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[96].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[96].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[96].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[97].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[97].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[97].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[97].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[98].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[98].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[98].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[98].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[99].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[99].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[99].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[99].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[100].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[100].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[100].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[100].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[101].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[101].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[101].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[101].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[102].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[102].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[102].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[102].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[103].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[103].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[103].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[103].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[104].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[104].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[104].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[104].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[105].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[105].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[105].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[105].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[106].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[106].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[106].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[106].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[107].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[107].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[107].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[107].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[108].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[108].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[108].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[108].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[109].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[109].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[109].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[109].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[110].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[110].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[110].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[110].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[111].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[111].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[111].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[111].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[112].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[112].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[112].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[112].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[113].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[113].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[113].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[113].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[114].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[114].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[114].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[114].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[115].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[115].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[115].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[115].normal",
+   "len": 3
+  },
+  {
+   "name": "return.clearances[116].pointIndex",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[116].valid",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[116].distance",
+   "len": 1
+  },
+  {
+   "name": "return.clearances[116].normal",
+   "len": 3
+  },
+  {
+   "name": "return.status",
+   "len": 1
+  },
+  {
+   "name": "return.positionError",
+   "len": 1
+  },
+  {
+   "name": "return.orientationError",
+   "len": 1
+  },
+  {
+   "name": "return.secondaryError",
+   "len": 1
+  },
+  {
+   "name": "return.maxViolation",
+   "len": 1
+  },
+  {
+   "name": "return.iterations",
+   "len": 1
+  },
+  {
+   "name": "return.environmentBatches",
+   "len": 1
+  }
+ ]
+}

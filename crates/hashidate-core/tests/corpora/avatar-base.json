@@ -1,0 +1,988 @@
+{
+ "arrays": [
+  {
+   "name": "node.kind",
+   "kind": "u32",
+   "offset": 0,
+   "len": 74
+  },
+  {
+   "name": "node.parent",
+   "kind": "u32",
+   "offset": 296,
+   "len": 74
+  },
+  {
+   "name": "node.flags",
+   "kind": "u32",
+   "offset": 592,
+   "len": 74
+  },
+  {
+   "name": "node.position",
+   "kind": "f64",
+   "offset": 888,
+   "len": 222
+  },
+  {
+   "name": "node.quaternion",
+   "kind": "f64",
+   "offset": 2664,
+   "len": 296
+  },
+  {
+   "name": "node.scale",
+   "kind": "f64",
+   "offset": 5032,
+   "len": 222
+  },
+  {
+   "name": "node.pivot",
+   "kind": "f64",
+   "offset": 6808,
+   "len": 222
+  },
+  {
+   "name": "node.matrix",
+   "kind": "f64",
+   "offset": 8584,
+   "len": 1184
+  },
+  {
+   "name": "node.matrixWorld",
+   "kind": "f64",
+   "offset": 18056,
+   "len": 1184
+  },
+  {
+   "name": "skinned.node",
+   "kind": "u32",
+   "offset": 27528,
+   "len": 2
+  },
+  {
+   "name": "skinned.bindMode",
+   "kind": "u32",
+   "offset": 27536,
+   "len": 2
+  },
+  {
+   "name": "skinned.skeleton",
+   "kind": "u32",
+   "offset": 27544,
+   "len": 2
+  },
+  {
+   "name": "skinned.bindMatrix",
+   "kind": "f64",
+   "offset": 27552,
+   "len": 32
+  },
+  {
+   "name": "skinned.bindMatrixInverse",
+   "kind": "f64",
+   "offset": 27808,
+   "len": 32
+  },
+  {
+   "name": "skeleton.boneCount",
+   "kind": "u32",
+   "offset": 28064,
+   "len": 1
+  },
+  {
+   "name": "skeleton.bones",
+   "kind": "u32",
+   "offset": 28072,
+   "len": 59
+  },
+  {
+   "name": "skeleton.boneInverses",
+   "kind": "f64",
+   "offset": 28312,
+   "len": 944
+  },
+  {
+   "name": "profile.bones.hips",
+   "kind": "u32",
+   "offset": 35864,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.spine",
+   "kind": "u32",
+   "offset": 35872,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.chest",
+   "kind": "u32",
+   "offset": 35880,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.neck",
+   "kind": "u32",
+   "offset": 35888,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.head",
+   "kind": "u32",
+   "offset": 35896,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.eye.L",
+   "kind": "u32",
+   "offset": 35904,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.eye.R",
+   "kind": "u32",
+   "offset": 35912,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.shoulder.L",
+   "kind": "u32",
+   "offset": 35920,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.shoulder.R",
+   "kind": "u32",
+   "offset": 35928,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.upperArm.L",
+   "kind": "u32",
+   "offset": 35936,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.upperArm.R",
+   "kind": "u32",
+   "offset": 35944,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.lowerArm.L",
+   "kind": "u32",
+   "offset": 35952,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.lowerArm.R",
+   "kind": "u32",
+   "offset": 35960,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.hand.L",
+   "kind": "u32",
+   "offset": 35968,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.hand.R",
+   "kind": "u32",
+   "offset": 35976,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.upperLeg.L",
+   "kind": "u32",
+   "offset": 35984,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.upperLeg.R",
+   "kind": "u32",
+   "offset": 35992,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.lowerLeg.L",
+   "kind": "u32",
+   "offset": 36000,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.lowerLeg.R",
+   "kind": "u32",
+   "offset": 36008,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.foot.L",
+   "kind": "u32",
+   "offset": 36016,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.foot.R",
+   "kind": "u32",
+   "offset": 36024,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.toe.L",
+   "kind": "u32",
+   "offset": 36032,
+   "len": 1
+  },
+  {
+   "name": "profile.bones.toe.R",
+   "kind": "u32",
+   "offset": 36040,
+   "len": 1
+  },
+  {
+   "name": "profile.fingerBones.thumb.L",
+   "kind": "u32",
+   "offset": 36048,
+   "len": 3
+  },
+  {
+   "name": "profile.fingerBones.index.L",
+   "kind": "u32",
+   "offset": 36064,
+   "len": 3
+  },
+  {
+   "name": "profile.fingerBones.middle.L",
+   "kind": "u32",
+   "offset": 36080,
+   "len": 3
+  },
+  {
+   "name": "profile.fingerBones.ring.L",
+   "kind": "u32",
+   "offset": 36096,
+   "len": 3
+  },
+  {
+   "name": "profile.fingerBones.little.L",
+   "kind": "u32",
+   "offset": 36112,
+   "len": 3
+  },
+  {
+   "name": "profile.fingerBones.thumb.R",
+   "kind": "u32",
+   "offset": 36128,
+   "len": 3
+  },
+  {
+   "name": "profile.fingerBones.index.R",
+   "kind": "u32",
+   "offset": 36144,
+   "len": 3
+  },
+  {
+   "name": "profile.fingerBones.middle.R",
+   "kind": "u32",
+   "offset": 36160,
+   "len": 3
+  },
+  {
+   "name": "profile.fingerBones.ring.R",
+   "kind": "u32",
+   "offset": 36176,
+   "len": 3
+  },
+  {
+   "name": "profile.fingerBones.little.R",
+   "kind": "u32",
+   "offset": 36192,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.hips",
+   "kind": "f64",
+   "offset": 36208,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.spine",
+   "kind": "f64",
+   "offset": 36232,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.chest",
+   "kind": "f64",
+   "offset": 36256,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.neck",
+   "kind": "f64",
+   "offset": 36280,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.head",
+   "kind": "f64",
+   "offset": 36304,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.eye.L",
+   "kind": "f64",
+   "offset": 36328,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.eye.R",
+   "kind": "f64",
+   "offset": 36352,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.shoulder.L",
+   "kind": "f64",
+   "offset": 36376,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.shoulder.R",
+   "kind": "f64",
+   "offset": 36400,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.upperArm.L",
+   "kind": "f64",
+   "offset": 36424,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.upperArm.R",
+   "kind": "f64",
+   "offset": 36448,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.lowerArm.L",
+   "kind": "f64",
+   "offset": 36472,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.lowerArm.R",
+   "kind": "f64",
+   "offset": 36496,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.hand.L",
+   "kind": "f64",
+   "offset": 36520,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.hand.R",
+   "kind": "f64",
+   "offset": 36544,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.upperLeg.L",
+   "kind": "f64",
+   "offset": 36568,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.upperLeg.R",
+   "kind": "f64",
+   "offset": 36592,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.lowerLeg.L",
+   "kind": "f64",
+   "offset": 36616,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.lowerLeg.R",
+   "kind": "f64",
+   "offset": 36640,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.foot.L",
+   "kind": "f64",
+   "offset": 36664,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.foot.R",
+   "kind": "f64",
+   "offset": 36688,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.toe.L",
+   "kind": "f64",
+   "offset": 36712,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.toe.R",
+   "kind": "f64",
+   "offset": 36736,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.thumb.L.0",
+   "kind": "f64",
+   "offset": 36760,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.thumb.L.1",
+   "kind": "f64",
+   "offset": 36784,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.thumb.L.2",
+   "kind": "f64",
+   "offset": 36808,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.index.L.0",
+   "kind": "f64",
+   "offset": 36832,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.index.L.1",
+   "kind": "f64",
+   "offset": 36856,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.index.L.2",
+   "kind": "f64",
+   "offset": 36880,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.middle.L.0",
+   "kind": "f64",
+   "offset": 36904,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.middle.L.1",
+   "kind": "f64",
+   "offset": 36928,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.middle.L.2",
+   "kind": "f64",
+   "offset": 36952,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.ring.L.0",
+   "kind": "f64",
+   "offset": 36976,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.ring.L.1",
+   "kind": "f64",
+   "offset": 37000,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.ring.L.2",
+   "kind": "f64",
+   "offset": 37024,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.little.L.0",
+   "kind": "f64",
+   "offset": 37048,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.little.L.1",
+   "kind": "f64",
+   "offset": 37072,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.little.L.2",
+   "kind": "f64",
+   "offset": 37096,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.thumb.R.0",
+   "kind": "f64",
+   "offset": 37120,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.thumb.R.1",
+   "kind": "f64",
+   "offset": 37144,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.thumb.R.2",
+   "kind": "f64",
+   "offset": 37168,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.index.R.0",
+   "kind": "f64",
+   "offset": 37192,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.index.R.1",
+   "kind": "f64",
+   "offset": 37216,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.index.R.2",
+   "kind": "f64",
+   "offset": 37240,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.middle.R.0",
+   "kind": "f64",
+   "offset": 37264,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.middle.R.1",
+   "kind": "f64",
+   "offset": 37288,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.middle.R.2",
+   "kind": "f64",
+   "offset": 37312,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.ring.R.0",
+   "kind": "f64",
+   "offset": 37336,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.ring.R.1",
+   "kind": "f64",
+   "offset": 37360,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.ring.R.2",
+   "kind": "f64",
+   "offset": 37384,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.little.R.0",
+   "kind": "f64",
+   "offset": 37408,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.little.R.1",
+   "kind": "f64",
+   "offset": 37432,
+   "len": 3
+  },
+  {
+   "name": "profile.restDir.little.R.2",
+   "kind": "f64",
+   "offset": 37456,
+   "len": 3
+  },
+  {
+   "name": "profile.sideSign",
+   "kind": "f64",
+   "offset": 37480,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.upper.L",
+   "kind": "f64",
+   "offset": 37488,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.lower.L",
+   "kind": "f64",
+   "offset": 37496,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.thigh.L",
+   "kind": "f64",
+   "offset": 37504,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.shin.L",
+   "kind": "f64",
+   "offset": 37512,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.tip.L.thumb",
+   "kind": "f64",
+   "offset": 37520,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.tip.L.index",
+   "kind": "f64",
+   "offset": 37528,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.tip.L.middle",
+   "kind": "f64",
+   "offset": 37536,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.tip.L.ring",
+   "kind": "f64",
+   "offset": 37544,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.tip.L.little",
+   "kind": "f64",
+   "offset": 37552,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.pitch.L",
+   "kind": "f64",
+   "offset": 37560,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.proximal.L",
+   "kind": "f64",
+   "offset": 37568,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.upper.R",
+   "kind": "f64",
+   "offset": 37576,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.lower.R",
+   "kind": "f64",
+   "offset": 37584,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.thigh.R",
+   "kind": "f64",
+   "offset": 37592,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.shin.R",
+   "kind": "f64",
+   "offset": 37600,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.tip.R.thumb",
+   "kind": "f64",
+   "offset": 37608,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.tip.R.index",
+   "kind": "f64",
+   "offset": 37616,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.tip.R.middle",
+   "kind": "f64",
+   "offset": 37624,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.tip.R.ring",
+   "kind": "f64",
+   "offset": 37632,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.tip.R.little",
+   "kind": "f64",
+   "offset": 37640,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.pitch.R",
+   "kind": "f64",
+   "offset": 37648,
+   "len": 1
+  },
+  {
+   "name": "profile.limb.proximal.R",
+   "kind": "f64",
+   "offset": 37656,
+   "len": 1
+  },
+  {
+   "name": "profile.face.origin",
+   "kind": "f64",
+   "offset": 37664,
+   "len": 3
+  },
+  {
+   "name": "profile.face.right",
+   "kind": "f64",
+   "offset": 37688,
+   "len": 3
+  },
+  {
+   "name": "profile.face.up",
+   "kind": "f64",
+   "offset": 37712,
+   "len": 3
+  },
+  {
+   "name": "profile.face.forward",
+   "kind": "f64",
+   "offset": 37736,
+   "len": 3
+  },
+  {
+   "name": "profile.face.ipd",
+   "kind": "f64",
+   "offset": 37760,
+   "len": 1
+  },
+  {
+   "name": "profile.face.mouth",
+   "kind": "f64",
+   "offset": 37768,
+   "len": 3
+  },
+  {
+   "name": "profile.body.right",
+   "kind": "f64",
+   "offset": 37792,
+   "len": 3
+  },
+  {
+   "name": "profile.body.up",
+   "kind": "f64",
+   "offset": 37816,
+   "len": 3
+  },
+  {
+   "name": "profile.body.forward",
+   "kind": "f64",
+   "offset": 37840,
+   "len": 3
+  },
+  {
+   "name": "profile.body.span",
+   "kind": "f64",
+   "offset": 37864,
+   "len": 1
+  },
+  {
+   "name": "profile.armTwists.upperArm.L.primary",
+   "kind": "u32",
+   "offset": 37872,
+   "len": 1
+  },
+  {
+   "name": "profile.armTwists.upperArm.L.next",
+   "kind": "u32",
+   "offset": 37880,
+   "len": 1
+  },
+  {
+   "name": "profile.armTwists.upperArm.L.helper",
+   "kind": "u32",
+   "offset": 37888,
+   "len": 1
+  },
+  {
+   "name": "profile.armTwists.upperArm.R.primary",
+   "kind": "u32",
+   "offset": 37896,
+   "len": 1
+  },
+  {
+   "name": "profile.armTwists.upperArm.R.next",
+   "kind": "u32",
+   "offset": 37904,
+   "len": 1
+  },
+  {
+   "name": "profile.armTwists.upperArm.R.helper",
+   "kind": "u32",
+   "offset": 37912,
+   "len": 1
+  },
+  {
+   "name": "profile.armTwists.lowerArm.L.primary",
+   "kind": "u32",
+   "offset": 37920,
+   "len": 1
+  },
+  {
+   "name": "profile.armTwists.lowerArm.L.next",
+   "kind": "u32",
+   "offset": 37928,
+   "len": 1
+  },
+  {
+   "name": "profile.armTwists.lowerArm.L.helper",
+   "kind": "u32",
+   "offset": 37936,
+   "len": 1
+  },
+  {
+   "name": "profile.armTwists.lowerArm.R.primary",
+   "kind": "u32",
+   "offset": 37944,
+   "len": 1
+  },
+  {
+   "name": "profile.armTwists.lowerArm.R.next",
+   "kind": "u32",
+   "offset": 37952,
+   "len": 1
+  },
+  {
+   "name": "profile.armTwists.lowerArm.R.helper",
+   "kind": "u32",
+   "offset": 37960,
+   "len": 1
+  },
+  {
+   "name": "measure.torso.frame",
+   "kind": "f64",
+   "offset": 37968,
+   "len": 12
+  },
+  {
+   "name": "measure.torso.r",
+   "kind": "f32",
+   "offset": 38064,
+   "len": 192
+  },
+  {
+   "name": "measure.torso.bands",
+   "kind": "f64",
+   "offset": 38832,
+   "len": 1
+  },
+  {
+   "name": "measure.torso.sectors",
+   "kind": "f64",
+   "offset": 38840,
+   "len": 1
+  },
+  {
+   "name": "measure.torso.top",
+   "kind": "f64",
+   "offset": 38848,
+   "len": 1
+  },
+  {
+   "name": "measure.torso.bottom",
+   "kind": "f64",
+   "offset": 38856,
+   "len": 1
+  },
+  {
+   "name": "measure.torso.radius",
+   "kind": "f64",
+   "offset": 38864,
+   "len": 1
+  },
+  {
+   "name": "measure.head.frame",
+   "kind": "f64",
+   "offset": 38872,
+   "len": 12
+  },
+  {
+   "name": "measure.head.r",
+   "kind": "f32",
+   "offset": 38968,
+   "len": 192
+  },
+  {
+   "name": "measure.head.bands",
+   "kind": "f64",
+   "offset": 39736,
+   "len": 1
+  },
+  {
+   "name": "measure.head.sectors",
+   "kind": "f64",
+   "offset": 39744,
+   "len": 1
+  },
+  {
+   "name": "measure.head.top",
+   "kind": "f64",
+   "offset": 39752,
+   "len": 1
+  },
+  {
+   "name": "measure.head.bottom",
+   "kind": "f64",
+   "offset": 39760,
+   "len": 1
+  },
+  {
+   "name": "measure.head.radius",
+   "kind": "f64",
+   "offset": 39768,
+   "len": 1
+  },
+  {
+   "name": "measure.face.pos",
+   "kind": "f32",
+   "offset": 39776,
+   "len": 768
+  },
+  {
+   "name": "measure.face.nrm",
+   "kind": "f32",
+   "offset": 42848,
+   "len": 768
+  }
+ ]
+}

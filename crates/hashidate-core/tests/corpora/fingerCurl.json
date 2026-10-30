@@ -1,0 +1,48 @@
+{
+ "fn": "fingerCurl",
+ "cases": 500,
+ "in": [
+  {
+   "name": "joints.dofs.proximal.free",
+   "len": 2
+  },
+  {
+   "name": "joints.dofs.proximal.max",
+   "len": 2
+  },
+  {
+   "name": "joints.dofs.intermediate.free",
+   "len": 2
+  },
+  {
+   "name": "joints.dofs.intermediate.max",
+   "len": 2
+  },
+  {
+   "name": "joints.dofs.distal.free",
+   "len": 2
+  },
+  {
+   "name": "joints.dofs.distal.max",
+   "len": 2
+  },
+  {
+   "name": "joints.elevation.present",
+   "len": 1
+  },
+  {
+   "name": "index",
+   "len": 1
+  },
+  {
+   "name": "amount",
+   "len": 1
+  }
+ ],
+ "out": [
+  {
+   "name": "return",
+   "len": 1
+  }
+ ]
+}

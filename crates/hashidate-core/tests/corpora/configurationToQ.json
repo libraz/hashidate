@@ -1,0 +1,44 @@
+{
+ "fn": "configurationToQ",
+ "cases": 500,
+ "in": [
+  {
+   "name": "configuration.shoulderPlane",
+   "len": 1
+  },
+  {
+   "name": "configuration.shoulderLift",
+   "len": 1
+  },
+  {
+   "name": "configuration.humeralRotation",
+   "len": 1
+  },
+  {
+   "name": "configuration.elbowFlex",
+   "len": 1
+  },
+  {
+   "name": "configuration.forearmRoll",
+   "len": 1
+  },
+  {
+   "name": "configuration.wristFlex",
+   "len": 1
+  },
+  {
+   "name": "configuration.wristDev",
+   "len": 1
+  },
+  {
+   "name": "out",
+   "len": 7
+  }
+ ],
+ "out": [
+  {
+   "name": "out",
+   "len": 7
+  }
+ ]
+}
