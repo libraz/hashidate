@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { HAND_CONTACT, JOINTS } from '@/engine/anatomy';
 import { ArmAnatomy } from '@/engine/anatomy/arm';
 import * as armFrame from '@/engine/anatomy/arm-frame';
 import * as strain from '@/engine/anatomy/strain';
@@ -11,7 +12,23 @@ import * as armConfiguration from '@/engine/rig/arm-configuration';
 import * as armPath from '@/engine/rig/arm-path';
 import * as armQp from '@/engine/rig/arm-qp';
 import * as armRoute from '@/engine/rig/arm-route';
-import { type BoneSlot, FINGER_NAMES } from '@/engine/types';
+import { ElbowSearch } from '@/engine/rig/elbow';
+import { ShoulderGirdle } from '@/engine/rig/girdle';
+import { GroundedLegs } from '@/engine/rig/legs';
+import { type PointRequest, PointSolver } from '@/engine/rig/point';
+import {
+  type ArmSolution,
+  nearReach,
+  poleAngle,
+  type ReachLinks,
+  reachRef,
+  solveReach,
+  swivelOf,
+} from '@/engine/rig/reach';
+import { SkeletonRefresh } from '@/engine/rig/skeleton';
+import { type OffsetSlot, SpineOffsets } from '@/engine/rig/spine';
+import { type BoneSlot, FINGER_NAMES, type Side, type Vec3Tuple } from '@/engine/types';
+import { makeFnv64 } from '../../tools/parity/hash';
 import { withCoreMath } from '../helpers/core-math';
 import {
   BASE_VARIANT,
@@ -48,6 +65,14 @@ import { must } from '../helpers/must';
  * anatomy's frame after `update`; `pose` places one arm, then measures, costs and clamps a pose
  * and clears a second one's hand; `volume` samples both clearances at a point and pushes it to
  * the surface; `face` samples the head's skin.
+ *
+ * `rig-a-battery` is the same kind of run over the rig's leaf modules on the base avatar:
+ * `SkeletonRefresh`, `GroundedLegs`, `SpineOffsets`, `ShoulderGirdle`, the reach functions,
+ * `ElbowSearch` and `PointSolver`, wired as `Rig` wires them. A step may first write one node's
+ * position and quaternion (`set`) and run the root's full pass (`update`); every step ends with
+ * `hash`, a 64-bit FNV-1a over every node's position, quaternion, scale, matrix, matrixWorld and
+ * matrixWorldNeedsUpdate (high and low 32 bits), and a step that writes bones lists their state
+ * as `touched`. `slot` names one of four `ArmSolution`s the elbow and point steps carry.
  *
  * Without `HASHIDATE_RECORD_CORPORA=1` this checks the files against a fresh recording;
  * with it, it writes them.
@@ -1038,6 +1063,539 @@ function recordArmBattery(): Recorded {
   return { json: `${JSON.stringify(index, null, 1)}\n`, bin: f64Bytes(values) };
 }
 
+// --- the rig battery ------------------------------------------------------------------------
+
+const RIG_KINDS = [
+  'skeleton.build',
+  'legs.create',
+  'spine.build',
+  'anat.build',
+  'update',
+  'skeleton.run',
+  'legs.apply',
+  'legs.pivot',
+  'spine.commit',
+  'spine.eyes',
+  'spine.head',
+  'girdle.room',
+  'girdle.turn',
+  'reach.near',
+  'reach.ref',
+  'reach.solve',
+  'reach.pole',
+  'reach.swivel',
+  'elbow.search',
+  'point.solve',
+] as const;
+type RigKind = (typeof RIG_KINDS)[number];
+const RIG_KIND = oneOf(RIG_KINDS);
+const OFFSET_SLOTS: readonly OffsetSlot[] = [
+  'hips',
+  'spine',
+  'chest',
+  'neck',
+  'head',
+  'eye.L',
+  'eye.R',
+];
+const offsetSlot = oneOf(OFFSET_SLOTS);
+const nodeState = obj([
+  ['node', num],
+  ['position', vec3],
+  ['quaternion', quat],
+  ['matrixWorld', tuple(16)],
+  ['matrixWorldNeedsUpdate', bool],
+]);
+const nodeWrite = obj([
+  ['node', num],
+  ['position', vec3],
+  ['quaternion', quat],
+]);
+const spineAdd = obj([
+  ['slot', offsetSlot],
+  ['offset', tuple3],
+]);
+
+/** The base avatar's rig leaf modules through a fixed run of their calls; see the file comment. */
+function recordRigBattery(): Recorded {
+  const fixture = must(
+    DIRECTOR_FIXTURES.find((f) => f.variant === BASE_VARIANT),
+    'a base-variant fixture',
+  );
+  const { root, profile } = prepareFixture(fixture);
+  root.updateMatrixWorld(true);
+  const nodes: THREE.Object3D[] = [];
+  root.traverse((o) => {
+    nodes.push(o);
+  });
+  const at = (o: THREE.Object3D) => {
+    const i = nodes.indexOf(o);
+    if (i < 0) throw new Error(`${o.name} is not under the root`);
+    return i;
+  };
+  const bone = (slot: BoneSlot) => must(profile.bones[slot], slot);
+  const cases: Array<{ input: Field[]; output: Field[] }> = [];
+
+  const hash = (out: Field[]) => {
+    const h = makeFnv64();
+    for (const o of nodes) {
+      h.f64s(o.position.toArray());
+      h.f64s(o.quaternion.toArray());
+      h.f64s(o.scale.toArray());
+      h.f64s(o.matrix.elements);
+      h.f64s(o.matrixWorld.elements);
+      h.bool(o.matrixWorldNeedsUpdate);
+    }
+    const d = h.digest();
+    tuple2([Number.parseInt(d.slice(0, 8), 16), Number.parseInt(d.slice(8), 16)], 'hash', out);
+  };
+  const touched = (bones: THREE.Object3D[], out: Field[]) =>
+    arr(nodeState)(
+      bones.map((b) => ({
+        node: at(b),
+        position: b.position,
+        quaternion: b.quaternion,
+        matrixWorld: [...b.matrixWorld.elements],
+        matrixWorldNeedsUpdate: b.matrixWorldNeedsUpdate,
+      })),
+      'touched',
+      out,
+    );
+  /** Write `set` and run the full pass when asked, then the call, then the hash. */
+  const step = (
+    kind: RigKind,
+    setup: { set?: [THREE.Object3D, THREE.Vector3, THREE.Quaternion]; update?: boolean },
+    input: Field[],
+    call: (output: Field[]) => void,
+  ) => {
+    const head: Field[] = [];
+    RIG_KIND(kind, 'kind', head);
+    const set = setup.set;
+    opt(nodeWrite)(
+      set ? { node: at(set[0]), position: set[1], quaternion: set[2] } : null,
+      'set',
+      head,
+    );
+    bool(setup.update ?? false, 'update', head);
+    if (set) {
+      set[0].position.copy(set[1]);
+      set[0].quaternion.copy(set[2]);
+    }
+    if (setup.update) root.updateMatrixWorld(true);
+    const output: Field[] = [];
+    call(output);
+    hash(output);
+    cases.push({ input: [...head, ...input], output });
+  };
+
+  withCoreMath(() => {
+    const rest = new Map<THREE.Object3D, THREE.Quaternion>();
+    for (const o of nodes) rest.set(o, o.quaternion.clone());
+    const restOf = (b: THREE.Bone) => must(rest.get(b), b.name);
+    const joints = profile.anatomy ?? JOINTS;
+
+    const skeleton = new SkeletonRefresh(root);
+    step('skeleton.build', {}, [], (out) => {
+      const s = skeleton as unknown as { path: THREE.Object3D[]; subtrees: THREE.Object3D[] };
+      arr(num)(s.path.map(at), 'path', out);
+      arr(num)(s.subtrees.map(at), 'subtrees', out);
+    });
+
+    let legs: GroundedLegs | null = null;
+    step('legs.create', {}, [], (out) => {
+      legs = must(GroundedLegs.create(profile, restOf), 'grounded legs');
+      const state = (legs as unknown as { legs: Record<Side, Record<string, unknown>> }).legs;
+      for (const s of ['L', 'R'] as const) {
+        vec3(state[s].kneePole, `legs.${s}.kneePole`, out);
+        vec3(state[s].anchorRoot, `legs.${s}.anchorRoot`, out);
+        num(state[s].softZone, `legs.${s}.softZone`, out);
+        num(state[s].upperLength, `legs.${s}.upperLength`, out);
+        num(state[s].lowerLength, `legs.${s}.lowerLength`, out);
+      }
+    });
+    const grounded = must<GroundedLegs>(legs, 'grounded legs');
+
+    const spine = new SpineOffsets(profile);
+    step('spine.build', {}, [], (out) => {
+      const basis = (spine as unknown as { basis: Map<OffsetSlot, { q: THREE.Quaternion }> }).basis;
+      for (const slot of OFFSET_SLOTS) opt(quat)(basis.get(slot)?.q, `basis.${slot}`, out);
+    });
+
+    const anat = new ArmAnatomy(profile);
+    step('anat.build', {}, [], (out) => {
+      bool(anat.update(), 'ok', out);
+    });
+
+    // --- legs ---
+    const hips = bone('hips');
+    const legBones = [
+      hips,
+      ...(['L', 'R'] as const).flatMap((s) =>
+        (['upperLeg', 'lowerLeg', 'foot'] as const).map((k) => bone(`${k}.${s}`)),
+      ),
+    ];
+    const hipsRest = hips.position.clone();
+    const hipsRestQ = hips.quaternion.clone();
+    const span = bone('upperLeg.L')
+      .getWorldPosition(new THREE.Vector3())
+      .distanceTo(bone('foot.L').getWorldPosition(new THREE.Vector3()));
+    const state = (grounded as unknown as { legs: Record<Side, Record<string, number>> }).legs;
+    const gap = state.L.upperLength + state.L.lowerLength - span;
+    const hipsAt = (x: number, y: number, z: number, q = hipsRestQ) =>
+      [hips, hipsRest.clone().add(new THREE.Vector3(x, y, z)), q.clone()] as [
+        THREE.Object3D,
+        THREE.Vector3,
+        THREE.Quaternion,
+      ];
+    const apply = (
+      rise: number,
+      turn: number,
+      refresh: boolean,
+      setup: Parameters<typeof step>[1] = {},
+    ) => {
+      const input: Field[] = [];
+      num(rise, 'rise', input);
+      num(turn, 'yaw', input);
+      bool(refresh, 'refresh', input);
+      step('legs.apply', setup, input, (out) => {
+        bool(grounded.apply(rise, turn, refresh ? skeleton : null), 'ok', out);
+        touched(legBones, out);
+      });
+    };
+    apply(0, 0, false);
+    apply(0, 0, false, { set: hipsAt(0.012, -0.035, 0.006) });
+    // Near full extension, so the soft reach settles the pelvis.
+    apply(0, 0, false, { set: hipsAt(0, gap * 0.5, 0) });
+    apply(0.03, 0, false, { set: hipsAt(0.01, -0.01, 0) });
+    apply(0, Math.PI / 2, false, { set: hipsAt(0, -0.02, 0.01), update: true });
+    apply(0.02, -0.7, true, {
+      set: hipsAt(
+        -0.01,
+        -0.015,
+        0,
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0.08)),
+      ),
+      update: true,
+    });
+    step('legs.pivot', {}, [], (out) => {
+      vec3(grounded.stancePivot(new THREE.Vector3()), 'value3', out);
+    });
+    // No common reach: the pose is left as it was.
+    apply(0, 0, false, { set: hipsAt(0.5, 0, 0) });
+
+    // --- skeleton ---
+    step(
+      'skeleton.run',
+      {
+        set: [
+          bone('spine'),
+          bone('spine').position.clone(),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(0.1, -0.2, 0.05)),
+        ],
+      },
+      [],
+      () => {
+        skeleton.run();
+      },
+    );
+    step('update', { set: hipsAt(0, 0, 0) }, [], () => {
+      root.updateMatrixWorld(true);
+    });
+
+    // --- spine ---
+    const spineBones = OFFSET_SLOTS.slice(0, 5).map((slot) => bone(slot));
+    const eyeBones = [bone('eye.L'), bone('eye.R')];
+    const commit = (adds: Array<[OffsetSlot, Vec3Tuple]>) => {
+      const input: Field[] = [];
+      arr(spineAdd)(
+        adds.map(([slot, offset]) => ({ slot, offset })),
+        'adds',
+        input,
+      );
+      step('spine.commit', {}, input, (out) => {
+        spine.clear();
+        for (const [slot, [x, y, z]] of adds) spine.add(slot, x, y, z);
+        spine.commit(profile, restOf);
+        touched(spineBones, out);
+      });
+    };
+    // Past every knee but the neck's, so the bound's tanh runs; the eyes ride along unbounded.
+    commit([
+      ['head', [1.5, 0.32, 0]],
+      ['head', [0.1, -0.2, 0.05]],
+      ['chest', [0.08, -0.4, 0.05]],
+      ['neck', [-0.11, 0.06, 0.13]],
+      ['hips', [0.3, 0, -0.5]],
+      ['spine', [0.02, 0.01, 0]],
+      ['eye.L', [-0.08, 0.1, 0.06]],
+      ['eye.R', [0.05, 0, 0]],
+    ]);
+    step('spine.head', {}, [], (out) => {
+      const q = new THREE.Quaternion();
+      bool(spine.readHeadOffset(profile, q), 'ok', out);
+      quat(q, 'q', out);
+    });
+    step('spine.eyes', {}, [], (out) => {
+      spine.commitEyes(profile, restOf);
+      touched(eyeBones, out);
+    });
+    commit([
+      ['hips', [0.01, 0.02, -0.03]],
+      ['head', [-0.2, 0.1, 0]],
+    ]);
+    step('update', {}, [], () => {
+      root.updateMatrixWorld(true);
+    });
+    step('anat.build', {}, [], (out) => {
+      bool(anat.update(), 'ok', out);
+    });
+
+    // --- girdle ---
+    const girdle = new ShoulderGirdle(profile, joints);
+    const shoulder = (s: Side) => bone(`upperArm.${s}`).getWorldPosition(new THREE.Vector3());
+    const clavicle = (s: Side) => bone(`shoulder.${s}`).getWorldPosition(new THREE.Vector3());
+    for (const [s, ahead, weight] of [
+      ['R', 0.04, 1],
+      ['R', 0.04, 0.6],
+      ['L', 0.07, 1],
+    ] as const) {
+      const aim = shoulder(s).sub(clavicle(s)).normalize();
+      const dir: Vec3Tuple = [aim.x, aim.y, aim.z];
+      const target = shoulder(s).addScaledVector(anat.fwd, ahead);
+      const turn = new THREE.Vector3(0.01, 0, 0);
+      const input: Field[] = [];
+      side(s, 'side', input);
+      vec3(target, 'target', input);
+      tuple3(dir, 'dir', input);
+      num(weight, 'weight', input);
+      vec3(turn, 'turn', input);
+      step('girdle.room', {}, input, (out) => {
+        girdle.girdleRoom(s, target, dir, weight, turn);
+        vec3(turn, 'value3', out);
+      });
+      const turnInput: Field[] = [];
+      tuple3(dir, 'dir', turnInput);
+      vec3(turn, 'turn', turnInput);
+      step('girdle.turn', {}, turnInput, (out) => {
+        girdle.turnGirdle(dir, turn);
+        tuple3(dir, 'value3', out);
+      });
+    }
+
+    // --- reach ---
+    const sR = shoulder('R');
+    const sL = shoulder('L');
+    const off = (s: THREE.Vector3, x: number, y: number, z: number) =>
+      s.clone().add(new THREE.Vector3(x, y, z));
+    const nearInput: Field[] = [];
+    num(profile.limb['upper.R'], 'la', nearInput);
+    num(profile.limb['lower.R'], 'lf', nearInput);
+    step('reach.near', {}, nearInput, (out) => {
+      num(nearReach(profile.limb['upper.R'], profile.limb['lower.R'], joints), 'value', out);
+    });
+    for (const [n, framed] of [
+      [new THREE.Vector3(0, -1, 0), null],
+      [new THREE.Vector3(-0.4, -0.6, -0.7).normalize(), true],
+      [anat.fwd.clone(), null],
+      [new THREE.Vector3(0, 0, 1), false],
+    ] as const) {
+      const input: Field[] = [];
+      vec3(n, 'n', input);
+      opt(bool)(framed, 'framed', input);
+      step('reach.ref', {}, input, (out) => {
+        vec3(reachRef(anat, n, new THREE.Vector3(), framed ?? undefined), 'value3', out);
+      });
+    }
+    for (const [s, target, angle, framed] of [
+      ['R', off(sR, -0.05, -0.05, -0.2), 0, null],
+      ['R', off(sR, 0, -0.2, -1), 0.4, null],
+      ['R', off(sR, 0, 0, -0.03), -0.7, true],
+      ['L', off(sL, 0.06, -0.08, -0.19), 1.2, false],
+      ['R', sR.clone(), 0, null],
+    ] as const) {
+      const input: Field[] = [];
+      side(s, 'side', input);
+      vec3(target, 'target', input);
+      num(angle, 'angle', input);
+      opt(bool)(framed, 'framed', input);
+      step('reach.solve', {}, input, (out) => {
+        const links: ReachLinks = { upperArm: new THREE.Vector3(), lowerArm: new THREE.Vector3() };
+        const solved = solveReach(
+          profile,
+          joints,
+          anat,
+          s,
+          target,
+          angle,
+          links,
+          framed ?? undefined,
+        );
+        bool(solved !== null, 'ok', out);
+        vec3(links.upperArm, 'upperArm', out);
+        vec3(links.lowerArm, 'lowerArm', out);
+      });
+    }
+    const reachTarget = off(sR, -0.05, -0.05, -0.2);
+    const reachLine = reachTarget.clone().sub(sR).normalize();
+    for (const pole of [
+      off(sR, 0.3, -0.3, 0),
+      off(sR, -0.25, -0.2, 0.1),
+      sR.clone().addScaledVector(reachLine, 0.2),
+      sR.clone(),
+    ]) {
+      const input: Field[] = [];
+      vec3(reachTarget, 'target', input);
+      vec3(pole, 'pole', input);
+      step('reach.pole', {}, input, (out) => {
+        const a = poleAngle(profile, anat, 'R', reachTarget, pole);
+        bool(a !== null, 'ok', out);
+        num(a ?? 0, 'value', out);
+      });
+    }
+    for (const [w, framed] of [
+      [new THREE.Vector3(0.2, -0.1, 0.05), true],
+      [
+        reachLine
+          .clone()
+          .multiplyScalar(0.3)
+          .add(new THREE.Vector3(0, 0.01, 0)),
+        null,
+      ],
+    ] as const) {
+      const input: Field[] = [];
+      vec3(reachLine, 'n', input);
+      vec3(w, 'w', input);
+      opt(bool)(framed, 'framed', input);
+      step('reach.swivel', {}, input, (out) => {
+        const a = swivelOf(anat, reachLine, w, framed ?? undefined);
+        bool(a !== null, 'ok', out);
+        num(a ?? 0, 'value', out);
+      });
+    }
+
+    // --- elbow and point, wired as `Rig` wires them ---
+    let dt = 1 / 60;
+    const armContext = (s: Side): boolean => {
+      const upper = profile.bones[`upperArm.${s}`];
+      const La = profile.limb?.[`upper.${s}`];
+      if (!(upper && La)) {
+        anat.clearArm();
+        return false;
+      }
+      upper.updateWorldMatrix(true, false);
+      anat.setArm(
+        upper.getWorldPosition(new THREE.Vector3()),
+        La,
+        profile.limb?.[`lower.${s}`] ?? 0,
+        (profile.limb?.[`tip.${s}.middle`] ?? 0) * HAND_CONTACT,
+      );
+      return true;
+    };
+    const elbow = new ElbowSearch(profile, anat, {
+      solveReach: (s, target, angle, out, framed) =>
+        solveReach(profile, joints, anat, s, target, angle, out, framed),
+      armContext,
+      dt: () => dt,
+    });
+    const point = new PointSolver(profile, joints, anat, (s, wrist, handDir, palmN, out) =>
+      elbow.search(s, wrist, handDir, palmN, out),
+    );
+    const slots: ArmSolution[] = Array.from({ length: 4 }, () => ({
+      upperArm: new THREE.Vector3(),
+      lowerArm: new THREE.Vector3(),
+      hand: new THREE.Vector3(),
+      palm: new THREE.Vector3(),
+      tip: new THREE.Vector3(),
+      twist: 0,
+      swivelDir: new THREE.Vector3(),
+    }));
+    const solution = (slot: number, out: Field[]) => {
+      const o = slots[slot];
+      vec3(o.upperArm, 'upperArm', out);
+      vec3(o.lowerArm, 'lowerArm', out);
+      vec3(o.swivelDir, 'swivelDir', out);
+    };
+    const limbSpan = profile.limb['upper.R'] + profile.limb['lower.R'];
+    const ahead = sR.clone().add(new THREE.Vector3(-0.2, 0.25, 0.6).multiplyScalar(limbSpan));
+    const across = sR.clone().add(new THREE.Vector3(-0.6, -0.1, 0.4).multiplyScalar(limbSpan));
+    const near = off(sR, -0.05, 0.02, -0.12);
+    const down = new THREE.Vector3(0, -1, 0);
+    for (const [s, slot, wrist, handDir, palmN, pole, stepDt] of [
+      ['R', 0, ahead, null, null, null, 1 / 60],
+      ['R', 0, across, null, null, null, 1 / 60],
+      ['R', 0, across, null, null, null, 1 / 144],
+      ['R', 0, ahead, null, null, null, 0.05],
+      ['R', 1, near, new THREE.Vector3(0, 0.3, -1).normalize(), down, null, 1 / 60],
+      ['R', 1, near, null, null, off(sR, 0.15, -0.2, 0.05), 1 / 60],
+      ['R', 1, near, null, null, off(sR, 0.15, -0.2, 0.05), 1 / 60],
+      ['L', 2, off(sL, 0.1, -0.1, -0.2), null, null, null, 1 / 30],
+    ] as const) {
+      const input: Field[] = [];
+      side(s, 'side', input);
+      num(slot, 'slot', input);
+      vec3(wrist, 'target', input);
+      opt(vec3)(handDir, 'handDir', input);
+      opt(vec3)(palmN, 'palmN', input);
+      opt(vec3)(pole, 'pole', input);
+      num(stepDt, 'dt', input);
+      step('elbow.search', {}, input, (out) => {
+        dt = stepDt;
+        const strain = elbow.search(s, wrist, handDir, palmN, slots[slot], pole);
+        bool(strain !== null, 'ok', out);
+        num(strain ?? 0, 'value', out);
+        solution(slot, out);
+      });
+    }
+    const spec = (azimuth: number, elevation: number, extent?: number): PointRequest => ({
+      azimuth,
+      elevation,
+      ...(extent === undefined ? {} : { extent }),
+    });
+    for (const [s, slot, request, stepDt] of [
+      ['R', 3, spec(0.2, 0.35, 0.75), 1 / 60],
+      ['R', 3, spec(0.2, 0.35, 0.75), 1 / 60],
+      ['R', 3, spec(0.2, 0.35, 0.75), 1 / 60],
+      ['R', 3, { ...spec(0.3, 0.2), finger: 'thumb' }, 1 / 144],
+      ['R', 3, { ...spec(0.3, 0.2, 0.5), point: new THREE.Vector3(0, -1, 0) }, 1 / 60],
+      ['R', 3, { ...spec(-0.9, 0.6, 0.7), palm: [0, 0, 1] as Vec3Tuple }, 1 / 60],
+      ['R', 0, spec(0, 0, 0.1), 0.05],
+      ['L', 2, spec(-0.5, 0.3, 4), 1 / 60],
+    ] as const) {
+      const r = request as PointRequest;
+      const input: Field[] = [];
+      side(s, 'side', input);
+      num(slot, 'slot', input);
+      num(r.azimuth ?? 0, 'azimuth', input);
+      num(r.elevation ?? 0, 'elevation', input);
+      opt(num)(r.extent, 'extent', input);
+      opt(finger)(r.finger, 'finger', input);
+      opt(vec3)(r.point ?? null, 'point', input);
+      opt(tuple3)(r.palm ?? null, 'palm', input);
+      num(stepDt, 'dt', input);
+      step('point.solve', {}, input, (out) => {
+        dt = stepDt;
+        const o = slots[slot];
+        bool(point.solve(s, r, o) !== null, 'ok', out);
+        solution(slot, out);
+        vec3(o.hand, 'hand', out);
+        vec3(o.palm, 'palm', out);
+        vec3(o.tip, 'tip', out);
+        num(o.twist, 'twist', out);
+        num(o.strain ?? 0, 'value', out);
+      });
+    }
+  });
+  const input = layout(cases.map((c) => c.input));
+  const output = layout(cases.map((c) => c.output));
+  const values: number[] = [];
+  for (const c of cases) {
+    fill(values, c.input, input);
+    fill(values, c.output, output);
+  }
+  const index = { fn: 'rig-a-battery', cases: cases.length, in: input, out: output };
+  return { json: `${JSON.stringify(index, null, 1)}\n`, bin: f64Bytes(values) };
+}
+
 // --- the files ----------------------------------------------------------------------------
 
 function settle(name: string, recorded: Recorded): void {
@@ -1070,5 +1628,9 @@ describe('the recorded corpora', () => {
 
   it('match a fresh recording of the anatomy battery', () => {
     settle('arm-battery', recordArmBattery());
+  });
+
+  it('match a fresh recording of the rig battery', () => {
+    settle('rig-a-battery', recordRigBattery());
   });
 });

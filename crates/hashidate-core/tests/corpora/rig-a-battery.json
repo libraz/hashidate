@@ -1,0 +1,536 @@
+{
+ "fn": "rig-a-battery",
+ "cases": 58,
+ "in": [
+  {
+   "name": "kind",
+   "len": 1
+  },
+  {
+   "name": "set.present",
+   "len": 1
+  },
+  {
+   "name": "set.node",
+   "len": 1
+  },
+  {
+   "name": "set.position",
+   "len": 3
+  },
+  {
+   "name": "set.quaternion",
+   "len": 4
+  },
+  {
+   "name": "update",
+   "len": 1
+  },
+  {
+   "name": "n",
+   "len": 3
+  },
+  {
+   "name": "w",
+   "len": 3
+  },
+  {
+   "name": "framed.present",
+   "len": 1
+  },
+  {
+   "name": "framed",
+   "len": 1
+  },
+  {
+   "name": "la",
+   "len": 1
+  },
+  {
+   "name": "lf",
+   "len": 1
+  },
+  {
+   "name": "side",
+   "len": 1
+  },
+  {
+   "name": "slot",
+   "len": 1
+  },
+  {
+   "name": "azimuth",
+   "len": 1
+  },
+  {
+   "name": "elevation",
+   "len": 1
+  },
+  {
+   "name": "extent.present",
+   "len": 1
+  },
+  {
+   "name": "extent",
+   "len": 1
+  },
+  {
+   "name": "finger.present",
+   "len": 1
+  },
+  {
+   "name": "finger",
+   "len": 1
+  },
+  {
+   "name": "point.present",
+   "len": 1
+  },
+  {
+   "name": "point",
+   "len": 3
+  },
+  {
+   "name": "palm.present",
+   "len": 1
+  },
+  {
+   "name": "palm",
+   "len": 3
+  },
+  {
+   "name": "target",
+   "len": 3
+  },
+  {
+   "name": "handDir.present",
+   "len": 1
+  },
+  {
+   "name": "handDir",
+   "len": 3
+  },
+  {
+   "name": "palmN.present",
+   "len": 1
+  },
+  {
+   "name": "palmN",
+   "len": 3
+  },
+  {
+   "name": "pole.present",
+   "len": 1
+  },
+  {
+   "name": "dt",
+   "len": 1
+  },
+  {
+   "name": "pole",
+   "len": 3
+  },
+  {
+   "name": "angle",
+   "len": 1
+  },
+  {
+   "name": "dir",
+   "len": 3
+  },
+  {
+   "name": "weight",
+   "len": 1
+  },
+  {
+   "name": "turn",
+   "len": 3
+  },
+  {
+   "name": "adds.len",
+   "len": 1
+  },
+  {
+   "name": "adds[0].slot",
+   "len": 1
+  },
+  {
+   "name": "adds[0].offset",
+   "len": 3
+  },
+  {
+   "name": "adds[1].slot",
+   "len": 1
+  },
+  {
+   "name": "adds[1].offset",
+   "len": 3
+  },
+  {
+   "name": "adds[2].slot",
+   "len": 1
+  },
+  {
+   "name": "adds[2].offset",
+   "len": 3
+  },
+  {
+   "name": "adds[3].slot",
+   "len": 1
+  },
+  {
+   "name": "adds[3].offset",
+   "len": 3
+  },
+  {
+   "name": "adds[4].slot",
+   "len": 1
+  },
+  {
+   "name": "adds[4].offset",
+   "len": 3
+  },
+  {
+   "name": "adds[5].slot",
+   "len": 1
+  },
+  {
+   "name": "adds[5].offset",
+   "len": 3
+  },
+  {
+   "name": "adds[6].slot",
+   "len": 1
+  },
+  {
+   "name": "adds[6].offset",
+   "len": 3
+  },
+  {
+   "name": "adds[7].slot",
+   "len": 1
+  },
+  {
+   "name": "adds[7].offset",
+   "len": 3
+  },
+  {
+   "name": "rise",
+   "len": 1
+  },
+  {
+   "name": "yaw",
+   "len": 1
+  },
+  {
+   "name": "refresh",
+   "len": 1
+  }
+ ],
+ "out": [
+  {
+   "name": "value",
+   "len": 1
+  },
+  {
+   "name": "value3",
+   "len": 3
+  },
+  {
+   "name": "ok",
+   "len": 1
+  },
+  {
+   "name": "upperArm",
+   "len": 3
+  },
+  {
+   "name": "lowerArm",
+   "len": 3
+  },
+  {
+   "name": "swivelDir",
+   "len": 3
+  },
+  {
+   "name": "hand",
+   "len": 3
+  },
+  {
+   "name": "palm",
+   "len": 3
+  },
+  {
+   "name": "tip",
+   "len": 3
+  },
+  {
+   "name": "twist",
+   "len": 1
+  },
+  {
+   "name": "q",
+   "len": 4
+  },
+  {
+   "name": "touched.len",
+   "len": 1
+  },
+  {
+   "name": "touched[0].node",
+   "len": 1
+  },
+  {
+   "name": "touched[0].position",
+   "len": 3
+  },
+  {
+   "name": "touched[0].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[0].matrixWorld",
+   "len": 16
+  },
+  {
+   "name": "touched[0].matrixWorldNeedsUpdate",
+   "len": 1
+  },
+  {
+   "name": "touched[1].node",
+   "len": 1
+  },
+  {
+   "name": "touched[1].position",
+   "len": 3
+  },
+  {
+   "name": "touched[1].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[1].matrixWorld",
+   "len": 16
+  },
+  {
+   "name": "touched[1].matrixWorldNeedsUpdate",
+   "len": 1
+  },
+  {
+   "name": "touched[2].node",
+   "len": 1
+  },
+  {
+   "name": "touched[2].position",
+   "len": 3
+  },
+  {
+   "name": "touched[2].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[2].matrixWorld",
+   "len": 16
+  },
+  {
+   "name": "touched[2].matrixWorldNeedsUpdate",
+   "len": 1
+  },
+  {
+   "name": "touched[3].node",
+   "len": 1
+  },
+  {
+   "name": "touched[3].position",
+   "len": 3
+  },
+  {
+   "name": "touched[3].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[3].matrixWorld",
+   "len": 16
+  },
+  {
+   "name": "touched[3].matrixWorldNeedsUpdate",
+   "len": 1
+  },
+  {
+   "name": "touched[4].node",
+   "len": 1
+  },
+  {
+   "name": "touched[4].position",
+   "len": 3
+  },
+  {
+   "name": "touched[4].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[4].matrixWorld",
+   "len": 16
+  },
+  {
+   "name": "touched[4].matrixWorldNeedsUpdate",
+   "len": 1
+  },
+  {
+   "name": "touched[5].node",
+   "len": 1
+  },
+  {
+   "name": "touched[5].position",
+   "len": 3
+  },
+  {
+   "name": "touched[5].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[5].matrixWorld",
+   "len": 16
+  },
+  {
+   "name": "touched[5].matrixWorldNeedsUpdate",
+   "len": 1
+  },
+  {
+   "name": "touched[6].node",
+   "len": 1
+  },
+  {
+   "name": "touched[6].position",
+   "len": 3
+  },
+  {
+   "name": "touched[6].quaternion",
+   "len": 4
+  },
+  {
+   "name": "touched[6].matrixWorld",
+   "len": 16
+  },
+  {
+   "name": "touched[6].matrixWorldNeedsUpdate",
+   "len": 1
+  },
+  {
+   "name": "basis.hips.present",
+   "len": 1
+  },
+  {
+   "name": "basis.hips",
+   "len": 4
+  },
+  {
+   "name": "basis.spine.present",
+   "len": 1
+  },
+  {
+   "name": "basis.spine",
+   "len": 4
+  },
+  {
+   "name": "basis.chest.present",
+   "len": 1
+  },
+  {
+   "name": "basis.chest",
+   "len": 4
+  },
+  {
+   "name": "basis.neck.present",
+   "len": 1
+  },
+  {
+   "name": "basis.neck",
+   "len": 4
+  },
+  {
+   "name": "basis.head.present",
+   "len": 1
+  },
+  {
+   "name": "basis.head",
+   "len": 4
+  },
+  {
+   "name": "basis.eye.L.present",
+   "len": 1
+  },
+  {
+   "name": "basis.eye.L",
+   "len": 4
+  },
+  {
+   "name": "basis.eye.R.present",
+   "len": 1
+  },
+  {
+   "name": "basis.eye.R",
+   "len": 4
+  },
+  {
+   "name": "legs.L.kneePole",
+   "len": 3
+  },
+  {
+   "name": "legs.L.anchorRoot",
+   "len": 3
+  },
+  {
+   "name": "legs.L.softZone",
+   "len": 1
+  },
+  {
+   "name": "legs.L.upperLength",
+   "len": 1
+  },
+  {
+   "name": "legs.L.lowerLength",
+   "len": 1
+  },
+  {
+   "name": "legs.R.kneePole",
+   "len": 3
+  },
+  {
+   "name": "legs.R.anchorRoot",
+   "len": 3
+  },
+  {
+   "name": "legs.R.softZone",
+   "len": 1
+  },
+  {
+   "name": "legs.R.upperLength",
+   "len": 1
+  },
+  {
+   "name": "legs.R.lowerLength",
+   "len": 1
+  },
+  {
+   "name": "path.len",
+   "len": 1
+  },
+  {
+   "name": "path[0]",
+   "len": 1
+  },
+  {
+   "name": "subtrees.len",
+   "len": 1
+  },
+  {
+   "name": "subtrees[0]",
+   "len": 1
+  },
+  {
+   "name": "hash",
+   "len": 2
+  }
+ ]
+}
