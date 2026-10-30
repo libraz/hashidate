@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import type { WindowBounds } from './types';
 
 /**
@@ -151,9 +151,17 @@ export class ShellState {
     }
     if (!this.pending) return;
     this.pending = false;
+    // Temp file in the same directory, then rename: the file is always whole.
+    const temp = `${this.filePath}.${process.pid}.tmp`;
     try {
-      writeFileSync(this.filePath, `${JSON.stringify(this.snapshot(), null, 2)}\n`, 'utf8');
+      writeFileSync(temp, `${JSON.stringify(this.snapshot(), null, 2)}\n`, 'utf8');
+      renameSync(temp, this.filePath);
     } catch {
+      try {
+        unlinkSync(temp);
+      } catch {
+        // Nothing was created, or it is already gone.
+      }
       // A read-only profile should not prevent a shell from opening. The next
       // launch simply starts at its defaults again.
     }

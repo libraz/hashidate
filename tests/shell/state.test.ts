@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -205,6 +205,27 @@ describe('writing a placement down', () => {
     // A read-only profile is not a reason to refuse to open a window; the next
     // launch simply starts at its defaults again.
     expect(() => state.flush()).not.toThrow();
+  });
+});
+
+describe('writing the file', () => {
+  it('leaves only the state file behind', () => {
+    const state = new ShellState(file);
+    state.setStageMuted(true);
+    expect(readdirSync(directory)).toEqual(['shell-state.json']);
+  });
+
+  it('keeps the previous file whole when the write cannot complete', () => {
+    new ShellState(file).setStageMuted(true);
+    const before = readFileSync(file, 'utf8');
+    // A directory squatting on the temp name makes the write fail partway.
+    mkdirSync(join(directory, `shell-state.json.${process.pid}.tmp`));
+
+    const state = new ShellState(file);
+    state.remember('control', FALLBACK);
+    expect(() => state.flush()).not.toThrow();
+    expect(readFileSync(file, 'utf8')).toBe(before);
+    expect(new ShellState(file).stageMuted).toBe(true);
   });
 });
 

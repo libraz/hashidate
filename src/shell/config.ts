@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ServerRoots } from '../protocol';
@@ -66,6 +67,17 @@ export function checkoutPaths(sourceFile = fileURLToPath(import.meta.url)): Shel
     tsx: resolve(root, 'node_modules/tsx/dist/loader.mjs'),
     server: resolve(root, 'src/server/main.ts'),
   };
+}
+
+/**
+ * A short name for a checkout, stable for its path.
+ *
+ * Electron keys the single-instance lock on the profile directory, so one
+ * profile per checkout is what keeps a second checkout's shell from raising the
+ * first one's windows.
+ */
+export function checkoutProfileId(root: string): string {
+  return createHash('sha256').update(root).digest('hex').slice(0, 8);
 }
 
 /** Read and validate a port without ever accepting an address override. */

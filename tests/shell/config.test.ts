@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   checkoutPaths,
+  checkoutProfileId,
   controlPort,
   controlURL,
   expectedRoots,
@@ -157,5 +158,13 @@ describe('the checkout', () => {
       bgm: '/work/hashidate/show/bgm',
       recordings: '/work/hashidate/show/recordings',
     });
+  });
+});
+
+describe('the per-checkout profile', () => {
+  it('is stable for a root and differs between roots', () => {
+    expect(checkoutProfileId('/work/a')).toBe(checkoutProfileId('/work/a'));
+    expect(checkoutProfileId('/work/a')).not.toBe(checkoutProfileId('/work/b'));
+    expect(checkoutProfileId('/work/a')).toMatch(/^[0-9a-f]{8}$/);
   });
 });

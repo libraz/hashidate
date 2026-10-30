@@ -18,6 +18,7 @@ import {
   CONTROL_PATH,
   CONTROL_TITLE,
   checkoutPaths,
+  checkoutProfileId,
   controlPort,
   expectedRoots,
   isAllowedPageURL,
@@ -54,15 +55,18 @@ for (const [name, value] of CHROMIUM_SWITCHES) {
   if (value === undefined) app.commandLine.appendSwitch(name);
   else app.commandLine.appendSwitch(name, value);
 }
+const paths = checkoutPaths();
 // Electron otherwise defaults to a generic `Electron` profile. Apart from
 // producing opaque SQLite warnings, that makes separate checkout runs share
-// state and window geometry.
+// state and window geometry. One profile per checkout also gives each its own
+// single-instance lock, which Electron keys on the profile directory.
+const profileId = checkoutProfileId(paths.root);
 app.setName('hashidate');
-app.setPath('userData', join(app.getPath('appData'), 'hashidate'));
+app.setPath('userData', join(app.getPath('appData'), 'hashidate', profileId));
 app.setAppLogsPath();
+app.setAppLogsPath(join(app.getPath('logs'), profileId));
 const singleInstance = app.requestSingleInstanceLock();
 
-const paths = checkoutPaths();
 const appIcon = join(paths.root, 'src/shell/assets/hashidate-icon.png');
 const port = controlPort();
 const logs = logDirectory();
@@ -230,16 +234,19 @@ function makeWindow(kind: WindowKind): BrowserWindow {
     });
   }
 
-  void window
-    .loadURL(windowURL(kind))
-    .then(() => {
-      if (!window.isDestroyed()) window.show();
-    })
-    .catch((error: unknown) => {
-      const message = `Could not load ${spec.title}: ${reason(error)}`;
-      console.error(message);
-      dialog.showErrorBox('hashidate could not open a window', message);
-    });
+  // Shown once the last navigation has finished, which a reload during the
+  // first load (Mute Stage) must not pre-empt or cancel.
+  window.webContents.once('did-finish-load', () => {
+    if (window.isDestroyed()) return;
+    revealed.add(window);
+    window.show();
+  });
+  void window.loadURL(windowURL(kind)).catch((error: unknown) => {
+    if (isSupersededLoad(error)) return;
+    const message = `Could not load ${spec.title}: ${reason(error)}`;
+    console.error(message);
+    dialog.showErrorBox('hashidate could not open a window', message);
+  });
 
   if (kind === 'control') controlWindow = window;
   else stageWindow = window;
@@ -277,6 +284,19 @@ function guardNavigation(window: BrowserWindow, expectedPath: string): void {
   });
 }
 
+/** Windows whose page has loaded and which have been shown at least once. */
+const revealed = new WeakSet<BrowserWindow>();
+
+/** A navigation replaced by a newer one rejects with `ERR_ABORTED` (-3). */
+function isSupersededLoad(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    ((error as { code?: unknown }).code === 'ERR_ABORTED' ||
+      (error as { errno?: unknown }).errno === -3)
+  );
+}
+
 function showWindow(kind: WindowKind): void {
   // A second-instance notification is allowed while startup waits for control.
   // The first instance will create both windows once that wait completes.
@@ -289,6 +309,8 @@ function showWindow(kind: WindowKind): void {
     makeWindow(kind);
     return;
   }
+  // Still on its first load: it shows itself when the page is there.
+  if (!revealed.has(existing)) return;
   if (existing.isMinimized()) existing.restore();
   existing.show();
   existing.focus();
@@ -351,7 +373,11 @@ function presentStageOn(displayId: number): void {
   const window = stageWindow;
   if (window === null || window.isDestroyed()) {
     showWindow('stage');
-    stageWindow?.once('ready-to-show', () => presentStageOn(displayId));
+    stageWindow?.once('show', () => presentStageOn(displayId));
+    return;
+  }
+  if (!revealed.has(window)) {
+    window.once('show', () => presentStageOn(displayId));
     return;
   }
   const move = () => {
