@@ -1,0 +1,16 @@
+{
+ "fn": "arm-path-solver-battery-c",
+ "cases": 1,
+ "in": [
+  {
+   "name": "records",
+   "len": 1
+  }
+ ],
+ "out": [
+  {
+   "name": "stream",
+   "len": 8923
+  }
+ ]
+}

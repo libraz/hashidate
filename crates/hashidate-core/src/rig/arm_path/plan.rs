@@ -19,37 +19,37 @@ use crate::rig::hand_geometry::HandGeometryCalibration;
 use crate::rig::hands::FingerSpec;
 use core::f64::consts::PI;
 
-pub const DOFS: usize = 7;
-pub const LANDMARKS: usize = 3;
-pub const DIRECTION_COMPONENTS: usize = 3;
-pub const MAX_ITERATIONS: usize = 6;
-pub const MAX_LINE_SEARCHES: usize = 6;
-pub const MAX_SWEEP_DEPTH: usize = 8;
-pub const MAX_ENVIRONMENT_BATCHES: usize = 96;
+pub(super) const DOFS: usize = 7;
+pub(super) const LANDMARKS: usize = 3;
+pub(super) const DIRECTION_COMPONENTS: usize = 3;
+pub(super) const MAX_ITERATIONS: usize = 6;
+pub(super) const MAX_LINE_SEARCHES: usize = 6;
+pub(super) const MAX_SWEEP_DEPTH: usize = 8;
+pub(super) const MAX_ENVIRONMENT_BATCHES: usize = 96;
 /// Metres outside the surface a restore aims for. The face field's normal is not
 /// its distance gradient, so aiming at exactly zero only approaches the surface.
-pub const RESTORE_MARGIN: f64 = 1e-6;
+pub(super) const RESTORE_MARGIN: f64 = 1e-6;
 // cbrt(Number.EPSILON) and EPSILON^(2/3), as the bits V8 and the core agree on.
-pub const DIFFERENCE_SCALE: f64 = CBRT_EPSILON;
-pub const LEXICAL_EPSILON: f64 = EPSILON_2_3;
-pub const FULL_TURN: f64 = 2.0 * PI;
-pub const SETTLED_POSITION_FRACTION: f64 = 1e-6;
-pub const SETTLED_ORIENTATION: f64 = 1e-5;
+pub(super) const DIFFERENCE_SCALE: f64 = CBRT_EPSILON;
+pub(super) const LEXICAL_EPSILON: f64 = EPSILON_2_3;
+pub(super) const FULL_TURN: f64 = 2.0 * PI;
+pub(super) const SETTLED_POSITION_FRACTION: f64 = 1e-6;
+pub(super) const SETTLED_ORIENTATION: f64 = 1e-5;
 /// Accepted moves that remove at most this fraction of the starting primary
 /// error, on physical stops only, mean the plan has stopped at a box minimum.
-pub const STATIONARY_FRACTION: f64 = 1e-3;
-pub const FRAME_TOLERANCE: f64 = 1e-4;
+pub(super) const STATIONARY_FRACTION: f64 = 1e-3;
+const FRAME_TOLERANCE: f64 = 1e-4;
 /// Weight of squared wrist deviation past its comfortable band, in radians, beside
 /// the elbow's squared miss. At 10 the pole still held fingerTouch at −20.1°; at
 /// 100 every hold the band can reach lands between −19.8° and −19.0°.
-pub const DEVIATION_COMFORT_WEIGHT: f64 = 100.0;
+pub(super) const DEVIATION_COMFORT_WEIGHT: f64 = 100.0;
 /// How far inside the band the comfort term aims, so the pole cannot balance it on the edge.
-pub const DEVIATION_COMFORT_MARGIN: f64 = PI / 180.0;
+pub(super) const DEVIATION_COMFORT_MARGIN: f64 = PI / 180.0;
 
 // arm-path.ts halvings
 //
 // Two to the minus `line` for a whole `line`: 0.5 multiplied in `line` times, which is exact.
-pub fn halvings(line: usize) -> f64 {
+pub(super) fn halvings(line: usize) -> f64 {
     let mut alpha = 1.0;
     for _ in 0..line {
         alpha *= 0.5;
@@ -160,7 +160,7 @@ pub struct ArmPathPlanOutput {
 
 /// One pose the solver holds: its q, what FK made of it, and how it measures.
 #[derive(Clone, Debug, PartialEq)]
-pub struct PathState {
+pub(super) struct PathState {
     pub q: [f64; DOFS],
     pub configuration: ArmConfiguration,
     pub forward: ArmForwardResult,
@@ -176,7 +176,7 @@ pub struct PathState {
 
 /// The supplied bounds narrowed to the joints' physical ones.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct ResolvedBounds {
+pub(super) struct ResolvedBounds {
     pub lower: [f64; DOFS],
     pub upper: [f64; DOFS],
     /// True where the supplied bound is narrower than the joint's physical one.
@@ -233,7 +233,7 @@ fn point(
 }
 
 // arm-path.ts proxyPoints
-pub fn proxy_points(hand: &HandGeometryCalibration) -> Vec<ArmPathPoint> {
+pub(super) fn proxy_points(hand: &HandGeometryCalibration) -> Vec<ArmPathPoint> {
     let mut out = Vec::with_capacity(3 * TORSO_SAMPLES + 1 + hand.points.len());
     for i in 0..=TORSO_SAMPLES {
         out.push(point(ArmPathPointKind::Upper, i, None, None, None));
@@ -258,7 +258,7 @@ pub fn proxy_points(hand: &HandGeometryCalibration) -> Vec<ArmPathPoint> {
 }
 
 // arm-path.ts makeState
-pub fn make_state(template: &[ArmPathPoint]) -> PathState {
+pub(super) fn make_state(template: &[ArmPathPoint]) -> PathState {
     PathState {
         q: [0.0; DOFS],
         configuration: ArmConfiguration::default(),
@@ -281,22 +281,22 @@ pub fn make_state(template: &[ArmPathPoint]) -> PathState {
 }
 
 // arm-path.ts cloneRows
-pub fn clone_rows(count: usize) -> Vec<ArmPathClearance> {
+pub(super) fn clone_rows(count: usize) -> Vec<ArmPathClearance> {
     vec![ArmPathClearance::default(); count]
 }
 
 // arm-path.ts finiteVector
-pub fn finite_vector(value: &Vec3) -> bool {
+pub(super) fn finite_vector(value: &Vec3) -> bool {
     value.x.is_finite() && value.y.is_finite() && value.z.is_finite()
 }
 
 // arm-path.ts unitVector
-pub fn unit_vector(value: &Vec3) -> bool {
+fn unit_vector(value: &Vec3) -> bool {
     finite_vector(value) && (value.length_sq() - 1.0).abs() < FRAME_TOLERANCE
 }
 
 // arm-path.ts unitQuaternion
-pub fn unit_quaternion(value: &Quat) -> bool {
+fn unit_quaternion(value: &Quat) -> bool {
     value.x.is_finite()
         && value.y.is_finite()
         && value.z.is_finite()
@@ -306,7 +306,7 @@ pub fn unit_quaternion(value: &Quat) -> bool {
 }
 
 // arm-path.ts validContext
-pub fn valid_context(context: &ArmForwardContext) -> bool {
+pub(super) fn valid_context(context: &ArmForwardContext) -> bool {
     if !(finite_vector(&context.shoulder)
         && unit_vector(&context.up)
         && unit_vector(&context.right)
@@ -325,7 +325,7 @@ pub fn valid_context(context: &ArmForwardContext) -> bool {
 }
 
 // arm-path.ts validForward
-pub fn valid_forward(forward: &ArmForwardResult) -> bool {
+pub(super) fn valid_forward(forward: &ArmForwardResult) -> bool {
     unit_vector(&forward.u)
         && unit_vector(&forward.l)
         && unit_vector(&forward.h)
@@ -342,12 +342,12 @@ pub fn valid_forward(forward: &ArmForwardResult) -> bool {
 }
 
 // arm-path.ts finiteSpec
-pub fn finite_spec(spec: &FingerSpec) -> bool {
+pub(super) fn finite_spec(spec: &FingerSpec) -> bool {
     spec.iter().all(|v| v.is_none_or(f64::is_finite))
 }
 
 // arm-path.ts createBounds
-pub fn create_bounds(
+pub(super) fn create_bounds(
     calibration: &ArmCalibration,
     supplied: &ArmPathBounds,
     out: &mut ResolvedBounds,
@@ -392,7 +392,7 @@ pub fn copy_forward(source: &ArmForwardResult, target: &mut ArmForwardResult) {
 }
 
 // arm-path.ts dotRow
-pub fn dot_row(matrix: &[f64], row: usize, vector: &[f64], vector_offset: usize) -> f64 {
+pub(super) fn dot_row(matrix: &[f64], row: usize, vector: &[f64], vector_offset: usize) -> f64 {
     let mut result = 0.0;
     let start = row * DOFS;
     for i in 0..DOFS {

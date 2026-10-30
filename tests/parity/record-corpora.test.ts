@@ -4,11 +4,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FINGER_WIDTH, HAND_CONTACT, JOINTS } from '@/engine/anatomy';
 import { ArmAnatomy } from '@/engine/anatomy/arm';
 import * as armFrame from '@/engine/anatomy/arm-frame';
+import { TORSO_SAMPLES } from '@/engine/anatomy/joints';
 import * as strain from '@/engine/anatomy/strain';
 import * as volume from '@/engine/anatomy/volume';
 import { type BodyClearance, makeBodyVolumeFrame } from '@/engine/anatomy/volumes';
 import { Director } from '@/engine/director';
+import { buildProfile } from '@/engine/profile';
+import { Rig } from '@/engine/rig';
 import * as armConfiguration from '@/engine/rig/arm-configuration';
+import { ArmDriver } from '@/engine/rig/arm-driver';
 import * as armPath from '@/engine/rig/arm-path';
 import * as armQp from '@/engine/rig/arm-qp';
 import * as armRoute from '@/engine/rig/arm-route';
@@ -59,6 +63,8 @@ import {
   splitmix64,
 } from '../helpers/director-fixtures';
 import { must } from '../helpers/must';
+import { buildRig } from '../helpers/scene';
+import { DT, harness } from '../motion/body/harness';
 
 /**
  * The function corpora and the base avatar the Rust ports replay, recorded from the TS engine.
@@ -108,6 +114,21 @@ import { must } from '../helpers/must';
  * directly, as every caller of theirs outside the tests is in their own module. The values are
  * splitmix64 draws over several magnitudes, mixed with signed zeros, infinities, NaN and the
  * smallest subnormal; `same` says `configurationFromQ` returned its `out`.
+ *
+ * `arm-path-solver-battery-{a..e}` are `ArmStepSolver` calls, each file one case: its input the
+ * number of `records`, its output one `stream` of f64 holding them one after another, a tag first. `0` defines a solver: its id, hand
+ * length, sweep resolution, calibration (axes, rests, front, palm, radial sign) and hand geometry
+ * (both on the human joint table). `1` is a `plan` and `2` a `restoreEndpoint` on a defined
+ * solver: the request, start, context, bounds, the environment's and the output's row counts,
+ * then every `sample` the solver made, then the output. A sample is the FNV-1a of its points'
+ * positions (high and low 32 bits) and the rows that differ from an empty row on their slot's
+ * key and point: `slot, valid, distance, normal`, or `-(slot + 1), key, point, ...` where the
+ * slot's key or point changed. A key is its first-seen index in the file, `-1` for none. The
+ * output is the result, q, configuration, forward result, status, errors and counts, and the
+ * FNV-1a of its points and of its rows. Absent values are a `0`, present ones a `1` and the value.
+ * `-a` and `-b` repeat the scenarios of `tests/rig/arm-path.test.ts`; `-c` puts the base
+ * avatar's arm-driver requests to solvers of their own with no environment and one plane; `-d`
+ * and `-e` are the drivers' own calls, chosen to reach every step the fixtures take.
  *
  * Without `HASHIDATE_RECORD_CORPORA=1` this checks the files against a fresh recording;
  * with it, it writes them.
@@ -1903,6 +1924,8 @@ function recordRigBBattery(): Recorded {
     const rest = new Map<THREE.Object3D, THREE.Quaternion>();
     for (const o of nodes) rest.set(o, o.quaternion.clone());
     const restOf = (b: THREE.Bone) => must(rest.get(b), b.name);
+    const boneRest = new Map<THREE.Bone, THREE.Quaternion>();
+    for (const [o, q] of rest) if (o instanceof THREE.Bone) boneRest.set(o, q);
     const joints = profile.anatomy ?? JOINTS;
     const clearanceOf = (s: Side) => 0.5 * FINGER_WIDTH * (profile.limb?.[`pitch.${s}`] ?? 0);
 
@@ -1982,7 +2005,7 @@ function recordRigBBattery(): Recorded {
       side(s, 'side', input);
       num(metricScale, 'metricScale', input);
       step('geometry.capture', {}, input, (out) => {
-        const g = captureHandGeometry(profile, s, rest, axes, joints, metricScale);
+        const g = captureHandGeometry(profile, s, boneRest, axes, joints, metricScale);
         geometry[s] = g;
         samples[s] = makeHandGeometrySample(g);
         const v: number[] = [];
@@ -2533,6 +2556,1399 @@ function recordArmPathPlanBattery(): Recorded {
   return { json: `${JSON.stringify(index, null, 1)}\n`, bin: f64Bytes(values) };
 }
 
+// --- the arm-path solver battery ----------------------------------------------------------
+
+const SOLVER_STATUSES = ['progress', 'settled', 'stationary', 'blocked'] as const;
+const PLAN = armPath.ArmStepSolver.prototype.plan;
+const RESTORE = armPath.ArmStepSolver.prototype.restoreEndpoint;
+type SolverMethod = 'plan' | 'restore';
+type SolverArgs = [
+  armPath.ArmPathRequest,
+  Float64Array,
+  armConfiguration.ArmForwardContext,
+  armPath.ArmPathBounds,
+  armPath.ArmPathEnvironment,
+  armPath.ArmPathPlanOutput,
+];
+/** What the solver keeps from its constructor arguments, read off the instance. */
+interface SolverInternals {
+  calibration: armConfiguration.ArmCalibration;
+  handGeometry: HandGeometryCalibration;
+  handLength: number;
+  resolution: number;
+}
+
+function hashHalves(values: readonly number[]): [number, number] {
+  const h = makeFnv64();
+  h.f64s(values);
+  const d = h.digest();
+  return [Number.parseInt(d.slice(0, 8), 16), Number.parseInt(d.slice(8), 16)];
+}
+
+function presentNumber(into: number[], v: number | undefined): void {
+  if (v === undefined) into.push(0);
+  else into.push(1, v);
+}
+
+function presentVector(into: number[], v: THREE.Vector3 | null | undefined): void {
+  if (v === null || v === undefined) into.push(0);
+  else into.push(1, v.x, v.y, v.z);
+}
+
+/**
+ * One battery file's stream of solver definitions and calls; see the file comment. A solver
+ * is defined by what it was built from, so solvers built alike share one definition.
+ */
+class SolverStream {
+  readonly values: number[] = [];
+  readonly statuses = new Map<string, number>();
+  samples = 0;
+  readonly #defs = new Map<string, number>();
+  readonly #keys = new Map<string, number>();
+  readonly #layouts = new Map<number, Array<{ key: number; point: number }>>();
+  #records = 0;
+
+  plan(solver: armPath.ArmStepSolver, ...args: SolverArgs): armPath.ArmPathPlanOutput {
+    return this.call(solver, 'plan', args) as armPath.ArmPathPlanOutput;
+  }
+
+  restore(solver: armPath.ArmStepSolver, ...args: SolverArgs): boolean {
+    return this.call(solver, 'restore', args) as boolean;
+  }
+
+  call(solver: armPath.ArmStepSolver, method: SolverMethod, args: SolverArgs): unknown {
+    const [request, start, context, bounds, environment, out] = args;
+    const def = this.#define(solver);
+    const head: number[] = [method === 'plan' ? 1 : 2, def];
+    head.push(...request.wrist.toArray(), ...request.hand.toArray());
+    presentVector(head, request.palm);
+    for (const f of FINGER_NAMES) presentNumber(head, request.curls[f]);
+    for (const f of FINGER_NAMES) presentNumber(head, request.spread[f]);
+    presentVector(head, request.elbow);
+    head.push(...start);
+    head.push(context.side === 'L' ? 0 : 1, ...context.shoulder.toArray());
+    head.push(context.upperLength, context.lowerLength);
+    head.push(...context.up.toArray(), ...context.right.toArray(), ...context.forward.toArray());
+    head.push(...context.upperParentWorld.toArray());
+    head.push(...bounds.lower, ...bounds.upper, environment.rowCount, out.clearances.length);
+    const samples: number[] = [];
+    let count = 0;
+    const recorded: armPath.ArmPathEnvironment = {
+      rowCount: environment.rowCount,
+      sample: (points, rows) => {
+        environment.sample(points, rows);
+        count++;
+        this.#sample(def, points, rows, samples);
+      },
+    };
+    const result =
+      method === 'plan'
+        ? PLAN.call(solver, request, start, context, bounds, recorded, out)
+        : RESTORE.call(solver, request, start, context, bounds, recorded, out);
+    const tail: number[] = [method === 'plan' || result ? 1 : 0, ...out.q];
+    tail.push(
+      ...(
+        [
+          'shoulderPlane',
+          'shoulderLift',
+          'humeralRotation',
+          'elbowFlex',
+          'forearmRoll',
+          'wristFlex',
+          'wristDev',
+        ] as const
+      ).map((k) => out.configuration[k]),
+    );
+    for (const k of ['u', 'l', 'h', 'palm', 'elbow', 'wrist'] as const)
+      tail.push(...out.forward[k].toArray());
+    for (const k of [
+      'upperWorld',
+      'lowerWorld',
+      'handWorld',
+      'upperLocal',
+      'lowerLocal',
+      'handLocal',
+    ] as const) {
+      tail.push(...out.forward[k].toArray());
+    }
+    tail.push(SOLVER_STATUSES.indexOf(out.status), out.positionError, out.orientationError);
+    tail.push(out.secondaryError, out.maxViolation, out.iterations, out.environmentBatches);
+    tail.push(...hashHalves(out.points.flatMap((p) => p.position.toArray())));
+    tail.push(
+      ...hashHalves(
+        out.clearances.flatMap((r) => [
+          this.#key(r.key),
+          r.pointIndex,
+          r.valid ? 1 : 0,
+          r.distance,
+          ...r.normal.toArray(),
+        ]),
+      ),
+    );
+    this.values.push(...head, count, ...samples, ...tail);
+    this.#records++;
+    this.samples += count;
+    const status = method === 'plan' ? out.status : result ? 'restored' : 'refused';
+    this.statuses.set(status, (this.statuses.get(status) ?? 0) + 1);
+    return result;
+  }
+
+  #key(key: string): number {
+    if (key === '') return -1;
+    let id = this.#keys.get(key);
+    if (id === undefined) {
+      id = this.#keys.size;
+      this.#keys.set(key, id);
+    }
+    return id;
+  }
+
+  #define(solver: armPath.ArmStepSolver): number {
+    const {
+      calibration: c,
+      handGeometry: g,
+      handLength,
+      resolution,
+    } = solver as unknown as SolverInternals;
+    expect(c.joints, 'a solver calibrated on the human joint table').toEqual(JOINTS);
+    expect(g.joints, 'a hand calibrated on the human joint table').toEqual(JOINTS);
+    const v: number[] = [handLength, resolution];
+    for (const x of [
+      c.upper.axis,
+      c.upper.rest,
+      c.upper.front,
+      c.lower.axis,
+      c.lower.rest,
+      c.hand.axis,
+      c.hand.rest,
+      c.hand.palm,
+    ]) {
+      v.push(...x.toArray());
+    }
+    v.push(c.radialSign);
+    presentNumber(v, g.handPresent === undefined ? undefined : g.handPresent ? 1 : 0);
+    v.push(g.metricScale, g.points.length);
+    for (const point of g.points) {
+      v.push(FINGER_NAMES.indexOf(point.finger), point.jointIndex, point.tip ? 1 : 0);
+      if (point.nodes) {
+        v.push(1, point.nodes.length);
+        for (const node of point.nodes) {
+          v.push(...node.position.toArray(), ...node.rest.toArray(), ...node.scale.toArray());
+          presentVector(v, node.curlAxis);
+          presentVector(v, node.splayAxis);
+          presentNumber(v, node.jointIndex);
+        }
+      } else v.push(0);
+      presentNumber(v, point.previousPoint);
+      presentNumber(v, point.lastPoint);
+    }
+    const content = JSON.stringify(v);
+    let id = this.#defs.get(content);
+    if (id === undefined) {
+      id = this.#defs.size;
+      this.#defs.set(content, id);
+      this.values.push(0, id, ...v);
+      this.#records++;
+    }
+    return id;
+  }
+
+  /** The points' hash, then each row that differs from its slot's layout and an empty row. */
+  #sample(
+    def: number,
+    points: readonly armPath.ArmPathPoint[],
+    rows: armPath.ArmPathClearance[],
+    into: number[],
+  ): void {
+    into.push(...hashHalves(points.flatMap((p) => p.position.toArray())));
+    let layout = this.#layouts.get(def);
+    if (!layout || layout.length !== rows.length) {
+      layout = rows.map(() => ({ key: -1, point: -1 }));
+      this.#layouts.set(def, layout);
+    }
+    const entries: number[] = [];
+    let changed = 0;
+    rows.forEach((row, slot) => {
+      const key = this.#key(row.key);
+      const values = [row.valid ? 1 : 0, row.distance, ...row.normal.toArray()];
+      const slotLayout = must(layout?.[slot], 'a row layout');
+      if (key !== slotLayout.key || row.pointIndex !== slotLayout.point) {
+        entries.push(-(slot + 1), key, row.pointIndex, ...values);
+        slotLayout.key = key;
+        slotLayout.point = row.pointIndex;
+        changed++;
+      } else if (!values.every((x, i) => Object.is(x, [0, Number.POSITIVE_INFINITY, 0, 0, 0][i]))) {
+        entries.push(slot, ...values);
+        changed++;
+      }
+    });
+    into.push(changed, ...entries);
+  }
+
+  recorded(name: string): Recorded {
+    const index = {
+      fn: name,
+      cases: 1,
+      in: [{ name: 'records', len: 1 }],
+      out: [{ name: 'stream', len: this.values.length }],
+    };
+    return {
+      json: `${JSON.stringify(index, null, 1)}\n`,
+      bin: f64Bytes([this.#records, ...this.values]),
+    };
+  }
+}
+
+// The synthetic arms of `tests/rig/arm-path.test.ts`, which the scenarios below repeat.
+
+const PATH_UP = new THREE.Vector3(0, 1, 0);
+const PATH_RIGHT = new THREE.Vector3(1, 0, 0);
+const PATH_FORWARD = new THREE.Vector3(0, 0, 1);
+
+interface PathFixture {
+  calibration: armConfiguration.ArmCalibration;
+  context: armConfiguration.ArmForwardContext;
+  handGeometry: HandGeometryCalibration;
+  handLength: number;
+  solver: armPath.ArmStepSolver;
+  output: armPath.ArmPathPlanOutput;
+}
+
+function pathFixture(side: Side = 'R', yaw = 0, scale = 1): PathFixture {
+  const identity = new THREE.Quaternion();
+  const calibration = armConfiguration.captureArmCalibration({
+    upper: { axis: PATH_UP, front: PATH_FORWARD, rest: identity },
+    lower: { axis: PATH_UP, rest: identity },
+    hand: { axis: PATH_UP, palm: PATH_FORWARD, rest: identity },
+    radialSign: side === 'L' ? -1 : 1,
+    joints: JOINTS,
+  });
+  const rotation = new THREE.Quaternion().setFromAxisAngle(PATH_UP, yaw);
+  const context: armConfiguration.ArmForwardContext = {
+    side,
+    shoulder: new THREE.Vector3(0, 0, 0).applyQuaternion(rotation),
+    upperLength: 0.31 * scale,
+    lowerLength: 0.27 * scale,
+    up: PATH_UP.clone().applyQuaternion(rotation),
+    right: PATH_RIGHT.clone().applyQuaternion(rotation),
+    forward: PATH_FORWARD.clone().applyQuaternion(rotation),
+    upperParentWorld: rotation,
+  };
+  const handGeometry: HandGeometryCalibration = { metricScale: scale, joints: JOINTS, points: [] };
+  const handLength = 0.1 * scale;
+  const solver = new armPath.ArmStepSolver(calibration, handGeometry, handLength, 0.006 * scale);
+  const output = armPath.makeArmPathPlanOutput(calibration, handGeometry, 0);
+  return { calibration, context, handGeometry, handLength, solver, output };
+}
+
+let pathFingerGeometryCache: HandGeometryCalibration | null = null;
+
+/** The synthetic avatar's right hand, built outside `withCoreMath` as its meshes need `Math.pow`. */
+function pathFingerGeometry(): HandGeometryCalibration {
+  pathFingerGeometryCache ??= capturePathFingerGeometry();
+  return pathFingerGeometryCache;
+}
+
+function capturePathFingerGeometry(): HandGeometryCalibration {
+  const built = buildRig({ armatureScale: 1 });
+  built.root.updateMatrixWorld(true);
+  const profile = buildProfile(built.root, built.descriptor);
+  const rig = new Rig(profile);
+  const hand = must(profile.bones['hand.R'], 'the synthetic right hand');
+  return captureHandGeometry(
+    profile,
+    'R',
+    rig.rest,
+    solveFingerAxes(profile),
+    rig.joints,
+    hand.getWorldScale(new THREE.Vector3()).x,
+  );
+}
+
+function pathFingerFixture(): PathFixture {
+  const h = pathFixture();
+  const handGeometry = pathFingerGeometry();
+  return {
+    ...h,
+    handGeometry,
+    solver: new armPath.ArmStepSolver(h.calibration, handGeometry, h.handLength, 0.006),
+    output: armPath.makeArmPathPlanOutput(h.calibration, handGeometry, 0),
+  };
+}
+
+function pathNeutralFixture() {
+  const calibration: armConfiguration.ArmCalibration = {
+    upper: {
+      axis: new THREE.Vector3(1, 0, 0),
+      front: new THREE.Vector3(0, 0, -1),
+      rest: new THREE.Quaternion(0, 0, 0, 1),
+    },
+    lower: { axis: new THREE.Vector3(1, 0, 0), rest: new THREE.Quaternion(0, 0, 0, 1) },
+    hand: {
+      axis: new THREE.Vector3(1, 0, 0),
+      palm: new THREE.Vector3(0, -1, 0),
+      rest: new THREE.Quaternion(0, 0, 0, 1),
+    },
+    radialSign: -1,
+    joints: JOINTS,
+  };
+  const context: armConfiguration.ArmForwardContext = {
+    side: 'R',
+    shoulder: new THREE.Vector3(0.155901888668811, 1.1405163252064308, -0.006688540336977538),
+    upperLength: 0.17,
+    lowerLength: 0.14999999999999997,
+    up: new THREE.Vector3(0, 1, 0),
+    right: new THREE.Vector3(1, 0, 0),
+    forward: new THREE.Vector3(0, 0, -1),
+    upperParentWorld: new THREE.Quaternion(
+      4.377774469290759e-19,
+      0.03068963967145867,
+      -0.1329884385763209,
+      0.9906423275945099,
+    ),
+  };
+  const handGeometry = pathFingerGeometry();
+  const handLength = 0.1187500000000001;
+  const solver = new armPath.ArmStepSolver(
+    calibration,
+    handGeometry,
+    handLength,
+    0.0011250000000000001,
+  );
+  const request: armPath.ArmPathRequest = {
+    wrist: new THREE.Vector3(0.23258893762054733, 0.8375989149964106, -0.06958939001876399),
+    hand: new THREE.Vector3(0.1302542439055869, -0.9618774934566418, -0.24046937336416044),
+    palm: new THREE.Vector3(-0.8799221644217047, -0.22391718724853235, 0.419044243265706),
+    curls: {
+      thumb: 0.24745597271258368,
+      index: 0.31225594371769966,
+      middle: 0.3759045026355887,
+      ring: 0.43840089115382835,
+      little: 0.49974139671977874,
+    },
+    spread: {
+      thumb: 0,
+      index: -6.759174985994615e-10,
+      middle: -3.1398130906790893e-10,
+      ring: 8.305082845022316e-12,
+      little: 3.189180344303935e-10,
+    },
+    elbow: new THREE.Vector3(0.2070761780500716, 0.9801702184784808, -0.03056987538156583),
+  };
+  const bound: armPath.ArmPathBounds = {
+    lower: new Float64Array([
+      -0.23333333333333334, 1.3823428885128457, -0.23333333333333334, 0, -0.23333333333333334,
+      -0.23333333333333334, -0.23333333333333334,
+    ]),
+    upper: new Float64Array([
+      0.23333333333333334, 1.8490095551795125, 0.23333333333333334, 0.23333333333333334,
+      0.23333333333333334, 0.23333333333333334, 0.23333333333333334,
+    ]),
+  };
+  const start = new Float64Array([0, 1.615676221846179, 0, 0, 0, 0, 0]);
+  return { calibration, context, handGeometry, handLength, solver, request, bound, start };
+}
+
+function pathConfiguration(q: Float64Array): armConfiguration.ArmConfiguration {
+  return armPath.configurationFromQ(q, {
+    shoulderPlane: 0,
+    shoulderLift: 0,
+    humeralRotation: 0,
+    elbowFlex: 0,
+    forearmRoll: 0,
+    wristFlex: 0,
+    wristDev: 0,
+  });
+}
+
+function pathForward(h: PathFixture, q: Float64Array): armConfiguration.ArmForwardResult {
+  return armConfiguration.forwardArm(
+    pathConfiguration(q),
+    h.calibration,
+    h.context,
+    armConfiguration.makeArmForwardResult(),
+  );
+}
+
+function pathRequestAt(h: PathFixture, q: Float64Array): armPath.ArmPathRequest {
+  const fk = pathForward(h, q);
+  return {
+    wrist: fk.wrist.clone(),
+    hand: fk.h.clone(),
+    palm: fk.palm.clone(),
+    curls: {},
+    spread: {},
+  };
+}
+
+function pathBounds(): armPath.ArmPathBounds {
+  const j = JOINTS.shoulder.dofs.rotation.max;
+  return {
+    lower: new Float64Array([
+      -Math.PI,
+      0,
+      j[0],
+      JOINTS.elbow.dofs.flexion.max[0],
+      JOINTS.elbow.dofs.rotation.max[0],
+      JOINTS.wrist.dofs.flexion.max[0],
+      JOINTS.wrist.dofs.deviation.max[0],
+    ]),
+    upper: new Float64Array([
+      Math.PI,
+      Math.PI,
+      j[1],
+      JOINTS.elbow.dofs.flexion.max[1],
+      JOINTS.elbow.dofs.rotation.max[1],
+      JOINTS.wrist.dofs.flexion.max[1],
+      JOINTS.wrist.dofs.deviation.max[1],
+    ]),
+  };
+}
+
+function pathBoundedAround(q: Float64Array, halfWidth: number): armPath.ArmPathBounds {
+  const full = pathBounds();
+  return {
+    lower: Float64Array.from(q, (v, i) => Math.max(full.lower[i], v - halfWidth)),
+    upper: Float64Array.from(q, (v, i) => Math.min(full.upper[i], v + halfWidth)),
+  };
+}
+
+function pathPoleQ(plane = -1.0605277708708791): Float64Array {
+  return new Float64Array([
+    plane,
+    0,
+    0.8775014769549042,
+    0.6286143089887103,
+    -1.3097985816478976,
+    0.29435979269206314,
+    0.004239725810632073,
+  ]);
+}
+
+function pathPoleBounds(q: Float64Array, halfWidth = 14 / 60): armPath.ArmPathBounds {
+  const result = pathBoundedAround(q, halfWidth);
+  result.lower[0] = q[0] - halfWidth;
+  result.upper[0] = q[0] + halfWidth;
+  return result;
+}
+
+const PATH_FREE: armPath.ArmPathEnvironment = { rowCount: 0, sample: () => {} };
+
+/** One row on `pointIndex` from `fill`, which may leave fields at the solver's reset. */
+function pathRow(
+  key: string,
+  pointIndex: number,
+  fill: (position: THREE.Vector3, row: armPath.ArmPathClearance) => void,
+): armPath.ArmPathEnvironment {
+  return {
+    rowCount: 1,
+    sample: (points, rows) => {
+      rows[0].key = key;
+      rows[0].pointIndex = pointIndex;
+      rows[0].valid = true;
+      fill(must(points[pointIndex], 'a proxy point').position, rows[0]);
+    },
+  };
+}
+
+/** A plane with `axis` its inward normal, whose row is negative past `offset`. */
+function pathPlane(pointIndex: number, axis: THREE.Vector3, offset: number) {
+  return pathRow('plane', pointIndex, (p, row) => {
+    row.distance = offset - p.dot(axis);
+    row.normal.copy(axis).negate();
+  });
+}
+
+function pathSphere(key: string, pointIndex: number, center: THREE.Vector3, radius: number) {
+  return pathRow(key, pointIndex, (p, row) => {
+    row.normal.copy(p).sub(center);
+    row.distance = row.normal.length() - radius;
+    if (row.normal.lengthSq() < 1e-12) row.normal.set(0, 1, 0);
+    else row.normal.normalize();
+  });
+}
+
+function pathEnteringPlane(
+  pointIndex: number,
+  axis: THREE.Vector3,
+  activation: number,
+  offset: number,
+): armPath.ArmPathEnvironment {
+  return pathRow('entering-plane', pointIndex, (p, row) => {
+    const coordinate = p.dot(axis);
+    row.valid = coordinate >= activation;
+    if (row.valid) {
+      row.distance = offset - coordinate;
+      row.normal.copy(axis).negate();
+    }
+  });
+}
+
+function pathHandProxy(h: PathFixture, q: Float64Array): THREE.Vector3 {
+  const r = pathForward(h, q);
+  return r.wrist.clone().addScaledVector(r.h, (h.handLength * HAND_CONTACT) / TORSO_SAMPLES);
+}
+
+const HAND_PROXY = TORSO_SAMPLES * 2 + 1;
+
+/** The scenarios of `tests/rig/arm-path.test.ts`, as public calls on their solvers. */
+function recordSyntheticSolverCalls(s: SolverStream, part: 0 | 1): void {
+  const out = (h: PathFixture, rows: number) =>
+    armPath.makeArmPathPlanOutput(h.calibration, h.handGeometry, rows);
+  if (part === 0) {
+    // Bounded progress, the neutral 60 Hz target, and the zero-lift pole.
+    let h = pathFixture();
+    const goal = new Float64Array([0.42, 0.64, 0.35, 0.82, 0.28, 0.22, -0.13]);
+    s.plan(
+      h.solver,
+      pathRequestAt(h, goal),
+      new Float64Array([0, 0, 0, 0.2, 0, 0, 0]),
+      h.context,
+      pathBounds(),
+      PATH_FREE,
+      h.output,
+    );
+    const n = pathNeutralFixture();
+    const neutral = {
+      ...n,
+      output: armPath.makeArmPathPlanOutput(n.calibration, n.handGeometry, 1),
+    };
+    const safe = pathRow('uniform-safe', HAND_PROXY, (p, row) => {
+      row.distance = p.y + 100;
+      row.normal.set(0, 1, 0);
+    });
+    s.plan(n.solver, n.request, n.start, n.context, n.bound, safe, neutral.output);
+    const pole = pathPoleQ();
+    s.plan(n.solver, n.request, pole, n.context, pathPoleBounds(pole), safe, neutral.output);
+    for (const [side, plane] of [
+      ['R', -1.0605277708708791],
+      ['R', -1.0605277708708791 + 2 * Math.PI],
+      ['L', -1.0605277708708791],
+    ] as const) {
+      const context = { ...n.context, side };
+      const o = armPath.makeArmPathPlanOutput(n.calibration, n.handGeometry, 0);
+      const start = pathPoleQ(plane);
+      s.plan(n.solver, n.request, start, context, pathPoleBounds(start), PATH_FREE, o);
+      for (let call = 0; call < 3 && !(o.q[1] > 1e-3); call++) {
+        const from = Float64Array.from(o.q);
+        s.plan(n.solver, n.request, from, context, pathPoleBounds(from), PATH_FREE, o);
+      }
+    }
+    for (const locked of [0, 1]) {
+      const limit = pathPoleBounds(pole);
+      limit.lower[locked] = pole[locked];
+      limit.upper[locked] = pole[locked];
+      const o = armPath.makeArmPathPlanOutput(n.calibration, n.handGeometry, 0);
+      s.plan(n.solver, n.request, pole, n.context, limit, PATH_FREE, o);
+    }
+    const lifted = pathPoleQ();
+    lifted[1] = 1e-8;
+    const narrow = pathPoleBounds(lifted);
+    narrow.lower[0] = lifted[0] - 1e-4;
+    narrow.upper[0] = lifted[0] + 1e-4;
+    const liftedOutput = armPath.makeArmPathPlanOutput(n.calibration, n.handGeometry, 0);
+    s.plan(n.solver, n.request, lifted, n.context, narrow, PATH_FREE, liftedOutput);
+    {
+      const initial = armConfiguration.forwardArm(
+        pathConfiguration(pole),
+        n.calibration,
+        n.context,
+        armConfiguration.makeArmForwardResult(),
+      );
+      const center = initial.wrist
+        .clone()
+        .addScaledVector(initial.h, (n.handLength * HAND_CONTACT) / TORSO_SAMPLES);
+      const boundary = pathRow('pole-lift-boundary', HAND_PROXY, (p, row) => {
+        const displacement = p.clone().sub(center);
+        row.distance = -displacement.length();
+        if (displacement.lengthSq() > 0) row.normal.copy(displacement).normalize().negate();
+        else row.normal.set(0, 1, 0);
+      });
+      s.plan(n.solver, n.request, pole, n.context, pathPoleBounds(pole), boundary, neutral.output);
+    }
+
+    // The sweep budget shared across halvings.
+    h = pathFixture();
+    {
+      const solver = new armPath.ArmStepSolver(h.calibration, h.handGeometry, h.handLength, 0.001);
+      const start = new Float64Array([0.08, 0.48, -0.04, 0.58, 0.01, 0.02, 0]);
+      const far = new Float64Array([0.95, 1.18, -0.4, 1.25, 0.45, 0.23, -0.13]);
+      const broad = pathRow('broad-clearance', HAND_PROXY, (p, row) => {
+        row.distance = p.y + 10;
+        row.normal.set(0, 1, 0);
+      });
+      s.plan(solver, pathRequestAt(h, far), start, h.context, pathBounds(), broad, out(h, 1));
+    }
+
+    // Authored elbow guidance and its fallback.
+    for (const scenario of [
+      { side: 'R' as const, yaw: 0, scale: 1, palm: true, width: 0.5, flex: 0.2, limit: 0.04 },
+      { side: 'L' as const, yaw: -0.5, scale: 1.7, palm: true, width: 0.5, flex: 0.2, limit: 0.04 },
+      { side: 'R' as const, yaw: 0.3, scale: 1, palm: false, width: 0.5, flex: 0.2, limit: 0.04 },
+      { side: 'R' as const, yaw: 0, scale: 1, palm: true, width: 14 / 60, flex: 0.08, limit: 0.02 },
+    ]) {
+      const f = pathFixture(scenario.side, scenario.yaw, scenario.scale);
+      const start = new Float64Array([0.3, 0.9, 0.1, 0.8, 0.2, 0.1, 0.05]);
+      const target = start.slice();
+      target[3] += scenario.flex;
+      const request = { ...pathRequestAt(f, target), ...(scenario.palm ? {} : { palm: null }) };
+      const limit = pathBoundedAround(start, scenario.width);
+      limit.upper[3] = start[3] + scenario.limit;
+      const reference = s.plan(f.solver, request, start, f.context, limit, PATH_FREE, f.output);
+      const nWrist = reference.forward.wrist.clone().sub(f.context.shoulder).normalize();
+      const d = reference.forward.wrist.distanceTo(f.context.shoulder);
+      const u = f.context.upperLength;
+      const l = f.context.lowerLength;
+      const center = f.context.shoulder
+        .clone()
+        .addScaledVector(nWrist, (u * u - l * l + d * d) / (2 * d));
+      const radial = reference.forward.elbow.clone().sub(center);
+      for (const sign of [-1, 1]) {
+        const elbow = radial
+          .clone()
+          .applyAxisAngle(nWrist, sign * 0.2)
+          .add(center);
+        const solver = new armPath.ArmStepSolver(
+          f.calibration,
+          f.handGeometry,
+          f.handLength,
+          0.006 * scenario.scale,
+        );
+        const floor = pathRow('floor', TORSO_SAMPLES, (p, row) => {
+          row.distance = p.y + scenario.scale;
+          row.normal.set(0, 1, 0);
+        });
+        s.plan(solver, { ...request, elbow }, start, f.context, limit, floor, out(f, 1));
+      }
+    }
+    {
+      const f = pathFixture();
+      const start = new Float64Array([0.3, 0.9, 0.1, 0.8, 0.2, 0.1, 0.05]);
+      const target = start.slice();
+      target[3] = 1;
+      const request = pathRequestAt(f, target);
+      const limit = pathBoundedAround(start, 14 / 60);
+      limit.upper[3] = start[3] + 0.04;
+      limit.lower[5] = start[5] - 0.02;
+      limit.upper[5] = start[5] + 0.02;
+      const reference = s.plan(f.solver, request, start, f.context, limit, PATH_FREE, f.output);
+      const nWrist = reference.forward.wrist.clone().sub(f.context.shoulder).normalize();
+      const center = f.context.shoulder
+        .clone()
+        .addScaledVector(
+          nWrist,
+          reference.forward.elbow.clone().sub(f.context.shoulder).dot(nWrist),
+        );
+      const elbow = reference.forward.elbow
+        .clone()
+        .sub(center)
+        .applyAxisAngle(nWrist, -0.2)
+        .add(center);
+      const solver = new armPath.ArmStepSolver(f.calibration, f.handGeometry, f.handLength, 0.006);
+      s.plan(solver, { ...request, elbow }, start, f.context, limit, PATH_FREE, out(f, 0));
+    }
+  } else {
+    let h = pathFixture();
+    for (const kind of ['locked', 'straight', 'pole', 'near-pole'] as const) {
+      const start = new Float64Array([0.3, 0.9, 0.1, 0.8, 0.2, 0.1, 0.05]);
+      if (kind === 'straight') start[3] = 0;
+      if (kind === 'pole') start[1] = 0;
+      if (kind === 'near-pole') start[1] = 1e-4;
+      const initial = pathForward(h, start);
+      const request = {
+        ...pathRequestAt(h, start),
+        elbow: initial.elbow.clone().add(new THREE.Vector3(0.01, 0.005, 0.01)),
+      };
+      const limit = pathBoundedAround(start, kind === 'locked' ? 0 : 14 / 60);
+      const floor = pathRow('floor', TORSO_SAMPLES, (p, row) => {
+        row.distance = p.dot(PATH_UP) + 1;
+        row.normal.copy(PATH_UP);
+      });
+      s.plan(h.solver, request, start, h.context, limit, floor, out(h, 1));
+    }
+    for (const kind of ['blocking', 'tangent'] as const) {
+      const start = new Float64Array([0.3, 0.9, 0.1, 0.8, 0.2, 0.1, 0.05]);
+      const initial = pathForward(h, start);
+      const nWrist = initial.wrist.clone().sub(h.context.shoulder).normalize();
+      const center = h.context.shoulder
+        .clone()
+        .addScaledVector(nWrist, initial.elbow.clone().sub(h.context.shoulder).dot(nWrist));
+      const radial = initial.elbow.clone().sub(center);
+      const elbow = radial.clone().applyAxisAngle(nWrist, -0.1).add(center);
+      const request = { ...pathRequestAt(h, start), elbow };
+      const limit = pathBoundedAround(start, 14 / 60);
+      const reference = s.plan(h.solver, request, start, h.context, limit, PATH_FREE, h.output);
+      const normal =
+        kind === 'blocking'
+          ? new THREE.Vector3().crossVectors(nWrist, radial).normalize()
+          : nWrist.clone();
+      const middle = Float64Array.from(start, (v, dof) => (v + reference.q[dof]) / 2);
+      if (kind === 'tangent' && normal.dot(pathForward(h, middle).elbow.sub(initial.elbow)) < 0)
+        normal.negate();
+      const plane = pathRow('elbow-plane', TORSO_SAMPLES, (p, row) => {
+        row.distance = normal.dot(p.clone().sub(initial.elbow));
+        row.normal.copy(normal);
+      });
+      const solver = new armPath.ArmStepSolver(h.calibration, h.handGeometry, h.handLength, 0.006);
+      s.plan(solver, request, start, h.context, limit, plane, out(h, 1));
+    }
+
+    // Certificates: one reserved final chord, and an uncertified sphere crossing.
+    {
+      const solver = new armPath.ArmStepSolver(h.calibration, h.handGeometry, h.handLength, 0.003);
+      const start = new Float64Array([0.3, 0.9, 0.1, 0.8, 0.2, 0.1, 0.05]);
+      const goal = new Float64Array([0.35, 1, 0.15, 0.9, 0.25, 0.1, 0.05]);
+      const floor = pathRow('floor', HAND_PROXY, (p, row) => {
+        row.distance = p.y + 1;
+        row.normal.set(0, 1, 0);
+      });
+      const request = pathRequestAt(h, goal);
+      const limit = pathBoundedAround(start, 14 / 60);
+      s.plan(h.solver, request, start, h.context, limit, PATH_FREE, h.output);
+      s.plan(solver, request, start, h.context, limit, floor, out(h, 1));
+    }
+    for (const incompatibleElbow of [false, true]) {
+      const solver = new armPath.ArmStepSolver(h.calibration, h.handGeometry, h.handLength, 0.003);
+      const start = new Float64Array([0, 0.9, 0.1, 0.8, 0.2, 0.1, 0.05]);
+      const goal = start.slice();
+      goal[0] = 0.3;
+      if (incompatibleElbow) goal[3] += 0.2;
+      const middle = start.slice();
+      middle[0] = 0.15;
+      const center = pathHandProxy(h, middle);
+      const limit = { lower: start.slice(), upper: start.slice() };
+      limit.upper[0] = goal[0];
+      const sphere = pathRow('interior-sphere', HAND_PROXY, (p, row) => {
+        row.normal.copy(p).sub(center);
+        row.distance = row.normal.length() - 0.008;
+        // A local query domain exposes the interior obstacle during the chord replay.
+        row.valid = row.distance < 0.012;
+        if (row.normal.lengthSq() < 1e-12) row.normal.set(0, 1, 0);
+        else row.normal.normalize();
+      });
+      s.plan(solver, pathRequestAt(h, goal), start, h.context, limit, sphere, out(h, 1));
+    }
+
+    // An unreachable request, rendered frames, an empty bound and an invalid frame.
+    {
+      let next = new Float64Array([0, 0.3, 0, 0.4, 0, 0, 0]);
+      const request: armPath.ArmPathRequest = {
+        wrist: new THREE.Vector3(8, 4, -7),
+        hand: PATH_FORWARD.clone(),
+        palm: PATH_UP.clone(),
+        curls: {},
+        spread: {},
+      };
+      for (let call = 0; call < 10; call++) {
+        const o = s.plan(h.solver, request, next, h.context, pathBounds(), PATH_FREE, h.output);
+        if (o.status !== 'progress') break;
+        next = new Float64Array(o.q);
+      }
+    }
+    for (const [side, yaw, scale] of [
+      ['L', 0, 1],
+      ['R', 0.7, 1],
+      ['L', 0.7, 0.01],
+    ] as const) {
+      const f = pathFixture(side, yaw, scale);
+      const start = new Float64Array([0, 0.18, 0.1, 0.5, 0.02, 0.04, -0.02]);
+      s.plan(
+        f.solver,
+        pathRequestAt(f, start),
+        start,
+        f.context,
+        pathBounds(),
+        PATH_FREE,
+        f.output,
+      );
+    }
+    {
+      const start = new Float64Array([0, 0.2, 0, 0.3, 0, 0, 0]);
+      const strict = pathBounds();
+      strict.lower[0] = 0.1;
+      strict.upper[0] = 0.05;
+      const request = pathRequestAt(h, new Float64Array([0.4, 0.5, 0.3, 0.7, 0, 0, 0]));
+      s.plan(h.solver, request, start, h.context, strict, PATH_FREE, h.output);
+      // An output sized for another environment is refused before anything is evaluated.
+      s.plan(h.solver, request, start, h.context, pathBounds(), PATH_FREE, out(h, 1));
+      const f = pathFixture();
+      const at = new Float64Array([0.02, 0.28, 0.05, 0.46, 0.02, 0.04, -0.03]);
+      const valid = pathRequestAt(f, at);
+      f.context.right.copy(f.context.up);
+      const never: armPath.ArmPathEnvironment = { rowCount: 1, sample: () => {} };
+      s.plan(f.solver, valid, at, f.context, pathBounds(), never, out(f, 1));
+      s.restore(f.solver, valid, at, f.context, pathBounds(), PATH_FREE, f.output);
+      s.restore(h.solver, valid, at, h.context, pathBounds(), PATH_FREE, h.output);
+    }
+
+    // Reused plan and restore calls through obstacles and row-count changes.
+    h = pathFixture();
+    {
+      const start = new Float64Array([0.04, 0.52, 0.06, 0.6, 0.01, 0.03, 0]);
+      const goal = new Float64Array([0.66, 0.9, 0.28, 1.0, 0.22, 0.18, -0.07]);
+      const request = pathRequestAt(h, goal);
+      const from = pathHandProxy(h, start);
+      const to = pathHandProxy(h, goal);
+      const axis = to.clone().sub(from).normalize();
+      const origin = from.dot(axis);
+      const travel = to.dot(axis) - origin;
+      const entering = pathEnteringPlane(
+        HAND_PROXY,
+        axis,
+        origin + travel * 0.08,
+        origin + travel * 0.46,
+      );
+      s.plan(h.solver, request, start, h.context, pathBounds(), entering, out(h, 1));
+      for (const [call, rowCount] of [2, 2, 3, 0, 1, 2].entries()) {
+        let samples = 0;
+        const environment: armPath.ArmPathEnvironment = {
+          rowCount,
+          sample: (_points, rows) => {
+            samples++;
+            for (let slot = 0; slot < rows.length; slot++) {
+              const index = (slot + call + samples) % rows.length;
+              rows[slot].key = `call:${call}:surface:${index}`;
+              rows[slot].pointIndex = index + call;
+              rows[slot].valid = index % 2 === 0;
+              rows[slot].distance = rows[slot].valid ? 1 : Number.POSITIVE_INFINITY;
+              rows[slot].normal.set(0, rows[slot].valid ? 1 : 0, 0);
+            }
+          },
+        };
+        if (call % 2 === 0)
+          s.plan(h.solver, request, start, h.context, pathBounds(), environment, out(h, rowCount));
+        else
+          s.restore(
+            h.solver,
+            request,
+            start,
+            h.context,
+            pathBounds(),
+            environment,
+            out(h, rowCount),
+          );
+      }
+    }
+
+    // Restoration: a curled fingertip, a start pushed into a face, a locked box.
+    for (const surface of ['plane', 'sphere'] as const) {
+      const f = pathFingerFixture();
+      const start = new Float64Array([0.1, 0.45, 0.1, 0.55, 0, 0, 0]);
+      const curls = { index: 0.8 };
+      const request = { ...pathRequestAt(f, start), curls };
+      s.plan(f.solver, request, start, f.context, pathBounds(), PATH_FREE, f.output);
+      const pointIndex = f.output.points.findIndex((p) => p.id === 'finger.index.2.tip');
+      const curled = f.output.points[pointIndex].position.clone();
+      const qPlus = new Float64Array(start);
+      qPlus[0] += 0.25;
+      const plusRequest = { ...pathRequestAt(f, qPlus), curls };
+      s.plan(f.solver, plusRequest, qPlus, f.context, pathBounds(), PATH_FREE, f.output);
+      const outward = f.output.points[pointIndex].position.clone().sub(curled).normalize();
+      const boundary = curled.dot(outward) + 0.002;
+      const center = curled.clone().addScaledVector(outward, -0.05);
+      const environment =
+        surface === 'plane'
+          ? pathRow('finger-plane', pointIndex, (p, row) => {
+              row.distance = p.dot(outward) - boundary;
+              row.normal.copy(outward);
+            })
+          : pathSphere('finger-sphere', pointIndex, center, 0.052);
+      const restricted = pathBounds();
+      for (let dof = 0; dof < 7; dof++) {
+        restricted.lower[dof] = start[dof];
+        restricted.upper[dof] = start[dof];
+      }
+      restricted.upper[0] = start[0] + 0.4;
+      const o = out(f, 1);
+      s.plan(f.solver, request, start, f.context, restricted, environment, o);
+      s.restore(f.solver, request, start, f.context, restricted, environment, o);
+      if (surface === 'plane') {
+        const locked = pathBounds();
+        for (let dof = 0; dof < 7; dof++) {
+          locked.lower[dof] = start[dof];
+          locked.upper[dof] = start[dof];
+        }
+        s.restore(f.solver, request, start, f.context, locked, environment, o);
+      }
+    }
+    {
+      const start = new Float64Array([0.05, 0.54, 0.08, 0.62, 0.02, 0.04, 0]);
+      const goal = new Float64Array([0.52, 0.84, 0.26, 0.94, 0.2, 0.16, -0.06]);
+      const from = pathHandProxy(h, start);
+      const axis = from.clone().sub(pathHandProxy(h, goal)).normalize();
+      const pushed = pathPlane(HAND_PROXY, axis, from.dot(axis) - 1e-3);
+      s.plan(h.solver, pathRequestAt(h, goal), start, h.context, pathBounds(), pushed, out(h, 1));
+    }
+
+    // Planes, tangents, scaled gradients and spheres the plan must keep clear of.
+    {
+      const start = new Float64Array([0.05, 0.54, 0.08, 0.62, 0.02, 0.04, 0]);
+      const goal = new Float64Array([0.72, 0.92, 0.32, 1.04, 0.24, 0.19, -0.08]);
+      const from = pathHandProxy(h, start);
+      const to = pathHandProxy(h, goal);
+      const axis = to.clone().sub(from).normalize();
+      const plane = pathPlane(HAND_PROXY, axis, (from.dot(axis) + to.dot(axis)) / 2);
+      s.plan(h.solver, pathRequestAt(h, goal), start, h.context, pathBounds(), plane, out(h, 1));
+      const near = new Float64Array([0.52, 0.84, 0.26, 0.94, 0.2, 0.16, -0.06]);
+      const tangent = pathHandProxy(h, near).sub(from).cross(PATH_UP).normalize();
+      const along = pathPlane(HAND_PROXY, tangent, from.dot(tangent));
+      s.plan(h.solver, pathRequestAt(h, near), start, h.context, pathBounds(), along, out(h, 1));
+    }
+    for (const magnitude of [1, 8]) {
+      const start = new Float64Array([0, 0.5, 0, 0.7, 0, 0, 0]);
+      const goal = start.slice();
+      goal[5] = 0.4;
+      const contact = start.slice();
+      contact[5] = 0.1;
+      const palm = pathForward(h, start).palm.clone();
+      const offset = pathHandProxy(h, contact).dot(palm);
+      const scaled = pathRow('scaled-plane', HAND_PROXY, (p, row) => {
+        row.distance = magnitude * (offset - p.dot(palm));
+        row.normal.copy(palm).multiplyScalar(-magnitude);
+      });
+      const strict = { lower: start.slice(), upper: start.slice() };
+      strict.upper[5] = goal[5];
+      s.plan(h.solver, pathRequestAt(h, goal), start, h.context, strict, scaled, out(h, 1));
+    }
+    {
+      const f = pathFixture('L', 0.7, 0.01);
+      const start = new Float64Array([0.08, 0.48, -0.04, 0.58, 0.01, 0.02, 0]);
+      const goal = new Float64Array([0.58, 0.86, -0.28, 0.98, 0.3, 0.18, -0.1]);
+      const from = pathHandProxy(f, start);
+      const center = from.clone().lerp(pathHandProxy(f, goal), 0.62);
+      const radius = from.distanceTo(center) * 0.82;
+      let calls = 0;
+      const reordered: armPath.ArmPathEnvironment = {
+        rowCount: 2,
+        sample: (points, rows) => {
+          const first = calls++ % 2 === 0 ? 0 : 1;
+          const assignments = [
+            { key: 'sphere:a', pointIndex: HAND_PROXY, valid: true },
+            { key: 'sphere:b', pointIndex: HAND_PROXY + 1, valid: false },
+          ];
+          for (const [slot, which] of [first, 1 - first].entries()) {
+            const a = assignments[which];
+            const row = rows[slot];
+            row.key = a.key;
+            row.pointIndex = a.pointIndex;
+            row.valid = a.valid;
+            if (a.valid) {
+              row.normal.copy(points[a.pointIndex].position).sub(center);
+              row.distance = row.normal.length() - radius;
+              if (row.normal.lengthSq() < 1e-12) row.normal.set(0, 1, 0);
+              else row.normal.normalize();
+            }
+          }
+        },
+      };
+      s.plan(
+        f.solver,
+        pathRequestAt(f, goal),
+        start,
+        f.context,
+        pathBounds(),
+        reordered,
+        out(f, 2),
+      );
+    }
+    {
+      const start = new Float64Array([0.08, 0.48, -0.04, 0.58, 0.01, 0.02, 0]);
+      const goal = new Float64Array([0.95, 1.18, -0.4, 1.25, 0.45, 0.23, -0.13]);
+      const from = pathHandProxy(h, start);
+      const center = from
+        .clone()
+        .lerp(pathHandProxy(h, goal), 0.35)
+        .add(new THREE.Vector3(0, 0.03, 0));
+      const sphere = pathSphere('sphere:original-chord', HAND_PROXY, center, 0.19814247673641228);
+      s.plan(h.solver, pathRequestAt(h, goal), start, h.context, pathBounds(), sphere, out(h, 1));
+    }
+    {
+      let q = new Float64Array([0.02, 0.28, 0.05, 0.46, 0.02, 0.04, -0.03]);
+      const goal = new Float64Array([0.58, 0.92, -0.32, 1.05, 0.35, 0.23, -0.15]);
+      const request = pathRequestAt(h, goal);
+      for (let call = 0; call < 12; call++) {
+        const o = s.plan(
+          h.solver,
+          request,
+          q,
+          h.context,
+          pathBoundedAround(q, 0.18),
+          PATH_FREE,
+          h.output,
+        );
+        if (o.status !== 'progress') break;
+        q = new Float64Array(o.q);
+      }
+    }
+  }
+}
+
+// The base avatar's arm drivers, through the director fixtures that load them hardest.
+
+const SOLVER_FLAGS = [
+  'blocked',
+  'stationary',
+  'refused',
+  'pushClear',
+  'checkpoint',
+  'retraction',
+  'halving',
+  'temporal',
+  'gauge',
+  'infeasible',
+  'failed',
+  'secondary',
+  'rows',
+  'progress',
+  'settled',
+  'restored',
+] as const;
+type SolverFlag = (typeof SOLVER_FLAGS)[number];
+
+interface SolverCallSummary {
+  flags: Set<SolverFlag>;
+  /** Stream values the call takes, less its solver's definition and row layout. */
+  cost: number;
+}
+
+type SolverCallHook = (
+  index: number,
+  solver: armPath.ArmStepSolver,
+  method: SolverMethod,
+  args: SolverArgs,
+) => unknown;
+
+/**
+ * Run `run` with every solver call answered by `hook` and summarised: what it exercised, read
+ * off the solver's private steps, and what it would cost to record.
+ */
+function observeSolverCalls(run: () => void, hook: SolverCallHook): SolverCallSummary[] {
+  const calls: SolverCallSummary[] = [];
+  let current: SolverCallSummary | null = null;
+  const note = (flag: SolverFlag) => current?.flags.add(flag);
+  const proto = armPath.ArmStepSolver.prototype as unknown as Record<
+    string,
+    (...args: unknown[]) => unknown
+  >;
+  for (const [method, name] of [
+    ['plan', 'plan'],
+    ['restore', 'restoreEndpoint'],
+  ] as const) {
+    vi.spyOn(proto, name).mockImplementation(function (this: unknown, ...raw: unknown[]) {
+      const args = raw as SolverArgs;
+      const summary: SolverCallSummary = { flags: new Set(), cost: 160 };
+      const index = calls.length;
+      calls.push(summary);
+      const environment = args[4];
+      const costed: armPath.ArmPathEnvironment = {
+        rowCount: environment.rowCount,
+        sample: (points, rows) => {
+          environment.sample(points, rows);
+          const live = rows.filter(
+            (r) => r.valid || r.distance !== Number.POSITIVE_INFINITY || r.normal.lengthSq() !== 0,
+          );
+          summary.cost += 3 + 6 * live.length;
+        },
+      };
+      current = summary;
+      try {
+        const result = hook(index, this as armPath.ArmStepSolver, method, [
+          args[0],
+          args[1],
+          args[2],
+          args[3],
+          costed,
+          args[5],
+        ]);
+        if (method === 'plan') note((result as armPath.ArmPathPlanOutput).status);
+        else note(result ? 'restored' : 'refused');
+        return result;
+      } finally {
+        current = null;
+      }
+    });
+  }
+  type Flagger = (
+    result: unknown,
+    self: Record<string, unknown>,
+    args: unknown[],
+    certifiedBefore: unknown,
+  ) => SolverFlag | null;
+  const watch = (name: string, flag: Flagger) => {
+    const original = proto[name];
+    vi.spyOn(proto, name).mockImplementation(function (this: unknown, ...args: unknown[]) {
+      const self = this as Record<string, unknown>;
+      const before = self.currentIsCertified;
+      const result = original.apply(this, args);
+      const f = flag(result, self, args, before);
+      if (f) note(f);
+      return result;
+    });
+  };
+  watch('pushClear', () => 'pushClear');
+  watch('prepareRows', () => 'rows');
+  watch('certifyCurrent', (r, _self, _args, before) =>
+    before === false && r === false ? 'checkpoint' : null,
+  );
+  watch('retractElbow', (r) => (r ? 'retraction' : null));
+  watch('evaluatePlanCandidate', (_r, _self, args) => ((args[3] as number) > 0 ? 'halving' : null));
+  watch('poleGaugeProposal', (r) => (r === undefined ? null : 'gauge'));
+  watch('makeSecondaryStep', (r) => (r ? 'secondary' : null));
+  watch('makeConstrainedStep', (r, self) => {
+    if (r && self.lastStepTemporal) return 'temporal';
+    if (self.lastQpResult === 'infeasible') return 'infeasible';
+    if (self.lastQpResult === 'failed') return 'failed';
+    return null;
+  });
+  try {
+    run();
+  } finally {
+    vi.restoreAllMocks();
+  }
+  return calls;
+}
+
+/** Contact gestures, reaches, points and hops, then a hand held against a joint-box corner. */
+function runArmDrivers(): void {
+  for (const id of ['c switches steady', 'f contact switches capped']) {
+    runDirectorFixture(
+      must(
+        DIRECTOR_FIXTURES.find((f) => f.id === id),
+        id,
+      ),
+    );
+  }
+  // Built outside `withCoreMath`, which the synthetic avatar's meshes cannot be.
+  const body = harness(0, { random: () => 0.5 });
+  withCoreMath(() => {
+    const driver = must(body.rig.armDriver('R'), 'a right arm driver');
+    let start: Float64Array | null = null;
+    let context: armConfiguration.ArmForwardContext | null = null;
+    const planFrom = ArmDriver.prototype.planFrom;
+    const spy = vi.spyOn(ArmDriver.prototype, 'planFrom').mockImplementation(function (
+      this: ArmDriver,
+      ...args
+    ) {
+      if (this === driver) {
+        start = Float64Array.from(args[0]);
+        context = args[1];
+      }
+      return planFrom.apply(this, args);
+    });
+    body.rig.reset();
+    body.body.update(DT);
+    body.body.play('cover', 'R');
+    for (let i = 0; i < 140; i++) {
+      body.rig.reset();
+      body.body.update(DT);
+    }
+    spy.mockRestore();
+    const r = driver.request;
+    const request: armPath.ArmPathRequest = {
+      wrist: r.wrist.clone(),
+      hand: r.hand.clone(),
+      palm: r.palm?.clone() ?? null,
+      elbow: r.elbow.clone(),
+      curls: { ...r.curls },
+      spread: { ...r.spread },
+    };
+    let q = must<Float64Array>(start, 'a captured plan');
+    const ctx = must<armConfiguration.ArmForwardContext>(context, 'a captured context');
+    for (let call = 0; call < 30; call++) {
+      const out = driver.solver.plan(
+        request,
+        q,
+        ctx,
+        driver.fillBounds(q, 0, false),
+        driver.environment,
+        driver.output,
+      );
+      q = Float64Array.from(out.q);
+      if (out.status === 'stationary') break;
+    }
+  });
+}
+
+/** Up to `budget` stream values of calls: the cheapest call with each flag, then an even spread. */
+function chooseSolverCalls(calls: SolverCallSummary[], budget: number): number[] {
+  const chosen = new Set<number>();
+  let spent = 0;
+  const take = (i: number) => {
+    if (chosen.has(i) || spent + calls[i].cost > budget) return false;
+    chosen.add(i);
+    spent += calls[i].cost;
+    return true;
+  };
+  for (const flag of SOLVER_FLAGS) {
+    const having = calls
+      .map((_, i) => i)
+      .filter((i) => calls[i].flags.has(flag))
+      .sort((a, b) => calls[a].cost - calls[b].cost);
+    if (having.some((i) => chosen.has(i))) continue;
+    for (const i of having) if (take(i)) break;
+  }
+  for (let stride = calls.length; stride >= 1; stride = Math.floor(stride / 2)) {
+    for (let i = 0; i < calls.length; i += stride) take(i);
+  }
+  return [...chosen].sort((a, b) => a - b);
+}
+
+/** A deep copy of the inputs of one call, which the drivers keep in reused buffers. */
+function cloneSolverInputs(args: SolverArgs) {
+  const [r, start, c, b] = args;
+  const request: armPath.ArmPathRequest = {
+    wrist: r.wrist.clone(),
+    hand: r.hand.clone(),
+    palm: r.palm?.clone() ?? null,
+    curls: { ...r.curls },
+    spread: { ...r.spread },
+    ...(r.elbow ? { elbow: r.elbow.clone() } : {}),
+  };
+  const context: armConfiguration.ArmForwardContext = {
+    ...c,
+    shoulder: c.shoulder.clone(),
+    up: c.up.clone(),
+    right: c.right.clone(),
+    forward: c.forward.clone(),
+    upperParentWorld: c.upperParentWorld.clone(),
+  };
+  const bounds = { lower: Float64Array.from(b.lower), upper: Float64Array.from(b.upper) };
+  return { request, start: Float64Array.from(start), context, bounds };
+}
+
+/**
+ * The solver battery's files: `-a` and `-b` the synthetic scenarios, `-c` the drivers' requests
+ * on solvers of their own build with a free and a one-plane environment, and one against the
+ * upper arm's torso rows alone, `-d` and `-e` the
+ * drivers' own calls with their own environment, the cheapest call that exercises each step
+ * first.
+ */
+function recordArmPathSolverBattery(): Map<string, Recorded> {
+  const files = new Map<string, Recorded>();
+  pathFingerGeometry();
+  for (const part of [0, 1] as const) {
+    const s = new SolverStream();
+    withCoreMath(() => recordSyntheticSolverCalls(s, part));
+    files.set(
+      `arm-path-solver-battery-${'ab'[part]}`,
+      s.recorded(`arm-path-solver-battery-${'ab'[part]}`),
+    );
+  }
+
+  const first = observeSolverCalls(runArmDrivers, (_i, solver, method, args) =>
+    method === 'plan' ? PLAN.apply(solver, args) : RESTORE.apply(solver, args),
+  );
+  const DRIVER_BUDGET = 19_000;
+  const chosen = chooseSolverCalls(first, 2 * DRIVER_BUDGET);
+  const fileOf = new Map<number, number>();
+  let spent = 0;
+  for (const i of chosen) {
+    spent += first[i].cost;
+    fileOf.set(i, spent > DRIVER_BUDGET ? 1 : 0);
+  }
+  const driverStreams = [new SolverStream(), new SolverStream()];
+  const ownStream = new SolverStream();
+  const own = new WeakMap<armPath.ArmStepSolver, armPath.ArmStepSolver>();
+  const OWN_CALLS = 36;
+  const ownPicks = new Set(
+    Array.from({ length: OWN_CALLS }, (_, k) => Math.floor(((k + 0.5) * first.length) / OWN_CALLS)),
+  );
+  // The drivers reach an infeasible elbow step only in calls too long to record whole; the
+  // first one's inputs reach it again against just the upper arm's torso rows.
+  const infeasible = first.findIndex((c) => c.flags.has('infeasible'));
+  const second = observeSolverCalls(runArmDrivers, (i, solver, method, args) => {
+    if (i === infeasible) {
+      const internals = solver as unknown as SolverInternals;
+      const mine = new armPath.ArmStepSolver(
+        internals.calibration,
+        internals.handGeometry,
+        internals.handLength,
+        internals.resolution,
+      );
+      const { request, start, context, bounds } = cloneSolverInputs(args);
+      const full = args[4];
+      const scratch = armPath.makeArmPathPlanOutput(
+        internals.calibration,
+        internals.handGeometry,
+        full.rowCount,
+      ).clearances;
+      const kept = Array.from({ length: TORSO_SAMPLES + 1 }, (_, point) => point * 3);
+      const torso: armPath.ArmPathEnvironment = {
+        rowCount: kept.length,
+        sample: (points, rows) => {
+          full.sample(points, scratch);
+          kept.forEach((from, slot) => {
+            const r = scratch[from];
+            Object.assign(rows[slot], { key: r.key, pointIndex: r.pointIndex, valid: r.valid });
+            rows[slot].distance = r.distance;
+            rows[slot].normal.copy(r.normal);
+          });
+        },
+      };
+      const o = armPath.makeArmPathPlanOutput(
+        internals.calibration,
+        internals.handGeometry,
+        kept.length,
+      );
+      ownStream.plan(mine, request, start, context, bounds, torso, o);
+    }
+    if (ownPicks.has(i) && method === 'plan') {
+      const internals = solver as unknown as SolverInternals;
+      let mine = own.get(solver);
+      if (!mine) {
+        mine = new armPath.ArmStepSolver(
+          internals.calibration,
+          internals.handGeometry,
+          internals.handLength,
+          internals.resolution,
+        );
+        own.set(solver, mine);
+      }
+      const { request, start, context, bounds } = cloneSolverInputs(args);
+      const output = armPath.makeArmPathPlanOutput(
+        internals.calibration,
+        internals.handGeometry,
+        0,
+      );
+      const free = ownStream.plan(mine, request, start, context, bounds, PATH_FREE, output);
+      const from = armConfiguration.forwardArm(
+        pathConfiguration(start),
+        internals.calibration,
+        context,
+        armConfiguration.makeArmForwardResult(),
+      );
+      const proxy = (f: armConfiguration.ArmForwardResult) =>
+        f.wrist.clone().addScaledVector(f.h, (internals.handLength * HAND_CONTACT) / TORSO_SAMPLES);
+      const a = proxy(from);
+      const b = proxy(free.forward);
+      if (a.distanceTo(b) > 1e-6) {
+        const axis = b.clone().sub(a).normalize();
+        const plane = pathPlane(HAND_PROXY, axis, (a.dot(axis) + b.dot(axis)) / 2);
+        const o = armPath.makeArmPathPlanOutput(internals.calibration, internals.handGeometry, 1);
+        ownStream.plan(mine, request, start, context, bounds, plane, o);
+      }
+    }
+    const file = fileOf.get(i);
+    if (file === undefined)
+      return method === 'plan' ? PLAN.apply(solver, args) : RESTORE.apply(solver, args);
+    return driverStreams[file].call(solver, method, args);
+  });
+  expect(second.length, 'solver calls across the two runs').toBe(first.length);
+  files.set('arm-path-solver-battery-c', ownStream.recorded('arm-path-solver-battery-c'));
+  for (const [k, stream] of driverStreams.entries()) {
+    const name = `arm-path-solver-battery-${'de'[k]}`;
+    files.set(name, stream.recorded(name));
+  }
+  // The battery is only worth its bytes if the chosen calls reach every step the drivers take.
+  // A step only calls too long to fit a file reach is left to the synthetic scenarios.
+  const covered = new Set(chosen.flatMap((i) => [...first[i].flags]));
+  const reached = new Set(
+    first.filter((c) => c.cost <= DRIVER_BUDGET).flatMap((c) => [...c.flags]),
+  );
+  expect(SOLVER_FLAGS.filter((f) => reached.has(f) && !covered.has(f))).toEqual([]);
+  return files;
+}
+
 // --- the files ----------------------------------------------------------------------------
 
 function settle(name: string, recorded: Recorded): void {
@@ -2577,5 +3993,9 @@ describe('the recorded corpora', () => {
 
   it('match a fresh recording of the arm-path plan battery', () => {
     settle('arm-path-plan-battery', recordArmPathPlanBattery());
+  });
+
+  it('match a fresh recording of the arm-path solver battery', () => {
+    for (const [name, recorded] of recordArmPathSolverBattery()) settle(name, recorded);
   });
 });
