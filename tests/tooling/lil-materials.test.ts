@@ -631,4 +631,20 @@ describe('toon_textures.py', () => {
     expect(existsSync(join(dir, 'out', 'rim_shade_mask.png'))).toBe(true);
     expect(existsSync(join(dir, 'out', 'spare.png'))).toBe(false);
   });
+
+  it.each(['../../escaped.png', 'a/b.png', 'a\\b.png', 'x.png?v=1', 'x#1.png', '..'])(
+    'refuses the name %j before copying anything',
+    async (name) => {
+      await setup(['shade.png'], {
+        materials: { toon: { Body: { shadow: { mask: 'shade.png' }, matcap: { file: name } } } },
+      });
+
+      const result = copy();
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('plain filename');
+      expect(existsSync(join(dir, 'out'))).toBe(false);
+      expect(existsSync(join(dir, 'escaped.png'))).toBe(false);
+    },
+  );
 });

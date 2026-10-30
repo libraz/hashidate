@@ -25,6 +25,10 @@ import subprocess
 import sys
 import zipfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import relative  # noqa: E402
+from toon_textures import plain_names  # noqa: E402
+
 RESOURCE = "unpacked"
 EXTRACT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "extract_textures.py")
 PACK_KEYS = {"store", "packages", "extract"}
@@ -43,15 +47,6 @@ def read_json(path):
         fail(f"cannot read {path}: {e}")
 
 
-def relative(path, where):
-    """A path inside the package: relative, and never climbing out of it."""
-    if not isinstance(path, str) or not path or os.path.isabs(path):
-        fail(f"{where}: must be a relative path, got {path!r}")
-    if ".." in path.replace("\\", "/").split("/"):
-        fail(f"{where}: may not contain '..', got {path!r}")
-    return path
-
-
 def load_pack(packs, pack_id):
     root = os.path.join(packs, pack_id)
     if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._-]*", pack_id) or not os.path.isdir(root):
@@ -59,7 +54,7 @@ def load_pack(packs, pack_id):
     pack = read_json(os.path.join(root, "pack.json"))
     if not isinstance(pack, dict) or set(pack) != PACK_KEYS:
         fail(f"{root}/pack.json: needs exactly the keys {sorted(PACK_KEYS)}")
-    if not isinstance(pack["store"], str) or not pack["store"].startswith("https://"):
+    if not isinstance(pack["store"], str) or not re.match(r"https://", pack["store"]):
         fail(f"{root}/pack.json: store must be an https URL")
     packages = pack["packages"]
     if not isinstance(packages, list) or not packages:
@@ -80,9 +75,14 @@ def load_pack(packs, pack_id):
             fail(f"{root}/pack.json: extract[{i}].match must be a non-empty string")
     avatar = read_json(os.path.join(root, "avatar.json"))
     profile = read_json(os.path.join(root, "export.json"))
+    plain_names(avatar, f"{root}/avatar.json")
     prefix = f"{RESOURCE}/{pack_id}/"
-    for key, path in profile_paths(profile):
-        if not path.startswith(prefix):
+    head = [RESOURCE, pack_id]
+    for key, path in profile_paths(profile) + [("textures", profile.get("textures"))]:
+        if not isinstance(path, str):
+            continue
+        relative(path, f"{root}/export.json: {key}")
+        if path.split("/")[:2] != head or path.split("/")[2:] == []:
             fail(f"{root}/export.json: {key} must be under {prefix}, got {path!r}")
     return pack, avatar, profile
 

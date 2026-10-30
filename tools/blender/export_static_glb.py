@@ -26,7 +26,7 @@ for obj in bpy.context.scene.objects:
     if obj.type == "MESH":
         obj.select_set(True)
 
-os.makedirs(os.path.dirname(destination), exist_ok=True)
+os.makedirs(os.path.dirname(destination) or ".", exist_ok=True)
 bpy.ops.export_scene.gltf(
     filepath=destination,
     export_format="GLB",

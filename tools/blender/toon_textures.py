@@ -13,6 +13,9 @@ import os
 import shutil
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import plain_name  # noqa: E402
+
 # The keys that hold a file name, per block of a ToonSpec.
 FILE_KEYS = {"shadow": ("mask",), "normalMap": ("file",), "rim": ("colorTex",),
              "rimShade": ("mask",), "matcap": ("file", "mask"), "emission": ("map",),
@@ -40,11 +43,17 @@ def named_files(descriptor):
     return sorted(files)
 
 
+def plain_names(descriptor, where):
+    """`named_files`, refused unless every name is a plain filename."""
+    return [plain_name(name, f"{where}: toon texture") for name in named_files(descriptor)]
+
+
 def main(argv):
     if len(argv) != 3:
         raise SystemExit("usage: toon_textures.py <profile.json> <descriptor.json> <outdir>")
     profile_path, descriptor_path, out = argv
-    files = named_files(read_json(descriptor_path, "descriptor")) if os.path.isfile(descriptor_path) else []
+    files = (plain_names(read_json(descriptor_path, "descriptor"), descriptor_path)
+             if os.path.isfile(descriptor_path) else [])
     if not files:
         print("toon textures: nothing to copy")
         return

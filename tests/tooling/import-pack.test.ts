@@ -43,6 +43,7 @@ interface Pack {
   extract?: unknown[];
   sha256?: string;
   profile?: Record<string, unknown>;
+  avatar?: Record<string, unknown>;
 }
 
 async function zip(members: Record<string, string | string[]>): Promise<string> {
@@ -58,7 +59,12 @@ async function hash(path: string): Promise<string> {
     .digest('hex');
 }
 
-async function pack({ extract = [], sha256 = '0'.repeat(64), profile }: Pack): Promise<void> {
+async function pack({
+  extract = [],
+  sha256 = '0'.repeat(64),
+  profile,
+  avatar,
+}: Pack): Promise<void> {
   const root = join(dir, 'packs', ID);
   await mkdir(root, { recursive: true });
   const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
@@ -70,7 +76,7 @@ async function pack({ extract = [], sha256 = '0'.repeat(64), profile }: Pack): P
       extract,
     }),
   );
-  await writeFile(join(root, 'avatar.json'), json({ label: { en: 'Demo', ja: 'デモ' } }));
+  await writeFile(join(root, 'avatar.json'), json(avatar ?? { label: { en: 'Demo', ja: 'デモ' } }));
   await writeFile(
     join(root, 'export.json'),
     json(
@@ -209,6 +215,45 @@ describe('import_pack.py', () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(`must be under unpacked/${ID}/`);
+  });
+
+  it.each([
+    ['source', { source: `unpacked/${ID}/../../etc/hosts` }],
+    ['textures_src', { textures_src: `unpacked/${ID}/../../elsewhere` }],
+    ['extras[0]', { extras: [`unpacked/${ID}/a/../../../b`] }],
+    ['textures', { textures: '/tmp/outside' }],
+    ['textures', { textures: `unpacked/${ID}/../escape` }],
+    ['textures', { textures: 'elsewhere/tex' }],
+  ])('refuses a profile %s path that leaves the pack', async (key, change) => {
+    const path = await zip({ 'Demo/demo.fbx': 'fbx' });
+    await pack({
+      profile: {
+        source: `unpacked/${ID}/Demo/demo.fbx`,
+        separator: 'x',
+        keep_groups: [],
+        ...change,
+      },
+    });
+
+    const result = run(ID, path, 'avatars');
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(key);
+    expect(existsSync(join(dir, 'unpacked'))).toBe(false);
+    expect(existsSync(avatar())).toBe(false);
+  });
+
+  it('refuses a descriptor whose toon texture name is not a plain filename', async () => {
+    const path = await zip({ 'Demo/demo.fbx': 'fbx' });
+    await pack({
+      avatar: { materials: { toon: { Body: { shadow: { mask: '../../escaped.png' } } } } },
+    });
+
+    const result = run(ID, path, 'avatars');
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('plain filename');
+    expect(existsSync(join(dir, 'unpacked'))).toBe(false);
   });
 
   it('refuses a pack id that is not a directory name', async () => {
