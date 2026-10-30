@@ -3,24 +3,21 @@ import {
   type Camera,
   InterleavedBufferAttribute,
   type Mesh,
+  type Object3D,
+  type Skeleton,
   SkinnedMesh,
   type TypedArray,
   Vector3,
   Vector4,
 } from 'three';
-import { core, views } from '../../core';
+import { allocating, core, views } from '../../core';
 import {
-  BONE,
   FLAG_MORPH_RELATIVE,
   FLAG_MORPHED,
   FLAG_SKINNED,
-  FRAME_BIND,
-  FRAME_BIND_INVERSE,
-  FRAME_MESH_WORLD,
   FRAME_VIEW,
   LAYOUT,
   LAYOUT_BASE,
-  LAYOUT_BONES,
   LAYOUT_CENTROIDS,
   LAYOUT_DEPTHS,
   LAYOUT_FACES,
@@ -33,6 +30,7 @@ import {
   LAYOUT_SKIN_WEIGHT,
   OUTCOME_NON_FINITE_DEPTH,
 } from '../../core/abi/triangles';
+import { NO_NODE, SceneGraph } from '../../core/scene';
 
 /** Why an update produced no new order. */
 export type TriangleKernelReason =
@@ -99,24 +97,27 @@ function sameStamp(a: readonly unknown[], b: readonly unknown[]): boolean {
  * near, ties by face index.
  *
  * Attributes are read through three (`fromBufferAttribute`) and uploaded only when the index, an
- * attribute, the morph set or the skeleton's size changes; each update writes the matrices and
- * morph influences and runs one core call. Call it outside `withDraw`, while the mesh holds its
- * own geometry.
+ * attribute, the morph set or the skeleton's size changes. The bone, bind and mesh matrices are
+ * read by the core from the avatar's scene graph (`SceneGraph.of(root)`, which `mesh` must be
+ * under); each update writes only the camera and the morph influences and runs one core call.
+ * Call it outside `withDraw`, while the mesh holds its own geometry.
  */
 export class TriangleKernel {
+  readonly root: Object3D;
   readonly mesh: Mesh;
   #handle = 0;
+  #skeleton: Skeleton | null = null;
   #layout = new Uint32Array(LAYOUT);
   #stamp: unknown[] = [];
   #next: unknown[] = [];
   #failure: TriangleKernelReason | null = null;
-  #skinned = false;
   #morphs = 0;
   #faces = 0;
   #sourceIndices = new Uint32Array(0);
   #vertices: number[] = [];
 
-  constructor(mesh: Mesh) {
+  constructor(root: Object3D, mesh: Mesh) {
+    this.root = root;
     this.mesh = mesh;
   }
 
@@ -141,6 +142,17 @@ export class TriangleKernel {
     this.#push(camera);
     const outcome = core().hd_tri_update(this.#handle);
     return outcome === OUTCOME_NON_FINITE_DEPTH ? 'non-finite-depth' : null;
+  }
+
+  /**
+   * Whether the skin matrices differ from those the last `update` read: any bone's `matrixWorld`
+   * or `boneInverse`, or either bind matrix, by `!==`, or a different skeleton. True before the
+   * first upload.
+   */
+  skinChanged(): boolean {
+    if (this.#handle === 0) return true;
+    const skeleton = this.mesh instanceof SkinnedMesh ? this.mesh.skeleton : null;
+    return skeleton !== this.#skeleton || core().hd_tri_skin_changed(this.#handle) !== 0;
   }
 
   /** Face indices, ascending depth; a view valid until the core's memory grows. */
@@ -183,8 +195,10 @@ export class TriangleKernel {
   }
 
   #release(): void {
-    if (this.#handle) core().hd_tri_free(this.#handle);
+    const h = this.#handle;
+    if (h) allocating(() => core().hd_tri_free(h));
     this.#handle = 0;
+    this.#skeleton = null;
     this.#faces = 0;
     this.#vertices = [];
     this.#sourceIndices = new Uint32Array(0);
@@ -225,6 +239,9 @@ export class TriangleKernel {
       }
     }
 
+    const graph = SceneGraph.of(this.root);
+    const node = graph.indexOf(mesh);
+    if (node === NO_NODE) throw new Error('TriangleKernel: the mesh is not under the root');
     const skinned = mesh instanceof SkinnedMesh;
     const skinIndex = geometry.attributes.skinIndex as AttributeLike | undefined;
     const skinWeight = geometry.attributes.skinWeight as AttributeLike | undefined;
@@ -246,6 +263,8 @@ export class TriangleKernel {
           ) {
             return 'pose-evaluation-failed';
           }
+          // The core reads a bone's matrix from the graph, so it can pose only with bones in it.
+          if (graph.indexOf(mesh.skeleton.bones[bone]) === NO_NODE) return 'pose-evaluation-failed';
         }
       }
     }
@@ -259,13 +278,15 @@ export class TriangleKernel {
     if (geometry.morphTargetsRelative) flags |= FLAG_MORPH_RELATIVE;
 
     const c = core();
-    const h = c.hd_tri_new(vertices.length, faces, morphs, bones, flags);
+    const skeleton = skinned ? graph.skeletonIndexOf(mesh.skeleton) : NO_NODE;
+    const [g, n] = [graph.handle, vertices.length];
+    const h = allocating(() => c.hd_tri_new(g, node, skeleton, n, faces, morphs, bones, flags));
     this.#handle = h;
+    this.#skeleton = skinned ? mesh.skeleton : null;
     this.#layout.set(new Uint32Array(c.memory.buffer, c.hd_tri_layout(h), LAYOUT));
     this.#faces = faces;
     this.#vertices = vertices;
     this.#sourceIndices = sourceIndices;
-    this.#skinned = skinned;
     this.#morphs = morphs;
 
     const { f64, u32 } = views();
@@ -301,25 +322,12 @@ export class TriangleKernel {
     return null;
   }
 
-  /** Write this frame's matrices and morph influences. */
+  /** Write this frame's camera and morph influences. */
   #push(camera: Camera): void {
     const { f64 } = views();
     const L = this.#layout;
-    const mesh = this.mesh;
-    const frame = f64At(L[LAYOUT_FRAME]);
-    if (this.#skinned && mesh instanceof SkinnedMesh) {
-      const { bones, boneInverses } = mesh.skeleton;
-      const at = f64At(L[LAYOUT_BONES]);
-      for (let b = 0; b < bones.length; b++) {
-        f64.set(bones[b].matrixWorld.elements, at + BONE * b);
-        f64.set(boneInverses[b].elements, at + BONE * b + 16);
-      }
-      f64.set(mesh.bindMatrix.elements, frame + FRAME_BIND);
-      f64.set(mesh.bindMatrixInverse.elements, frame + FRAME_BIND_INVERSE);
-    }
-    f64.set(mesh.matrixWorld.elements, frame + FRAME_MESH_WORLD);
-    f64.set(camera.matrixWorldInverse.elements, frame + FRAME_VIEW);
-    const influences = mesh.morphTargetInfluences;
+    f64.set(camera.matrixWorldInverse.elements, f64At(L[LAYOUT_FRAME]) + FRAME_VIEW);
+    const influences = this.mesh.morphTargetInfluences;
     const at = f64At(L[LAYOUT_INFLUENCES]);
     for (let t = 0; t < this.#morphs; t++) f64[at + t] = influences?.[t] ?? Number.NaN;
   }

@@ -164,7 +164,7 @@ describe('avatar shader warm-up', () => {
     root.add(mesh);
     root.visible = false;
     const sourceGeometry = mesh.geometry;
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(root);
     controller.reconcile([{ key: 'node:0:primitive:0', mesh }]);
     const scene = new THREE.Scene().add(root);
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
@@ -233,7 +233,7 @@ describe('avatar shader warm-up', () => {
     const mesh = new THREE.Mesh(geometry, toon);
     root.add(mesh);
     root.visible = false;
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(root);
     controller.reconcile([{ key: 'warm-cache', mesh }]);
     const scene = new THREE.Scene().add(root);
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
@@ -328,7 +328,7 @@ describe('avatar shader warm-up', () => {
     const mesh = new THREE.Mesh(geometry, toon);
     root.add(mesh);
     root.visible = false;
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(root);
     controller.reconcile([{ key: 'warm-throw', mesh }]);
     const scene = new THREE.Scene().add(root);
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);

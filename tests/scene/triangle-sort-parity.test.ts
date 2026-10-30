@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { core } from '@/core';
+import { SceneGraph } from '@/core/scene';
 import { TriangleKernel } from '@/engine/scene/triangle-sort-core';
 import { must } from '../helpers/must';
 import {
@@ -38,7 +39,7 @@ describe('TransparentTriangleController against the recorded frame hashes', () =
     const fixture = must(TRIANGLE_FIXTURES[2], 'skinned-relative');
     const rig = fixture.build();
     const camera = new THREE.PerspectiveCamera();
-    const kernel = new TriangleKernel(rig.mesh);
+    const kernel = new TriangleKernel(rig.root, rig.mesh);
     applyTriangleFrame(rig, camera, must(fixture.script[NAN_FRAME - 1], 'frame'));
     expect(kernel.update(camera)).toBeNull();
     const before = kernel.order().slice();
@@ -54,7 +55,7 @@ describe('TransparentTriangleController against the recorded frame hashes', () =
     const fixture = must(TRIANGLE_FIXTURES[3], 'skinned-normalized');
     const rig = fixture.build();
     const camera = new THREE.PerspectiveCamera();
-    const kernel = new TriangleKernel(rig.mesh);
+    const kernel = new TriangleKernel(rig.root, rig.mesh);
     applyTriangleFrame(rig, camera, must(fixture.script[0], 'frame'));
     kernel.update(camera);
     const before = core().memory.buffer.byteLength;
@@ -65,9 +66,11 @@ describe('TransparentTriangleController against the recorded frame hashes', () =
     const after = core().memory.buffer.byteLength;
     kernel.dispose();
     for (let k = 0; k < 300; k++) {
-      const again = new TriangleKernel(fixture.build().mesh);
+      const built = fixture.build();
+      const again = new TriangleKernel(built.root, built.mesh);
       again.update(camera);
       again.dispose();
+      SceneGraph.of(built.root).dispose();
     }
     const rebuilt = core().memory.buffer.byteLength;
     expect(after).toBe(before);

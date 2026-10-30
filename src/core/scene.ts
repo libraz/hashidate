@@ -421,6 +421,12 @@ export class SceneGraph {
     return binding?.graph === this ? binding.index : NO_NODE;
   }
 
+  /** The skeleton's index in the core's table, or `NO_NODE` for a skeleton outside it. */
+  skeletonIndexOf(skeleton: THREE.Skeleton): number {
+    const binding = (skeleton as Partial<BoundSkeleton>)[BOUND];
+    return binding?.graph === this ? binding.index : NO_NODE;
+  }
+
   /**
    * Runs a core call that may update nodes: checks the views, mirrors the root's ancestors in,
    * writes them back after, and repeats the pass on the plain leaves as `replay` says.

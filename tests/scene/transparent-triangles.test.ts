@@ -147,7 +147,7 @@ describe('TransparentTriangleController', () => {
     const camera = cameraAt(10);
     const originalIndex = geometry.index;
     const originalIndexValues = Array.from(originalIndex!.array);
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(mesh);
     controller.reconcile([{ key: 'sleeve', mesh }]);
 
     const sorted = withIndexOrder(controller, camera, mesh);
@@ -167,7 +167,7 @@ describe('TransparentTriangleController', () => {
   it('uses camera-space depth for perspective and orthographic views, and keeps ordinal ties stable', () => {
     for (const type of ['perspective', 'orthographic'] as const) {
       const { mesh } = skinnedTarget([-3, -3, -1, -5]);
-      const controller = new TransparentTriangleController();
+      const controller = new TransparentTriangleController(mesh);
       controller.reconcile([{ key: type, mesh }]);
 
       expect(faceOrder(withIndexOrder(controller, cameraAt(10, type), mesh))).toEqual([3, 0, 1, 2]);
@@ -182,7 +182,7 @@ describe('TransparentTriangleController', () => {
 
   it('reuses posed centroids for camera changes and skips all work on an identical frame', () => {
     const { mesh } = skinnedTarget([-1, -5, -2, -4]);
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(mesh);
     controller.reconcile([{ key: 'sleeve', mesh }]);
     const firstCamera = cameraAt(10);
     const reverseCamera = cameraAt(-10);
@@ -206,7 +206,7 @@ describe('TransparentTriangleController', () => {
   it('refreshes pose for morph-only and bone-only changes without camera movement', () => {
     const { mesh, bone } = skinnedTarget([-1, -5, -2, -4], -12);
     const camera = cameraAt(10);
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(mesh);
     controller.reconcile([{ key: 'sleeve', mesh }]);
     withIndexOrder(controller, camera, mesh);
 
@@ -228,7 +228,7 @@ describe('TransparentTriangleController', () => {
     const positions = geometry.getAttribute('position') as THREE.BufferAttribute;
     const interleavedData = new THREE.InterleavedBuffer(positions.array.slice(), 3);
     geometry.setAttribute('position', new THREE.InterleavedBufferAttribute(interleavedData, 3, 0));
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(mesh);
     const camera = cameraAt(10);
     controller.reconcile([{ key: 'interleaved', mesh }]);
 
@@ -258,7 +258,7 @@ describe('TransparentTriangleController', () => {
     const sourcePosition = geometry.getAttribute('position');
     const sourceMorph = geometry.morphAttributes.position;
     const sourceIndex = geometry.index;
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(mesh);
     controller.reconcile([{ key: 'selected', mesh }]);
 
     let shell: THREE.BufferGeometry | undefined;
@@ -294,7 +294,7 @@ describe('TransparentTriangleController', () => {
     const { geometry, mesh } = skinnedTarget([-1, -5, -2, -4]);
     const sourcePosition = geometry.getAttribute('position');
     attributes.update(sourcePosition, gl.ARRAY_BUFFER);
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(mesh);
     const camera = cameraAt(10);
     controller.reconcile([{ key: 'gpu-index', mesh }]);
     const ownedIndices: THREE.BufferAttribute[] = [];
@@ -375,7 +375,7 @@ describe('TransparentTriangleController', () => {
 
   it('restores source references immediately when the draw callback returns a promise', () => {
     const { geometry, material, mesh } = skinnedTarget([-1, -5]);
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(mesh);
     controller.reconcile([{ key: 'async-callback', mesh }]);
     let resolve!: () => void;
     const pending = new Promise<void>((done) => {
@@ -418,7 +418,8 @@ describe('TransparentTriangleController', () => {
       sourceTextureDisposals += 1;
     });
 
-    const controller = new TransparentTriangleController();
+    const root = new THREE.Group().add(first.mesh, second.mesh);
+    const controller = new TransparentTriangleController(root);
     controller.reconcile([{ key: 'sleeve', mesh: first.mesh }]);
     withIndexOrder(controller, camera, first.mesh);
     let oldShell: THREE.BufferGeometry | undefined;
@@ -470,7 +471,7 @@ describe('TransparentTriangleController', () => {
     const parent = new THREE.Group();
     parent.add(mesh);
     const camera = cameraAt(10);
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(parent);
     controller.reconcile([{ key: 'hidden', mesh }]);
 
     controller.withDraw(camera, () => {
@@ -581,7 +582,7 @@ describe('TransparentTriangleController', () => {
       }
       item.mutate(mesh);
       const sourceMaterial = mesh.material;
-      const controller = new TransparentTriangleController();
+      const controller = new TransparentTriangleController(mesh);
       controller.reconcile([{ key: `invalid-${index}`, mesh }]);
       controller.withDraw(camera, () => {
         expect(mesh.geometry).toBe(geometry);
@@ -618,7 +619,7 @@ describe('TransparentTriangleController', () => {
       textureDisposals += 1;
     });
 
-    const unsupported = new TransparentTriangleController();
+    const unsupported = new TransparentTriangleController(mesh);
     unsupported.reconcile([{ key: 'custom', mesh }]);
     unsupported.withDraw(camera, () => {
       expect(mesh.geometry).toBe(geometry);
@@ -628,7 +629,7 @@ describe('TransparentTriangleController', () => {
     unsupported.dispose();
 
     let cloneDisposals = 0;
-    const controller = new TransparentTriangleController({
+    const controller = new TransparentTriangleController(mesh, {
       cloneMaterial: (source) => {
         const shader = source as THREE.ShaderMaterial;
         const clone = new THREE.ShaderMaterial().copy(shader);
@@ -657,7 +658,7 @@ describe('TransparentTriangleController', () => {
 
   it('refreshes its material clone on source version changes and explicit invalidation', () => {
     const { material, mesh } = skinnedTarget([-1, -5]);
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(mesh);
     const camera = cameraAt(10);
     controller.reconcile([{ key: 'versioned', mesh }]);
     let firstClone: THREE.Material | undefined;
@@ -702,7 +703,7 @@ describe('TransparentTriangleController', () => {
     const third = transparentMaterial();
     const disposed = new Map<THREE.Material, number>();
     const tracked = new Set<THREE.Material>();
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(mesh);
     const camera = cameraAt(10);
     controller.reconcile([{ key: 'material-lru', mesh }]);
     const drawMaterial = () => {
@@ -755,7 +756,7 @@ describe('TransparentTriangleController', () => {
     >;
     const first = mesh.material as THREE.Material;
     const second = transparentMaterial();
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(mesh);
     const camera = cameraAt(10);
     controller.reconcile([{ key: 'material-version', mesh }]);
     const drawMaterial = () => {
@@ -791,7 +792,7 @@ describe('TransparentTriangleController', () => {
     >;
     const first = mesh.material as THREE.Material;
     const second = transparentMaterial();
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(mesh);
     const camera = cameraAt(10);
     controller.reconcile([{ key: 'material-ineligible', mesh }]);
     let firstClone: THREE.Material | undefined;
@@ -845,7 +846,7 @@ describe('TransparentTriangleController', () => {
     const second = transparentMaterial();
     const allClones: THREE.Material[] = [];
     const disposalCounts = new Map<THREE.Material, number>();
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(mesh);
     const camera = cameraAt(10);
     controller.reconcile([{ key: 'material-cleanup', mesh }]);
     const draw = () =>
@@ -904,7 +905,7 @@ describe('TransparentTriangleController', () => {
       depthWrite: false,
     });
     let factoryCalls = 0;
-    const controller = new TransparentTriangleController({
+    const controller = new TransparentTriangleController(mesh, {
       cloneMaterial: () => {
         factoryCalls += 1;
         return null;
@@ -965,7 +966,7 @@ describe('TransparentTriangleController', () => {
     };
     sourceWithDefines.defines = { TRANSPARENT_TRIANGLE_DEFINE: '1' };
 
-    const unsupported = new TransparentTriangleController();
+    const unsupported = new TransparentTriangleController(mesh);
     unsupported.reconcile([{ key: 'custom-hooks', mesh }]);
     unsupported.withDraw(cameraAt(10), () => {
       expect(mesh.geometry).toBe(geometry);
@@ -975,7 +976,7 @@ describe('TransparentTriangleController', () => {
     unsupported.dispose();
 
     let factoryCalls = 0;
-    const controller = new TransparentTriangleController({
+    const controller = new TransparentTriangleController(mesh, {
       cloneMaterial: (material) => {
         factoryCalls += 1;
         const hookedSource = material as THREE.MeshStandardMaterial & {
@@ -1024,7 +1025,7 @@ describe('TransparentTriangleController', () => {
     source.onBeforeRender = sourceHook;
     const camera = cameraAt(10);
 
-    const unsupported = new TransparentTriangleController();
+    const unsupported = new TransparentTriangleController(mesh);
     unsupported.reconcile([{ key: 'custom-render-hook', mesh }]);
     unsupported.withDraw(camera, () => {
       expect(mesh.geometry).toBe(geometry);
@@ -1034,7 +1035,7 @@ describe('TransparentTriangleController', () => {
     unsupported.dispose();
 
     let factoryCalls = 0;
-    const controller = new TransparentTriangleController({
+    const controller = new TransparentTriangleController(mesh, {
       cloneMaterial: (material) => {
         factoryCalls += 1;
         const hookedSource = material as THREE.MeshStandardMaterial;
@@ -1066,7 +1067,7 @@ describe('TransparentTriangleController', () => {
 
   it('rejects nested draws and lifecycle changes during a draw with clear errors', () => {
     const { mesh } = skinnedTarget([-1]);
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(mesh);
     const camera = cameraAt(10);
     controller.reconcile([{ key: 'nested', mesh }]);
 

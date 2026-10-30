@@ -7,9 +7,15 @@
 //!
 //! Vertices are compact: the caller uploads only the vertices the index references, and faces
 //! name them by their slot. Every buffer is allocated by [`Kernel::new`] and never resized.
+//!
+//! On an avatar the matrices come from the scene graph through a [`Binding`]; the caller supplies
+//! only the camera and the morph influences.
 
+pub mod binding;
 pub mod pose;
 pub mod sort;
+
+pub use binding::Binding;
 
 use crate::math::{Mat4, Vec3};
 

@@ -333,7 +333,7 @@ export function runTriangleFixture(
 ): void {
   const rig = fixture.build();
   const camera = new THREE.PerspectiveCamera();
-  const controller = new TransparentTriangleController();
+  const controller = new TransparentTriangleController(rig.root);
   controller.reconcile([{ key: fixture.id, mesh: rig.mesh }]);
   try {
     for (const step of fixture.script) {

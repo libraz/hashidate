@@ -93,7 +93,7 @@ export function mountAvatar(
   const state = wornState(avatar.wardrobe, worn);
   poseWardrobe(root, avatar.wardrobe, state);
 
-  const transparentTriangles = new TransparentTriangleController({
+  const transparentTriangles = new TransparentTriangleController(root, {
     cloneMaterial: cloneTransparentTriangleMaterial,
   });
   transparentTriangles.reconcile(resolveTransparentTriangleTargets(root, parser));

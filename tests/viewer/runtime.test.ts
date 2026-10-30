@@ -285,7 +285,7 @@ describe('transparent triangle runtime draw', () => {
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
     camera.position.z = 8;
     scene.add(camera);
-    const controller = new TransparentTriangleController();
+    const controller = new TransparentTriangleController(root);
     controller.reconcile([{ key: 'node:0:primitive:0', mesh }]);
     const drawSorted = controller.withDraw.bind(controller);
     vi.spyOn(controller, 'withDraw').mockImplementation((drawCamera, draw) => {

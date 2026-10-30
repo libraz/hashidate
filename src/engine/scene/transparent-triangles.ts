@@ -19,7 +19,6 @@ import {
   NormalBlending,
   type Object3D,
   ShadowMaterial,
-  SkinnedMesh,
   type TypedArray,
 } from 'three';
 import { TriangleKernel } from './triangle-sort-core';
@@ -85,26 +84,6 @@ interface MorphAttributeSnapshot {
   entries: Map<string, { attributes: AttributeLike[]; snapshots: AttributeSnapshot[] }>;
 }
 
-interface BoneSnapshot {
-  bone: SkinnedMesh['skeleton']['bones'][number];
-  worldMatrix: Matrix4;
-  worldValues: Float64Array;
-  inverseMatrix: Matrix4;
-  inverseValues: Float64Array;
-}
-
-interface SkinSnapshot {
-  skeleton: SkinnedMesh['skeleton'];
-  bones: SkinnedMesh['skeleton']['bones'];
-  inverses: SkinnedMesh['skeleton']['boneInverses'];
-  bindMode: SkinnedMesh['bindMode'];
-  bindMatrix: Matrix4;
-  bindMatrixValues: Float64Array;
-  bindMatrixInverse: Matrix4;
-  bindMatrixInverseValues: Float64Array;
-  boneSnapshots: BoneSnapshot[];
-}
-
 interface MaterialCloneEntry {
   source: Material;
   version: number;
@@ -142,7 +121,6 @@ interface TargetRecord {
   morphInfluences: number[] | undefined;
   morphInfluenceValues: number[];
   morphTargetsRelative: boolean;
-  skinSnapshot: SkinSnapshot | null;
   sortedCameraValues: Float64Array | null;
   sortedMeshValues: Float64Array | null;
   sortedPoseRevision: number;
@@ -287,82 +265,8 @@ function morphAttributesMatch(map: MorphAttributeMap, snapshot: MorphAttributeSn
   return count === snapshot.entries.size;
 }
 
-function matrixValuesMatch(matrix: Matrix4, values: Float64Array): boolean {
-  const elements = matrix.elements;
-  if (elements.length !== values.length) return false;
-  for (let index = 0; index < 16; index += 1) {
-    if (elements[index] !== values[index]) return false;
-  }
-  return true;
-}
-
 function copyMatrixValues(matrix: Matrix4): Float64Array {
   return Float64Array.from(matrix.elements);
-}
-
-function createSkinSnapshot(mesh: SkinnedMesh): SkinSnapshot {
-  const skeleton = mesh.skeleton;
-  const boneSnapshots = skeleton.bones.map((bone, index) => {
-    const inverseMatrix = skeleton.boneInverses[index];
-    if (inverseMatrix === undefined)
-      throw new Error('Skinned mesh skeleton has no matching inverse matrix.');
-    return {
-      bone,
-      worldMatrix: bone.matrixWorld,
-      worldValues: copyMatrixValues(bone.matrixWorld),
-      inverseMatrix,
-      inverseValues: copyMatrixValues(inverseMatrix),
-    };
-  });
-  return {
-    skeleton,
-    bones: skeleton.bones,
-    inverses: skeleton.boneInverses,
-    bindMode: mesh.bindMode,
-    bindMatrix: mesh.bindMatrix,
-    bindMatrixValues: copyMatrixValues(mesh.bindMatrix),
-    bindMatrixInverse: mesh.bindMatrixInverse,
-    bindMatrixInverseValues: copyMatrixValues(mesh.bindMatrixInverse),
-    boneSnapshots,
-  };
-}
-
-function skinSnapshotMatches(mesh: Mesh, previous: SkinSnapshot | null): boolean {
-  const isSkinned = mesh instanceof SkinnedMesh;
-  if (!isSkinned) return previous === null;
-  if (previous === null) return false;
-  const skeleton = mesh.skeleton;
-  if (
-    skeleton !== previous.skeleton ||
-    skeleton.bones !== previous.bones ||
-    skeleton.boneInverses !== previous.inverses ||
-    mesh.bindMode !== previous.bindMode ||
-    mesh.bindMatrix !== previous.bindMatrix ||
-    mesh.bindMatrixInverse !== previous.bindMatrixInverse ||
-    !matrixValuesMatch(mesh.bindMatrix, previous.bindMatrixValues) ||
-    !matrixValuesMatch(mesh.bindMatrixInverse, previous.bindMatrixInverseValues) ||
-    skeleton.bones.length !== previous.boneSnapshots.length
-  ) {
-    return false;
-  }
-  for (let index = 0; index < skeleton.bones.length; index += 1) {
-    const bone = skeleton.bones[index];
-    const inverse = skeleton.boneInverses[index];
-    const old = previous.boneSnapshots[index];
-    if (
-      bone === undefined ||
-      inverse === undefined ||
-      old === undefined ||
-      bone !== old.bone ||
-      inverse !== old.inverseMatrix ||
-      bone.matrixWorld !== old.worldMatrix ||
-      !matrixValuesMatch(bone.matrixWorld, old.worldValues) ||
-      !matrixValuesMatch(inverse, old.inverseValues)
-    ) {
-      return false;
-    }
-  }
-  return true;
 }
 
 function matricesMatch(left: Matrix4, right: Float64Array | null): boolean {
@@ -405,7 +309,6 @@ function createRecord(key: string, mesh: Mesh): TargetRecord {
     morphInfluences: undefined,
     morphInfluenceValues: [],
     morphTargetsRelative: mesh.geometry.morphTargetsRelative,
-    skinSnapshot: null,
     sortedCameraValues: null,
     sortedMeshValues: null,
     sortedPoseRevision: -1,
@@ -529,7 +432,6 @@ function clearPose(record: TargetRecord): void {
   record.morphInfluences = undefined;
   record.morphInfluenceValues.length = 0;
   record.morphTargetsRelative = record.originalGeometry.morphTargetsRelative;
-  record.skinSnapshot = null;
   record.sortedCameraValues = null;
   record.sortedMeshValues = null;
   record.sortedPoseRevision = -1;
@@ -764,7 +666,7 @@ function poseDependenciesMatch(record: TargetRecord): boolean {
   for (let index = 0; index < influenceCount; index += 1) {
     if (influences![index] !== record.morphInfluenceValues[index]) return false;
   }
-  return skinSnapshotMatches(record.mesh, record.skinSnapshot);
+  return record.kernel !== null && !record.kernel.skinChanged();
 }
 
 function markPoseDependencies(record: TargetRecord): void {
@@ -781,11 +683,6 @@ function markPoseDependencies(record: TargetRecord): void {
   record.morphTargetsRelative = geometry.morphTargetsRelative;
   record.morphInfluences = record.mesh.morphTargetInfluences;
   record.morphInfluenceValues = record.morphInfluences?.slice() ?? [];
-  if (record.mesh instanceof SkinnedMesh) {
-    record.skinSnapshot = createSkinSnapshot(record.mesh);
-  } else {
-    record.skinSnapshot = null;
-  }
   record.poseDirty = false;
 }
 
@@ -803,10 +700,11 @@ function recordSort(
 /** Pose, measure and sort the target's vertices; the reason it could not, or null. */
 function refreshPose(
   record: TargetRecord,
+  root: Object3D,
   camera: Camera,
   counters: TransparentTriangleCounters,
 ): string | null {
-  record.kernel ??= new TriangleKernel(record.mesh);
+  record.kernel ??= new TriangleKernel(root, record.mesh);
   const kernel = record.kernel;
   const previousSource = kernel.sourceIndices;
   const reason = kernel.update(camera);
@@ -956,6 +854,7 @@ function materialCloneEntry(
 }
 
 export class TransparentTriangleController {
+  private readonly root: Object3D;
   private readonly cloneMaterial: TransparentTriangleControllerOptions['cloneMaterial'];
   private readonly records = new Map<string, TargetRecord>();
   private readonly recordList: TargetRecord[] = [];
@@ -974,7 +873,9 @@ export class TransparentTriangleController {
   private disposed = false;
   private inDraw = false;
 
-  constructor(options: TransparentTriangleControllerOptions = {}) {
+  /** `root` is the avatar the targets belong to; their kernels read its scene graph. */
+  constructor(root: Object3D, options: TransparentTriangleControllerOptions = {}) {
+    this.root = root;
     this.cloneMaterial = options.cloneMaterial;
   }
 
@@ -1132,7 +1033,7 @@ export class TransparentTriangleController {
           const indexReplaced = syncOwnedIndex(record);
           if (!poseDependenciesMatch(record)) {
             record.poseDirty = true;
-            const poseError = refreshPose(record, camera, this.counters);
+            const poseError = refreshPose(record, this.root, camera, this.counters);
             if (poseError !== null) {
               record.reason = poseError;
               continue;
