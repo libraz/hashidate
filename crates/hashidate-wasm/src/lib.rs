@@ -3,11 +3,12 @@
 use std::alloc::{Layout, alloc, dealloc};
 
 mod math;
+mod scene;
 mod spring;
 mod triangles;
 
 /// Version of the export surface; bumped on any incompatible change.
-const ABI_VERSION: u32 = 1;
+const ABI_VERSION: u32 = 2;
 
 /// Returns the ABI version this module was built with.
 #[unsafe(no_mangle)]

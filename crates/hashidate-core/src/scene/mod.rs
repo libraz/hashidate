@@ -4,6 +4,7 @@
 //! node's subtree is the contiguous run of indices after it. The table holds what the solvers
 //! read and write; everything else about the hierarchy stays on the three side.
 
+pub mod graph;
 pub mod node;
 
 pub use node::{NONE, Node};
