@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { TransparentTriangleController } from '../../src/engine/scene/transparent-triangles';
+import { ByteWriter, hashBytes, writeTriangles } from '../../tools/parity/hash';
 
 /**
  * Deterministic transparent meshes and motion for comparing `TransparentTriangleController`
@@ -319,4 +321,44 @@ export function applyTriangleFrame(
   rig.root.updateMatrixWorld(true);
   if (frame.meshWorld) rig.mesh.matrixWorld.fromArray(frame.meshWorld);
   camera.matrixWorldInverse.fromArray(frame.view);
+}
+
+/**
+ * Run `fixture` through a `TransparentTriangleController`, calling `visit` with each frame's
+ * step and the shell index the controller drew it with.
+ */
+export function runTriangleFixture(
+  fixture: TriangleFixture,
+  visit: (step: TriangleFrame, index: Uint32Array) => void,
+): void {
+  const rig = fixture.build();
+  const camera = new THREE.PerspectiveCamera();
+  const controller = new TransparentTriangleController();
+  controller.reconcile([{ key: fixture.id, mesh: rig.mesh }]);
+  try {
+    for (const step of fixture.script) {
+      applyTriangleFrame(rig, camera, step);
+      controller.withDraw(camera, () => {
+        const index = rig.mesh.geometry.index;
+        if (index === null) throw new Error('shell has no index');
+        visit(step, Uint32Array.from(index.array));
+      });
+    }
+  } finally {
+    controller.dispose();
+  }
+}
+
+/** The hash of one frame's shell index. */
+export function triangleFrameHash(key: string, index: Uint32Array): string {
+  return hashBytes(writeTriangles(new ByteWriter(), [{ key, index }]).bytes());
+}
+
+/** The hash of each frame of `fixture` as the controller draws it. */
+export function triangleFrameHashes(fixture: TriangleFixture): string[] {
+  const hashes: string[] = [];
+  runTriangleFixture(fixture, (_step, index) => {
+    hashes.push(triangleFrameHash(fixture.id, index));
+  });
+  return hashes;
 }

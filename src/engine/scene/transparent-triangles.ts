@@ -21,8 +21,8 @@ import {
   ShadowMaterial,
   SkinnedMesh,
   type TypedArray,
-  Vector3,
 } from 'three';
+import { TriangleKernel } from './triangle-sort-core';
 
 export interface TransparentTriangleTarget {
   key: string;
@@ -130,14 +130,8 @@ interface TargetRecord {
   poseIndexArray: TypedArray | null;
   poseIndexVersion: number;
   poseIndexCount: number;
-  sourceIndices: Uint32Array | null;
-  uniqueVertices: number[];
-  vertexMarks: Uint8Array | null;
-  posedPositions: Float64Array | null;
-  centroids: Float64Array | null;
-  cameraDepths: Float64Array | null;
-  workingOrder: number[];
-  appliedOrder: number[];
+  kernel: TriangleKernel | null;
+  appliedOrder: Uint32Array;
   appliedSourceIndex: BufferAttribute | null;
   appliedSourceIndexArray: TypedArray | null;
   appliedSourceVersion: number;
@@ -152,7 +146,6 @@ interface TargetRecord {
   sortedCameraValues: Float64Array | null;
   sortedMeshValues: Float64Array | null;
   sortedPoseRevision: number;
-  scratchVector: Vector3;
   swapGeometry: BufferGeometry | null;
   swapMaterial: Material | Material[] | null;
   swapped: boolean;
@@ -400,14 +393,8 @@ function createRecord(key: string, mesh: Mesh): TargetRecord {
     poseIndexArray: null,
     poseIndexVersion: -1,
     poseIndexCount: -1,
-    sourceIndices: null,
-    uniqueVertices: [],
-    vertexMarks: null,
-    posedPositions: null,
-    centroids: null,
-    cameraDepths: null,
-    workingOrder: [],
-    appliedOrder: [],
+    kernel: null,
+    appliedOrder: new Uint32Array(0),
     appliedSourceIndex: null,
     appliedSourceIndexArray: null,
     appliedSourceVersion: -1,
@@ -422,7 +409,6 @@ function createRecord(key: string, mesh: Mesh): TargetRecord {
     sortedCameraValues: null,
     sortedMeshValues: null,
     sortedPoseRevision: -1,
-    scratchVector: new Vector3(),
     swapGeometry: null,
     swapMaterial: null,
     swapped: false,
@@ -530,14 +516,9 @@ function clearPose(record: TargetRecord): void {
   record.poseIndexArray = null;
   record.poseIndexVersion = -1;
   record.poseIndexCount = -1;
-  record.sourceIndices = null;
-  record.uniqueVertices.length = 0;
-  record.vertexMarks = null;
-  record.posedPositions = null;
-  record.centroids = null;
-  record.cameraDepths = null;
-  record.workingOrder.length = 0;
-  record.appliedOrder.length = 0;
+  record.kernel?.dispose();
+  record.kernel = null;
+  record.appliedOrder = new Uint32Array(0);
   record.appliedSourceIndex = null;
   record.appliedSourceIndexArray = null;
   record.appliedSourceVersion = -1;
@@ -655,8 +636,10 @@ function ensureShell(record: TargetRecord, counters: TransparentTriangleCounters
   record.appliedSourceIndex = sourceIndex;
   record.appliedSourceIndexArray = sourceIndex.array;
   record.appliedSourceVersion = sourceIndex.version;
-  record.appliedOrder = Array.from({ length: sourceIndex.count / 3 }, (_unused, face) => face);
-  record.workingOrder = record.appliedOrder.slice();
+  record.appliedOrder = Uint32Array.from(
+    { length: sourceIndex.count / 3 },
+    (_unused, face) => face,
+  );
   counters.geometryShellsCreated += 1;
 }
 
@@ -806,107 +789,41 @@ function markPoseDependencies(record: TargetRecord): void {
   record.poseDirty = false;
 }
 
-function evaluatePose(record: TargetRecord, counters: TransparentTriangleCounters): string | null {
-  const geometry = record.originalGeometry;
-  const index = geometry.index!;
-  const position = geometry.getAttribute('position');
-  const triangleCount = index.count / 3;
-  const vertexCount = position.count;
-  const topologyChanged =
-    record.sourceIndices === null ||
-    record.sourceIndices.length !== index.count ||
-    record.vertexMarks === null ||
-    record.vertexMarks.length !== vertexCount ||
-    record.centroids === null ||
-    record.centroids.length !== triangleCount * 3;
+function recordSort(
+  record: TargetRecord,
+  camera: Camera,
+  counters: TransparentTriangleCounters,
+): void {
+  counters.sorts += 1;
+  record.sortedCameraValues = copyMatrixValues(camera.matrixWorldInverse);
+  record.sortedMeshValues = copyMatrixValues(record.mesh.matrixWorld);
+  record.sortedPoseRevision = record.poseRevision;
+}
 
-  if (topologyChanged) {
-    record.sourceIndices = new Uint32Array(index.count);
-    record.vertexMarks = new Uint8Array(vertexCount);
-    record.posedPositions = new Float64Array(vertexCount * 3);
-    record.centroids = new Float64Array(triangleCount * 3);
-    record.cameraDepths = new Float64Array(triangleCount);
-    record.workingOrder = Array.from({ length: triangleCount }, (_unused, face) => face);
-    record.appliedOrder = Array.from({ length: triangleCount }, (_unused, face) => face);
+/** Pose, measure and sort the target's vertices; the reason it could not, or null. */
+function refreshPose(
+  record: TargetRecord,
+  camera: Camera,
+  counters: TransparentTriangleCounters,
+): string | null {
+  record.kernel ??= new TriangleKernel(record.mesh);
+  const kernel = record.kernel;
+  const previousSource = kernel.sourceIndices;
+  const reason = kernel.update(camera);
+  if (kernel.sourceIndices !== previousSource) {
+    record.appliedOrder = new Uint32Array(0);
     record.appliedSourceIndex = null;
     record.appliedSourceVersion = -1;
   }
-
-  const sourceIndices = record.sourceIndices!;
-  const vertexMarks = record.vertexMarks!;
-  const positions = record.posedPositions!;
-  const centroids = record.centroids!;
-  const indexChanged =
-    topologyChanged ||
-    record.poseIndex !== index ||
-    record.poseIndexArray !== index.array ||
-    record.poseIndexVersion !== index.version ||
-    record.poseIndexCount !== index.count;
-  if (indexChanged) {
-    vertexMarks.fill(0);
-    record.uniqueVertices.length = 0;
-    for (let offset = 0; offset < index.count; offset += 1) {
-      const vertex = index.getX(offset);
-      if (!Number.isInteger(vertex) || vertex < 0 || vertex >= vertexCount) {
-        return 'index-out-of-range';
-      }
-      sourceIndices[offset] = vertex;
-      if (vertexMarks[vertex] === 0) {
-        vertexMarks[vertex] = 1;
-        record.uniqueVertices.push(vertex);
-      }
-    }
-  }
-
-  try {
-    for (const vertex of record.uniqueVertices) {
-      record.mesh.getVertexPosition(vertex, record.scratchVector);
-      const offset = vertex * 3;
-      positions[offset] = record.scratchVector.x;
-      positions[offset + 1] = record.scratchVector.y;
-      positions[offset + 2] = record.scratchVector.z;
-      counters.vertexEvaluations += 1;
-    }
-  } catch {
+  if (reason !== null && reason !== 'non-finite-depth') {
     record.poseDirty = true;
-    return 'pose-evaluation-failed';
+    return reason;
   }
-
-  for (let face = 0; face < triangleCount; face += 1) {
-    const indexOffset = face * 3;
-    const vertex0 = sourceIndices[indexOffset]! * 3;
-    const vertex1 = sourceIndices[indexOffset + 1]! * 3;
-    const vertex2 = sourceIndices[indexOffset + 2]! * 3;
-    const centroidOffset = face * 3;
-    centroids[centroidOffset] =
-      (positions[vertex0]! + positions[vertex1]! + positions[vertex2]!) / 3;
-    centroids[centroidOffset + 1] =
-      (positions[vertex0 + 1]! + positions[vertex1 + 1]! + positions[vertex2 + 1]!) / 3;
-    centroids[centroidOffset + 2] =
-      (positions[vertex0 + 2]! + positions[vertex1 + 2]! + positions[vertex2 + 2]!) / 3;
-  }
-
+  counters.vertexEvaluations += kernel.vertices.length;
   record.poseRevision += 1;
-  record.sortedPoseRevision = -1;
   markPoseDependencies(record);
+  recordSort(record, camera, counters);
   return null;
-}
-
-function calculateCameraDepths(record: TargetRecord, camera: Camera): void {
-  const centroids = record.centroids!;
-  const depths = record.cameraDepths!;
-  const world = record.mesh.matrixWorld.elements;
-  const view = camera.matrixWorldInverse.elements;
-  for (let face = 0; face < depths.length; face += 1) {
-    const offset = face * 3;
-    const x = centroids[offset]!;
-    const y = centroids[offset + 1]!;
-    const z = centroids[offset + 2]!;
-    const worldX = world[0]! * x + world[4]! * y + world[8]! * z + world[12]!;
-    const worldY = world[1]! * x + world[5]! * y + world[9]! * z + world[13]!;
-    const worldZ = world[2]! * x + world[6]! * y + world[10]! * z + world[14]!;
-    depths[face] = view[2]! * worldX + view[6]! * worldY + view[10]! * worldZ + view[14]!;
-  }
 }
 
 function markIndexNeedsUpdate(record: TargetRecord, counters: TransparentTriangleCounters): void {
@@ -914,35 +831,28 @@ function markIndexNeedsUpdate(record: TargetRecord, counters: TransparentTriangl
   counters.indexUploads += 1;
 }
 
-function sortAndApply(
+/** Re-sort for a moved camera or mesh, then write the shell index if the order changed. */
+function applyOrder(
   record: TargetRecord,
   camera: Camera,
   counters: TransparentTriangleCounters,
 ): void {
+  const kernel = record.kernel!;
   const matrixChanged = !(
     matricesMatch(camera.matrixWorldInverse, record.sortedCameraValues) &&
     matricesMatch(record.mesh.matrixWorld, record.sortedMeshValues)
   );
-  const mustSort = matrixChanged || record.sortedPoseRevision !== record.poseRevision;
-  if (mustSort) {
-    calculateCameraDepths(record, camera);
-    record.workingOrder.sort((left, right) => {
-      const leftDepth = record.cameraDepths![left]!;
-      const rightDepth = record.cameraDepths![right]!;
-      if (leftDepth < rightDepth) return -1;
-      if (leftDepth > rightDepth) return 1;
-      return left - right;
-    });
-    counters.sorts += 1;
-    record.sortedCameraValues = copyMatrixValues(camera.matrixWorldInverse);
-    record.sortedMeshValues = copyMatrixValues(record.mesh.matrixWorld);
-    record.sortedPoseRevision = record.poseRevision;
+  if (matrixChanged || record.sortedPoseRevision !== record.poseRevision) {
+    const reason = kernel.update(camera);
+    if (reason !== null && reason !== 'non-finite-depth') throw new Error(reason);
+    recordSort(record, camera, counters);
   }
 
-  let permutationChanged = record.appliedOrder.length !== record.workingOrder.length;
+  const order = kernel.order();
+  let permutationChanged = record.appliedOrder.length !== order.length;
   if (!permutationChanged) {
-    for (let index = 0; index < record.workingOrder.length; index += 1) {
-      if (record.appliedOrder[index] !== record.workingOrder[index]) {
+    for (let index = 0; index < order.length; index += 1) {
+      if (record.appliedOrder[index] !== order[index]) {
         permutationChanged = true;
         break;
       }
@@ -956,10 +866,10 @@ function sortAndApply(
   if (!(permutationChanged || sourceIndexChanged)) return;
 
   const output = record.shellIndex!.array;
-  const sourceIndices = record.sourceIndices!;
+  const sourceIndices = kernel.sourceIndices;
   let outputOffset = 0;
   let contentsChanged = false;
-  for (const face of record.workingOrder) {
+  for (const face of order) {
     const sourceOffset = face * 3;
     const index0 = sourceIndices[sourceOffset]!;
     const index1 = sourceIndices[sourceOffset + 1]!;
@@ -976,7 +886,7 @@ function sortAndApply(
     output[outputOffset + 2] = index2;
     outputOffset += 3;
   }
-  if (permutationChanged) record.appliedOrder = record.workingOrder.slice();
+  if (permutationChanged) record.appliedOrder = order.slice();
   record.appliedSourceIndex = sourceIndex;
   record.appliedSourceIndexArray = sourceIndex.array;
   record.appliedSourceVersion = sourceIndex.version;
@@ -1137,14 +1047,13 @@ export class TransparentTriangleController {
   inspect(): TransparentTriangleInspection {
     const targets: TransparentTriangleTargetInspection[] = [];
     for (const record of this.records.values()) {
-      let triangleCount = 0;
-      if (record.centroids !== null) triangleCount = record.centroids.length / 3;
+      const triangleCount = (record.kernel?.sourceIndices.length ?? 0) / 3;
       targets.push({
         key: record.key,
         active: record.active,
         reason: record.reason,
         triangleCount,
-        referencedVertexCount: record.uniqueVertices.length,
+        referencedVertexCount: record.kernel?.vertices.length ?? 0,
         poseRevision: record.poseRevision,
       });
     }
@@ -1223,16 +1132,16 @@ export class TransparentTriangleController {
           const indexReplaced = syncOwnedIndex(record);
           if (!poseDependenciesMatch(record)) {
             record.poseDirty = true;
-            const poseError = evaluatePose(record, this.counters);
+            const poseError = refreshPose(record, camera, this.counters);
             if (poseError !== null) {
               record.reason = poseError;
               continue;
             }
           }
           if (indexReplaced) {
-            record.appliedOrder.length = 0;
+            record.appliedOrder = new Uint32Array(0);
           }
-          sortAndApply(record, camera, this.counters);
+          applyOrder(record, camera, this.counters);
           record.reason = null;
           record.active = true;
           record.drawMaterial = entry.clone;
