@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 import { controlPort } from './src/shell/config';
+import { rustCore } from './tools/rust-core/vite-plugin';
 
 // The same rule the control server reads its port by. See `serverPort`.
 const CONTROL_PORT = controlPort();
@@ -46,7 +47,7 @@ function announceSurfaces(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), announceSurfaces()],
+  plugins: [react(), announceSurfaces(), rustCore()],
   // Keep the Emscripten factory's `import.meta.url` intact. IIFE worker output
   // rewrites it to `self.location.href`, but AudioWorkletGlobalScope exposes
   // neither `self` nor a worker location. The page supplies WASM bytes through
@@ -67,7 +68,7 @@ export default defineConfig({
       // `public/models` is 28 MB of built GLB. Neither is source, and watching
       // them costs a file handle per file and a full page reload every time the
       // model pipeline writes.
-      ignored: ['**/backup/**', '**/public/models/**'],
+      ignored: ['**/backup/**', '**/public/models/**', '**/target/**'],
     },
     // Loopback only, and that is a licence condition rather than a default. The
     // avatars used for validation may not be republished, so the viewer must

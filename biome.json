@@ -93,6 +93,16 @@
       }
     },
     {
+      "includes": ["src/core/abi/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useNamingConvention": "off"
+          }
+        }
+      }
+    },
+    {
       "includes": ["src/cli/**", "src/server/**", "src/viewer/**"],
       "linter": {
         "rules": {

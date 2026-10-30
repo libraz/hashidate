@@ -15,6 +15,10 @@ __pycache__/
 # in it is removed on the way out — neither is anything a checkout arrives with.
 tools/tts/.run/
 
+# Rust build output; the wasm the viewer loads is copied out of it into
+# src/core/generated/.
+target/
+
 # Purchased assets, extracted intermediates and internal specs. Never tracked.
 backup/
 

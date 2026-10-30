@@ -21,6 +21,8 @@ const alias = { '@': fileURLToPath(new URL('./src', import.meta.url)) };
 export default defineConfig({
   resolve: { alias },
   test: {
+    globalSetup: ['tests/setup/rust-core-build.ts'],
+    setupFiles: ['tests/setup/core.ts'],
     // Timeouts catch a hang, and are not a budget. Under coverage the engine's
     // longest simulation took 22 s at three workers on an Apple core, and the
     // longest sweep 99 s uninstrumented; a CI runner is slower than both.

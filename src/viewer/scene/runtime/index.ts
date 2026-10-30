@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import type { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { initCore } from '@/core';
+import wasmUrl from '@/core/generated/hashidate.wasm?url';
 import type { WornState } from '@/engine/scene';
 import { drawnBounds } from '@/engine/scene/drawn';
 import { Session } from '@/engine/session';
@@ -741,6 +743,7 @@ export class AvatarRuntime {
       return;
     }
     const toonTextures = await toonLoad;
+    await initCore(() => fetch(wasmUrl).then((r) => r.arrayBuffer()));
 
     if (!this.isLoadCurrent(generation, avatar.id)) {
       disposeRawAvatar(gltf.scene);

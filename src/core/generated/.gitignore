@@ -1,0 +1,4 @@
+# The wasm module built from crates/hashidate-wasm. Derived output, rebuilt by
+# `yarn rust:build` and by the dev server and test runner on start.
+*
+!.gitignore

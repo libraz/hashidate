@@ -25,6 +25,7 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit",
+    "rust:build": "tsx tools/rust-core/build.ts",
     "look": "tsx tools/capture/look.ts"
   },
   "dependencies": {
