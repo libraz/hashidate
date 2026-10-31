@@ -449,7 +449,8 @@ impl ArmChain {
                 let parent = self.upper_parent_q;
                 self.upper_q = self.aim(graph, port, upper, &rest, &parent, &u, 0.0, None);
             } else {
-                self.upper_q.copy(&q).multiply(&port.rest_of(upper));
+                let parent = self.upper_parent_q;
+                self.upper_q.copy(&parent).multiply(&port.rest_of(upper));
             }
             if let (Some(u), Some(l)) = (u_d, l_d) {
                 self.hinge_upper(p, graph, side, upper, &u, &l);
@@ -854,6 +855,31 @@ mod tests {
             (BoneSlot::LowerArmR, DIRS[2]),
             (BoneSlot::HandR, DIRS[3]),
         ] {
+            let mut target = want.unwrap();
+            target.normalize();
+            assert!(
+                world_direction_of(&mut h, slot).angle_to(&target) < 1e-6,
+                "{slot:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn holds_a_carrier_above_an_unaimed_upper_arm() {
+        // With no upper-arm direction the upper arm rests under its real parent, so the links
+        // below are aimed from where it actually is.
+        let (g, p) = avatar();
+        let (g, p) = interpose(&g, &p, BoneSlot::UpperArmR, [0.31, -0.42, 0.57], 0.5);
+        let upper = bone(&p, BoneSlot::UpperArmR);
+        assert_ne!(g.parent_of(upper), p.bone(BoneSlot::ShoulderR));
+        let mut h = Driven::of(g, p);
+        h.limits = false;
+        let mut dirs = DIRS;
+        dirs[ArmSlot::UpperArm as usize] = None;
+
+        h.aim_arm_legacy(Side::R, &dirs, 0.0, None, 1.0);
+
+        for (slot, want) in [(BoneSlot::LowerArmR, DIRS[2]), (BoneSlot::HandR, DIRS[3])] {
             let mut target = want.unwrap();
             target.normalize();
             assert!(
