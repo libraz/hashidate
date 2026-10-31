@@ -24,8 +24,9 @@
  * | hd_rig_tx_buffer        | t                                           | ptr to TX_BUFFER f64 |
  *
  * `hd_rig_new` traps on a profile node past the graph's table. Allocating: `hd_rig_new`,
- * `hd_rig_free`, `hd_rig_new_transaction`, `hd_rig_free_transaction`; call them through
- * `allocating`. No other export allocates, so every address below stays put until the free.
+ * `hd_rig_free`, `hd_rig_new_transaction`, `hd_rig_free_transaction`, and
+ * `hd_rig_bootstrap_standing_pose` on its first call (once, at Body construction); call them
+ * through `allocating`. No other export allocates, so every address below stays put until the free.
  *
  * ## Fields
  *

@@ -5,7 +5,10 @@ import { describe, expect, it } from 'vitest';
 import { core } from '@/core';
 import { SceneGraph } from '@/core/scene';
 import { Director } from '@/engine/director';
+import type { Rig } from '@/engine/rig';
+import { CoreRig } from '@/engine/rig/core';
 import { TransparentTriangleController } from '@/engine/scene/transparent-triangles';
+import type { Profile } from '@/engine/types';
 import { DIRECTOR_FIXTURES, prepareFixture, splitmix64 } from '../helpers/director-fixtures';
 import { must } from '../helpers/must';
 import { applyTriangleFrame, TRIANGLE_FIXTURES } from '../helpers/triangle-fixtures';
@@ -16,9 +19,9 @@ const SLOT_MASK = 0xffff;
 const byteLength = () => core().memory.buffer.byteLength;
 
 /** A director on a synthetic avatar with one sway group, and the graph it made. */
-function mountDirector() {
+function mountDirector(rig?: (profile: Profile) => Rig) {
   const { root, profile } = prepareFixture(must(DIRECTOR_FIXTURES[0], 'fixture'));
-  const director = new Director(profile, undefined, { random: splitmix64() });
+  const director = new Director(profile, undefined, { random: splitmix64(), rig });
   const graph = must(SceneGraph.existing(root), 'graph');
   return { root, director, graph };
 }
@@ -46,6 +49,21 @@ describe('scene graph lifetime', () => {
       a.director.dispose();
       t.controller.dispose();
       must(SceneGraph.existing(t.root), 'triangle graph').dispose();
+      a.graph.dispose();
+    };
+    round();
+    const afterFirst = byteLength();
+    for (let i = 0; i < ROUNDS - 1; i++) round();
+    expect(byteLength()).toBe(afterFirst);
+  });
+
+  it('returns the memory a core rig took: 100 directors on it do not grow it past the first', () => {
+    const rig = (p: Profile) => new CoreRig(p) as unknown as Rig;
+    const round = () => {
+      const a = mountDirector(rig);
+      a.director.update(1 / 60);
+      a.root.updateMatrixWorld(true);
+      a.director.dispose();
       a.graph.dispose();
     };
     round();

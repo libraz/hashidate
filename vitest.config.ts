@@ -10,6 +10,7 @@ import { configDefaults, defineConfig } from 'vitest/config';
  */
 const SWEEPS = [
   'tests/engine/director-parity.test.ts',
+  'tests/engine/rig-differential.test.ts',
   'tests/parity/record-corpora.test.ts',
   'tests/motion/body/arm-budget.test.ts',
   'tests/motion/body/cute.test.ts',

@@ -105,7 +105,8 @@ for (const [k, name] of ['_x', '_y', '_z', '_w'].entries())
   QUATERNION_FIELDS[name] = slotAccessor(k);
 const CORE_QUATERNION: object = Object.create(THREE.Quaternion.prototype, QUATERNION_FIELDS);
 
-function coreVector3(o: number): THREE.Vector3 {
+/** A `Vector3` whose x, y, z are accessors onto the core's f64 heap from index `o`. */
+export function coreVector3(o: number): THREE.Vector3 {
   return Object.create(CORE_VECTOR3, { coreAt: { value: o } });
 }
 

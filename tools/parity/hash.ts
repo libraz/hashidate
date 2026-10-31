@@ -241,6 +241,12 @@ export function parityKit() {
     'arm bones, limb lengths, palm or finger clearance unresolved',
     'arm bones not conformally scaled',
     'upper arm has no parent',
+    'arm calibration axis must be nonzero',
+    'upper humeral front must not parallel its axis',
+    'hand palm normal must not parallel its axis',
+    'wrist hard ranges must stay inside a 90 degree combined bend',
+    'measured hand length must be finite and positive',
+    'sweep resolution must be finite and positive',
   ];
 
   /** `rig.armSolverOff` as numbers: the count, then the side (L 0, R 1) and reason of each. */
