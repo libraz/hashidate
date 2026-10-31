@@ -38,7 +38,6 @@ import {
 } from './motion';
 import { holdsUntilReleased, type PerformanceDef, performanceDef } from './performance';
 import { Rig } from './rig';
-import { CoreRig } from './rig/core';
 import { Spring, Tail } from './secondary';
 import type {
   AvatarDescriptor,
@@ -78,8 +77,6 @@ export interface DirectorOptions {
    * since the idle choices arrive as commands.
    */
   random?: () => number;
-  /** Builds the rig, for running the core's rig beside the TS one while it is ported. */
-  rig?: (profile: Profile) => Rig;
 }
 
 /** Surprise holds the eyes open; blinking through it looks wrong. */
@@ -229,14 +226,14 @@ export class Director {
   constructor(
     profile: Profile,
     avatar: AvatarDescriptor = profile.avatar,
-    { random = Math.random, rig = (p) => new Rig(p) }: DirectorOptions = {},
+    { random = Math.random }: DirectorOptions = {},
   ) {
     this.p = profile;
     this.a = avatar;
     this.#random = random;
     this.#blink = new Blink({ random });
     this.#morphs = new MorphFrame(profile);
-    this.rig = rig(profile);
+    this.rig = new Rig(profile);
     this.body = new Body(this.rig, profile, { random });
     this.mouth = new Mouth();
     // Driven by the pose rather than by anything semantic, so it takes no
@@ -349,8 +346,7 @@ export class Director {
   /** Free what the director holds in the core. It must run before the scene graph is disposed. */
   dispose(): void {
     this.spring.dispose();
-    const rig: unknown = this.rig;
-    if (rig instanceof CoreRig) rig.dispose();
+    this.rig.dispose();
   }
 
   /** The emotion currently used by the face and tail for this frame. */

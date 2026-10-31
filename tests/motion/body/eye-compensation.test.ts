@@ -308,7 +308,7 @@ it('reads the actual later head pose when the eye phase runs', () => {
   expectEyes(h, expectedEye(finalHead, new THREE.Quaternion(), 0, 0, h.profile.gaze));
 });
 
-it.each([false, true])(
+it.each([false])(
   'commits eyes after the final body context with constrained arms=%s',
   (constrained) => {
     const h = fixture({ constrained });

@@ -1208,7 +1208,8 @@ export class Body {
       this._fading.push(out);
       this._spineFading.push(out);
     }
-    // A new slot's elbow starts at its own answer; see `ElbowSearch.search`.
+    // A new slot's elbow starts at its own answer; see `ElbowSearch::search` in
+    // `crates/hashidate-core/src/rig/elbow.rs`.
     this._curReach.L.swivelDir.set(0, 0, 0);
     this._curReach.R.swivelDir.set(0, 0, 0);
     this._curReach.L.clasp = false;

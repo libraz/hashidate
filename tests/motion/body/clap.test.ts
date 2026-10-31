@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { FINGER_WIDTH } from '@/engine/anatomy';
 import { gestureDef } from '@/engine/motion';
-import { FINGER_TIP_EXTENSION } from '@/engine/rig/hand-geometry';
 import type { FingerName, GestureDef, Side } from '@/engine/types';
 import { DT, type Harness, harness, wristOf } from './harness';
 
@@ -12,6 +11,8 @@ import { DT, type Harness, harness, wristOf } from './harness';
  * other's.
  */
 
+/** How far a fingertip runs past its last joint, as a share of that bone (`rig/hand_geometry.rs`). */
+const FINGER_TIP_EXTENSION = 0.75;
 const FRAMES = 240;
 /** The frames between the entrance settling and the exit starting. */
 const HOLD = { from: 45, to: 175 };

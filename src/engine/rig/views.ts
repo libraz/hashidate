@@ -2,14 +2,13 @@
  * Live three-shaped views over records the core's rig owns.
  *
  * A view's fields are accessors onto the wasm heap at a fixed f64 index, so the object the facade
- * hands out once keeps reading what the core last wrote, as the TS rig's own vectors and records
- * do. The heap is one module binding, rebuilt whenever an `allocating` call finds the memory grown;
+ * hands out once keeps reading what the core last wrote. The heap is one module binding, rebuilt whenever an `allocating` call finds the memory grown;
  * no view holds a typed array of its own except `float64View`, whose arrays are rebuilt then too.
  */
 
 import * as THREE from 'three';
-import { core, onMemoryGrow } from '../../../core';
-import { coreVector3 } from '../../../core/scene';
+import { core, onMemoryGrow } from '../../core';
+import { coreVector3 } from '../../core/scene';
 
 let heapBuffer: ArrayBufferLike | null = null;
 let f64 = new Float64Array(0);
@@ -30,7 +29,7 @@ export function rebindHeap(): void {
 /** Throws when the memory grew outside `allocating`, which would leave every view reading zeros. */
 export function checkHeap(): void {
   if (heapBuffer !== core().memory.buffer) {
-    throw new Error('CoreRig: core memory grew outside allocating(); its views are stale');
+    throw new Error('Rig: core memory grew outside allocating(); its views are stale');
   }
 }
 

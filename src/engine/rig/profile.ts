@@ -3,12 +3,12 @@
  * `hd_profile_*` (tabled in `src/core/abi/profile.ts`).
  *
  * Bones become the scene graph's indices. What construction measures off the mesh — the trunk and
- * head volumes and the face's skin — is measured here by the TS code that always measured it, at
- * the pose the TS rig would have measured it in, and handed over as arrays.
+ * head volumes and the face's skin — is measured here, at the pose the rig is built in, and handed
+ * over as arrays.
  */
 
-import * as THREE from 'three';
-import { allocating, core } from '../../../core';
+import type * as THREE from 'three';
+import { allocating, core } from '../../core';
 import {
   ARM_SLOTS,
   ARM_TWIST_SLOTS,
@@ -27,11 +27,10 @@ import {
   PART_HEAD,
   PART_TORSO,
   SIDES,
-} from '../../../core/abi/profile';
-import type { SceneGraph } from '../../../core/scene';
-import type { MeasuredVolume } from '../../anatomy/volume';
-import { BodyVolumes } from '../../anatomy/volumes';
-import type { Profile } from '../../types';
+} from '../../core/abi/profile';
+import type { SceneGraph } from '../../core/scene';
+import { type MeasuredVolume, measureBodyVolumes } from '../anatomy/volume';
+import type { Profile } from '../types';
 
 const LIMB_KEYS: Record<string, number> = {
   upper: LIMB_UPPER,
@@ -41,12 +40,6 @@ const LIMB_KEYS: Record<string, number> = {
   pitch: LIMB_PITCH,
   proximal: LIMB_PROXIMAL,
 };
-
-/** The face skin's two arrays, which `FaceSurface` keeps private. */
-interface FaceSkin {
-  readonly pos: Float32Array;
-  readonly nrm: Float32Array;
-}
 
 function f32At(address: number, n: number): Float32Array {
   return new Float32Array(core().memory.buffer, address, n);
@@ -77,7 +70,7 @@ function writeVolume(p: number, part: number, v: MeasuredVolume): void {
 
 /**
  * A profile pointer for `hd_rig_new`, which consumes it. `graph` must be `SceneGraph.of` the
- * profile's root, and the avatar posed as the TS rig's constructor would find it.
+ * profile's root, and the avatar posed as `Rig`'s constructor leaves it.
  */
 export function buildCoreProfile(profile: Profile, graph: SceneGraph): number {
   const c = core();
@@ -120,7 +113,7 @@ function fill(p: number, profile: Profile, graph: SceneGraph): void {
       name === 'tip'
         ? LIMB_TIP + FINGERS.indexOf(finger as (typeof FINGERS)[number])
         : LIMB_KEYS[name];
-    if (s < 0 || code === undefined || code < 0) throw new Error(`CoreRig: unknown limb ${key}`);
+    if (s < 0 || code === undefined || code < 0) throw new Error(`Rig: unknown limb ${key}`);
     c.hd_profile_limb(p, s, code, value);
   }
 
@@ -160,7 +153,7 @@ function fill(p: number, profile: Profile, graph: SceneGraph): void {
       } else if (code >= JOINT_FINGER_PROXIMAL && code <= JOINT_THUMB_DISTAL) {
         c.hd_profile_joint(p, code, 0, 0, 0, 0, 0);
       } else {
-        throw new Error(`CoreRig: the joint table override has no ${joint}.${name}`);
+        throw new Error(`Rig: the joint table override has no ${joint}.${name}`);
       }
     }
     for (const [plane, free, max] of rows) c.hd_profile_elevation(p, plane, free, max);
@@ -181,19 +174,12 @@ function fill(p: number, profile: Profile, graph: SceneGraph): void {
     if (dir) c.hd_profile_arm_rest(p, code, dir[0], dir[1], dir[2]);
   }
 
-  // The same measurement `ArmAnatomy` makes, by the same code; its frame vectors are unused here.
-  const volumes = new BodyVolumes(
-    profile,
-    profile.body,
-    new THREE.Vector3(),
-    new THREE.Vector3(),
-    new THREE.Vector3(),
-  );
+  const volumes = measureBodyVolumes(profile);
   if (volumes.torso) writeVolume(p, PART_TORSO, volumes.torso);
   const head = volumes.head;
   if (head) {
     writeVolume(p, PART_HEAD, head);
-    const skin = head.face as unknown as FaceSkin | null;
+    const skin = head.face;
     if (skin) {
       const n = skin.pos.length;
       f32At(

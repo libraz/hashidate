@@ -24,9 +24,14 @@
  * | hd_rig_tx_buffer        | t                                           | ptr to TX_BUFFER f64 |
  *
  * `hd_rig_new` traps on a profile node past the graph's table. Allocating: `hd_rig_new`,
- * `hd_rig_free`, `hd_rig_new_transaction`, `hd_rig_free_transaction`, and
- * `hd_rig_bootstrap_standing_pose` on its first call (once, at Body construction); call them
- * through `allocating`. No other export allocates, so every address below stays put until the free.
+ * `hd_rig_free`, `hd_rig_new_transaction` and `hd_rig_free_transaction`, and every export that
+ * plans, validates or restores a constrained arm — `hd_rig_bootstrap_standing_pose`,
+ * `hd_rig_set_limits_enabled`, `hd_rig_finish_legacy_body_frame`, `hd_rig_aim_arm`,
+ * `hd_rig_curl_finger`, `hd_rig_curl_hand`, `hd_rig_tx_stage_clasp_leader` and `hd_rig_tx_commit`
+ * — on a side's first such call and whenever its clearance row count changes, when the arm step
+ * solver lays out its rows. On a director that first call is Body's bootstrap, at construction.
+ * Call them through `allocating`. No other export allocates. The addresses below are of records
+ * the rig holds from construction, so they stay put until the free.
  *
  * ## Fields
  *

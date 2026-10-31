@@ -9,14 +9,15 @@
  * delivered by hand, `performance.now` and `Date.now` read a clock that advances 1/60 s per
  * frame, `Math.random` is splitmix64, the page is muted and no turn is sent. Recording and
  * `--compare` also answer the transcendentals the core fixes from the core (see
- * `tests/helpers/core-math.ts`), so a TS rig and a ported one see the same values. The page's
- * entry script, and so the avatar download, waits until the core is loaded and the page has
- * passed the checks the rig's constants rely on: engine modules compute constants as they load.
+ * `tests/helpers/core-math.ts`), so the TypeScript layers around the rig see the values the
+ * synthetic golden sees. The page's entry script, and so the avatar download, waits until the
+ * core is loaded and the page has passed the checks the rig's constants rely on: engine modules
+ * compute constants as they load.
  *
  * After each frame is drawn the page hashes it with `parityKit`'s `writeDirectorFrame`, the
  * same writer the synthetic golden uses. Recording writes `backup/parity/<avatar>.director.json`;
  * `--compare` records again and reports the first frame that differs. `--time` keeps the host's
- * `Math`, measures each frame with the real clock, split into the part the Rust core takes over
+ * `Math`, measures each frame with the real clock, split into the part the Rust core runs
  * (rig and anatomy calls, the root's world updates, `Skeleton.update`, the sway update) and the
  * rest, and writes the medians to `backup/parity/<avatar>.director-time.json`. `backup/` is
  * ignored because the files describe a purchased model.

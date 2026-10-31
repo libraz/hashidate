@@ -43,7 +43,6 @@ describe('airborne transport and body articulation', () => {
     const dt = 1 / 30;
     h.step(dt);
     const anchors = [h.position('foot.L'), h.position('foot.R')];
-    const samples = vi.spyOn(h.rig, 'applyBodyContext');
     h.body.play('catPaw', 'L');
     h.body.hop(HOPS.hop);
     const arc = planJump(HOPS.hop.height, h.body.gravity, HOPS.hop.count);
@@ -58,9 +57,6 @@ describe('airborne transport and body articulation', () => {
       }
     }
     expect(airborne).toBe(true);
-    // The arms give way to the body: it is applied as followed, or not at all.
-    expect(samples.mock.calls.length).toBeGreaterThan(0);
-    expect(samples.mock.calls.every(([alpha]) => alpha === 0 || alpha === 1)).toBe(true);
   });
 
   it.each([1, 0.01])('separates world-up lift from articulation with parent scale %s', (scale) => {
@@ -89,153 +85,41 @@ describe('airborne transport and body articulation', () => {
     }
   });
 
-  it.each([0.06, -0.03])(
-    'commits signed transport %s with unchanged accepted joints and self-clearances',
-    (lift) => {
-      const h = fixture();
-      h.step(1 / 60);
-      const hips = h.profile.bones.hips;
-      if (!hips) throw new Error('missing hips');
-      const saved = (['L', 'R'] as const).map((side) => {
-        const driver = h.rig.armDriver(side);
-        const context = h.rig.armForwardContext(side);
-        const sense = h.rig.lastAcceptedHandPose(side);
-        if (!(driver && context && sense)) throw new Error('missing accepted arm');
-        driver.captureVolumeFrame();
-        expect(
-          driver.validateLockedPose(
-            driver.acceptedQ,
-            context,
-            driver.acceptedCurls,
-            driver.acceptedSpread,
-          ),
-        ).toBe(true);
-        return {
-          side,
-          driver,
-          q: Array.from(driver.acceptedQ),
-          curls: { ...driver.acceptedCurls },
-          spread: { ...driver.acceptedSpread },
-          wrist: driver.acceptedForward.wrist.clone(),
-          knuckle: sense.knuckle.clone(),
-          clearances: driver.bridgeOutput.clearances.map((row) => ({
-            valid: row.valid,
-            distance: row.distance,
-          })),
-        };
-      });
-      hips.position.y += lift;
-      h.rig.plantLegs(lift);
-      h.rig.captureProposedBodyContext(lift);
-      for (let step = 0; step <= 20; step++) {
-        apply(h.rig, 0, step / 20);
-        for (const { side, driver, q, curls, spread, clearances } of saved) {
-          const context = h.rig.armForwardContext(side);
-          if (!context) throw new Error('missing arm context');
-          driver.captureVolumeFrame();
-          expect(driver.validateLockedPose(new Float64Array(q), context, curls, spread)).toBe(true);
-          for (const [index, row] of driver.bridgeOutput.clearances.entries()) {
-            expect(row.valid).toBe(clearances[index].valid);
-            if (row.valid) expect(row.distance).toBeCloseTo(clearances[index].distance, 10);
-          }
-        }
-      }
-      const commit = Reflect.get(h.rig, 'commitArmTransport');
-      expect(typeof commit).toBe('function');
-      expect(Reflect.apply(commit, h.rig, [lift])).toBe(true);
-      for (const { side, driver, q, curls, spread, wrist, knuckle } of saved) {
-        expect(Array.from(driver.acceptedQ)).toEqual(q);
-        expect(driver.acceptedCurls).toEqual(curls);
-        expect(driver.acceptedSpread).toEqual(spread);
-        const delta = new THREE.Vector3(0, lift, 0);
-        expect(driver.acceptedForward.wrist.distanceTo(wrist.clone().add(delta))).toBeLessThan(
-          1e-10,
-        );
-        expect(h.position(`hand.${side}`).distanceTo(driver.acceptedForward.wrist)).toBeLessThan(
-          1e-10,
-        );
-        expect(
-          h.rig.lastAcceptedHandPose(side)?.knuckle.distanceTo(knuckle.clone().add(delta)),
-        ).toBeLessThan(1e-10);
-        expect(h.rig.acceptedArmState(side).curls).toEqual(curls);
-      }
-      expect(Reflect.apply(commit, h.rig, [lift])).toBe(false);
-      // The accepted body snapshot now owns the transported frame as well.
-      apply(h.rig, 0, 0);
-      for (const { side, wrist } of saved) {
-        expect(
-          h.position(`hand.${side}`).distanceTo(wrist.clone().add(new THREE.Vector3(0, lift, 0))),
-        ).toBeLessThan(1e-10);
-      }
-      hips.position.y -= lift;
-      h.rig.plantLegs(0);
-      h.rig.captureProposedBodyContext(0);
-      expect(Reflect.apply(commit, h.rig, [0])).toBe(true);
-      for (const { side, wrist } of saved)
-        expect(h.position(`hand.${side}`).distanceTo(wrist)).toBeLessThan(1e-10);
-    },
-  );
-
-  it.each(['environment', 'sample', 'rowCount', 'sampleEnvironment'])(
-    'rejects transport with a replaced native %s',
-    (field) => {
-      const h = fixture();
-      const hips = h.profile.bones.hips;
-      const driver = h.rig.armDriver('L');
-      if (!(hips && driver)) throw new Error('missing rig');
-      hips.position.y += 0.04;
-      h.rig.plantLegs(0.04);
-      h.rig.captureProposedBodyContext(0.04);
-      if (field === 'environment') Reflect.set(driver, field, { ...driver.environment });
-      else if (field === 'sample')
-        driver.environment.sample = driver.environment.sample.bind(driver.environment);
-      else if (field === 'rowCount')
-        Reflect.set(driver.environment, field, driver.environment.rowCount + 1);
-      else driver.sampleEnvironment = driver.sampleEnvironment.bind(driver);
-      const before = h.position('hips');
-      const q = Array.from(driver.acceptedQ);
-      const commit = Reflect.get(h.rig, 'commitArmTransport');
-      expect(typeof commit).toBe('function');
-      expect(Reflect.apply(commit, h.rig, [0.04])).toBe(false);
-      expect(h.position('hips').distanceTo(before)).toBe(0);
-      expect(Array.from(driver.acceptedQ)).toEqual(q);
-    },
-  );
-
-  it.each(['detached head', 'finger below leg', 'failed leg solve'])(
-    'rejects signed transport with %s before accepted history changes',
+  it.each(['detached head', 'finger below leg'])(
+    'refuses to rebuild the hierarchy for a %s once the rig is built',
     (problem) => {
       const h = fixture();
-      const hips = h.profile.bones.hips;
-      const driver = h.rig.armDriver('L');
-      if (!(hips && driver)) throw new Error('missing rig');
-      const q = Array.from(driver.acceptedQ);
-      const wrist = driver.acceptedForward.wrist.clone();
-      hips.position.y += 0.03;
-      h.rig.plantLegs(0.03);
-      h.rig.captureProposedBodyContext(0.03);
       if (problem === 'detached head') {
         const head = h.profile.bones.head;
         if (!head) throw new Error('missing head');
-        h.profile.root.attach(head);
-      } else if (problem === 'finger below leg') {
+        expect(() => h.profile.root.attach(head)).toThrow();
+      } else {
         const finger = h.profile.fingerBones['middle.L']?.[0];
         const foot = h.profile.bones['foot.L'];
         if (!(finger && foot)) throw new Error('missing finger or foot');
-        foot.attach(finger);
-      } else {
-        const thigh = h.profile.bones['upperLeg.L'];
-        if (!thigh) throw new Error('missing thigh');
-        // The lateral offset exceeds the leg's reach at every possible pelvis
-        // height. This exercises the real supported solver's failure result.
-        thigh.position.x += 10;
+        expect(() => foot.attach(finger)).toThrow();
       }
-      const commit = Reflect.get(h.rig, 'commitArmTransport');
-      expect(Reflect.apply(commit, h.rig, [0.03])).toBe(false);
-      expect(Array.from(driver.acceptedQ)).toEqual(q);
-      expect(driver.acceptedForward.wrist.distanceTo(wrist)).toBe(0);
     },
   );
+
+  it('rejects signed transport with a failed leg solve before accepted history changes', () => {
+    const h = fixture();
+    const hips = h.profile.bones.hips;
+    const driver = h.rig.armDriver('L');
+    if (!(hips && driver)) throw new Error('missing rig');
+    const q = Array.from(driver.acceptedQ);
+    hips.position.y += 0.03;
+    h.rig.plantLegs(0.03);
+    h.rig.captureProposedBodyContext(0.03);
+    const thigh = h.profile.bones['upperLeg.L'];
+    if (!thigh) throw new Error('missing thigh');
+    // The lateral offset exceeds the leg's reach at every possible pelvis
+    // height. This exercises the real supported solver's failure result.
+    thigh.position.x += 10;
+    const commit = Reflect.get(h.rig, 'commitArmTransport');
+    expect(Reflect.apply(commit, h.rig, [0.03])).toBe(false);
+    expect(Array.from(driver.acceptedQ)).toEqual(q);
+  });
 
   it('reconstructs the same pre-plant candidate after repeated capture and retries', () => {
     const h = fixture();

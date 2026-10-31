@@ -153,20 +153,6 @@ describe('a spinning hop on a standing rig', () => {
     expect(worstLanding).toBeLessThan(0.02);
   });
 
-  it('threads the turn through the arm commit while a gesture plays', () => {
-    const h = legged();
-    const restQ = worldQ(h, 'hips');
-    const proposed = vi.spyOn(h.rig, 'captureProposedBodyContext');
-    h.body.play('sparkle');
-    h.body.hop(spin);
-    for (let i = 0; i < 400; i++) step(h);
-    const turns = proposed.mock.calls.map((c) => c[1] ?? 0);
-    expect(turns.length).toBeGreaterThan(0);
-    expect(Math.max(...turns)).toBeGreaterThan(1);
-    expect(h.body.jumping).toBe(false);
-    expect(worldQ(h, 'hips').angleTo(restQ)).toBeLessThan(1e-6);
-  });
-
   it('still closes when finished early', () => {
     const h = legged();
     const restQ = worldQ(h, 'hips');

@@ -43,9 +43,11 @@ function need<T>(value: T | undefined | null, what: string): T {
 }
 
 /** A rig with its world matrices current and the body frame refreshed. */
-function buildArm(side: Side = 'R'): Arm {
+/** `prepare` edits the profile before the rig reads it, which it does once, when it is built. */
+function buildArm(side: Side = 'R', prepare?: (profile: Profile) => void): Arm {
   const built = buildRig();
   const profile = buildProfile(built.root, built.descriptor);
+  prepare?.(profile);
   const rig = new Rig(profile);
   rig.anat.update();
   const bone = need(profile.bones[`upperArm.${side}`], `upperArm.${side}`);
@@ -234,8 +236,9 @@ describe('solveReach', () => {
   });
 
   it('refuses an arm the profile has no segment lengths for', () => {
-    const arm = buildArm();
-    arm.profile.limb['upper.R'] = 0;
+    const arm = buildArm('R', (p) => {
+      p.limb['upper.R'] = 0;
+    });
     const target = arm.shoulder.clone().add(new THREE.Vector3(0, -0.1, -0.2));
     expect(solve(arm, target, 0, links())).toBeNull();
   });

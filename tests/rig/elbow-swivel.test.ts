@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { mkReachScratch } from '@/engine/motion/resolve';
 import { buildProfile } from '@/engine/profile';
 import { Rig, reachRef } from '@/engine/rig';
@@ -81,10 +81,10 @@ describe('elbow swivel tracking', () => {
     // them must mean the same elbow in both frames.
     const { rig } = setup();
     const anat = rig.anat;
-    const upper = rig.anat.p.bones['upperArm.R'];
+    const upper = rig.p.bones['upperArm.R'];
     if (!upper) throw new Error('synthetic rig has no upper arm');
     const shoulder = upper.getWorldPosition(new THREE.Vector3());
-    const span = (rig.anat.p.limb['upper.R'] ?? 0) + (rig.anat.p.limb['lower.R'] ?? 0);
+    const span = (rig.p.limb['upper.R'] ?? 0) + (rig.p.limb['lower.R'] ?? 0);
     const bearing = (ahead: number) => {
       const rest = Math.sqrt(1 - ahead * ahead);
       return new THREE.Vector3()
@@ -104,14 +104,5 @@ describe('elbow swivel tracking', () => {
     const held = slot.R.upperArm.clone();
     rig.solveReachNatural('R', after, null, slot.R);
     expect(slot.R.upperArm.angleTo(held)).toBeLessThan(0.05);
-  });
-
-  it('refreshes the body frame once per search, not once per candidate', () => {
-    const { rig, ahead } = setup();
-    const slot = mkReachScratch();
-    const update = vi.spyOn(rig.anat, 'update');
-    rig.solveReachNatural('R', ahead, null, slot.R);
-    expect(update).toHaveBeenCalledTimes(1);
-    update.mockRestore();
   });
 });

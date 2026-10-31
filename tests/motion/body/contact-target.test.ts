@@ -3,10 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ReachAnchors } from '@/engine/motion/anchors';
 import { Body } from '@/engine/motion/body';
 import { FingerLife } from '@/engine/motion/finger-life';
-import { CharacterFrame } from '@/engine/motion/frame';
 import { buildProfile } from '@/engine/profile';
 import { handFrame, Rig } from '@/engine/rig';
-import { Hands } from '@/engine/rig/hands';
 import type { FingerSpec, ReachSpec, Side } from '@/engine/types';
 import { buildRig } from '../../helpers/scene';
 
@@ -32,10 +30,9 @@ function setup(scale = 1, yaw = 0) {
   built.root.updateMatrixWorld(true);
   const profile = buildProfile(built.root, built.descriptor);
   const rig = new Rig(profile);
-  const axes = new CharacterFrame(rig, profile);
+  const axes = rig.characterFrame;
   const anchors = new ReachAnchors(profile, rig, axes);
-  const hands = new Hands(profile, rig.joints, (bone) => rig.rest.get(bone) ?? bone.quaternion);
-  return { profile, rig, axes, anchors, hands };
+  return { profile, rig, axes, anchors };
 }
 
 describe('requested hand contact target', () => {
@@ -50,9 +47,9 @@ describe('requested hand contact target', () => {
           const target = required(
             h.anchors.target(request, side, undefined, { curls, spread }),
           ).clone();
-          // Independent live hierarchy: actual Hands composition, then rigidly place
+          // Independent live hierarchy: the rig's direct finger write, then rigidly place
           // its bone frame at the returned wrist. No predicted contact enters the oracle.
-          h.hands.curlHand(side, curls, spread);
+          h.rig.curlHandLegacy(side, curls, spread);
           hand.updateWorldMatrix(true, true);
           const chain = required(h.profile.fingerBones[`index.${side}`]);
           const contact = chain[1]
@@ -81,7 +78,7 @@ describe('requested hand contact target', () => {
   it('ignores previously posed fingers', () => {
     const h = setup();
     const first = required(h.anchors.target(request, 'R', undefined, { curls, spread })).clone();
-    h.hands.curlHand('R', { index: 1, middle: 1 }, { index: -0.3 });
+    h.rig.curlHandLegacy('R', { index: 1, middle: 1 }, { index: -0.3 });
     const second = required(h.anchors.target(request, 'R', undefined, { curls, spread })).clone();
     expect(second.toArray()).toEqual(first.toArray());
   });
@@ -236,14 +233,11 @@ describe('requested hand contact target', () => {
     const shape = clear.mock.calls[0][6] as readonly THREE.Vector3[];
     const rotation = (clear.mock.calls[0][7] as THREE.Matrix3).clone();
     expect(shape.length).toBe(20);
-    const driver = required(h.rig.armDriver('R'));
-    const bind = required(
-      handFrame(
-        driver.calibration.hand.axis.clone(),
-        driver.calibration.hand.palm.clone(),
-        new THREE.Matrix3(),
-      ),
-    );
+    // The driver's calibrated hand frame: the rest axis, and the palm made perpendicular to it.
+    const axis = h.profile.restDir['hand.R'].clone().normalize();
+    const palmLocal = required(h.rig.palmLocal.R);
+    const palm = palmLocal.clone().addScaledVector(axis, -palmLocal.dot(axis)).normalize();
+    const bind = required(handFrame(axis.clone(), palm.clone(), new THREE.Matrix3()));
     const desired = required(
       handFrame(
         h.axes.toWorld(new THREE.Vector3(), required(request.hand), 'R'),
@@ -252,7 +246,7 @@ describe('requested hand contact target', () => {
       ),
     );
     expect(rotation.elements).toEqual(desired.multiply(bind.transpose()).elements);
-    h.hands.curlHand('R', curls, spread);
+    h.rig.curlHandLegacy('R', curls, spread);
     const hand = required(h.profile.bones['hand.R']);
     hand.updateWorldMatrix(true, true);
     const inverse = hand.matrixWorld.clone().invert();

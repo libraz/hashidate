@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { fingerCurl } from '@/engine/anatomy';
 import {
   both,
   clasp,
@@ -23,8 +22,6 @@ import {
 } from '@/engine/motion/gestures/hands';
 import { buildProfile } from '@/engine/profile';
 import { Rig } from '@/engine/rig';
-import { FINGER_TIP_EXTENSION } from '@/engine/rig/hand-geometry';
-import { composeFingerRotation } from '@/engine/rig/hands';
 import type {
   FingerName,
   GestureVariation,
@@ -48,6 +45,8 @@ import { buildRig, type RigOptions } from '../helpers/scene';
 
 /** Metres the synthetic thumb stands further out of the palm, so a folded tip rests on the fingers as it does on both validation avatars. */
 const THUMB_STAND_OFF = 0.003;
+/** How far a fingertip runs past its last joint, as a share of that bone (`rig/hand_geometry.rs`). */
+const FINGER_TIP_EXTENSION = 0.75;
 
 const NAMED_SHAPES = {
   FIST,
@@ -141,8 +140,6 @@ interface Hand {
   frame: { along: THREE.Vector3; across: THREE.Vector3; normal: THREE.Vector3 };
   /** A tip bone on the thumb's distal bone, so that bone has a direction of its own. */
   thumbTip: THREE.Bone;
-  /** Thumb axes as a finger would have them, for the control. */
-  fingerLike: { axes: THREE.Vector3[]; splay: THREE.Vector3 };
 }
 
 function buildHand(row: Row): Hand {
@@ -182,35 +179,6 @@ function buildHand(row: Row): Hand {
     .normalize();
   across.addScaledVector(along, -across.dot(along)).normalize();
 
-  // The thumb hinged about the finger axis, signed so a positive curl lifts the tip to the palm.
-  const axes = chain('thumb').map((bone, i) => {
-    const boneQ = bone.getWorldQuaternion(new THREE.Quaternion());
-    const nLocal = normal.clone().applyQuaternion(boneQ.clone().invert()).normalize();
-    const dir = need(profile.restDir[`thumb.${side}.${i}`], 'thumb dir');
-    const axis = new THREE.Vector3().crossVectors(dir, nLocal).normalize();
-    const segLen = chain('thumb')[i + 1]?.position.length() ?? 1;
-    const at = wp(bone);
-    const q = new THREE.Quaternion().setFromAxisAngle(axis, 0.4);
-    const moved = dir
-      .clone()
-      .applyQuaternion(q)
-      .sub(dir)
-      .applyQuaternion(boneQ)
-      .multiplyScalar(segLen);
-    if (moved.dot(normal) < 0) axis.negate();
-    void at;
-    return axis;
-  });
-  const bone0 = chain('thumb')[0];
-  const q0 = bone0.getWorldQuaternion(new THREE.Quaternion());
-  const splay = normal.clone().applyQuaternion(q0.invert()).normalize();
-  const dir0 = need(profile.restDir[`thumb.${side}.0`], 'thumb dir');
-  const turn = new THREE.Vector3().crossVectors(
-    normal,
-    dir0.clone().applyQuaternion(bone0.getWorldQuaternion(new THREE.Quaternion())),
-  );
-  if (turn.dot(across) < 0) splay.negate();
-
   return {
     rig,
     profile,
@@ -218,31 +186,14 @@ function buildHand(row: Row): Hand {
     pitch: need(profile.limb?.[`pitch.${side}`], 'pitch'),
     frame: { along, across, normal },
     thumbTip,
-    fingerLike: { axes, splay },
   };
 }
 
-/** Pose the hand through the rig; `fingerThumb` replaces the thumb's hinge with a finger's. */
-function pose(hand: Hand, shapeValue: HandShape, fingerThumb: boolean): void {
+/** Pose the hand through the rig. */
+function pose(hand: Hand, shapeValue: HandShape): void {
   const { rig, profile, side } = hand;
   rig.reset();
   rig.curlHand(side, shapeValue.curl, shapeValue.spread);
-  if (fingerThumb) {
-    const scratch = new THREE.Quaternion();
-    for (const [i, bone] of need(profile.fingerBones[`thumb.${side}`], 'thumb').entries()) {
-      composeFingerRotation(
-        bone.quaternion,
-        need(rig.rest.get(bone), 'rest'),
-        hand.fingerLike.axes[i],
-        fingerCurl(rig.joints.thumb, i, shapeValue.curl.thumb),
-        i === 0 ? hand.fingerLike.splay : undefined,
-        i === 0 ? (shapeValue.spread.thumb ?? 0) : 0,
-        undefined,
-        0,
-        scratch,
-      );
-    }
-  }
   profile.root.updateMatrixWorld(true);
 }
 
@@ -386,14 +337,8 @@ describe('formed hand shapes', () => {
       const hand = buildHand(row);
       const value = NAMED_SHAPES[row.shape];
 
-      pose(hand, value, false);
+      pose(hand, value);
       expect(failing(rows(hand, row.shape))).toEqual([]);
-
-      // The fist and the chop exist to rule out a thumb hinged like a finger.
-      if (row.shape === 'FIST' || row.shape === 'CHOP_HAND') {
-        pose(hand, value, true);
-        expect(failing(rows(hand, row.shape)).length, 'finger-hinged thumb').toBeGreaterThan(0);
-      }
     },
   );
 

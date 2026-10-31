@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { allocating, core } from '@/core';
 import { NO_NODE, SceneGraph } from '@/core/scene';
-import { SkeletonRefresh } from '@/engine/rig/skeleton';
 
 const MASK = (1n << 64n) - 1n;
 const TREES = 1_000;
@@ -250,17 +249,6 @@ function subtree(node: THREE.Object3D): THREE.Object3D[] {
   return flatten(node);
 }
 
-function refreshShape(w: World): unknown[] {
-  const refresh = new SkeletonRefresh(w.root) as unknown as {
-    path: THREE.Object3D[];
-    subtrees: THREE.Object3D[];
-    run(): void;
-  };
-  const shape = [...refresh.path.map((n) => n.name), '|', ...refresh.subtrees.map((n) => n.name)];
-  refresh.run();
-  return shape;
-}
-
 type Op = (w: World, p: number[]) => unknown[];
 
 /** The S3 operations. Each reads its parameters from `p` and returns what it read. */
@@ -323,7 +311,6 @@ const OPERATIONS: Array<[string, Op]> = [
       return [node.name];
     },
   ],
-  ['SkeletonRefresh', (w) => refreshShape(w)],
   [
     'ancestor TRS',
     (w, p) => {
@@ -549,15 +536,6 @@ describe('core-backed scene graph', () => {
     bits[0] ^= 1n;
     expect(diffWorld(t.plain, t.backed)).toMatch(/matrixWorld\[13\]/);
     t.graph.dispose();
-  });
-
-  it('gives the same SkeletonRefresh path and subtrees on a backed tree', () => {
-    for (let tree = 0; tree < 50; tree++) {
-      const t = pair(seedOf(tree));
-      expect(refreshShape(t.backed)).toEqual(refreshShape(t.plain));
-      expect(diffWorld(t.plain, t.backed)).toBeNull();
-      t.graph.dispose();
-    }
   });
 
   it('fixes the hierarchy except for plain leaves and the root parent', () => {

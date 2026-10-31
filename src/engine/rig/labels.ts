@@ -13,18 +13,14 @@ import {
   OFF_REFUSED,
   OFF_REST_POSE_OUTSIDE_MODEL,
   OFF_REST_POSE_UNREADABLE,
-  READING_IDS,
   REFUSAL_CALIBRATION,
   REFUSAL_HAND_LENGTH,
   REFUSAL_NO_PARENT,
   REFUSAL_NOT_CONFORMAL,
   REFUSAL_SWEEP_RESOLUTION,
   REFUSAL_UNRESOLVED,
-} from '../../../core/abi/rig';
-import type { Localized } from '../../../i18n/locale';
-import { JOINTS } from '../../anatomy';
-import { report } from '../../anatomy/cost';
-import type { ArmMeasurement, ArmStrain } from '../../anatomy/measurement';
+} from '../../core/abi/rig';
+import type { Localized } from '../../i18n/locale';
 
 /** The setter's throw when no feasible arm pose can be restored. */
 export const LIMITS_REFUSED =
@@ -56,7 +52,7 @@ const CALIBRATION: Record<number, string> = {
 
 function known(table: Record<number, string>, code: number, what: string): string {
   const text = table[code];
-  if (text === undefined) throw new Error(`CoreRig: unknown ${what} code ${code}`);
+  if (text === undefined) throw new Error(`Rig: unknown ${what} code ${code}`);
   return text;
 }
 
@@ -64,39 +60,19 @@ function known(table: Record<number, string>, code: number, what: string): strin
 export function solverOffReason(off: number, refusal: number, calibration: number): string {
   if (off !== OFF_REFUSED) return known(OFF, off, 'solver-off');
   if (refusal !== REFUSAL_CALIBRATION) return known(REFUSAL, refusal, 'refusal');
-  if (calibration === NO_NODE) throw new Error('CoreRig: a calibration refusal without its cause');
+  if (calibration === NO_NODE) throw new Error('Rig: a calibration refusal without its cause');
   return known(CALIBRATION, calibration, 'calibration');
 }
 
-const ZERO_MEASUREMENT: ArmMeasurement = {
-  elevation: 0,
-  plane: 0,
-  rotation: 0,
-  elbow: 0,
-  forearm: 0,
-  wristFlex: 0,
-  wristDev: 0,
-  torso: 0,
-  inboard: 0,
-  rotationRead: 0,
-};
-
-const ZERO_STRAIN: ArmStrain = {
-  elevation: 0,
-  rotation: 0,
-  elbow: 0,
-  forearm: 0,
-  wristFlex: 0,
-  wristDev: 0,
-  torso: 0,
-};
-
-/** Each reading's label, in READING_IDS order, as `cost.report` gives them. */
-export const READING_LABELS: readonly Localized[] = (() => {
-  const rows = report(ZERO_MEASUREMENT, JOINTS, { ...ZERO_STRAIN }, { torso: true, arm: true });
-  return READING_IDS.map((id) => {
-    const row = rows.find((r) => r.id === id);
-    if (!row) throw new Error(`CoreRig: report has no reading ${id}`);
-    return row.label;
-  });
-})();
+/** Each reading's label, in READING_IDS order, as the panel shows them. */
+export const READING_LABELS: readonly Localized[] = [
+  { en: 'Shoulder elevation', ja: '肩 挙上' },
+  { en: 'Shoulder plane', ja: '肩 挙上面' },
+  { en: 'Shoulder rotation', ja: '肩 回旋' },
+  { en: 'Elbow flexion', ja: '肘 屈曲' },
+  { en: 'Forearm rotation', ja: '前腕 回内外' },
+  { en: 'Wrist flexion', ja: '手首 掌背屈' },
+  { en: 'Wrist deviation', ja: '手首 橈尺屈' },
+  { en: 'Arm inside the body', ja: '腕の身体貫通' },
+  { en: 'Elbow tucked in', ja: '肘の内寄り' },
+];

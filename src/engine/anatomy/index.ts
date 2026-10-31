@@ -1,42 +1,23 @@
 /**
  * Anatomy — what a joint can do, and what the body it hangs on is in the way of.
  *
- * `joints.ts` is the table itself, `strain.ts` scores a value against it,
- * `volume.ts` measures a body part's surface off the mesh, and `volumes.ts`
- * assembles the trunk and the head from those measurements. `arm.ts` puts them
- * together for one arm: `measurement.ts` is the shape of what it reads off a
- * pose, and `cost.ts` turns that into strain, a search cost and a readout. See
- * `joints.ts` for why every degree of freedom carries two bands rather than one
- * bound.
+ * `joints.ts` is the table itself and the labels a reading is shown with. The
+ * measurement and limiting run in the core; `arm.ts` and `face.ts` are the
+ * views of it motion reads through `rig.anat`. What is read off the mesh at
+ * load stays here: `volume.ts` measures a body part's surface, `face.ts` the
+ * face's skin, and `body-frame.ts` the chest's frame. See `joints.ts` for why
+ * every degree of freedom carries two bands rather than one bound.
  */
 
-export { ArmAnatomy, rotationTrust } from './arm';
+export { ArmAnatomy } from './arm';
 export { buildBodyFrame } from './body-frame';
-export { contactCost } from './cost';
 export {
   FINGER_WIDTH,
   HAND_CONTACT,
   INTERLACE_GAP,
   JOINTS,
   SPLAY_CAP,
-  THUMB_FLEXION_TILT,
-  THUMB_OPPOSITION,
-  THUMB_OPPOSITION_CURL,
   ZONES,
 } from './joints';
-export type { ArmMeasurement, ArmStrain } from './measurement';
-export type { ElevationCeiling } from './strain';
-export {
-  clampDof,
-  elevationCeiling,
-  elevationStrain,
-  excessOf,
-  fingerCurl,
-  rollRoom,
-  strainOf,
-  thumbOpposition,
-  zoneOf,
-} from './strain';
 export type { MeasuredVolume, VolumeExtent } from './volume';
-export { measureVolume, surfaceOf } from './volume';
-export type { VolumeFrame } from './volumes';
+export { measureVolume } from './volume';

@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FINGER_WIDTH } from '@/engine/anatomy';
 import { gestureDef } from '@/engine/motion';
 import { ReachAnchors } from '@/engine/motion/anchors';
-import { CharacterFrame } from '@/engine/motion/frame';
 import type { HandContact } from '@/engine/types';
 import { DT, fingerDepth, type Harness, harness } from './harness';
 
@@ -45,7 +44,7 @@ function held(h: Harness) {
   const face = required(h.profile.face, 'face frame');
   const head = required(h.profile.bones.head, 'head');
   head.updateWorldMatrix(true, false);
-  const anchors = new ReachAnchors(h.profile, h.rig, new CharacterFrame(h.rig, h.profile));
+  const anchors = new ReachAnchors(h.profile, h.rig, h.rig.characterFrame);
   const anchor = required(anchors.face(reach.at, reach.offset, 'R'), 'anchor').clone();
   const pad = contactPoint(h, contact);
   // The pad in the face frame, in IPD: right, up, forward of the eye midpoint.

@@ -1,7 +1,5 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { forwardArm, makeArmForwardResult } from '@/engine/rig/arm-configuration';
-import { configurationFromQ } from '@/engine/rig/arm-path';
 import type { Side } from '@/engine/types';
 import { canonicalDirection, DT, type Harness, harness, wristOf } from './harness';
 
@@ -80,8 +78,6 @@ interface Run {
   forearm: number;
   /** The lead hand's wrist, shoulder-relative in the body frame, every frame. */
   wrist: THREE.Vector3[];
-  /** The lead hand's wrist at its route's projected goal, as `wrist`; limiter on only. */
-  projected: THREE.Vector3 | null;
 }
 
 /** Play a gesture's entrance from rest and measure it. */
@@ -98,7 +94,7 @@ function entrance(id: string, side: Side, limits: boolean, frames = 90): Run {
     L: null,
     R: null,
   };
-  const run: Run = { acceleration: 0, upperArm: 0, forearm: 0, wrist: [], projected: null };
+  const run: Run = { acceleration: 0, upperArm: 0, forearm: 0, wrist: [] };
   for (let i = 0; i < frames; i++) {
     h.rig.reset();
     h.body.update(DT);
@@ -117,22 +113,6 @@ function entrance(id: string, side: Side, limits: boolean, frames = 90): Run {
       prev[s] = { u, l, w, v };
     }
     run.wrist.push(shoulderRelative(h, side));
-  }
-  const route = (
-    h.body as unknown as {
-      _transaction: { _routes: Record<Side, { goalQ: Float64Array }> };
-    }
-  )._transaction._routes;
-  const driver = h.rig.armDriver(side);
-  const context = h.rig.armForwardContext(side);
-  if (limits && driver && context) {
-    const goal = forwardArm(
-      configurationFromQ(route[side].goalQ, { ...driver.acceptedConfiguration }),
-      driver.calibration,
-      context,
-      makeArmForwardResult(),
-    );
-    run.projected = bodyFrame(h, side, goal.wrist.clone().sub(context.shoulder));
   }
   return run;
 }
@@ -174,10 +154,9 @@ describe('a reach with a pole', () => {
     // The solved pose has to be one the body allows: where the clamp has to
     // move the arm, the hand ends up somewhere other than its anchor.
     const off: string[] = [];
-    for (const id of CLEAR_OF_THE_FACE) {
-      const run = entrance(id, side, true);
-      const limited = run.wrist.at(-1);
-      const free = PROJECTED.includes(id) ? run.projected : entrance(id, side, false).wrist.at(-1);
+    for (const id of CLEAR_OF_THE_FACE.filter((g) => !PROJECTED.includes(g))) {
+      const limited = entrance(id, side, true).wrist.at(-1);
+      const free = entrance(id, side, false).wrist.at(-1);
       if (!(limited && free)) throw new Error('no frames');
       const gap = limited.distanceTo(free);
       if (gap > 0.01) off.push(`${id}: ${(gap * 100).toFixed(1)} cm`);

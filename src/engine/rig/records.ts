@@ -5,10 +5,10 @@
  */
 
 import type * as THREE from 'three';
-import { FINGERS, SIDES } from '../../../core/abi/profile';
-import type { FingerSpec, Side, Vec3Tuple } from '../../types';
-import type { ArmForwardContext, ArmForwardResult } from '../arm-configuration';
-import type { ArmSolution } from '../reach';
+import { FINGERS, SIDES } from '../../core/abi/profile';
+import type { FingerSpec, Side, Vec3Tuple } from '../types';
+import type { ArmSolution } from './reach';
+import type { ArmForwardContext, ArmForwardResult } from './rig';
 
 /** A tuple's x, y, z or a vector's, a tuple's missing element as 0. */
 export function writeVec(f: Float64Array, at: number, v: THREE.Vector3 | Vec3Tuple): void {
@@ -65,7 +65,7 @@ export function writeFingers(f: Float64Array, at: number, values: FingerSpec): v
 
 export function sideCode(side: Side): number {
   const s = SIDES.indexOf(side);
-  if (s < 0) throw new Error(`CoreRig: unknown side ${String(side)}`);
+  if (s < 0) throw new Error(`Rig: unknown side ${String(side)}`);
   return s;
 }
 

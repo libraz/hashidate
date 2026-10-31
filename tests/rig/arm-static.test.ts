@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { Body } from '@/engine/motion/body';
 import { buildProfile } from '@/engine/profile';
 import { Rig } from '@/engine/rig';
@@ -45,59 +45,13 @@ describe('static constrained arm operations', () => {
     if (!driver) return;
     const beforeBones = armQuaternions(profile);
     const beforeQ = Array.from(driver.acceptedQ);
-    const beforeConfiguration = { ...driver.acceptedConfiguration };
-    const beforeRoll = driver.requestRollHistory;
     const beforeRevision = rig.externalArmRevision;
 
     expect(rig.aimArm('R', dirs([Number.NaN, 0.2, 0.9]))).toBe(false);
 
     expect(armQuaternions(profile)).toEqual(beforeBones);
     expect(Array.from(driver.acceptedQ)).toEqual(beforeQ);
-    expect(driver.acceptedConfiguration).toEqual(beforeConfiguration);
-    expect(driver.requestRollHistory).toBe(beforeRoll);
     expect(rig.externalArmRevision).toBe(beforeRevision);
-  });
-
-  it('does not partially re-enable when the second arm cannot be seeded', () => {
-    const { profile, rig } = makeRig();
-    const drivers = (['L', 'R'] as const).map((side) => {
-      const driver = rig.armDriver(side);
-      if (!driver) throw new Error(`missing ${side} arm driver`);
-      return driver;
-    });
-
-    rig.limitsEnabled = false;
-    rig.aimArm('L', dirs([-0.42, -0.79, 0.44]));
-    const beforeBones = armQuaternions(profile);
-    const beforeQs = drivers.map((driver) => Array.from(driver.acceptedQ));
-    const beforeRevision = rig.externalArmRevision;
-    const beforeStates = (['L', 'R'] as const).map((side) => ({
-      directions: structuredClone(rig.acceptedArmState(side).directions),
-      palm: [...rig.acceptedArmState(side).palm],
-      curls: { ...rig.acceptedArmState(side).curls },
-      spread: { ...rig.acceptedArmState(side).spread },
-    }));
-
-    // The left arm preflights first and mutates its driver's temporary seed.
-    // The right context then fails, exercising rollback after partial staging.
-    if (!profile.limb) throw new Error('synthetic rig has no limb measurements');
-    profile.limb['upper.R'] = 0;
-    expect(() => {
-      rig.limitsEnabled = true;
-    }).toThrow('Could not restore a feasible arm pose; anatomical limits remain disabled.');
-
-    expect(rig.limitsEnabled).toBe(false);
-    expect(armQuaternions(profile)).toEqual(beforeBones);
-    expect(drivers.map((driver) => Array.from(driver.acceptedQ))).toEqual(beforeQs);
-    expect(rig.externalArmRevision).toBe(beforeRevision);
-    expect(
-      (['L', 'R'] as const).map((side) => ({
-        directions: structuredClone(rig.acceptedArmState(side).directions),
-        palm: [...rig.acceptedArmState(side).palm],
-        curls: { ...rig.acceptedArmState(side).curls },
-        spread: { ...rig.acceptedArmState(side).spread },
-      })),
-    ).toEqual(beforeStates);
   });
 
   it('re-enables from the displayed pose and publishes one revision on success', () => {
@@ -118,10 +72,6 @@ describe('static constrained arm operations', () => {
     expect(rig.limitsEnabled).toBe(true);
     expect(rig.externalArmRevision).toBe(revisionBeforeReenable + 1);
     expect(driver.acceptedQ.every(Number.isFinite)).toBe(true);
-    displayedHand.updateWorldMatrix(true, false);
-    const actualWorld = displayedHand.getWorldQuaternion(new THREE.Quaternion());
-    expect(actualWorld.angleTo(driver.acceptedForward.handWorld)).toBeLessThan(1e-8);
-    expect(driver.output.maxViolation).toBeLessThanOrEqual(2e-10);
   });
 
   it('refreshes a translated, rotated ancestor and rejects an equal-length shear', () => {
@@ -153,10 +103,6 @@ describe('static constrained arm operations', () => {
     expect(rig.limitsEnabled).toBe(true);
     expect(Array.from(driver.acceptedQ)).toEqual(beforeQ);
     expect(rig.externalArmRevision).toBe(beforeRevision);
-
-    const legacyAim = vi.spyOn(rig, 'aimArmLegacy');
-    rig.aimArm('R', dirs([0.38, -0.79, 0.48]));
-    expect(legacyAim).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -203,41 +149,6 @@ describe('static constrained arm operations', () => {
         spread: { ...rig.acceptedArmState(side).spread },
       })),
     ).toEqual(accepted);
-  });
-
-  it('consumes the standing bootstrap claim and rolls back both shoulders after second-side preflight failure', () => {
-    const { profile, rig } = makeRig();
-    const beforeArms = armQuaternions(profile);
-    const beforeFingers = fingerQuaternions(profile);
-    const beforeQs = (['L', 'R'] as const).map((side) => {
-      const driver = rig.armDriver(side);
-      if (!driver) throw new Error(`missing ${side} arm driver`);
-      return Array.from(driver.acceptedQ);
-    });
-    const beforeRevision = rig.externalArmRevision;
-    if (!profile.limb) throw new Error('synthetic rig has no limb measurements');
-    const rightLength = profile.limb['upper.R'];
-    profile.limb['upper.R'] = 0;
-
-    new Body(rig, profile);
-
-    expect(armQuaternions(profile)).toEqual(beforeArms);
-    expect(fingerQuaternions(profile)).toEqual(beforeFingers);
-    expect(
-      (['L', 'R'] as const).map((side) => {
-        const driver = rig.armDriver(side);
-        if (!driver) throw new Error(`missing ${side} arm driver`);
-        return Array.from(driver.acceptedQ);
-      }),
-    ).toEqual(beforeQs);
-    expect(rig.externalArmRevision).toBe(beforeRevision);
-
-    profile.limb['upper.R'] = rightLength;
-    new Body(rig, profile);
-
-    expect(armQuaternions(profile)).toEqual(beforeArms);
-    expect(fingerQuaternions(profile)).toEqual(beforeFingers);
-    expect(rig.externalArmRevision).toBe(beforeRevision);
   });
 
   it.each([

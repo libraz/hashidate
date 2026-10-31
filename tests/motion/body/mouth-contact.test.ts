@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FINGER_WIDTH } from '@/engine/anatomy';
 import { gestureDef } from '@/engine/motion';
 import { ReachAnchors } from '@/engine/motion/anchors';
-import { CharacterFrame } from '@/engine/motion/frame';
 import { performanceDef } from '@/engine/performance';
 import type { HandContact } from '@/engine/types';
 import { DT, fingerDepth, type Harness, harness } from './harness';
@@ -54,7 +53,7 @@ function measure(h: Harness, gesture: string, t: number) {
   const g = required(h.body.gesture, 'running gesture');
   const reach = required(def.build(t, g.v, g.phase).reach?.R, 'right-hand reach');
   const contact = required(reach.contact, 'contact');
-  const anchors = new ReachAnchors(h.profile, h.rig, new CharacterFrame(h.rig, h.profile));
+  const anchors = new ReachAnchors(h.profile, h.rig, h.rig.characterFrame);
   const anchor = required(anchors.face(reach.at, reach.offset, 'R'), 'face frame').clone();
   return {
     distance: contactPoint(h, contact).distanceTo(anchor),

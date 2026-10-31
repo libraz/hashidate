@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { ZONES as ZONE_CODES } from '@/core/abi/rig';
 import { D, ELEVATION, HAND_CONTACT, JOINTS, ZONES } from '@/engine/anatomy/joints';
-import { zoneOf } from '@/engine/anatomy/strain';
 import type { JointDof, JointSpec, StrainZone } from '@/engine/types';
 
 const deg = (radians: number): number => radians / D;
@@ -183,9 +183,8 @@ describe('ZONES', () => {
     }
   });
 
-  it('has a label for every zone zoneOf can return', () => {
-    const seen = new Set<StrainZone>();
-    for (let s = -0.5; s <= 2; s += 0.05) seen.add(zoneOf(s));
+  it('has a label for every zone the core can report', () => {
+    const seen = new Set<StrainZone>(ZONE_CODES);
     expect(seen.size).toBe(3);
     for (const zone of seen) expect(ZONES[zone]).toBeDefined();
   });

@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { gestureDef } from '@/engine/motion';
 import { ReachAnchors } from '@/engine/motion/anchors';
-import { CharacterFrame } from '@/engine/motion/frame';
 import { DT, type Harness, harness } from './harness';
 
 /**
@@ -74,7 +73,7 @@ describe('the slide that clears the face at the mouth', () => {
   it('is measured on skin that faces downward', () => {
     const h = harness(0, { random: () => 0.75 }, { lipTilt: TILT });
     const face = required(h.rig.anat.face, 'face skin');
-    const anchors = new ReachAnchors(h.profile, h.rig, new CharacterFrame(h.rig, h.profile));
+    const anchors = new ReachAnchors(h.profile, h.rig, h.rig.characterFrame);
     const mouth = required(anchors.face('mouth', undefined, 'R'), 'mouth').clone();
     face.refresh();
     const normal = new THREE.Vector3();

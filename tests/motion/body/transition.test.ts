@@ -169,7 +169,6 @@ describe('the path between two poses', () => {
     const heldWorldOrientation = hand.getWorldQuaternion(new THREE.Quaternion());
     const clearance = h.rig.fingerClearance('R');
     expect(clearance).toBeGreaterThan(0);
-    const transitionCommits = vi.spyOn(h.rig, 'commitArmFrame');
     let greatestHandTurn = 0;
 
     h.body.play('cover');
@@ -188,11 +187,6 @@ describe('the path between two poses', () => {
         heldWorldOrientation.angleTo(currentWorldOrientation),
       );
     }
-    expect(
-      transitionCommits.mock.results.some(
-        (result) => result.type === 'return' && result.value === true,
-      ),
-    ).toBe(true);
     expect(greatestHandTurn).toBeGreaterThan(1e-3);
 
     for (let i = 0; i < 120; i++) step();

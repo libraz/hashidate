@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import type { BoneSlot, Profile } from '../types';
+import { type FaceSkin, measureFaceSkin } from './face';
 import { TORSO_BANDS, TORSO_SECTORS } from './joints';
 
 /**
@@ -181,51 +183,203 @@ export function partSkin(
   };
 }
 
-/** Derivatives of the radius table in metres per height metre and per radian. */
-export interface SurfaceGradient {
-  height: number;
-  bearing: number;
+/** The head's surface, with the skin the fingers are tested against. */
+export interface HeadMeasurement extends MeasuredVolume {
+  /** The skin itself, for what passes closer to it than the volume can tell. */
+  face: FaceSkin | null;
 }
 
-/** Radius of one volume at a height and bearing in its own frame. */
-export function surfaceOf(
-  t: MeasuredVolume,
-  h: number,
-  theta: number,
-  gradient?: SurfaceGradient,
-): number {
-  const tr = t.r;
-  if (!tr) {
-    if (gradient) {
-      gradient.height = 0;
-      gradient.bearing = 0;
-    }
-    return t.radius;
+/** What the core's body volumes are built from, measured off the mesh at the pose it is in now. */
+export interface BodyMeasurement {
+  torso: MeasuredVolume | null;
+  head: HeadMeasurement | null;
+}
+
+/**
+ * The trunk and the head as the core's body volumes are built from them, measured off the mesh
+ * at the pose the avatar is in now.
+ */
+export function measureBodyVolumes(p: Profile): BodyMeasurement {
+  // Every world matrix brought up to date, so the measurement reads the pose as it stands.
+  p.root.updateWorldMatrix(true, true);
+  return { torso: measureTorsoSurface(p), head: measureHead(p) };
+}
+
+/**
+ * The torso, as a cylinder the elbow may not enter.
+ *
+ * Joint angles are not the whole of a range of motion. The reason you
+ * cannot swing your elbow twenty centimetres to the left is not that a
+ * shoulder runs out of rotation — it is that your ribcage is there. The
+ * angular model approximates this at the top, through the elevation ceiling
+ * that closes down across the midline, and misses it entirely at the
+ * bottom: below about 25 degrees of elevation the ceiling permits any
+ * plane, including pointing the upper arm straight into the chest.
+ *
+ * Radius is measured, not assumed: the shoulder joint sits at roughly the
+ * outer edge of the trunk, so its horizontal offset from the spine is the
+ * half-width. Taken at 0.9 to leave the arms their resting position, which
+ * hangs slightly outboard of the shoulder on this avatar and slightly
+ * inboard on others.
+ *
+ * In world units. Chest-local distances are not usable here — the armature
+ * carries a 0.01 scale on this avatar — and the reach lengths this is
+ * compared against are world-space.
+ *
+ * Trunk half-width and vertical span, in world units, from the rest pose.
+ */
+function measureTorso(p: Profile): MeasuredVolume | null {
+  const { bones } = p;
+  const frame = p.body;
+  const chest = bones.chest ?? bones.spine ?? bones.hips;
+  // The upper arm and not the clavicle. `shoulder.*` is the clavicle root,
+  // which sits beside the neck: measured from there the trunk came out with a
+  // radius of 0.034 against an upper arm of 0.171, a torso a fifth as wide as
+  // one arm segment, and nothing ever touched it. The glenohumeral joint is
+  // where the arm actually hangs from, and it is at the edge of the trunk.
+  const sL = bones['upperArm.L'] ?? bones['shoulder.L'];
+  const sR = bones['upperArm.R'] ?? bones['shoulder.R'];
+  if (!(chest && sL && sR && frame)) return null;
+  const w = (b: THREE.Bone) => b.getWorldPosition(new THREE.Vector3());
+  const q = chest.getWorldQuaternion(new THREE.Quaternion());
+  const up = frame.up.clone().applyQuaternion(q);
+  const O = w(chest);
+  // Horizontal distance from the trunk axis to each shoulder.
+  const off = (b: THREE.Bone) => {
+    const v = w(b).sub(O);
+    v.addScaledVector(up, -v.dot(up));
+    return v.length();
+  };
+  const radius = ((off(sL) + off(sR)) / 2) * 0.9;
+  // Only between the hips and the shoulders is there a trunk to hit.
+  const hips = bones.hips ? w(bones.hips).sub(O).dot(up) : -radius * 3;
+  const top = w(sR).sub(O).dot(up);
+  return radius > 1e-6
+    ? {
+        r: null,
+        bands: TORSO_BANDS,
+        sectors: TORSO_SECTORS,
+        radius,
+        top,
+        bottom: Math.min(hips, top - 1e-4),
+      }
+    : null;
+}
+
+/**
+ * The trunk's actual surface, measured off the mesh.
+ *
+ * A cylinder sized from the shoulders is the wrong shape, and being the wrong
+ * shape it cannot be tuned into the right answer: a chest is markedly wider
+ * than it is deep, so one radius is simultaneously too small at the sides and
+ * too large in front. Too small at the sides means an arm crossing the body
+ * passes through the ribs with nothing reported; too large in front means a
+ * hand deliberately placed on the sternum reads as buried, so the poses that
+ * *should* touch the chest cannot be told from the ones that go through it.
+ *
+ * Stored as a radius per (height band, angular sector) in the chest's own
+ * frame, which is the same frame the cylinder used — so it still follows the
+ * chest when the spine turns, and the query is still a couple of lookups.
+ *
+ * Read at load, before anything is posed, with each vertex put through
+ * three's own skinning transform (see `measureVolume`), so what is measured is
+ * the rest shape where the mesh actually draws it.
+ *
+ * Only vertices whose *dominant* bone is part of the trunk are counted. The
+ * arms rest inside the trunk's height band in a bind pose, and a maximum over
+ * everything there would inflate the sides by an entire arm.
+ */
+function measureTorsoSurface(p: Profile): MeasuredVolume | null {
+  const base = measureTorso(p);
+  const root = p.root;
+  const frame = p.body;
+  const { bones } = p;
+  const chest = bones.chest ?? bones.spine ?? bones.hips;
+  if (!(base && root && frame && chest)) return base;
+
+  // The trunk is the spine's whole subtree, stopping where the limbs and the
+  // head begin. Taken as a subtree and not as the four named slots because a
+  // rig puts the parts that stick out on their own bones — the bust is
+  // `Breast_L`/`Breast_R` here — and those are exactly the parts a collision
+  // surface exists to describe. Named-slot-only left the chest a smooth tube.
+  const stop = new Set<THREE.Bone>();
+  const stopSlots: BoneSlot[] = [
+    'shoulder.L',
+    'shoulder.R',
+    'upperArm.L',
+    'upperArm.R',
+    'head',
+    'neck',
+  ];
+  for (const slot of stopSlots) {
+    const b = bones[slot];
+    if (b) stop.add(b);
   }
-  const rawBand = ((h - t.bottom) / (t.top - t.bottom)) * t.bands - 0.5;
-  const fb = Math.min(t.bands - 1, Math.max(0, rawBand));
-  const b0 = Math.floor(fb);
-  const b1 = Math.min(t.bands - 1, b0 + 1);
-  const tb = fb - b0;
-  let a = theta / (Math.PI * 2);
-  a -= Math.floor(a);
-  const fs = a * t.sectors - 0.5;
-  const s0 = ((Math.floor(fs) % t.sectors) + t.sectors) % t.sectors;
-  const s1 = (s0 + 1) % t.sectors;
-  const ts = fs - Math.floor(fs);
-  // The cell's four corners, read once rather than through a per-call closure.
-  const r00 = tr[b0 * t.sectors + s0];
-  const r01 = tr[b0 * t.sectors + s1];
-  const r10 = tr[b1 * t.sectors + s0];
-  const r11 = tr[b1 * t.sectors + s1];
-  if (gradient) {
-    // The selected cell also fixes the one-sided derivative at a table knot.
-    // Clamped half-bands have constant radius in height.
-    gradient.height =
-      rawBand > 0 && rawBand < t.bands - 1
-        ? ((r10 * (1 - ts) + r11 * ts - (r00 * (1 - ts) + r01 * ts)) * t.bands) / (t.top - t.bottom)
-        : 0;
-    gradient.bearing = (((r01 - r00) * (1 - tb) + (r11 - r10) * tb) * t.sectors) / (Math.PI * 2);
-  }
-  return (r00 * (1 - ts) + r01 * ts) * (1 - tb) + (r10 * (1 - ts) + r11 * ts) * tb;
+  const trunk = new Set<THREE.Bone>();
+  const walk = (b: THREE.Bone | undefined) => {
+    if (!b || stop.has(b) || trunk.has(b)) return;
+    trunk.add(b);
+    for (const c of b.children) if (c instanceof THREE.Bone) walk(c);
+  };
+  if (bones.hips) trunk.add(bones.hips); // itself, not the legs below it
+  walk(bones.spine ?? chest);
+  walk(chest);
+
+  const q = chest.getWorldQuaternion(new THREE.Quaternion());
+  const up = frame.up.clone().applyQuaternion(q);
+  const right = frame.right.clone().applyQuaternion(q);
+  const fwd = frame.forward.clone().applyQuaternion(q);
+  const O = chest.getWorldPosition(new THREE.Vector3());
+  // The height range is fixed rather than taken from the vertices: the trunk
+  // has to stop at the shoulders, or the neck stub raises its top and an arm
+  // resting beside the neck reads as inside the body.
+  const vol = measureVolume(root, trunk, O, up, right, fwd, {
+    top: base.top,
+    bottom: base.bottom,
+  });
+  return vol ? { ...base, ...vol } : base;
+}
+
+/**
+ * The head, measured the same way as the trunk.
+ *
+ * A separate volume rather than an extension of the trunk because it moves
+ * separately: a head turns and tips under the chest, so a surface stored in
+ * the chest's frame would swing away from the skull it is meant to describe.
+ * Its own frame is the one the face anchors already use.
+ *
+ * Without it the whole face is empty space to the arm. Every gesture in the
+ * table that touches the face aims at a point *on* the head, so the hand
+ * arrives at the surface and the fingers carry on into it.
+ *
+ * The extent is taken from the vertices rather than from bones, because there
+ * is no second bone to measure a head against the way the shoulders measure
+ * the trunk.
+ *
+ * Hair is excluded for free: it hangs off its own bones, so the dominant-bone
+ * filter never sees it. That is the behaviour to want — a hand should be able
+ * to touch hair, and pushing it out to the far side of a twintail would put it
+ * a head's width away from the head.
+ */
+function measureHead(p: Profile): HeadMeasurement | null {
+  const head = p.bones.head;
+  const face = p.face;
+  if (!(head && face && p.root)) return null;
+
+  const set = new Set<THREE.Bone>();
+  const walk = (b: THREE.Bone) => {
+    if (!b || set.has(b)) return;
+    set.add(b);
+    for (const c of b.children) if (c instanceof THREE.Bone) walk(c);
+  };
+  walk(head);
+
+  const q = head.getWorldQuaternion(new THREE.Quaternion());
+  const up = face.up.clone().applyQuaternion(q).normalize();
+  const right = face.right.clone().applyQuaternion(q).normalize();
+  const fwd = face.forward.clone().applyQuaternion(q).normalize();
+  const O = head.getWorldPosition(new THREE.Vector3());
+  const vol = measureVolume(p.root, set, O, up, right, fwd);
+  if (!vol) return null;
+  return { ...vol, face: measureFaceSkin(p.root, head, set) };
 }

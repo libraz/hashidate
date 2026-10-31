@@ -1,9 +1,7 @@
-import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { core, views } from '@/core';
 import { MATH_BATCHES, type MathBatchName } from '@/core/abi/math';
-import { SWIVEL_TRACK } from '@/engine/rig/elbow';
 import { coreMathCalls, withCoreMath } from '../helpers/core-math';
 
 /** Shared with `crates/hashidate-core/tests/math_corpus.rs`. */
@@ -740,7 +738,9 @@ describe('what the rig relies on', () => {
     }
   });
 
-  it('puts the rig constants at the recorded bits, in the core and in the TS rig', () => {
+  it('puts the rig constants at the recorded bits, in the core and on the host', () => {
+    // The elbow's swivel tracking share (`SWIVEL_TRACK`, `rig/elbow.rs`).
+    const SWIVEL_TRACK = 0.25;
     const exports = core();
     expect(bitsOf(Math.log(1 - SWIVEL_TRACK))).toBe(P5.log075);
     expect(bitsOf(Math.cbrt(EPSILON))).toBe(P5.cbrtEpsilon);
@@ -750,13 +750,5 @@ describe('what the rig relies on', () => {
     expect(bitsOf(exports.hd_math_rig_constant(1))).toBe(P5.cbrtEpsilon);
     expect(bitsOf(exports.hd_math_rig_constant(2))).toBe(P5.epsilon23);
     expect(exports.hd_math_rig_constant(3)).toBeNaN();
-
-    const source = (file: string) => readFileSync(`src/engine/rig/${file}`, 'utf8');
-    const hex = (bits: bigint) => `0x${bits.toString(16)}n`;
-    expect(source('elbow.ts')).toContain(hex(P5.log075));
-    expect(source('arm-path.ts')).toContain(hex(P5.cbrtEpsilon));
-    expect(source('arm-path.ts')).toContain(hex(P5.epsilon23));
-    expect(source('elbow.ts')).not.toMatch(/Math\.log/);
-    expect(source('arm-path.ts')).not.toMatch(/Math\.cbrt|EPSILON \*\*/);
   });
 });

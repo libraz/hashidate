@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { ArmAnatomy, JOINTS } from '@/engine/anatomy';
+import { JOINTS } from '@/engine/anatomy';
 import { buildProfile } from '@/engine/profile';
+import { Rig } from '@/engine/rig';
 import { avatarsResponseSchema, parseAvatar } from '@/protocol';
 import { buildRig } from '../helpers/scene';
 
@@ -153,9 +154,9 @@ describe('parseAvatar', () => {
     const anatomy = accept({ ...minimal, anatomy: completeAnatomy() }).anatomy;
     const built = buildRig();
     const profile = buildProfile(built.root, { ...built.descriptor, anatomy });
-    const arm = new ArmAnatomy(profile);
-    expect(arm.update()).toBe(true);
-    expect(() => arm.report()).not.toThrow();
+    const rig = new Rig(profile);
+    expect(rig.anat.update()).toBe(true);
+    expect(() => rig.measure('L')).not.toThrow();
   });
 
   it('names the path of a joint that lacks a degree of freedom the engine reads', () => {

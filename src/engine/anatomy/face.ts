@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import type { RigHandle } from '../rig/handle';
+import { readVec, writeVec } from '../rig/records';
 import { partSkin } from './volume';
 
 /**
@@ -19,17 +21,16 @@ import { partSkin } from './volume';
  * cupped behind the ear read as three centimetres inside the cheek.
  */
 
-/** Hash cell, metres. About a fingertip's breadth. */
-const CELL = 0.02;
-/** Cells out to look before calling a point nowhere near the face. */
-const REACH = 3;
-/** Least radius the skin is read over round a point, metres: a few vertex spacings. */
-const SMOOTH = 0.01;
-
 const _n = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _at = new THREE.Vector3();
 const ONE = new THREE.Vector3(1, 1, 1);
+
+/** The skin measured at load, in the head bone's frame: positions and outward normals. */
+export interface FaceSkin {
+  readonly pos: Float32Array;
+  readonly nrm: Float32Array;
+}
 
 /** Signed local plane sample and its outward normal in world coordinates. */
 export interface FaceSurfaceSample {
@@ -43,8 +44,6 @@ function headFrame(bone: THREE.Bone, out: THREE.Matrix4): THREE.Matrix4 {
   bone.updateWorldMatrix(true, false);
   return out.compose(bone.getWorldPosition(_at), bone.getWorldQuaternion(_q), ONE).invert();
 }
-
-const key = (x: number, y: number, z: number) => ((x + 512) * 1024 + (y + 512)) * 1024 + (z + 512);
 
 /**
  * The skin of one primitive as a surface: which vertices are on it and the
@@ -108,220 +107,79 @@ function shell(geometry: THREE.BufferGeometry) {
   };
 }
 
+/** Measure the skin carried by `head` and its subtree, at the pose it is in now. */
+export function measureFaceSkin(
+  root: THREE.Object3D | null,
+  head: THREE.Bone,
+  set: Set<THREE.Bone>,
+): FaceSkin | null {
+  const skin = partSkin(root, set);
+  if (!skin) return null;
+  // The skin proper is the primitive carrying most of the head. The others the
+  // part's mesh brings are eyes and the inside of the mouth, whose normals face
+  // anywhere: nearest to a finger in the cheek, they called it outside.
+  const count = new Map<THREE.SkinnedMesh, number>();
+  skin((_P, mesh) => count.set(mesh, (count.get(mesh) ?? 0) + 1));
+  let face: THREE.SkinnedMesh | null = null;
+  for (const [mesh, n] of count) if (!face || n > (count.get(face) ?? 0)) face = mesh;
+  if (!face) return null;
+  const toHead = headFrame(head, new THREE.Matrix4());
+  const surface = shell(face.geometry);
+  const pos: number[] = [];
+  const nrm: number[] = [];
+  const off = new THREE.Vector3();
+  skin((P, mesh, i) => {
+    if (mesh !== face || !surface.has(i)) return;
+    const at = P.clone().applyMatrix4(toHead);
+    // Skinned the way the position was, so the normal goes through the same
+    // transform: the vertex nudged along its rest normal, and the difference.
+    off.fromBufferAttribute(mesh.geometry.attributes.position, i);
+    off.addScaledVector(surface.normal(i, _n), 1e-3);
+    mesh.applyBoneTransform(i, off);
+    off.applyMatrix4(mesh.matrixWorld).applyMatrix4(toHead).sub(at);
+    if (off.lengthSq() < 1e-16) return;
+    off.normalize();
+    pos.push(at.x, at.y, at.z);
+    nrm.push(off.x, off.y, off.z);
+  });
+  if (!pos.length) return null;
+  return { pos: new Float32Array(pos), nrm: new Float32Array(nrm) };
+}
+
+/** `rig.anat.face`: the face's skin, held by the core. */
 export class FaceSurface {
-  private readonly cells = new Map<number, number[]>();
-  private minCellX = Number.POSITIVE_INFINITY;
-  private minCellY = Number.POSITIVE_INFINITY;
-  private minCellZ = Number.POSITIVE_INFINITY;
-  private maxCellX = Number.NEGATIVE_INFINITY;
-  private maxCellY = Number.NEGATIVE_INFINITY;
-  private maxCellZ = Number.NEGATIVE_INFINITY;
-  private readonly toHead = new THREE.Matrix4();
-  private readonly turn = new THREE.Quaternion();
-  private readonly samplePoint = new THREE.Vector3();
-  private readonly sampleNormal = new THREE.Vector3();
-  private best = Number.POSITIVE_INFINITY;
-  private bi = -1;
-  private R2 = 0;
-  private sum = 0;
-  private weight = 0;
-  private readonly cachedSample: FaceSurfaceSample = {
-    distance: 0,
-    normal: new THREE.Vector3(),
-    valid: false,
-  };
-  private readonly findNearest = (i: number) => {
-    const d2 = this.dist2(this.samplePoint, i);
-    if (d2 < this.best) {
-      this.best = d2;
-      this.bi = i;
-    }
-  };
-  private readonly gatherWeighted = (i: number) => {
-    const p = this.samplePoint;
-    const R2 = this.R2;
-    const d2 = this.dist2(p, i);
-    if (d2 >= R2) return;
-    const k = 1 - d2 / R2;
-    const w = k * k;
-    const nx = this.nrm[i * 3];
-    const ny = this.nrm[i * 3 + 1];
-    const nz = this.nrm[i * 3 + 2];
-    this.sum +=
-      w *
-      ((p.x - this.pos[i * 3]) * nx +
-        (p.y - this.pos[i * 3 + 1]) * ny +
-        (p.z - this.pos[i * 3 + 2]) * nz);
-    this.weight += w;
-    this.sampleNormal.x += w * nx;
-    this.sampleNormal.y += w * ny;
-    this.sampleNormal.z += w * nz;
-  };
+  readonly #rig: RigHandle;
 
-  private constructor(
-    private readonly bone: THREE.Bone,
-    private readonly pos: Float32Array,
-    private readonly nrm: Float32Array,
-  ) {
-    for (let i = 0; i < pos.length / 3; i++) {
-      const x = Math.floor(pos[i * 3] / CELL);
-      const y = Math.floor(pos[i * 3 + 1] / CELL);
-      const z = Math.floor(pos[i * 3 + 2] / CELL);
-      const k = key(x, y, z);
-      this.minCellX = Math.min(this.minCellX, x);
-      this.minCellY = Math.min(this.minCellY, y);
-      this.minCellZ = Math.min(this.minCellZ, z);
-      this.maxCellX = Math.max(this.maxCellX, x);
-      this.maxCellY = Math.max(this.maxCellY, y);
-      this.maxCellZ = Math.max(this.maxCellZ, z);
-      const c = this.cells.get(k);
-      if (c) c.push(i);
-      else this.cells.set(k, [i]);
-    }
-  }
-
-  /** Measure the skin carried by `head` and its subtree, at the pose it is in now. */
-  static measure(root: THREE.Object3D | null, head: THREE.Bone, set: Set<THREE.Bone>) {
-    const skin = partSkin(root, set);
-    if (!skin) return null;
-    // The skin proper is the primitive carrying most of the head. The others the
-    // part's mesh brings are eyes and the inside of the mouth, whose normals face
-    // anywhere: nearest to a finger in the cheek, they called it outside.
-    const count = new Map<THREE.SkinnedMesh, number>();
-    skin((_P, mesh) => count.set(mesh, (count.get(mesh) ?? 0) + 1));
-    let face: THREE.SkinnedMesh | null = null;
-    for (const [mesh, n] of count) if (!face || n > (count.get(face) ?? 0)) face = mesh;
-    if (!face) return null;
-    const toHead = headFrame(head, new THREE.Matrix4());
-    const surface = shell(face.geometry);
-    const pos: number[] = [];
-    const nrm: number[] = [];
-    const off = new THREE.Vector3();
-    skin((P, mesh, i) => {
-      if (mesh !== face || !surface.has(i)) return;
-      const at = P.clone().applyMatrix4(toHead);
-      // Skinned the way the position was, so the normal goes through the same
-      // transform: the vertex nudged along its rest normal, and the difference.
-      off.fromBufferAttribute(mesh.geometry.attributes.position, i);
-      off.addScaledVector(surface.normal(i, _n), 1e-3);
-      mesh.applyBoneTransform(i, off);
-      off.applyMatrix4(mesh.matrixWorld).applyMatrix4(toHead).sub(at);
-      if (off.lengthSq() < 1e-16) return;
-      off.normalize();
-      pos.push(at.x, at.y, at.z);
-      nrm.push(off.x, off.y, off.z);
-    });
-    if (!pos.length) return null;
-    return new FaceSurface(head, new Float32Array(pos), new Float32Array(nrm));
+  constructor(rig: RigHandle) {
+    this.#rig = rig;
   }
 
   /** Follow the head to where it is posed now. Call before a run of face queries. */
   refresh(): void {
-    this.bone.updateWorldMatrix(true, false);
-    this.bone.getWorldQuaternion(this.turn);
-    this.toHead.compose(this.bone.getWorldPosition(_at), this.turn, ONE).invert();
+    this.#rig.run((c, h) => c.hd_rig_face_refresh(h));
   }
 
   /**
-   * How far short of `clear` outside the skin a world point is, in metres.
-   * Writes the outward normal only for a positive shortfall; clear and invalid
-   * points retain the old no-write behavior.
+   * How far short of `clear` outside the skin a world point is, in metres. Writes the outward
+   * normal only for a positive shortfall.
    */
   shortfall(P: THREE.Vector3, clear: number, outward: THREE.Vector3): number {
-    this.sample(P, this.cachedSample);
-    if (!this.cachedSample.valid || this.cachedSample.distance >= clear) return 0;
-    outward.copy(this.cachedSample.normal);
-    return clear - this.cachedSample.distance;
+    const r = this.#rig;
+    const f = r.s();
+    writeVec(f, r.scratch, outward);
+    const short = r.direct((c, h) => c.hd_rig_face_shortfall(h, P.x, P.y, P.z, clear));
+    readVec(f, r.scratch, outward);
+    return short;
   }
 
-  /**
-   * Signed local averaged-plane distance in metres and its outward world
-   * normal. Invalid samples reset the output to neutral values.
-   *
-   * Read off the vertices round the point rather than the nearest one alone,
-   * each weighted down to nothing at a radius: the nearest vertex changes
-   * under a moving point, the distance to its plane jumped by millimetres when
-   * it did, and a hand placed by that distance jerked with it. The radius
-   * grows with the distance to the skin, so the reading stays smooth deep in.
-   */
+  /** Signed local plane distance in metres and its outward world normal round `P`. */
   sample(P: THREE.Vector3, out: FaceSurfaceSample): void {
-    out.distance = 0;
-    out.normal.set(0, 0, 0);
-    out.valid = false;
-    const p = this.samplePoint.copy(P).applyMatrix4(this.toHead);
-    const cx = Math.floor(p.x / CELL);
-    const cy = Math.floor(p.y / CELL);
-    const cz = Math.floor(p.z / CELL);
-    // The nearest-vertex search cannot find a cell beyond this exact reach cube.
-    if (
-      cx + REACH < this.minCellX ||
-      cx - REACH > this.maxCellX ||
-      cy + REACH < this.minCellY ||
-      cy - REACH > this.maxCellY ||
-      cz + REACH < this.minCellZ ||
-      cz - REACH > this.maxCellZ
-    ) {
-      return;
-    }
-    this.best = Number.POSITIVE_INFINITY;
-    this.bi = -1;
-    // Widened only when the near cells are empty: a finger sunk deep in a cheek
-    // is further from the skin than a cell, and that is the finger to move most.
-    for (let r = 1; r <= REACH && this.bi < 0; r++) {
-      this.each(cx, cy, cz, r, this.findNearest);
-    }
-    const bi = this.bi;
-    if (bi < 0) return;
-    const R = Math.max(SMOOTH, 2 * Math.sqrt(this.best));
-    // Too far off the skin to gather round: its nearest vertex's plane says it.
-    if (R > REACH * CELL) {
-      this.planeSample(p, bi, out);
-      return;
-    }
-    this.R2 = R * R;
-    this.sum = 0;
-    this.weight = 0;
-    this.sampleNormal.set(0, 0, 0);
-    this.each(cx, cy, cz, Math.ceil(R / CELL), this.gatherWeighted);
-    if (!(this.weight > 0) || this.sampleNormal.lengthSq() < 1e-12) return;
-    const s = this.sum / this.weight;
-    out.distance = s;
-    out.normal.copy(this.sampleNormal).normalize().applyQuaternion(this.turn);
-    out.valid = true;
-  }
-
-  private planeSample(p: THREE.Vector3, i: number, out: FaceSurfaceSample): void {
-    const nx = this.nrm[i * 3];
-    const ny = this.nrm[i * 3 + 1];
-    const nz = this.nrm[i * 3 + 2];
-    const s =
-      (p.x - this.pos[i * 3]) * nx +
-      (p.y - this.pos[i * 3 + 1]) * ny +
-      (p.z - this.pos[i * 3 + 2]) * nz;
-    const lengthSq = nx * nx + ny * ny + nz * nz;
-    if (lengthSq < 1e-12) return;
-    out.distance = s;
-    // Keep the captured Float32 normal: the former fallback wrote it unscaled.
-    out.normal.set(nx, ny, nz).applyQuaternion(this.turn);
-    out.valid = true;
-  }
-
-  private dist2(p: THREE.Vector3, i: number): number {
-    const dx = p.x - this.pos[i * 3];
-    const dy = p.y - this.pos[i * 3 + 1];
-    const dz = p.z - this.pos[i * 3 + 2];
-    return dx * dx + dy * dy + dz * dz;
-  }
-
-  /** Every vertex in the cells within `r` of cell (cx, cy, cz). */
-  private each(cx: number, cy: number, cz: number, r: number, fn: (i: number) => void): void {
-    for (let x = cx - r; x <= cx + r; x++) {
-      for (let y = cy - r; y <= cy + r; y++) {
-        for (let z = cz - r; z <= cz + r; z++) {
-          const c = this.cells.get(key(x, y, z));
-          if (c) for (const i of c) fn(i);
-        }
-      }
-    }
+    const r = this.#rig;
+    r.direct((c, h) => c.hd_rig_face_sample(h, P.x, P.y, P.z));
+    const f = r.s();
+    const s = r.scratch;
+    out.distance = f[s];
+    out.normal.set(f[s + 1], f[s + 2], f[s + 3]);
+    out.valid = f[s + 4] !== 0;
   }
 }

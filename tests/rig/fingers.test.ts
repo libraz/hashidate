@@ -1,13 +1,8 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { ArmAnatomy, fingerCurl, JOINTS } from '@/engine/anatomy';
-import { THUMB_OPPOSITION, THUMB_OPPOSITION_CURL } from '@/engine/anatomy/joints';
-import { restPalmNormals } from '@/engine/anatomy/palm-frame';
+import { JOINTS } from '@/engine/anatomy';
 import { buildProfile } from '@/engine/profile';
-import { Rig, solveFingerAxes } from '@/engine/rig';
-import { type ArmConfiguration, forwardArm } from '@/engine/rig/arm-configuration';
-import { FingerClearance } from '@/engine/rig/finger-clearance';
-import { Hands } from '@/engine/rig/hands';
+import { Rig } from '@/engine/rig';
 import type { FingerName, Profile, Side } from '@/engine/types';
 import { buildRig } from '../helpers/scene';
 
@@ -89,72 +84,6 @@ function buildPalmsInHands(): { profile: Profile; rig: Rig } {
   return { profile, rig: new Rig(profile) };
 }
 
-function aimedFingerShape(
-  configuration: ArmConfiguration,
-  palmOffset: number,
-): {
-  shape: THREE.Vector3[];
-  axis: THREE.Vector3;
-  palm: THREE.Vector3;
-  askedAxis: THREE.Vector3;
-  askedPalm: THREE.Vector3;
-  endpointValid: boolean;
-  endpointViolation: number;
-} {
-  const { profile, rig } = buildHands();
-  const driver = rig.armDriver('R');
-  const context = rig.armForwardContext('R');
-  if (!(driver && context)) throw new Error('synthetic rig has no calibrated right arm');
-  const target = forwardArm(configuration, driver.calibration, context, driver.targetForward);
-  // Keep immutable requests because the driver reuses its FK scratch buffers.
-  const upper = target.u.clone();
-  const lower = target.l.clone();
-  const handTarget = target.h.clone();
-  const palmTarget = target.palm.clone().applyAxisAngle(target.h, palmOffset).normalize();
-  rig.aimArm(
-    'R',
-    {
-      shoulder: [upper.x, upper.y, upper.z],
-      upperArm: [upper.x, upper.y, upper.z],
-      lowerArm: [lower.x, lower.y, lower.z],
-      hand: [handTarget.x, handTarget.y, handTarget.z],
-    },
-    0,
-    [palmTarget.x, palmTarget.y, palmTarget.z],
-  );
-  profile.root.updateMatrixWorld(true);
-
-  const hand = need(profile.bones['hand.R'], 'hand.R');
-  const curls = { thumb: 0.4, index: 0.7, middle: 0.55, ring: 0.35, little: 0.2 };
-  const spread = { index: 0.25, ring: -0.15 };
-  rig.curlHand('R', curls, spread);
-  hand.updateWorldMatrix(true, false);
-  const world = hand.getWorldQuaternion(new THREE.Quaternion());
-  const axis = profile.restDir['hand.R'].clone().applyQuaternion(world).normalize();
-  const palm = need(rig.palmLocal.R, 'palmLocal.R').clone().applyQuaternion(world).normalize();
-  const finalContext = rig.armForwardContext('R');
-  if (!finalContext) throw new Error('synthetic rig lost its right-arm context');
-  driver.captureVolumeFrame();
-  driver.requestForConfiguration(driver.acceptedConfiguration, finalContext, curls, spread);
-  const endpointValid = driver.validateLockedPose(
-    driver.acceptedQ,
-    finalContext,
-    curls,
-    spread,
-    driver.bridgeOutput,
-  );
-
-  return {
-    shape: rig.fingerShape('R').map((point) => point.clone()),
-    axis,
-    palm,
-    askedAxis: handTarget,
-    askedPalm: palmTarget,
-    endpointValid,
-    endpointViolation: driver.bridgeOutput.maxViolation,
-  };
-}
-
 /** The palm normal in world space, for a hand that has not been posed. */
 function palmWorld(profile: Profile, rig: Rig, side: Side): THREE.Vector3 {
   const hand = need(profile.bones[`hand.${side}`], `hand.${side}`);
@@ -186,22 +115,6 @@ describe('solveFingerAxes', () => {
       }
     }
     expect(rig.fingerAxis.size).toBe(bones);
-  });
-
-  it('derives the same axes standalone as the rig holds', () => {
-    const { profile, rig } = buildHands();
-    const standalone = solveFingerAxes(profile);
-
-    expect(standalone.axes.size).toBe(rig.fingerAxis.size);
-    for (const [bone, axis] of standalone.axes) {
-      expect(need(rig.fingerAxis.get(bone), 'axis').distanceTo(axis)).toBeLessThan(EXACT);
-    }
-    expect(standalone.splayAxes.size).toBe(rig.fingerSplayAxis.size);
-    for (const [bone, axis] of standalone.splayAxes) {
-      expect(need(rig.fingerSplayAxis.get(bone), 'splay axis').distanceTo(axis)).toBeLessThan(
-        EXACT,
-      );
-    }
   });
 
   it('mirrors the two palms about the midline instead of deciding each alone', () => {
@@ -263,42 +176,6 @@ describe('solveFingerAxes', () => {
     expect.soft(palms[1].distanceTo(mirrored)).toBeLessThan(EXACT);
   });
 
-  it.each(SIDES)('uses the actual near-horizontal %s palm for radial and ulnar limits', (side) => {
-    const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0.6));
-    const { profile, rig } = buildNearHorizontalHands(rotation);
-    const wp = (bone: THREE.Bone) => bone.getWorldPosition(new THREE.Vector3());
-    const hand = need(profile.bones[`hand.${side}`], `hand.${side}`);
-    const middle = need(profile.fingerBones[`middle.${side}`], `middle.${side}`)[0];
-    const index = need(profile.fingerBones[`index.${side}`], `index.${side}`)[0];
-    const little = need(profile.fingerBones[`little.${side}`], `little.${side}`)[0];
-    const along = wp(middle).sub(wp(hand)).normalize();
-    const towardThumb = wp(index).sub(wp(little));
-    towardThumb.addScaledVector(along, -towardThumb.dot(along)).normalize();
-    const palm = palmWorld(profile, rig, side);
-    const radial = new THREE.Vector3()
-      .crossVectors(palm, along)
-      .multiplyScalar(rig.anat.radialSign[side])
-      .normalize();
-    expect.soft(radial.dot(towardThumb), 'radial points toward thumb').toBeCloseTo(1, 9);
-
-    const [ulnarLimit, radialLimit] = JOINTS.wrist.dofs.deviation.max;
-    const asked = radialLimit - ulnarLimit;
-    for (const [sign, limit] of [
-      [1, radialLimit],
-      [-1, -ulnarLimit],
-    ]) {
-      const direction = along
-        .clone()
-        .multiplyScalar(Math.cos(asked))
-        .addScaledVector(towardThumb, sign * Math.sin(asked));
-      rig.anat.clampWrist(side, along, direction, palm);
-      expect
-        .soft(Math.abs(direction.angleTo(along) - limit), `deviation sign ${sign}`)
-        .toBeLessThan(EXACT);
-      expect.soft(direction.dot(towardThumb) * sign).toBeGreaterThan(0);
-    }
-  });
-
   it.each(SIDES)(
     'uses body up for the remaining palm when %s middle geometry is missing',
     (missing) => {
@@ -315,7 +192,6 @@ describe('solveFingerAxes', () => {
   it('reads each palm from the hand, not from which way is up', () => {
     const { profile, rig } = buildPalmsInHands();
     rig.anat.update();
-    const palms = restPalmNormals(profile);
     for (const side of SIDES) {
       const upper = need(profile.bones[`upperArm.${side}`], `upperArm.${side}`);
       // Down in the unrotated bind, carried round with the arm.
@@ -323,7 +199,7 @@ describe('solveFingerAxes', () => {
         upper.getWorldQuaternion(new THREE.Quaternion()),
       );
       const inward = rig.anat.right.clone().multiplyScalar(side === 'L' ? 1 : -1);
-      const palm = need(palms[side], `palm.${side}`);
+      const palm = palmWorld(profile, rig, side);
       expect.soft(expected.dot(rig.anat.up), `${side} palm tips up`).toBeGreaterThan(0.05);
       expect.soft(palm.distanceTo(expected), `${side} palm`).toBeLessThan(EXACT);
       expect.soft(palm.dot(inward), `${side} faces the body`).toBeGreaterThan(0.99);
@@ -445,58 +321,6 @@ describe('curlFinger', () => {
       }
     });
 
-    it('turns only the distal hinge about the phalanx once the thumb has closed, mirrored on both hands', () => {
-      const { profile, rig } = buildHands();
-      const q = (a: THREE.Vector3, r: number) => new THREE.Quaternion().setFromAxisAngle(a, r);
-
-      for (const side of SIDES) {
-        const chain = need(profile.fingerBones[`thumb.${side}`], `thumb.${side}`);
-        // The turn is signed per hand: whichever sign folds the tip further toward the palm side.
-        const palm = palmWorld(profile, rig, side);
-        const tipDot = (sign: number): number => {
-          const dir = need(profile.restDir[`thumb.${side}.2`], `thumb.${side}.2 dir`);
-          const axis = need(rig.fingerAxis.get(chain[2]), `thumb.${side}.2 axis`);
-          const local = dir
-            .clone()
-            .applyAxisAngle(axis, 1)
-            .applyAxisAngle(dir, sign * THUMB_OPPOSITION);
-          rig.reset();
-          profile.root.updateMatrixWorld(true);
-          const q = chain[2].getWorldQuaternion(new THREE.Quaternion());
-          return local.applyQuaternion(q).dot(palm);
-        };
-        const turnSign = tipDot(1) <= tipDot(-1) ? 1 : -1;
-        for (const curl of [THUMB_OPPOSITION_CURL[0], 1]) {
-          rig.reset();
-          rig.curlHand(side, { thumb: curl });
-          for (const [i, bone] of chain.entries()) {
-            const rest = need(rig.rest.get(bone), `thumb.${side}.${i} rest`);
-            const axis = need(rig.fingerAxis.get(bone), `thumb.${side}.${i} axis`);
-            const hinge = q(axis, fingerCurl(rig.joints.thumb, i, curl));
-            const expected = rest.clone();
-            if (i === 2 && curl === 1) {
-              const dir = need(profile.restDir[`thumb.${side}.2`], `thumb.${side}.2 dir`);
-              expected.multiply(q(dir, turnSign * THUMB_OPPOSITION));
-            }
-            expected.multiply(hinge);
-            const sign = bone.quaternion.dot(expected) < 0 ? -1 : 1;
-            for (const [k, v] of bone.quaternion.toArray().entries()) {
-              expect(v, `${side} bone ${i} curl ${curl} [${k}]`).toBeCloseTo(
-                sign * expected.toArray()[k],
-                9,
-              );
-            }
-          }
-        }
-        // curlFinger agrees with curlHand.
-        const viaHand = chain[2].quaternion.clone();
-        rig.reset();
-        rig.curlFinger('thumb', side, 1);
-        expect(chain[2].quaternion.angleTo(viaHand)).toBeLessThan(1e-6);
-      }
-      rig.reset();
-    });
-
     it('splays positive spread toward the palm, at the carpometacarpal bone only', () => {
       const { profile, rig } = buildHands();
 
@@ -558,8 +382,9 @@ describe('curlFinger', () => {
     const { profile, rig } = buildHands();
     const thumb = need(profile.fingerBones['thumb.L'], 'thumb.L');
     const dofs = JOINTS.thumb.dofs;
-    // At the start of the opposition ramp, where the distal hinge has not turned yet.
-    const curl = THUMB_OPPOSITION_CURL[0];
+    // At the start of the opposition ramp (`THUMB_OPPOSITION_CURL`, `anatomy/joints.rs`), where
+    // the distal hinge has not turned yet.
+    const curl = 0.4;
     const want = [dofs.proximal, dofs.intermediate, dofs.distal].map((d) => d.free[1] * curl);
 
     rig.curlFinger('thumb', 'L', curl);
@@ -634,63 +459,7 @@ describe('curlFinger', () => {
   });
 });
 
-describe('FingerClearance', () => {
-  function clearanceFor(profile: Profile): FingerClearance {
-    const hands = new Hands(profile, profile.anatomy ?? JOINTS, (bone) => bone.quaternion.clone());
-    return new FingerClearance(profile, hands, new ArmAnatomy(profile), () => 0);
-  }
-
-  it("caps a frame's turn at the span of the avatar's own wrist deviation range", () => {
-    const { profile } = buildHands();
-    const [lo, hi] = JOINTS.wrist.dofs.deviation.free;
-    expect(clearanceFor(profile).turnMax).toBe(hi - lo);
-
-    const anatomy = structuredClone(JOINTS);
-    anatomy.wrist.dofs.deviation.free = [lo / 2, hi / 2];
-    profile.anatomy = anatomy;
-    expect(clearanceFor(profile).turnMax).toBe((hi - lo) / 2);
-  });
-});
-
 describe('curlHand', () => {
-  it('records a curled hand in its reached frame when constraints change the request', () => {
-    const base: ArmConfiguration = {
-      shoulderPlane: 0,
-      shoulderLift: 0.4,
-      humeralRotation: 0,
-      elbowFlex: 0.8,
-      forearmRoll: 0,
-      wristFlex: 0.1,
-      wristDev: -0.1,
-    };
-    const first = aimedFingerShape(base, 1);
-    const second = aimedFingerShape(
-      { ...base, shoulderPlane: 0.5, shoulderLift: 0.3, elbowFlex: 0.9 },
-      -1,
-    );
-
-    // Positive controls: these are distinct reached hand orientations, and
-    // each reached hand/palm frame differs from its requested frame. The shape
-    // below must not inherit either discrepancy from the requested frame cache.
-    expect(first.axis.angleTo(second.axis)).toBeGreaterThan(0.25);
-    const frameError = (capture: ReturnType<typeof aimedFingerShape>) =>
-      Math.max(capture.axis.angleTo(capture.askedAxis), capture.palm.angleTo(capture.askedPalm));
-    expect(frameError(first)).toBeGreaterThan(0.05);
-    expect(frameError(second)).toBeGreaterThan(0.05);
-    expect(first.shape.length).toBeGreaterThan(10);
-    expect(second.shape.length).toBe(first.shape.length);
-    expect(first.endpointValid).toBe(true);
-    expect(second.endpointValid).toBe(true);
-    expect(first.endpointViolation).toBeLessThanOrEqual(2e-10);
-    expect(second.endpointViolation).toBeLessThanOrEqual(2e-10);
-
-    const worst = Math.max(...first.shape.map((point, i) => point.distanceTo(second.shape[i])));
-    expect(
-      worst,
-      `largest canonical finger-shape point differs by ${worst.toFixed(6)} m`,
-    ).toBeLessThan(1e-6);
-  });
-
   it('drives each named finger and leaves the unnamed ones at rest', () => {
     const { profile, rig } = buildHands();
     rig.reset();
@@ -758,35 +527,6 @@ describe('curlHand', () => {
     }
 
     expect(displacement.L).toBeCloseTo(displacement.R, 9);
-  });
-
-  it('composes proximal splay before curl and leaves distal splay off', () => {
-    const { profile, rig } = buildHands();
-    const chain = need(profile.fingerBones['index.R'], 'index.R');
-    const spread = 0.24;
-    const curl = 0.55;
-    rig.reset();
-    rig.curlHand('R', { index: curl }, { index: spread });
-
-    const splayAxis = need(rig.fingerSplayAxis.get(chain[0]), 'index.R splay axis');
-    const curlAxis = need(rig.fingerAxis.get(chain[0]), 'index.R curl axis');
-    const want = need(rig.rest.get(chain[0]), 'index.R rest')
-      .clone()
-      .multiply(new THREE.Quaternion().setFromAxisAngle(splayAxis, spread))
-      .multiply(
-        new THREE.Quaternion().setFromAxisAngle(curlAxis, fingerCurl(rig.joints.finger, 0, curl)),
-      );
-    expect(chain[0].quaternion.angleTo(want)).toBeLessThan(1e-7);
-
-    for (let i = 1; i < chain.length; i++) {
-      const axis = need(rig.fingerAxis.get(chain[i]), `index.R curl axis ${i}`);
-      const expected = need(rig.rest.get(chain[i]), `index.R rest ${i}`)
-        .clone()
-        .multiply(
-          new THREE.Quaternion().setFromAxisAngle(axis, fingerCurl(rig.joints.finger, i, curl)),
-        );
-      expect(chain[i].quaternion.angleTo(expected), `index.R segment ${i}`).toBeLessThan(1e-7);
-    }
   });
 
   it('keeps omitted and zero spread identical to curl-only', () => {

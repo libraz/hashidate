@@ -50,9 +50,11 @@ function need<T>(value: T | undefined | null, what: string): T {
   return value;
 }
 
-function buildArm(side: Side = 'R'): Arm {
+/** `prepare` edits the profile before the rig reads it, which it does once, when it is built. */
+function buildArm(side: Side = 'R', prepare?: (profile: Profile) => void): Arm {
   const built = buildRig();
   const profile = buildProfile(built.root, built.descriptor);
+  prepare?.(profile);
   const rig = new Rig(profile);
   rig.anat.update();
   const bone = need(profile.bones[`upperArm.${side}`], `upperArm.${side}`);
@@ -259,10 +261,11 @@ describe('solvePoint hand length', () => {
 
   it('falls back to the index finger for a finger the rig does not have', () => {
     const named = buildArm();
-    const fallback = buildArm();
+    const fallback = buildArm('R', (p) => {
+      delete p.limb['tip.R.little'];
+    });
     const a = solution();
     const b = solution();
-    delete fallback.profile.limb['tip.R.little'];
     const spec = { azimuth: 0.1, elevation: 0.1, extent: 0.7, finger: 'little' as FingerName };
 
     solve(named, { ...spec, finger: 'index' as FingerName }, a);
@@ -293,23 +296,6 @@ describe('solvePoint strain', () => {
     // Reaching across the body drives the arm into the trunk, which outbids
     // every joint term.
     expect(hard.strain as number).toBeGreaterThan((easy.strain as number) * 10);
-  });
-
-  it('reports the strain of the pose it returned, without the elbow prior', () => {
-    for (const spec of [
-      { azimuth: 0.3, elevation: 0.2, extent: 0.75 },
-      { azimuth: -0.9, elevation: 0.6, extent: 0.7 },
-    ]) {
-      const arm = buildArm();
-      const out = solution();
-      // The first frame tracks only part of the way toward the winner, so the
-      // returned pose is not the one the search scored best.
-      solve(arm, spec, out);
-      solve(arm, { ...spec, azimuth: spec.azimuth + 0.4 }, out);
-      const anat = arm.rig.anat;
-      anat.measure(arm.side, out.upperArm, out.lowerArm, out.hand, null, 0);
-      expect(out.strain as number).toBeCloseTo(anat.cost(), 12);
-    }
   });
 });
 
@@ -468,8 +454,9 @@ describe('solvePoint guards', () => {
   });
 
   it('refuses an arm the profile has no segment lengths for', () => {
-    const arm = buildArm();
-    arm.profile.limb['lower.R'] = 0;
+    const arm = buildArm('R', (p) => {
+      p.limb['lower.R'] = 0;
+    });
     expect(solve(arm, { azimuth: 0, elevation: 0, extent: 0.7 }, solution())).toBeNull();
   });
 });

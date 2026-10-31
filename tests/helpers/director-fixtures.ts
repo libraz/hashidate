@@ -748,36 +748,6 @@ const pointRequest = obj([
   ['palm', opt(vecLike)],
   ['twist', optNum],
 ]);
-const armMeasurement = rec(
-  [
-    'elevation',
-    'plane',
-    'rotation',
-    'elbow',
-    'forearm',
-    'wristFlex',
-    'wristDev',
-    'torso',
-    'inboard',
-    'rotationRead',
-  ],
-  num,
-);
-const armStrain = rec(
-  ['elevation', 'rotation', 'elbow', 'forearm', 'wristFlex', 'wristDev', 'torso'],
-  num,
-);
-const volumeFrame = rec(['O', 'up', 'right', 'fwd'], vec3);
-const bodyVolumeFrame = obj([
-  ['torso', opt(volumeFrame)],
-  ['head', opt(volumeFrame)],
-]);
-const bodyClearance = obj([
-  ['surface', oneOf(['torso', 'head'])],
-  ['valid', bool],
-  ['distance', num],
-  ['normal', vec3],
-]);
 const faceSample = obj([
   ['distance', num],
   ['normal', vec3],
@@ -839,18 +809,7 @@ export const BOUNDARY = {
   },
   ArmAnatomy: {
     update: m(bool),
-    setArm: m(none, vec3, num, optNum, optNum),
-    clearArm: m(none),
-    measure: m(armMeasurement, side, vec3, vec3, vec3, opt(vec3), optNum, optNum),
-    score: m(armStrain),
-    cost: m(num),
-    report: m(arr(jointReading)),
-    clamp: m(none, side, vec3, vec3, vec3, opt(vec3)),
     surface: m(num, vec3),
-    captureVolumeFrame: m(bodyVolumeFrame, bodyVolumeFrame),
-    sampleVolumeClearances: m(arr(bodyClearance), bodyVolumeFrame, vec3, arr(bodyClearance)),
-    clearHand: m(bool, side, vec3, opt(vec3), opt(vec3)),
-    clampWrist: m(none, side, vec3, vec3, opt(vec3)),
   },
   FaceSurface: {
     refresh: m(none),

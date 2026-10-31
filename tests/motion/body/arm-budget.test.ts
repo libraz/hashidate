@@ -4,7 +4,6 @@ import { gestureEntries } from '@/engine/motion';
 import { Body } from '@/engine/motion/body';
 import { buildProfile } from '@/engine/profile';
 import { Rig } from '@/engine/rig';
-import { validationSamples } from '@/engine/rig/arm-route';
 import type { GestureDef, Profile } from '@/engine/types';
 import { buildRig } from '../../helpers/scene';
 import { harness, wristOf } from './harness';
@@ -27,8 +26,12 @@ interface Work {
 const work = (body: unknown): Work =>
   (body as { _transaction: { _armFrameWork: Work } })._transaction._armFrameWork;
 
-/** One solver call's own cap on environment batches (`arm-path.ts`). */
+/** One solver call's own cap on environment batches (`rig/arm_path/plan.rs`). */
 const SOLVER_CALL = 96;
+
+/** Locked validations for one frame of `dt` seconds, as `rig/arm_route.rs` counts them. */
+const validationSamples = (dt: number): number =>
+  Math.min(4, Math.max(1, Math.ceil(dt / (1 / 60) - 1e-9)));
 
 /**
  * The most one frame may spend, both arms: per arm the goal's solver step, the

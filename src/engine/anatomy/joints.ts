@@ -169,7 +169,7 @@ export const JOINTS: JointTable = {
   // framing limits in `profile.gaze` are far tighter than anatomy, because a
   // bust shot runs out of room long before a neck does. Neither this entry nor
   // `spine` is applied: gaze is bounded by its framing limits alone, and the
-  // summed spine offsets by the per-slot `SPINE_LIMITS` (`rig/spine.ts`).
+  // summed spine offsets by the per-slot `SPINE_LIMITS` (`rig/spine.rs` in the core).
   neck: {
     label: { en: 'Neck', ja: '首' },
     dofs: {
@@ -229,70 +229,6 @@ export const INTERLACE_GAP = 1.5;
 
 /** Total fan of a hand's four fingers when interlaced, about the MCP abduction a relaxed hand reaches. */
 export const SPLAY_CAP = 25 * D;
-
-/**
- * Tilt of the thumb's flexion axis from the palm normal toward the finger fold. About the bare
- * normal the wrapped thumb sank into the curled fingers on both validation rigs; tilted 20 degrees
- * it rests on their middle phalanges.
- */
-export const THUMB_FLEXION_TILT = 20 * D;
-
-/**
- * Opposition: how far the thumb's distal hinge turns about the phalanx as the thumb closes, so its
- * flexion folds the tip onto the fingers instead of sweeping on past them. Turned on the
- * metacarpal or proximal bone instead, the whole thumb sank a finger's radius into the fist.
- */
-export const THUMB_OPPOSITION = -80 * D;
-/** Thumb curl where the turn starts and where it is complete; a chop thumb stays below it. */
-export const THUMB_OPPOSITION_CURL: readonly [number, number] = [0.4, 0.65];
-
-/** Points tested per arm segment against the trunk. See `torsoDepth`. */
-export const TORSO_SAMPLES = 6;
-
-/**
- * Where along the upper arm the trunk test starts, as a fraction of it.
- *
- * The top of the upper arm is *supposed* to be against the trunk — that is
- * where the arm attaches, and the deltoid sits on the chest wall. On the
- * validation avatar the shoulder joint is 9% clear of the cylinder, so any
- * inward tilt at all puts the first sample inside, and no rotation about the
- * shoulder can lift a point that close to the pivot back out. Testing from the
- * root made the constraint unsatisfiable rather than strict.
- */
-export const TORSO_ARM_START = 0.4;
-
-/** What a fully tucked-in elbow costs the search. See `cost`. */
-export const INBOARD_COST = 3;
-
-/**
- * Being inside the body: what any contact costs, and what depth adds on top.
- *
- * The step outbids any single joint, so a pose that clears the body beats one
- * that does not however the joints compare. The slope has to be the larger of
- * the two, because the search's real problem is not choosing between touching
- * and not touching — it is choosing among candidates that all touch.
- */
-export const BODY_HIT = 6;
-export const BODY_DEPTH = 30;
-
-/** How many times the escape may re-aim per segment. See `clearBody`. */
-export const TORSO_PASSES = 8;
-
-/**
- * What holding the arm fully overhead costs, against zero for hanging.
- *
- * This is the term that decides between the two solutions most face-height
- * targets have — elbow hanging below the hand, or elbow cocked above it — and
- * it has to decide firmly. At 0.5 the two came out within a few hundredths of
- * each other, near enough that the small vertical bob written into a gesture
- * flipped the arm from one to the other mid-animation: not a pose that looks
- * wrong so much as an arm that snaps.
- *
- * Raising it does not distort gestures that genuinely reach upward. Where the
- * target is overhead there is no low-elbow solution to prefer, so the term is
- * the same for every candidate and cancels.
- */
-export const LIFT_COST = 2;
 
 /**
  * Resolution of the trunk's measured surface: height bands × angular sectors.

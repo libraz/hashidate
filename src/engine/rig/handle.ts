@@ -1,14 +1,14 @@
-import { core } from '../../../core';
-import type { Core } from '../../../core/abi';
-import type { SceneGraph } from '../../../core/scene';
+import { allocating, core } from '../../core';
+import type { Core } from '../../core/abi';
+import type { SceneGraph } from '../../core/scene';
 import { checkHeap, heap } from './views';
 
 /**
  * One `hd_rig_new` handle and the scene graph it was made on, shared by the rig's facades.
  *
  * `run` is for every export that may read or move a node: it goes through the graph's ancestor
- * mirror, as the scene graph's own updates do. `direct` is for the ones that touch only the
- * rig's own state.
+ * mirror, as the scene graph's own updates do, and through `allocating`. `direct` is for the ones
+ * that touch only the rig's own state.
  */
 export class RigHandle {
   #h: number;
@@ -24,7 +24,7 @@ export class RigHandle {
 
   /** The live handle; throws once the rig is freed. */
   get h(): number {
-    if (this.#h === 0) throw new Error('CoreRig: used after dispose()');
+    if (this.#h === 0) throw new Error('Rig: used after dispose()');
     return this.#h;
   }
 
@@ -40,7 +40,8 @@ export class RigHandle {
   run<T>(fn: (c: Core, h: number) => T): T {
     const h = this.h;
     checkHeap();
-    return this.graph.run(() => fn(core(), h));
+    // The arm step solver lays out its rows on a side's first constrained call; see `abi/rig.ts`.
+    return this.graph.run(() => allocating(() => fn(core(), h)));
   }
 
   direct<T>(fn: (c: Core, h: number) => T): T {
