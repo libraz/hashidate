@@ -3,6 +3,8 @@
 use std::alloc::{Layout, alloc, dealloc};
 
 mod math;
+mod profile;
+mod rig;
 mod scene;
 mod spring;
 mod triangles;

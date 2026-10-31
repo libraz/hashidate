@@ -721,7 +721,7 @@ impl Rig {
         // Anatomy has to be built after the finger axes: it reads the same rest
         // geometry to work out which side of the hand the thumb is on.
         let anat = ArmAnatomy::new(&p, graph);
-        let fingers = FingerClearance::new(&hands, &anat, |side| finger_clearance(&p, side));
+        let fingers = FingerClearance::new(&p, &hands, &anat, |side| finger_clearance(&p, side));
         let elbow = ElbowSearch::new();
         let point = PointSolver::new();
 
@@ -1264,6 +1264,12 @@ impl Rig {
             }
         }
         Some(prediction)
+    }
+
+    /// One side's prediction record, present once construction calibrated the hand: the record
+    /// `predict_hand_contact` refills in place and lends out.
+    pub fn contact_prediction(&self, side: Side) -> Option<&ContactPrediction> {
+        self.contact_prediction[side as usize].as_ref()
     }
 
     // rig.ts Rig.armFrameSupportedFromUpdatedRoot

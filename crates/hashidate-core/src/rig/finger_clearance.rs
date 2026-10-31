@@ -89,15 +89,29 @@ pub struct FingerClearance {
     spec: FingerSpec,
 }
 
+/// The most points `note_fingers` records for one hand: each resolved finger's joints and tip.
+fn shape_bound(p: &Profile, side: Side) -> usize {
+    Finger::ALL
+        .iter()
+        .map(|&f| p.finger(f, side).len())
+        .filter(|&len| len > 0)
+        .map(|len| len + 1)
+        .sum()
+}
+
 impl FingerClearance {
     // finger-clearance.ts FingerClearance.constructor
+    //
+    // The shapes are sized once for every point `note_fingers` can record, so noting never
+    // allocates.
     pub fn new(
+        p: &Profile,
         hands: &Hands,
         anat: &ArmAnatomy,
         finger_clearance: impl Fn(Side) -> f64,
     ) -> FingerClearance {
         FingerClearance {
-            finger_shape: [Vec::new(), Vec::new()],
+            finger_shape: Side::BOTH.map(|side| Vec::with_capacity(shape_bound(p, side))),
             finger_frame: [Mat3::default(); 2],
             palm_local: *hands.palm_local(),
             clearance: [finger_clearance(Side::L), finger_clearance(Side::R)],
@@ -414,7 +428,7 @@ mod tests {
         let b = built();
         let [lo, hi] = JointTable::human().wrist.deviation.free;
         assert_eq!(
-            FingerClearance::new(&b.hands, &b.anat, |_| 0.0).turn_max,
+            FingerClearance::new(&b.profile, &b.hands, &b.anat, |_| 0.0).turn_max,
             hi - lo
         );
 
@@ -425,7 +439,7 @@ mod tests {
         let mut g = b.graph;
         let anat = ArmAnatomy::new(&p, &mut g);
         assert_eq!(
-            FingerClearance::new(&b.hands, &anat, |_| 0.0).turn_max,
+            FingerClearance::new(&p, &b.hands, &anat, |_| 0.0).turn_max,
             (hi - lo) / 2.0
         );
     }
@@ -456,8 +470,16 @@ mod tests {
                 &spread,
             );
             b.graph.update_matrix_world(0, true);
-            let mut fingers = FingerClearance::new(&b.hands, &b.anat, clearance_of(&b.profile));
+            let mut fingers =
+                FingerClearance::new(&b.profile, &b.hands, &b.anat, clearance_of(&b.profile));
+            let capacity = fingers.finger_shape[1].capacity();
+            assert_eq!(capacity, shape_bound(&b.profile, Side::R));
             fingers.note_fingers(&b.profile, &mut b.graph, Side::R);
+            assert_eq!(
+                fingers.finger_shape[1].capacity(),
+                capacity,
+                "noting reallocated"
+            );
             shapes.push(fingers.finger_shape(Side::R).to_vec());
         }
         assert!(shapes[0].len() > 10);
@@ -508,7 +530,7 @@ mod tests {
         b.graph.set_local_position(hand, &target);
         b.graph.set_local_quaternion(hand, &local);
 
-        let mut fingers = FingerClearance::new(&b.hands, &b.anat, clearance_of(&p));
+        let mut fingers = FingerClearance::new(&p, &b.hands, &b.anat, clearance_of(&p));
         let rest = rest_of(&b.rest);
         let rig = FingerRig {
             p: &p,
@@ -1020,7 +1042,7 @@ mod battery {
                     let mut built = ArmAnatomy::new(&p, &mut g);
                     s.same_bool(built.update(&mut g), "ok");
                     let clearance =
-                        FingerClearance::new(hands.as_ref().unwrap(), &built, clearance_of);
+                        FingerClearance::new(&p, hands.as_ref().unwrap(), &built, clearance_of);
                     s.same(&[clearance.turn_max], "value");
                     anat = Some(built);
                     fingers = Some(clearance);
