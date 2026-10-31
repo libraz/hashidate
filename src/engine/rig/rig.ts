@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { ArmAnatomy, FINGER_WIDTH, HAND_CONTACT, JOINTS } from '../anatomy';
+import { ArmTransaction } from '../motion/arm-transaction';
 import type { HandSensePose } from '../motion/finger-life';
+import { CharacterFrame } from '../motion/frame';
+import type { ArmResolver } from '../motion/resolve';
 import type {
   ArmSlot,
   FingerName,
@@ -542,6 +545,23 @@ export class Rig {
 
   get externalArmRevision(): number {
     return this._externalArmRevision;
+  }
+
+  private _characterFrame: CharacterFrame | null = null;
+
+  /** The character frame over this rig's anatomy; the same instance on every read. */
+  get characterFrame(): CharacterFrame {
+    this._characterFrame ??= new CharacterFrame(this, this.p);
+    return this._characterFrame;
+  }
+
+  /** A constrained arm commit over this rig, reading the followed records in `output`. */
+  armTransaction(
+    arm: ArmResolver,
+    output: ConstructorParameters<typeof ArmTransaction>[3],
+    leadFloor: number,
+  ): ArmTransaction {
+    return new ArmTransaction(this, this.characterFrame, arm, output, leadFloor);
   }
 
   acceptedArmState(side: Side): Readonly<AcceptedArmState> {

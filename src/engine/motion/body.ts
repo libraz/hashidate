@@ -18,13 +18,13 @@ import type {
 } from '../types';
 import { FINGER_NAMES } from '../types';
 import { type HandControls, ReachAnchors } from './anchors';
-import { ArmTransaction } from './arm-transaction';
+import type { ArmTransaction } from './arm-transaction';
 import { Attitude } from './attitude';
 import { claspMeasure, claspSpread } from './clasp';
 import { gestureDef, SPINE_SLOTS } from './custom';
 import { FingerLife, type HandSensePose } from './finger-life';
 import { DirFollower, ScalarFollower, slerpDir } from './follow';
-import { CharacterFrame, sideMirror } from './frame';
+import { type CharacterFrame, sideMirror } from './frame';
 import { Gaze, type SpeechGaze } from './gaze';
 import { BASE_FINGERS, BASE_PALM, BASE_POSE, pointHand } from './gestures';
 import { OPEN_HAND } from './gestures/hands';
@@ -556,7 +556,7 @@ export class Body {
     this.rig = rig;
     this.p = profile;
     this._rest = restPose(profile.avatar.armRest);
-    this.axes = new CharacterFrame(rig, profile);
+    this.axes = rig.characterFrame;
     this.anchors = new ReachAnchors(profile, rig, this.axes);
     this._arm = new ArmResolver(profile, rig, this.axes, this.anchors);
     this._spine = new SpineCarry(rig);
@@ -665,9 +665,7 @@ export class Body {
       load: 0,
     };
 
-    this._transaction = new ArmTransaction(
-      rig,
-      this.axes,
+    this._transaction = rig.armTransaction(
       this._arm,
       {
         _armDirs: this._armDirs,
