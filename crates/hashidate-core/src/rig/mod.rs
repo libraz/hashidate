@@ -4132,7 +4132,7 @@ mod battery {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     use crate::anatomy::joints::JointTable;
@@ -5500,7 +5500,7 @@ mod tests {
     /// avatar's TS `Rig`, its anatomy, its face and its arm drivers through a few short scripts,
     /// with what the other layers did to the tree in between, replayed on the port. See
     /// `record-corpora.test.ts`.
-    mod battery {
+    pub(crate) mod battery {
         use super::*;
         use crate::anatomy::strain::StrainZone;
         use crate::corpus_replay::Corpus;
@@ -5514,8 +5514,10 @@ mod tests {
         };
         use crate::scene::graph::flag;
 
-        const TAGS: [&str; 9] = [
-            "begin", "new", "rig", "anat", "face", "driver", "dt", "frame", "end",
+        /// The record tags; the last three are the motion battery's, which [`replay`] hands on.
+        const TAGS: [&str; 12] = [
+            "begin", "new", "rig", "anat", "face", "driver", "dt", "frame", "end", "txNew", "tx",
+            "axes",
         ];
         const METHODS: [&str; 38] = [
             "acceptedArmState",
@@ -5582,15 +5584,15 @@ mod tests {
         /// A node's state as the recording dumps it.
         const NODE: usize = 43;
 
-        fn files() -> Vec<String> {
+        fn files(name: &str) -> Vec<String> {
             let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpora");
             ('a'..='z')
-                .map(|c| format!("rig-battery-{c}"))
+                .map(|c| format!("{name}-{c}"))
                 .take_while(|name| dir.join(format!("{name}.json")).exists())
                 .collect()
         }
 
-        fn spec(s: &mut Stream) -> FingerSpec {
+        pub(crate) fn spec(s: &mut Stream) -> FingerSpec {
             let mask = s.index();
             std::array::from_fn(|i| (mask & (1 << i) != 0).then(|| s.f64()))
         }
@@ -5612,7 +5614,7 @@ mod tests {
             }
         }
 
-        fn put_vec(out: &mut Vec<f64>, v: &Vec3) {
+        pub(crate) fn put_vec(out: &mut Vec<f64>, v: &Vec3) {
             out.extend([v.x, v.y, v.z]);
         }
 
@@ -5727,7 +5729,7 @@ mod tests {
         }
 
         /// `rigStateValues`: what the rig keeps that a caller can see or a later call reads.
-        fn state_values(rig: &Rig) -> Vec<f64> {
+        pub(crate) fn state_values(rig: &Rig) -> Vec<f64> {
             let b = |v: bool| f64::from(u8::from(v));
             let mut v = vec![
                 b(rig.limits_enabled),
@@ -5786,7 +5788,7 @@ mod tests {
         }
 
         /// Write one node's recorded parts: TRS, matrix, matrixWorld, the flag, by `mask`.
-        fn write_parts(g: &mut Graph, i: usize, mask: usize, s: &mut Stream) {
+        pub(crate) fn write_parts(g: &mut Graph, i: usize, mask: usize, s: &mut Stream) {
             if mask & 1 != 0 {
                 g.position[3 * i..3 * i + 3].copy_from_slice(s.take(3));
                 g.quaternion[4 * i..4 * i + 4].copy_from_slice(s.take(4));
@@ -5808,7 +5810,7 @@ mod tests {
         }
 
         /// What the other layers changed since the last record.
-        fn apply_diff(g: &mut Graph, s: &mut Stream) {
+        pub(crate) fn apply_diff(g: &mut Graph, s: &mut Stream) {
             for _ in 0..s.index() {
                 let i = s.index();
                 let mask = s.index();
@@ -6287,7 +6289,7 @@ mod tests {
         }
 
         /// A heavy record's close: the output when there is one, the rig's state and the tree.
-        fn same_close(s: &mut Stream, rig: &Rig, g: &Graph, out: &[f64]) {
+        pub(crate) fn same_close(s: &mut Stream, rig: &Rig, g: &Graph, out: &[f64]) {
             if !out.is_empty() {
                 s.same(&hash_halves(out), "output");
             }
@@ -6295,10 +6297,18 @@ mod tests {
             s.same(&halves(graph_hash(g)), "tree");
         }
 
-        #[test]
-        fn replays_the_ts_rig_through_the_director_bit_for_bit() {
-            let files = files();
-            assert!(!files.is_empty(), "no rig-battery files");
+        /// A call the rig battery's loop does not replay itself: the tag, the tree, the rig and
+        /// the stream at the record's body.
+        pub(crate) type Extra<'e> = dyn FnMut(&str, &mut Graph, &mut Rig, &mut Stream) + 'e;
+
+        /// Replay the call battery `name`, handing the motion tags to `extra`. Returns how often
+        /// each tag and method was replayed, and the fixtures that ended.
+        pub(crate) fn replay(
+            name: &str,
+            extra: &mut Extra,
+        ) -> (std::collections::BTreeMap<String, usize>, usize) {
+            let files = files(name);
+            assert!(!files.is_empty(), "no {name} files");
             let mut begin: Vec<f64> = Vec::new();
             let mut built: Option<(Graph, Profile)> = None;
             let mut live: Option<(Graph, Rig)> = None;
@@ -6404,11 +6414,22 @@ mod tests {
                             same_close(&mut s, &rig, &g, &[rig.arm_solver_off.len() as f64]);
                             fixtures += 1;
                         }
-                        other => panic!("unknown tag {other}"),
+                        other => {
+                            let (g, rig) = live.as_mut().expect("a rig");
+                            extra(other, g, rig, &mut s);
+                        }
                     }
                 }
             }
             assert!(live.is_none(), "the last fixture did not end");
+            (seen, fixtures)
+        }
+
+        #[test]
+        fn replays_the_ts_rig_through_the_director_bit_for_bit() {
+            let (seen, fixtures) = replay("rig-battery", &mut |tag, _, _, s| {
+                panic!("{}: no replay for {tag}", s.what)
+            });
             assert_eq!(fixtures, 4);
             for method in [
                 "bootstrapStandingPose",

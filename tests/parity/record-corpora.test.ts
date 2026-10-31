@@ -10,8 +10,11 @@ import * as strain from '@/engine/anatomy/strain';
 import * as volume from '@/engine/anatomy/volume';
 import { type BodyClearance, makeBodyVolumeFrame } from '@/engine/anatomy/volumes';
 import { Director } from '@/engine/director';
+import { ArmTransaction } from '@/engine/motion/arm-transaction';
 import { Body } from '@/engine/motion/body';
 import type { HandSensePose } from '@/engine/motion/finger-life';
+import { CharacterFrame } from '@/engine/motion/frame';
+import { ArmResolver } from '@/engine/motion/resolve';
 import { buildProfile } from '@/engine/profile';
 import { Rig } from '@/engine/rig';
 import { ArmChain } from '@/engine/rig/arm-chain';
@@ -56,6 +59,7 @@ import type {
 import { SkeletonRefresh } from '@/engine/rig/skeleton';
 import { type OffsetSlot, SpineOffsets } from '@/engine/rig/spine';
 import {
+  type ArmSlot,
   type BoneSlot,
   FINGER_NAMES,
   type FingerName,
@@ -170,6 +174,16 @@ import { DT, harness } from '../motion/body/harness';
  * a code instead of its values; a driver call repeating its side's last context says so. `frame`
  * closes each frame after the director's full pass with the positions, quaternions and scales
  * that changed, `dt` is a new `rig.dt`, and `end` closes a script.
+ *
+ * `motion-battery-{a..}` is the same stream over those scripts and two more (contact switches at
+ * the capped step, performances changing mid-flight), with Body's `ArmTransaction` and
+ * `CharacterFrame` calls recorded as units: what they call inside the rig is left to the replay.
+ * `txNew` is the transaction's construction (its lead floor). A `tx` record is its method, the
+ * arguments, and for `stageClaspLeader` and `commit` the diff before it and Body's followed
+ * records; it closes with the FNV-1a of the frame's work, each route as `rig-d-battery` takes it
+ * and whether it is commanded, then for a commit every `ArmResolver.note` it made. An `axes`
+ * record says whether it resolves the frame itself, which makes it a call with a diff, a state
+ * and a tree, and closes with what it returned or wrote.
  *
  * Without `HASHIDATE_RECORD_CORPORA=1` this checks the files against a fresh recording;
  * with it, it writes them.
@@ -5227,6 +5241,9 @@ const RIG_BATTERY_TAGS = [
   'dt',
   'frame',
   'end',
+  'txNew',
+  'tx',
+  'axes',
 ] as const;
 type RigBatteryTag = (typeof RIG_BATTERY_TAGS)[number];
 /** The `Rig` methods the battery replays, `limitsEnabled` being its setter. */
@@ -5943,13 +5960,260 @@ const RIG_BATTERY_FIXTURES: readonly DirectorFixture[] = (() => {
   ];
 })();
 
+/** One call battery: the scripts it runs and what they must reach. */
+interface CallBattery {
+  name: string;
+  fixtures: readonly DirectorFixture[];
+  /**
+   * Record the arm transaction's and the character frame's calls as units, with what the rig
+   * and its parts do inside them left to the replay.
+   */
+  motion: boolean;
+  reaches: readonly string[];
+}
+
+const RIG_CALL_BATTERY: CallBattery = {
+  name: 'rig-battery',
+  fixtures: RIG_BATTERY_FIXTURES,
+  motion: false,
+  reaches: [
+    'bootstrapStandingPose',
+    'applyBodyContext',
+    'commitArmFrame',
+    'armForwardContextFromUpdatedBody',
+    'stageArmForward',
+    'plantLegs',
+    'aimArm',
+    'aimArmLegacy',
+    'curlFinger',
+    'curlHand',
+    'curlHandLegacy',
+    'measure',
+    'solveReachNatural',
+    'solvePoint',
+    'predictHandContact',
+    'finishLegacyBodyFrame',
+    'limitsEnabled',
+    'driver.planFrom',
+    'face.refresh',
+  ],
+};
+
+/** The rig battery's scripts, then contact switches at the capped step and performance changes mid-flight. */
+const MOTION_BATTERY_FIXTURES: readonly DirectorFixture[] = (() => {
+  const capped = (every: number) => (frame: number) =>
+    frame % every === every - 1 ? 0.05 : 1 / 60;
+  const script = (
+    id: string,
+    frames: number,
+    at: Record<number, DirectorFixture['steps'][number]['actions']>,
+    dt: (frame: number) => number,
+  ): DirectorFixture => ({
+    id,
+    variant: BASE_VARIANT,
+    idle: false,
+    steps: Array.from({ length: frames }, (_, frame) => ({
+      dt: dt(frame),
+      ...(at[frame] ? { actions: at[frame] } : {}),
+    })),
+  });
+  const contacts = ['cover', 'heartHands', 'faceFrame', 'cheekPoke', 'selfHug', 'listen'];
+  return [
+    ...RIG_BATTERY_FIXTURES,
+    script(
+      'contact switches capped',
+      60,
+      Object.fromEntries(
+        Array.from({ length: 8 }, (_, k) => [
+          k * 8,
+          [{ gesture: contacts[k % contacts.length], side: k % 2 ? 'L' : 'R' } as const],
+        ]),
+      ),
+      capped(3),
+    ),
+    script(
+      'transitions',
+      50,
+      {
+        0: [{ perform: 'explain' }],
+        12: [{ perform: 'bravo' }],
+        24: [{ gesture: 'handsClasp', side: 'R' }, { hop: 'leap' }],
+        38: [{ perform: 'twirl' }],
+      },
+      capped(10),
+    ),
+  ];
+})();
+
+const MOTION_CALL_BATTERY: CallBattery = {
+  name: 'motion-battery',
+  fixtures: MOTION_BATTERY_FIXTURES,
+  motion: true,
+  reaches: [
+    'bootstrapStandingPose',
+    'plantLegs',
+    'aimArm',
+    'curlHand',
+    'measure',
+    'limitsEnabled',
+    'tx.beginFrame',
+    'tx.retime',
+    'tx.resetRoute',
+    'tx.stageClaspLeader',
+    'tx.commit',
+    'axes.axialMirror',
+    'axes.tupleToWorld',
+    'axes.toCharacter',
+  ],
+};
+
+const TX_METHODS = ['beginFrame', 'retime', 'resetRoute', 'stageClaspLeader', 'commit'] as const;
+const AXES_METHODS = [
+  'ready',
+  'legacyMirror',
+  'axialMirror',
+  'toWorld',
+  'tupleToWorld',
+  'toCharacter',
+] as const;
+type AxesMethod = (typeof AXES_METHODS)[number];
+/** The argument a `CharacterFrame` method takes `frameReady` in; left out, the call resolves the frame. */
+const AXES_READY_ARGUMENT: Record<AxesMethod, number | null> = {
+  ready: null,
+  legacyMirror: null,
+  axialMirror: 1,
+  toWorld: 4,
+  tupleToWorld: 4,
+  toCharacter: 3,
+};
+
+function transactionArguments(
+  method: (typeof TX_METHODS)[number],
+  a: readonly unknown[],
+  into: number[],
+): void {
+  switch (method) {
+    case 'beginFrame':
+      return;
+    case 'retime':
+      into.push(a[0] as number);
+      return;
+    case 'resetRoute':
+      putSide(into, a[0] as Side);
+      into.push(...(a[1] as Float64Array));
+      return;
+    case 'stageClaspLeader':
+      putSide(into, a[0] as Side);
+      into.push(a[1] as number, a[2] ? 1 : 0);
+      return;
+    case 'commit':
+      into.push(a[0] as number, a[1] as number, (a[2] as number | undefined) ?? 0);
+  }
+}
+
+/** Body's followed records as the transaction reads them, per side. */
+function putFollowed(into: number[], tx: ArmTransaction): void {
+  const get = <T>(name: string) => Reflect.get(tx, name) as Record<Side, T>;
+  const dirs = get<Record<ArmSlot, Vec3Tuple>>('_armDirs');
+  const palm = get<Vec3Tuple>('_palmOut');
+  const palmW = get<{ value: number }>('_palmW');
+  const twist = get<{ value: number }>('_twist');
+  const curls = get<Record<FingerName, number | undefined>>('_fingerSpec');
+  const spread = get<Record<FingerName, number | undefined>>('_fingerSpreadSpec');
+  const tuple = (v: Vec3Tuple) => into.push(v[0] ?? 0, v[1] ?? 0, v[2] ?? 0);
+  for (const side of ['L', 'R'] as const) {
+    for (const slot of ARM_SLOTS) tuple(dirs[side][slot]);
+    tuple(palm[side]);
+    into.push(palmW[side].value, twist[side].value);
+    for (const spec of [curls[side], spread[side]]) {
+      for (const f of FINGER_NAMES) into.push(must(spec[f], `a followed ${f}`));
+    }
+  }
+}
+
+function putRoute(into: number[], r: armRoute.ArmRoute): void {
+  into.push(
+    ...hashHalves([
+      ...r.goalQ,
+      ...r.qAcc,
+      ...r.vAcc,
+      ...r.aAcc,
+      ...r.tail0,
+      ...r.tailV,
+      ...r.tailA,
+      ...r.carryFrom,
+      ...r.carryRate,
+    ]),
+    r.projected ? 1 : 0,
+    r.solved ? 1 : 0,
+    r.stopping ? 1 : 0,
+  );
+}
+
+/** The transaction's own state after a call: the frame's work, each route and whether it is commanded. */
+function transactionResult(tx: ArmTransaction): number[] {
+  const work = Reflect.get(tx, '_armFrameWork') as Record<string, number>;
+  const out = [
+    work.plans,
+    work.validations,
+    work.repairs,
+    work.stopTails,
+    work.holds,
+    work.solverCalls,
+    work.solverIterations,
+    work.environmentBatches,
+  ];
+  const routes = Reflect.get(tx, '_routes') as Record<Side, armRoute.ArmRoute>;
+  const commanded = Reflect.get(tx, '_commanded') as Record<Side, boolean>;
+  for (const side of ['L', 'R'] as const) {
+    putRoute(out, routes[side]);
+    out.push(commanded[side] ? 1 : 0);
+  }
+  return out;
+}
+
+function putValue(into: number[], v: Vec3Tuple | THREE.Vector3): void {
+  if (Array.isArray(v)) into.push(v[0] ?? 0, v[1] ?? 0, v[2] ?? 0);
+  else putVec(into, v as THREE.Vector3);
+}
+
+function axesArguments(method: AxesMethod, a: readonly unknown[], into: number[]): void {
+  if (method === 'ready') return;
+  putSide(into, a[method === 'legacyMirror' || method === 'axialMirror' ? 0 : 2] as Side);
+  switch (method) {
+    case 'legacyMirror':
+      return;
+    case 'axialMirror':
+      putOptBool(into, a[1] as boolean | undefined);
+      return;
+    case 'toWorld':
+    case 'tupleToWorld':
+      putValue(into, a[1] as Vec3Tuple | THREE.Vector3);
+      presentNumber(into, a[3] as number | undefined);
+      putOptBool(into, a[4] as boolean | undefined);
+      return;
+    case 'toCharacter':
+      putVec(into, a[1] as THREE.Vector3);
+      putOptBool(into, a[3] as boolean | undefined);
+  }
+}
+
+function axesResult(method: AxesMethod, a: readonly unknown[], r: unknown, into: number[]): void {
+  if (method === 'ready') into.push(r ? 1 : 0);
+  else if (method === 'legacyMirror' || method === 'axialMirror') into.push(r as number);
+  else {
+    if (r !== a[0]) throw new Error(`${method} returned another object than its out`);
+    putValue(into, r as Vec3Tuple | THREE.Vector3);
+  }
+}
+
 /**
  * Every call the director's layers make into the base avatar's `Rig`, its anatomy, its face
  * and its arm drivers through `RIG_BATTERY_FIXTURES`, with what the other layers did to the
  * tree in between; see the file comment.
  */
-function recordRigCallBattery(): Map<string, Recorded> {
-  const stream = new RecordStream('rig-battery');
+function recordRigCallBattery(battery: CallBattery = RIG_CALL_BATTERY): Map<string, Recorded> {
+  const stream = new RecordStream(battery.name);
   const coverage = new Map<string, number>();
   const count = (what: string) => coverage.set(what, (coverage.get(what) ?? 0) + 1);
   const state = {
@@ -5961,6 +6225,8 @@ function recordRigCallBattery(): Map<string, Recorded> {
     pendingNew: null as number[] | null,
     begin: null as number[] | null,
     dt: 1 / 60,
+    transaction: null as ArmTransaction | null,
+    notes: null as number[] | null,
   };
   const read = (o: THREE.Object3D, out: Float64Array) => {
     out.set(o.position.toArray(), 0);
@@ -6239,6 +6505,59 @@ function recordRigCallBattery(): Map<string, Recorded> {
     );
   }
 
+  if (battery.motion) {
+    const ownRig = (self: unknown) => Reflect.get(self as object, 'rig') === state.rig;
+    patch(
+      ArmResolver.prototype,
+      'note',
+      (original) =>
+        function (this: ArmResolver, ...args: unknown[]) {
+          if (state.notes) {
+            const [side, ...links] = args as [Side, Vec3Tuple, Vec3Tuple, Vec3Tuple];
+            putSide(state.notes, side);
+            for (const link of links) putVec(state.notes, link);
+          }
+          return original.apply(this, args);
+        },
+    );
+    for (const method of TX_METHODS) {
+      const heavy = method === 'stageClaspLeader' || method === 'commit';
+      watch(ArmTransaction.prototype, method, ownRig, (self, args, run) => {
+        const tx = self as ArmTransaction;
+        const body = open(heavy, [TX_METHODS.indexOf(method)]);
+        if (state.transaction !== tx) {
+          state.transaction = tx;
+          const routes = Reflect.get(tx, '_routes') as Record<Side, armRoute.ArmRoute>;
+          emit('txNew', [Reflect.get(routes.L, 'leadFloor') as number]);
+        }
+        transactionArguments(method, args, body);
+        if (heavy) putFollowed(body, tx);
+        if (method === 'commit') state.notes = [];
+        const result = run();
+        const output = transactionResult(tx);
+        if (state.notes) output.push(state.notes.length / 10, ...state.notes);
+        state.notes = null;
+        close('tx', body, output, heavy);
+        count(`tx.${method}`);
+        return result;
+      });
+    }
+    for (const method of AXES_METHODS) {
+      watch(CharacterFrame.prototype, method, ownRig, (_self, args, run) => {
+        const at = AXES_READY_ARGUMENT[method];
+        const heavy = method === 'ready' || (at !== null && args[at] === undefined);
+        const body = open(heavy, [AXES_METHODS.indexOf(method), heavy ? 1 : 0]);
+        axesArguments(method, args, body);
+        const result = run();
+        const output: number[] = [];
+        axesResult(method, args, result, output);
+        close('axes', body, output, heavy);
+        count(`axes.${method}`);
+        return result;
+      });
+    }
+  }
+
   /**
    * The frame's close: the director's full pass has run, so the tree is its TRS alone. The
    * record carries the TRS the other layers changed since the last record, for the replay to
@@ -6268,8 +6587,9 @@ function recordRigCallBattery(): Map<string, Recorded> {
   };
 
   try {
-    for (const fixture of RIG_BATTERY_FIXTURES) {
+    for (const fixture of battery.fixtures) {
       state.rig = null;
+      state.transaction = null;
       contexts.L = null;
       contexts.R = null;
       runDirectorFixture(fixture, { tamper: endFrame });
@@ -6281,27 +6601,7 @@ function recordRigCallBattery(): Map<string, Recorded> {
     for (const undo of restore.reverse()) undo();
   }
   // Every part of the rig the scripts are there for.
-  for (const what of [
-    'bootstrapStandingPose',
-    'applyBodyContext',
-    'commitArmFrame',
-    'armForwardContextFromUpdatedBody',
-    'stageArmForward',
-    'plantLegs',
-    'aimArm',
-    'aimArmLegacy',
-    'curlFinger',
-    'curlHand',
-    'curlHandLegacy',
-    'measure',
-    'solveReachNatural',
-    'solvePoint',
-    'predictHandContact',
-    'finishLegacyBodyFrame',
-    'limitsEnabled',
-    'driver.planFrom',
-    'face.refresh',
-  ]) {
+  for (const what of battery.reaches) {
     expect(coverage.get(what), what).toBeGreaterThan(0);
   }
   return stream.finish();
@@ -6364,5 +6664,11 @@ describe('the recorded corpora', () => {
 
   it('match a fresh recording of the rig call battery', () => {
     for (const [name, recorded] of recordRigCallBattery()) settle(name, recorded);
+  });
+
+  it('match a fresh recording of the arm transaction and character frame battery', () => {
+    for (const [name, recorded] of recordRigCallBattery(MOTION_CALL_BATTERY)) {
+      settle(name, recorded);
+    }
   });
 });

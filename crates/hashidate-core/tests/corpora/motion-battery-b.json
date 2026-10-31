@@ -1,0 +1,16 @@
+{
+ "fn": "motion-battery-b",
+ "cases": 1,
+ "in": [
+  {
+   "name": "records",
+   "len": 1
+  }
+ ],
+ "out": [
+  {
+   "name": "stream",
+   "len": 25385
+  }
+ ]
+}
