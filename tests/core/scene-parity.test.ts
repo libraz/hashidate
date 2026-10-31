@@ -1,7 +1,10 @@
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { allocating, core } from '@/core';
 import { NO_NODE, SceneGraph } from '@/core/scene';
+import { WASM_PATH } from '../../tools/rust-core/build';
 
 const MASK = (1n << 64n) - 1n;
 const TREES = 1_000;
@@ -592,5 +595,87 @@ describe('core-backed scene graph', () => {
       core().hd_free(ptr, 64 << 20);
       t.graph.dispose();
     }
+  });
+  it('fixes the update flags, the pivot and bindMode at SceneGraph.of', () => {
+    const t = pair(seedOf(17));
+    for (const node of t.backed.nodes) {
+      expect(() => {
+        node.matrixAutoUpdate = !node.matrixAutoUpdate;
+      }).toThrow(TypeError);
+      expect(() => {
+        node.matrixWorldAutoUpdate = !node.matrixWorldAutoUpdate;
+      }).toThrow(TypeError);
+      expect(() => {
+        node.pivot = node.pivot === null ? new THREE.Vector3() : null;
+      }).toThrow(TypeError);
+      const mesh = node as THREE.SkinnedMesh;
+      if (mesh.isSkinnedMesh) {
+        expect(() => {
+          mesh.bindMode = THREE.DetachedBindMode;
+        }).toThrow(TypeError);
+      }
+    }
+    // A pivot's coordinates are the core's, and stay writable.
+    const k = t.backed.nodes.findIndex((n) => n.pivot !== null);
+    expect(k).toBeGreaterThanOrEqual(0);
+    for (const w of [t.plain, t.backed]) {
+      w.nodes[k].pivot?.set(0.25, -0.5, 1);
+      w.root.updateMatrixWorld(true);
+    }
+    expect(diffWorld(t.plain, t.backed)).toBeNull();
+    t.graph.dispose();
+    for (const node of t.backed.nodes) {
+      node.matrixAutoUpdate = !node.matrixAutoUpdate;
+      node.matrixWorldAutoUpdate = !node.matrixWorldAutoUpdate;
+      node.pivot = null;
+    }
+  });
+
+  it('leaves core-backed nodes in V8 fast mode', () => {
+    const url = (path: string) => new URL(path, import.meta.url).href;
+    // `%HasFastProperties` needs a process started with --allow-natives-syntax.
+    const script = `
+      import { readFile } from 'node:fs/promises';
+      import * as THREE from 'three';
+      import { initCore } from ${JSON.stringify(url('../../src/core/index.ts'))};
+      import { SceneGraph } from ${JSON.stringify(url('../../src/core/scene.ts'))};
+      await initCore(() => readFile(${JSON.stringify(WASM_PATH)}));
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
+      geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute([0, 0, 0, 0], 4));
+      geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute([1, 0, 0, 0], 4));
+      const root = new THREE.Group();
+      const bones = [new THREE.Bone(), new THREE.Bone(), new THREE.Bone()];
+      root.add(bones[0]);
+      bones[0].add(bones[1], bones[2]);
+      bones[1].pivot = new THREE.Vector3(0, 1, 0);
+      bones[2].matrixAutoUpdate = false;
+      const attached = new THREE.SkinnedMesh(geometry);
+      const detached = new THREE.SkinnedMesh(geometry);
+      detached.bindMode = THREE.DetachedBindMode;
+      root.add(attached, detached, new THREE.Mesh(geometry), new THREE.Object3D());
+      for (const mesh of [attached, detached]) mesh.bind(new THREE.Skeleton(bones));
+      new THREE.Group().add(root);
+      const fast = new Function('o', 'return %HasFastProperties(o)');
+      const nodes = [];
+      root.traverse((n) => nodes.push(n));
+      const graph = SceneGraph.of(root);
+      root.updateMatrixWorld(true);
+      bones[1].updateMatrix();
+      bones[2].getWorldPosition(new THREE.Vector3());
+      attached.skeleton.update();
+      const slow = nodes.filter((n) => !fast(n)).map((n) => n.type);
+      graph.dispose();
+      // The check can fail: an accessor on the instance is what turns a node slow.
+      const control = new THREE.Bone();
+      Object.defineProperty(control, 'matrixAutoUpdate', { get: () => true });
+      process.stdout.write(JSON.stringify({ nodes: nodes.length, slow, control: fast(control) }));
+    `;
+    const out = execFileSync(
+      process.execPath,
+      ['--allow-natives-syntax', '--import', 'tsx', '--input-type=module', '-e', script],
+      { cwd: fileURLToPath(new URL('../..', import.meta.url)), encoding: 'utf8' },
+    );
+    expect(JSON.parse(out)).toEqual({ nodes: 8, slow: [], control: false });
   });
 });

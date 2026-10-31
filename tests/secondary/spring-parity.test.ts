@@ -76,7 +76,7 @@ describe('Spring against the recorded hashes', () => {
     });
   }
 
-  it('reports both anchor failures of F7 and switches their groups off', () => {
+  it('reports the scale failure of F7 and switches its group off', () => {
     const fixture = must(SPRING_FIXTURES[7], 'F7');
     const tree = fixture.build();
     const spring = withCoreMath(
@@ -86,15 +86,19 @@ describe('Spring against the recorded hashes', () => {
       applyFrame(tree.rig, spring, step);
       withCoreMath(() => spring.update(step.dt));
     }
-    const failed = spring.groups.filter((g) => g.id.startsWith('charm'));
+    const groups = spring.groups.filter((g) => g.id.startsWith('charm'));
+    // The anchor is core-backed now, so its world override can no longer be switched on.
+    const anchor = must(tree.rig.bones.get('CharmB_1'), 'CharmB_1');
+    expect(() => {
+      anchor.matrixWorldAutoUpdate = false;
+    }).toThrow(TypeError);
     spring.dispose();
     expect(spring.missing).toEqual([
       'sway:charm anchor: anchor:ProducerA_1 scale changed after resolution',
-      'sway:charmB anchor: anchor:CharmB_1 has a manual matrixWorld override',
     ]);
-    expect(failed.map((g) => [g.enabled, g.anchor])).toEqual([
-      [false, null],
-      [false, null],
+    expect(groups.map((g) => [g.id, g.enabled, g.anchor === null])).toEqual([
+      ['charm', false, true],
+      ['charmB', true, false],
     ]);
   });
 

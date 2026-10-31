@@ -10,6 +10,11 @@
 //! branch when the chain is empty and the multiply branch otherwise; it is only updated where three
 //! would update it, on the climb of `updateWorldMatrix(true, …)`.
 //!
+//! The caller keeps its own copy of each node's `matrixWorldNeedsUpdate` as a plain field. Every
+//! write that flips the bit lists the node once in [`Graph::needs_changed`], and
+//! [`Graph::take_needs_changed`] reduces that list to the nodes whose bit now differs from what the
+//! caller last saw, so a pass that sets and clears every node's bit reports nothing.
+//!
 //! Children that stay outside the table (outline meshes added after construction) are updated by
 //! the caller. A pass records, for each node flagged as having such children, the `force` it handed
 //! its children, so the caller can repeat three's call on them afterwards.
@@ -123,6 +128,14 @@ pub struct Graph {
     /// [`flag`] bits per ancestor level (the first four only).
     pub ancestor_flags: Vec<u8>,
     ancestor_count: usize,
+    /// u32: the count of listed nodes, then those nodes. A node is listed once when its
+    /// `MATRIX_WORLD_NEEDS_UPDATE` bit is written to a new value; [`Graph::take_needs_changed`]
+    /// reduces the list to the nodes the caller has to assign.
+    pub needs_changed: Vec<u32>,
+    /// 1 where the node is in [`Graph::needs_changed`].
+    listed: Vec<u8>,
+    /// The `MATRIX_WORLD_NEEDS_UPDATE` value the caller last saw, 0 or 1 per node.
+    shown: Vec<u8>,
     /// Mesh slot per node, or [`NO_NODE`].
     mesh_of: Vec<u32>,
     /// Nodes flagged [`flag::PLAIN_CHILDREN`]; its capacity is the node count, so it never grows.
@@ -173,6 +186,9 @@ impl Graph {
             ancestors: vec![0.0; RECORD * MAX_ANCESTORS],
             ancestor_flags: vec![0; MAX_ANCESTORS],
             ancestor_count: 0,
+            needs_changed: vec![0; n + 1],
+            listed: vec![0; n],
+            shown: vec![0; n],
             mesh_of: vec![NO_NODE; n],
             plain: Vec::with_capacity(n),
             filled: Shape::default(),
@@ -211,6 +227,7 @@ impl Graph {
         }
         self.parent[i] = parent;
         self.flags[i] = flags;
+        self.shown[i] = u8::from(flags & flag::MATRIX_WORLD_NEEDS_UPDATE != 0);
         self.position[3 * i..3 * i + 3].copy_from_slice(&record[R_POSITION..R_POSITION + 3]);
         self.quaternion[4 * i..4 * i + 4].copy_from_slice(&record[R_QUATERNION..R_QUATERNION + 4]);
         self.scale[3 * i..3 * i + 3].copy_from_slice(&record[R_SCALE..R_SCALE + 3]);
@@ -390,7 +407,45 @@ impl Graph {
         let mut matrix = mat4(&self.matrix, n);
         object3d::update_matrix(&mut matrix, &position, &quaternion, &scale, pivot.as_ref());
         put_mat4(&mut self.matrix, n, &matrix);
-        self.flags[n] |= flag::MATRIX_WORLD_NEEDS_UPDATE;
+        self.set_needs_update(n, true);
+    }
+
+    /// Reduces [`Graph::needs_changed`] to the nodes whose `MATRIX_WORLD_NEEDS_UPDATE` differs from
+    /// what the caller last saw, records the new values as seen and returns their count; the nodes
+    /// follow the count's slot, which is left at 0 for the next call.
+    pub fn take_needs_changed(&mut self) -> u32 {
+        let listed = self.needs_changed[0] as usize;
+        let mut out = 0;
+        for k in 1..=listed {
+            let n = self.needs_changed[k] as usize;
+            self.listed[n] = 0;
+            let on = u8::from(self.flags[n] & flag::MATRIX_WORLD_NEEDS_UPDATE != 0);
+            if on != self.shown[n] {
+                self.shown[n] = on;
+                out += 1;
+                self.needs_changed[out] = n as u32;
+            }
+        }
+        self.needs_changed[0] = 0;
+        out as u32
+    }
+
+    fn set_needs_update(&mut self, n: usize, on: bool) {
+        let was = self.flags[n] & flag::MATRIX_WORLD_NEEDS_UPDATE != 0;
+        if was == on {
+            return;
+        }
+        if on {
+            self.flags[n] |= flag::MATRIX_WORLD_NEEDS_UPDATE;
+        } else {
+            self.flags[n] &= !flag::MATRIX_WORLD_NEEDS_UPDATE;
+        }
+        if self.listed[n] == 0 {
+            self.listed[n] = 1;
+            let count = self.needs_changed[0] + 1;
+            self.needs_changed[0] = count;
+            self.needs_changed[count as usize] = n as u32;
+        }
     }
 
     // three r186 Object3D.updateMatrixWorld, with SkinnedMesh.updateMatrixWorld on skinned nodes
@@ -634,7 +689,7 @@ impl Graph {
                 }
                 put_mat4(&mut self.matrix_world, n, &world);
             }
-            self.flags[n] &= !flag::MATRIX_WORLD_NEEDS_UPDATE;
+            self.set_needs_update(n, false);
             force = true;
         }
         force
@@ -897,6 +952,28 @@ mod tests {
     #[should_panic(expected = "out of traverse order")]
     fn a_parent_off_the_current_path_traps() {
         graph(&[NO_NODE, 0, 1, 0, 2], &[AUTO; 5]);
+    }
+
+    #[test]
+    fn needs_changed_reports_only_the_nodes_that_differ_from_what_was_seen() {
+        let mut g = graph(&[NO_NODE, 0, 0], &[AUTO; 3]);
+        // A pass sets and clears every node's bit: each is listed once, none differs.
+        g.update_matrix_world(0, false);
+        assert_eq!(g.needs_changed[0], 3);
+        assert_eq!(g.take_needs_changed(), 0);
+        assert_eq!(g.needs_changed[0], 0);
+        g.update_matrix(2);
+        g.update_matrix(2);
+        assert_eq!(g.needs_changed[0], 1);
+        assert_eq!(g.take_needs_changed(), 1);
+        assert_eq!(g.needs_changed[1], 2);
+        assert!(needs_update(&g, 2));
+        // Clearing it again is a change from the value last reported.
+        g.update_world_matrix(2, false, false, false);
+        assert_eq!(g.take_needs_changed(), 1);
+        assert_eq!(g.needs_changed[1], 2);
+        assert!(!needs_update(&g, 2));
+        assert_eq!(g.take_needs_changed(), 0);
     }
 
     #[test]

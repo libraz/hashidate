@@ -37,8 +37,9 @@
  * | hd_scene_update_matrix_world | node, force 0/1                                    | `updateMatrixWorld(force)`, with the `SkinnedMesh` override on skinned nodes |
  * | hd_scene_update_world_matrix | node, updateParents 0/1, updateChildren 0/1, force 0/1 | `updateWorldMatrix(updateParents, updateChildren, force)`; climbs into the ancestor mirror past the root |
  * | hd_scene_skeleton_update     | skeleton                                           | `Skeleton.update` into the bone matrices buffer |
+ * | hd_scene_take_needs_changed  | —                                                  | reduces the needs-changed list (below); returns the count of nodes to assign |
  *
- * None returns a value. They allocate nothing.
+ * Only `hd_scene_take_needs_changed` returns a value. They allocate nothing.
  *
  * ## Buffers (`hd_scene_layout`, one byte address per slot at `LAYOUT_*`)
  *
@@ -65,6 +66,7 @@
  * | ancestors           | f64 ANCESTOR record per level, the root's parent first, MAX_ANCESTORS levels | ANCESTOR |
  * | ancestor flags      | u8 FLAG_MATRIX_AUTO_UPDATE, _WORLD_AUTO_UPDATE, _WORLD_NEEDS_UPDATE, FLAG_PIVOT per level | 1 |
  * | scratch             | f64, SCRATCH long; the record the next registration reads      | — |
+ * | needs changed       | u32 count, then that many node indices (nodes + 1 long)         | 1 |
  *
  * Records: NODE and ANCESTOR are position 3, quaternion 4, scale 3, pivot 3, matrix 16,
  * matrixWorld 16 (offsets `RECORD_*`). MESH is bindMatrix 16 then bindMatrixInverse 16. BONE is
@@ -73,6 +75,14 @@
  * Flags: FLAG_BONE and FLAG_SKINNED are fixed at registration; FLAG_PLAIN_CHILDREN changes only
  * through `hd_scene_plain_children`. The rest may be written in the flags byte at any time, keeping
  * the other bits.
+ *
+ * Needs changed: the caller holds each node's matrixWorldNeedsUpdate as it last saw it, starting
+ * from the registered flags. Every export that writes a node's FLAG_MATRIX_WORLD_NEEDS_UPDATE to a
+ * new value lists the node once, raising the count. When the count is not 0,
+ * `hd_scene_take_needs_changed` keeps only the nodes whose bit now differs from what the caller
+ * saw, writes them after the count's slot, sets the count to 0 and returns how many it kept; the
+ * caller then assigns those nodes' value from the flags byte. A write the caller makes to the
+ * flags byte itself is not listed.
  *
  * Ancestors: before any per-call export the caller writes the chain above the root (records,
  * flags, `hd_scene_ancestors` when its length changes); with none the root takes three's
@@ -148,7 +158,8 @@ export const LAYOUT_BONE_MATRICES = 17;
 export const LAYOUT_ANCESTORS = 18;
 export const LAYOUT_ANCESTOR_FLAGS = 19;
 export const LAYOUT_SCRATCH = 20;
-export const LAYOUT = 21;
+export const LAYOUT_NEEDS_CHANGED = 21;
+export const LAYOUT = 22;
 
 /** Export names of the scene graph. */
 export const SCENE_EXPORTS = [
@@ -167,6 +178,7 @@ export const SCENE_EXPORTS = [
   'hd_scene_update_matrix_world',
   'hd_scene_update_world_matrix',
   'hd_scene_skeleton_update',
+  'hd_scene_take_needs_changed',
 ] as const;
 
 export interface SceneExports {
@@ -191,4 +203,5 @@ export interface SceneExports {
     force: number,
   ): void;
   hd_scene_skeleton_update(h: number, skeleton: number): void;
+  hd_scene_take_needs_changed(h: number): number;
 }

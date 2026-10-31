@@ -24,8 +24,6 @@ export interface FrameScript {
   rootPosition?: readonly [number, number, number];
   /** Scales by bone name. */
   scales?: ReadonlyArray<readonly [string, number, number, number]>;
-  /** Bones whose `matrixWorldAutoUpdate` is switched off. */
-  worldOverride?: readonly string[];
   enabled?: boolean;
   groups?: ReadonlyArray<readonly [string, boolean]>;
   reset?: boolean;
@@ -54,7 +52,6 @@ export function applyFrame(rig: SyntheticRig, spring: Spring, frame: FrameScript
   for (const [name, x, y, z] of frame.rotations ?? []) node(name).rotation.set(x, y, z);
   if (frame.rootPosition) rig.root.position.set(...frame.rootPosition);
   for (const [name, x, y, z] of frame.scales ?? []) node(name).scale.set(x, y, z);
-  for (const name of frame.worldOverride ?? []) node(name).matrixWorldAutoUpdate = false;
   if (frame.enabled !== undefined) spring.enabled = frame.enabled;
   const groups = spring.groups as Array<{ id: string; enabled: boolean }>;
   for (const [id, enabled] of frame.groups ?? []) {
@@ -532,7 +529,6 @@ const F7: SpringFixture = {
   script: script([STEP, 0.05], (frame, t) => ({
     rotations: trajectoryMotion(t),
     ...(frame === 200 ? { scales: [['ProducerA_1', 1.001, 1.001, 1.001]] as const } : {}),
-    ...(frame === 350 ? { worldOverride: ['CharmB_1'] } : {}),
   })),
 };
 

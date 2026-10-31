@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use hashidate_core::math::Mat4;
 use hashidate_core::scene::graph::{Graph, RECORD, Registry, Shape};
 
-const LAYOUT: usize = 21;
+const LAYOUT: usize = 22;
 const SCRATCH: usize = RECORD;
 
 /// A graph and the table of its buffer addresses.
@@ -80,6 +80,7 @@ pub extern "C" fn hd_scene_new(nodes: u32, meshes: u32, skeletons: u32, bones: u
             ptr(&g.ancestors),
             ptr(&g.ancestor_flags),
             ptr(&s.scratch),
+            ptr(&g.needs_changed),
         ];
         h
     })
@@ -185,4 +186,11 @@ pub extern "C" fn hd_scene_update_world_matrix(
 #[unsafe(no_mangle)]
 pub extern "C" fn hd_scene_skeleton_update(h: u32, skeleton: u32) {
     with_scene(h, |s| s.graph.skeleton_update(skeleton));
+}
+
+/// Reduces the listed nodes to those whose matrixWorldNeedsUpdate differs from what the caller
+/// last saw; returns their count, the nodes following it in the needs-changed buffer.
+#[unsafe(no_mangle)]
+pub extern "C" fn hd_scene_take_needs_changed(h: u32) -> u32 {
+    with_scene(h, |s| s.graph.take_needs_changed())
 }

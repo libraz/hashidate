@@ -2,10 +2,16 @@
  * Core-backed three nodes: an avatar root's subtree whose transforms live in the core's scene graph.
  *
  * `SceneGraph.of(root)` registers every node under `root` with `hd_scene_*` and then rewires each
- * one in place: `position`, `quaternion` and `scale` become accessors over the core's f64 buffers,
- * the matrices' `elements` become subviews of them, the update flags read the core's flag bytes,
- * and the three update methods call the core instead of recursing in JS. Everything else on the
- * node stays three's, so the renderer and the TS engine read the same objects as before.
+ * one in place: `position`, `quaternion` and `scale` become objects whose fields are accessors over
+ * the core's f64 buffers, the matrices' `elements` become subviews of them, and the three update
+ * methods call the core instead of recursing in JS. Everything else on the node stays three's, so
+ * the renderer and the TS engine read the same objects as before.
+ *
+ * No accessor goes on a node itself: it would put the node in V8's dictionary mode and slow every
+ * property read three's renderer makes on it. So `matrixAutoUpdate`, `matrixWorldAutoUpdate`,
+ * `pivot` and `bindMode` become read-only data holding their value at `SceneGraph.of` (a write
+ * throws; a pivot's x, y, z stay writable), and `matrixWorldNeedsUpdate` stays a plain field that
+ * each call assigns on the nodes the core reports changed. A JS write to it does not reach the core.
  *
  * The hierarchy is fixed from that call on. The root may change parents, and a childless non-bone
  * `Mesh` (an outline) may be added and removed as a plain leaf that three keeps updating; any other
@@ -39,6 +45,7 @@ import {
   LAYOUT_FORCE,
   LAYOUT_MATRIX,
   LAYOUT_MATRIX_WORLD,
+  LAYOUT_NEEDS_CHANGED,
   LAYOUT_PIVOT,
   LAYOUT_POSITION,
   LAYOUT_QUATERNION,
@@ -65,6 +72,7 @@ export type PlainReplay = 'none' | 'matrixWorld' | 'worldMatrix';
 let heapBuffer: ArrayBufferLike | null = null;
 let f64 = new Float64Array(0);
 let f32 = new Float32Array(0);
+let u32 = new Uint32Array(0);
 let u8 = new Uint8Array(0);
 
 function rebindHeap(): void {
@@ -73,6 +81,7 @@ function rebindHeap(): void {
   heapBuffer = buffer;
   f64 = new Float64Array(buffer);
   f32 = new Float32Array(buffer);
+  u32 = new Uint32Array(buffer);
   u8 = new Uint8Array(buffer);
 }
 
@@ -119,11 +128,6 @@ const BOUND = Symbol('hashidate.core-backed');
 interface NodeBinding {
   readonly graph: SceneGraph;
   readonly index: number;
-  /** Byte index of the node's flags. */
-  readonly flags: number;
-  /** f64 index of the node's pivot. */
-  readonly pivotAt: number;
-  pivot: THREE.Vector3 | null;
 }
 
 interface SkeletonBinding {
@@ -140,68 +144,6 @@ type BoundSkeleton = THREE.Skeleton & { [BOUND]: SkeletonBinding };
 function bindingOf(node: THREE.Object3D): NodeBinding | undefined {
   return (node as Partial<BoundNode>)[BOUND];
 }
-
-function flagAccessor(bit: number, strict: boolean): PropertyDescriptor {
-  return {
-    configurable: true,
-    enumerable: true,
-    get(this: BoundNode) {
-      return (u8[this[BOUND].flags] & bit) !== 0;
-    },
-    // three tests `matrixWorldAutoUpdate === true` and the other two for truthiness.
-    set(this: BoundNode, v: unknown) {
-      const at = this[BOUND].flags;
-      u8[at] = (strict ? v === true : Boolean(v)) ? u8[at] | bit : u8[at] & ~bit;
-    },
-  };
-}
-
-const FLAG_ACCESSORS: PropertyDescriptorMap = {
-  matrixAutoUpdate: flagAccessor(FLAG_MATRIX_AUTO_UPDATE, false),
-  matrixWorldAutoUpdate: flagAccessor(FLAG_MATRIX_WORLD_AUTO_UPDATE, true),
-  matrixWorldNeedsUpdate: flagAccessor(FLAG_MATRIX_WORLD_NEEDS_UPDATE, false),
-  pivot: {
-    configurable: true,
-    enumerable: true,
-    get(this: BoundNode) {
-      const b = this[BOUND];
-      if ((u8[b.flags] & FLAG_PIVOT) === 0) return null;
-      b.pivot ??= coreVector3(b.pivotAt);
-      return b.pivot;
-    },
-    // The value is copied: the core holds the pivot, not the caller's vector.
-    set(this: BoundNode, v: THREE.Vector3 | null) {
-      const b = this[BOUND];
-      if (v === null) {
-        u8[b.flags] &= ~FLAG_PIVOT;
-        return;
-      }
-      const o = b.pivotAt;
-      f64[o] = v.x;
-      f64[o + 1] = v.y;
-      f64[o + 2] = v.z;
-      u8[b.flags] |= FLAG_PIVOT;
-    },
-  },
-};
-
-const BIND_MODE_ACCESSOR: PropertyDescriptorMap = {
-  bindMode: {
-    configurable: true,
-    enumerable: true,
-    get(this: BoundNode) {
-      return (u8[this[BOUND].flags] & FLAG_DETACHED) !== 0
-        ? THREE.DetachedBindMode
-        : THREE.AttachedBindMode;
-    },
-    set(this: BoundNode, v: THREE.BindMode) {
-      const at = this[BOUND].flags;
-      if (v === THREE.DetachedBindMode) u8[at] |= FLAG_DETACHED;
-      else if (v === THREE.AttachedBindMode) u8[at] &= ~FLAG_DETACHED;
-      else throw new Error(`SceneGraph: unknown bindMode ${String(v)}`);
-    },
-  },
-};
 
 const OVERRIDDEN = [
   'updateMatrix',
@@ -356,6 +298,7 @@ export class SceneGraph {
     at[LAYOUT_FLAGS] = addresses[LAYOUT_FLAGS];
     at[LAYOUT_FORCE] = addresses[LAYOUT_FORCE];
     at[LAYOUT_ANCESTOR_FLAGS] = addresses[LAYOUT_ANCESTOR_FLAGS];
+    at[LAYOUT_NEEDS_CHANGED] = addresses[LAYOUT_NEEDS_CHANGED] / 4;
     at[LAYOUT_BONE_MATRICES] = addresses[LAYOUT_BONE_MATRICES] / 4;
     const scratch = at[LAYOUT_SCRATCH];
 
@@ -439,6 +382,7 @@ export class SceneGraph {
     this.#check();
     this.#mirror();
     const result = fn(this.#handle);
+    this.#takeNeedsChanged();
     this.#writeBack();
     if (replay !== 'none') this.#replay(replay === 'matrixWorld');
     return result;
@@ -493,15 +437,21 @@ export class SceneGraph {
 
   #back(node: THREE.Object3D, i: number): void {
     const at = this.#at;
-    const binding: NodeBinding = {
-      graph: this,
-      index: i,
-      flags: at[LAYOUT_FLAGS] + i,
-      pivotAt: at[LAYOUT_PIVOT] + 3 * i,
-      pivot: null,
-    };
+    const binding: NodeBinding = { graph: this, index: i };
     Object.defineProperty(node, BOUND, { configurable: true, value: binding });
     const q = coreQuaternion(at[LAYOUT_QUATERNION] + 4 * i);
+    // Data in place of three's data, so the node keeps its fast shape.
+    const fixed: PropertyDescriptorMap = {
+      matrixAutoUpdate: { writable: false, value: node.matrixAutoUpdate },
+      matrixWorldAutoUpdate: { writable: false, value: node.matrixWorldAutoUpdate },
+      pivot: {
+        writable: false,
+        value: node.pivot === null ? null : coreVector3(at[LAYOUT_PIVOT] + 3 * i),
+      },
+    };
+    if ((node as Partial<THREE.SkinnedMesh>).isSkinnedMesh) {
+      fixed.bindMode = { writable: false, value: (node as THREE.SkinnedMesh).bindMode };
+    }
     Object.defineProperties(node, {
       position: {
         configurable: true,
@@ -510,8 +460,7 @@ export class SceneGraph {
       },
       quaternion: { configurable: true, enumerable: true, value: q },
       scale: { configurable: true, enumerable: true, value: coreVector3(at[LAYOUT_SCALE] + 3 * i) },
-      ...FLAG_ACCESSORS,
-      ...((node as Partial<THREE.SkinnedMesh>).isSkinnedMesh ? BIND_MODE_ACCESSOR : {}),
+      ...fixed,
       ...METHODS,
     });
     syncRotation(node, q);
@@ -564,6 +513,19 @@ export class SceneGraph {
     if (count !== this.#ancestors) {
       core().hd_scene_ancestors(this.#handle, count);
       this.#ancestors = count;
+    }
+  }
+
+  /** Assigns `matrixWorldNeedsUpdate` on the nodes whose value the last call changed. */
+  #takeNeedsChanged(): void {
+    const at = this.#at[LAYOUT_NEEDS_CHANGED];
+    if (u32[at] === 0) return;
+    const count = core().hd_scene_take_needs_changed(this.#handle);
+    const flagsAt = this.#at[LAYOUT_FLAGS];
+    for (let k = 1; k <= count; k++) {
+      const i = u32[at + k];
+      this.#nodes[i].matrixWorldNeedsUpdate =
+        (u8[flagsAt + i] & FLAG_MATRIX_WORLD_NEEDS_UPDATE) !== 0;
     }
   }
 
@@ -672,6 +634,7 @@ export class SceneGraph {
       // It reads only the node's own transform, so the ancestors need no mirror.
       b.graph.#check();
       core().hd_scene_update_matrix(b.graph.#handle, b.index);
+      b.graph.#takeNeedsChanged();
     }
 
     function updateMatrixWorld(this: THREE.Object3D, force?: boolean): void {
