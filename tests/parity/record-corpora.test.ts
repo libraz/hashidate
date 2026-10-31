@@ -4,12 +4,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FINGER_WIDTH, HAND_CONTACT, JOINTS } from '@/engine/anatomy';
 import { ArmAnatomy } from '@/engine/anatomy/arm';
 import * as armFrame from '@/engine/anatomy/arm-frame';
+import { FaceSurface } from '@/engine/anatomy/face';
 import { TORSO_SAMPLES } from '@/engine/anatomy/joints';
 import * as strain from '@/engine/anatomy/strain';
 import * as volume from '@/engine/anatomy/volume';
 import { type BodyClearance, makeBodyVolumeFrame } from '@/engine/anatomy/volumes';
 import { Director } from '@/engine/director';
 import { Body } from '@/engine/motion/body';
+import type { HandSensePose } from '@/engine/motion/finger-life';
 import { buildProfile } from '@/engine/profile';
 import { Rig } from '@/engine/rig';
 import { ArmChain } from '@/engine/rig/arm-chain';
@@ -45,13 +47,21 @@ import {
   solveReach,
   swivelOf,
 } from '@/engine/rig/reach';
+import type {
+  AcceptedArmState,
+  ArmFrameSideCommit,
+  RigBodyPoseSnapshot,
+  StandingArmPose,
+} from '@/engine/rig/rig';
 import { SkeletonRefresh } from '@/engine/rig/skeleton';
 import { type OffsetSlot, SpineOffsets } from '@/engine/rig/spine';
 import {
   type BoneSlot,
   FINGER_NAMES,
+  type FingerName,
   type FingerSpec,
   type HandContact,
+  type JointReading,
   type JointTable,
   type Side,
   type Vec3Tuple,
@@ -61,6 +71,7 @@ import { withCoreMath } from '../helpers/core-math';
 import {
   BASE_VARIANT,
   DIRECTOR_FIXTURES,
+  type DirectorFixture,
   prepareFixture,
   runDirectorFixture,
   splitmix64,
@@ -144,6 +155,21 @@ import { DT, harness } from '../motion/body/harness';
  * which reaches the recoveries a real plan on this avatar does not. `rig-d-battery-box` is
  * `arm-path.test.ts`'s box-optimum scenario on the base avatar: the captured plan, the
  * environment it ran in, every plan to the box minimum and every probe around it.
+ *
+ * `rig-battery-{a..}` are one stream cut the same way: four short director scripts on the base
+ * avatar with every call the other layers make into its `Rig` (the methods `Body` and the arm
+ * transaction call, and the `limitsEnabled` setter), its anatomy's `update`, its face's
+ * `refresh` and its arm drivers, recorded where they enter from outside all four. A `begin`
+ * record dumps every node (position, quaternion, scale, matrix, matrixWorld, the flag) as the
+ * rig's constructor first finds it, or says the dump repeats the last one; `new` is the
+ * constructor's result. A call record is its method, then, for a call that may touch the tree,
+ * what the other layers changed since the last such record (`node, mask` and the parts the mask
+ * names), then its arguments, then the FNV-1a of what it returned and wrote into its arguments,
+ * and for that same kind of call the FNV-1a of the rig's state and the tree's hash. An argument
+ * that is a driver's output, its accepted forward result or the rig's own context is named by
+ * a code instead of its values; a driver call repeating its side's last context says so. `frame`
+ * closes each frame after the director's full pass with the positions, quaternions and scales
+ * that changed, `dt` is a new `rig.dt`, and `end` closes a script.
  *
  * Without `HASHIDATE_RECORD_CORPORA=1` this checks the files against a fresh recording;
  * with it, it writes them.
@@ -4106,6 +4132,9 @@ function definitionValues(
   return v;
 }
 
+/** The suffix of each file a battery's stream is cut into, in order. */
+const FILE_LETTERS = 'abcdefghijklmnopqrstuvwxyz';
+
 /** One battery's records, cut into files a little under the size limit at record boundaries. */
 class RecordStream {
   readonly files: Recorded[] = [];
@@ -4121,7 +4150,7 @@ class RecordStream {
   }
 
   #flush(): void {
-    const name = `${this.name}-${'abcdefgh'[this.files.length]}`;
+    const name = `${this.name}-${FILE_LETTERS[this.files.length]}`;
     const index = {
       fn: name,
       cases: 1,
@@ -4138,7 +4167,7 @@ class RecordStream {
 
   finish(): Map<string, Recorded> {
     if (this.#records > 0) this.#flush();
-    return new Map(this.files.map((f, i) => [`${this.name}-${'abcdefgh'[i]}`, f]));
+    return new Map(this.files.map((f, i) => [`${this.name}-${FILE_LETTERS[i]}`, f]));
   }
 }
 
@@ -5186,6 +5215,1098 @@ function recordRigDBox(): Recorded {
   return { json: `${JSON.stringify(index, null, 1)}\n`, bin: f64Bytes([1, ...values]) };
 }
 
+// --- the Rig battery ---------------------------------------------------------------------------
+
+const RIG_BATTERY_TAGS = [
+  'begin',
+  'new',
+  'rig',
+  'anat',
+  'face',
+  'driver',
+  'dt',
+  'frame',
+  'end',
+] as const;
+type RigBatteryTag = (typeof RIG_BATTERY_TAGS)[number];
+/** The `Rig` methods the battery replays, `limitsEnabled` being its setter. */
+const RIG_METHODS = [
+  'acceptedArmState',
+  'bootstrapStandingPose',
+  'armStateForBodyInitialization',
+  'armDriver',
+  'predictHandContact',
+  'beginBodyArmFrame',
+  'finishLegacyBodyFrame',
+  'armForwardContext',
+  'armForwardContextFromUpdatedBody',
+  'captureProposedBodyContext',
+  'applyBodyContext',
+  'stageArmForward',
+  'commitArmFrame',
+  'commitArmTransport',
+  'lastAcceptedHandPose',
+  'reset',
+  'addOffset',
+  'commitSpine',
+  'readHeadOffset',
+  'commitEyes',
+  'plantLegs',
+  'girdleRoom',
+  'turnGirdle',
+  'aimShoulder',
+  'aimArm',
+  'aimArmLegacy',
+  'measure',
+  'solveReachNatural',
+  'solvePoint',
+  'solveReach',
+  'curlFinger',
+  'curlHand',
+  'curlFingerLegacy',
+  'curlHandLegacy',
+  'fingerClearance',
+  'fingerShape',
+  'fingerFrame',
+  'limitsEnabled',
+] as const;
+type RigMethod = (typeof RIG_METHODS)[number];
+/**
+ * The `Rig` calls that neither read nor write the tree: recorded without a diff before them or
+ * the state and the tree after.
+ */
+const RIG_READS = [
+  'acceptedArmState',
+  'armDriver',
+  'lastAcceptedHandPose',
+  'addOffset',
+  'fingerClearance',
+  'fingerShape',
+  'fingerFrame',
+  'turnGirdle',
+] as const;
+/**
+ * The anatomy's and the face's calls that change what they hold. `surface`, `shortfall` and
+ * `sample` write only scratch they write before reading, so they are not recorded.
+ */
+const ANAT_METHODS = ['update'] as const;
+const FACE_METHODS = ['refresh'] as const;
+const DRIVER_METHODS = [
+  'captureVolumeFrame',
+  'composeRequest',
+  'configurationFromPose',
+  'fillBounds',
+  'planFrom',
+  'restoreEndpointFrom',
+  'validateLockedPose',
+  'requestForConfiguration',
+  'refreshAcceptedForward',
+] as const;
+const BODY_SNAPSHOT_SLOTS = [
+  'hips',
+  'spine',
+  'chest',
+  'neck',
+  'head',
+  'shoulder.L',
+  'shoulder.R',
+] as const;
+const PATH_STATUSES = ['progress', 'settled', 'stationary', 'blocked'] as const;
+const CONTACT_SURFACES = ['center', 'pad', 'back'] as const;
+const READING_ZONES = ['natural', 'strained', 'limit'] as const;
+/** The values one node's state is diffed in: position, quaternion, scale; matrix; matrixWorld; the flag. */
+const NODE_PARTS = [
+  [0, 10],
+  [10, 26],
+  [26, 42],
+  [42, 43],
+] as const;
+
+type VecLike = THREE.Vector3 | Readonly<Vec3Tuple>;
+
+function putVec(into: number[], v: VecLike): void {
+  if (v instanceof THREE.Vector3) into.push(v.x, v.y, v.z);
+  else into.push(v[0], v[1], v[2]);
+}
+
+function putOptVec(into: number[], v: VecLike | null | undefined): void {
+  if (v === null || v === undefined) into.push(0);
+  else {
+    into.push(1);
+    putVec(into, v);
+  }
+}
+
+function putOptBool(into: number[], v: boolean | undefined): void {
+  if (v === undefined) into.push(0);
+  else into.push(1, v ? 1 : 0);
+}
+
+/** A finger spec as the mask of the fingers it names, then their values. */
+function putSpec(into: number[], spec: FingerSpec): void {
+  let mask = 0;
+  FINGER_NAMES.forEach((f, i) => {
+    if (spec[f] !== undefined) mask |= 1 << i;
+  });
+  into.push(mask);
+  for (const f of FINGER_NAMES) if (spec[f] !== undefined) into.push(spec[f]);
+}
+
+function putSide(into: number[], side: Side): void {
+  if (side !== 'L' && side !== 'R') throw new Error(`not a side: ${side}`);
+  into.push(side === 'L' ? 0 : 1);
+}
+
+function putIndex(into: number[], list: readonly string[], value: string): void {
+  const i = list.indexOf(value);
+  if (i < 0) throw new Error(`${value} is not one of ${list.join(', ')}`);
+  into.push(i);
+}
+
+function putSolution(into: number[], o: ArmSolution): void {
+  for (const v of [o.upperArm, o.lowerArm, o.hand, o.palm, o.tip]) putVec(into, v);
+  into.push(o.twist);
+  presentNumber(into, o.strain);
+  putVec(into, o.swivelDir);
+  putOptBool(into, o.clasp);
+}
+
+function putArmState(into: number[], s: Readonly<AcceptedArmState>): void {
+  for (const slot of ARM_SLOTS) into.push(...s.directions[slot]);
+  into.push(...s.palm);
+  for (const f of FINGER_NAMES) into.push(s.curls[f]);
+  for (const f of FINGER_NAMES) into.push(s.spread[f]);
+  into.push(s.forearmRoll);
+}
+
+function putSense(into: number[], pose: Readonly<HandSensePose> | null): void {
+  if (!pose) {
+    into.push(0);
+    return;
+  }
+  into.push(1);
+  for (const v of [pose.knuckle, pose.palm, pose.forearm]) putVec(into, v);
+  putVec(into, must(pose.index, 'an index knuckle'));
+  putVec(into, must(pose.little, 'a little knuckle'));
+}
+
+function putRequest(into: number[], r: armPath.ArmPathRequest): void {
+  putVec(into, r.wrist);
+  putVec(into, r.hand);
+  putOptVec(into, r.palm);
+  putSpec(into, r.curls);
+  putSpec(into, r.spread);
+  putOptVec(into, r.elbow);
+}
+
+function putPlan(into: number[], o: armPath.ArmPathPlanOutput): void {
+  into.push(...o.q, ...configurationValues(o.configuration), ...forwardValues(o.forward));
+  putIndex(into, PATH_STATUSES, o.status);
+  into.push(o.positionError, o.orientationError, o.secondaryError, o.maxViolation);
+  into.push(o.iterations, o.environmentBatches, o.points.length);
+  for (const p of o.points) putVec(into, p.position);
+  into.push(o.clearances.length);
+  for (const r of o.clearances)
+    into.push(r.pointIndex, r.valid ? 1 : 0, r.distance, ...r.normal.toArray());
+}
+
+function putContact(into: number[], c: HandContact): void {
+  const surface = (s: string | undefined) => {
+    if (s === undefined) into.push(0);
+    else {
+      into.push(1);
+      putIndex(into, CONTACT_SURFACES, s);
+    }
+  };
+  if (c.kind === 'palm') {
+    into.push(0);
+    putIndex(into, ['heel', 'center'], c.region);
+    surface(c.surface);
+  } else {
+    into.push(1);
+    putIndex(into, FINGER_NAMES, c.finger);
+    into.push(c.segment, c.fraction);
+    surface(c.surface);
+  }
+}
+
+function putPointRequest(into: number[], r: PointRequest): void {
+  presentNumber(into, r.azimuth);
+  presentNumber(into, r.elevation);
+  presentNumber(into, r.extent);
+  if (r.finger === undefined) into.push(0);
+  else {
+    into.push(1);
+    putIndex(into, FINGER_NAMES, r.finger);
+  }
+  putOptVec(into, r.point);
+  putOptVec(into, r.palm);
+}
+
+function putDirs(into: number[], dirs: Readonly<Record<string, Readonly<Vec3Tuple>>>): void {
+  for (const slot of ARM_SLOTS) putOptVec(into, dirs[slot]);
+}
+
+function driverSideOf(driver: ArmDriver): Side {
+  return Reflect.get(driver, 'side') as Side;
+}
+
+/**
+ * A plan output, forward result or context a `Rig` call is handed: `0` the side driver's
+ * `output`, `1` its `bridgeOutput`, `2` its `acceptedForward`, `3` the rig's own context for the
+ * side, or `4` and the values.
+ */
+function putReference(
+  into: number[],
+  rig: Rig,
+  side: Side,
+  value: object,
+  values: () => number[],
+): void {
+  const driver = (Reflect.get(rig, '_armDrivers') as Record<Side, ArmDriver | null>)[side];
+  const context = (Reflect.get(rig, '_armContexts') as Record<Side, object>)[side];
+  const refs = [driver?.output, driver?.bridgeOutput, driver?.acceptedForward, context];
+  const k = refs.indexOf(value as never);
+  if (k >= 0) into.push(k);
+  else into.push(4, ...values());
+}
+
+/** A `Rig` call's arguments as replayed, with the TS defaults filled in. */
+function rigArguments(rig: Rig, method: RigMethod, a: readonly unknown[], into: number[]): void {
+  const side = () => putSide(into, a[0] as Side);
+  switch (method) {
+    case 'acceptedArmState':
+    case 'armStateForBodyInitialization':
+    case 'armDriver':
+    case 'armForwardContext':
+    case 'armForwardContextFromUpdatedBody':
+    case 'lastAcceptedHandPose':
+    case 'measure':
+    case 'fingerClearance':
+    case 'fingerShape':
+    case 'fingerFrame':
+      side();
+      return;
+    case 'bootstrapStandingPose': {
+      const poses = a[0] as Record<Side, StandingArmPose>;
+      for (const s of ['L', 'R'] as const) {
+        const p = poses[s];
+        for (const v of [p.shoulder, p.upperArm, p.lowerArm, p.hand, p.palm]) putVec(into, v);
+        putSpec(into, p.curls);
+        putSpec(into, p.spread);
+      }
+      return;
+    }
+    case 'predictHandContact':
+      side();
+      putContact(into, a[1] as HandContact);
+      putSpec(into, a[2] as FingerSpec);
+      putSpec(into, a[3] as FingerSpec);
+      return;
+    case 'beginBodyArmFrame':
+    case 'reset':
+    case 'commitSpine':
+    case 'commitEyes':
+    // Its quaternion is written whole on success and left alone otherwise, so its prior value
+    // is the caller's and carries nothing.
+    case 'readHeadOffset':
+      return;
+    case 'finishLegacyBodyFrame':
+    case 'captureProposedBodyContext':
+      into.push(a[0] as number, (a[1] as number | undefined) ?? 0);
+      return;
+    case 'applyBodyContext':
+      into.push(a[0] as number, (a[1] as number | undefined) ?? (a[0] as number));
+      into.push((a[2] as boolean | undefined) ? 1 : 0);
+      return;
+    case 'stageArmForward': {
+      side();
+      const forward = a[1] as armConfiguration.ArmForwardResult;
+      putReference(into, rig, a[0] as Side, forward, () => forwardValues(forward));
+      putSpec(into, a[2] as FingerSpec);
+      putSpec(into, a[3] as FingerSpec);
+      return;
+    }
+    case 'commitArmFrame': {
+      const plans = a[0] as Record<Side, ArmFrameSideCommit>;
+      for (const s of ['L', 'R'] as const) {
+        const plan = plans[s];
+        putReference(into, rig, s, plan.output, () => [
+          ...plan.output.q,
+          ...forwardValues(plan.output.forward),
+        ]);
+        putReference(into, rig, s, plan.context, () => contextValues(plan.context));
+        putSpec(into, plan.curls);
+        putSpec(into, plan.spread);
+      }
+      into.push(a[1] as number, (a[2] as number | undefined) ?? 0);
+      into.push((a[3] as boolean | undefined) ? 1 : 0);
+      return;
+    }
+    case 'commitArmTransport':
+    case 'plantLegs':
+      into.push(a[0] as number, (a[1] as number | undefined) ?? 0);
+      into.push((a[2] as boolean | undefined) ? 1 : 0);
+      return;
+    case 'addOffset':
+      putIndex(into, OFFSET_SLOTS, a[0] as string);
+      into.push(a[1] as number, a[2] as number, a[3] as number);
+      return;
+    case 'girdleRoom':
+      side();
+      putVec(into, a[1] as THREE.Vector3);
+      putVec(into, a[2] as Vec3Tuple);
+      into.push(a[3] as number);
+      putVec(into, a[4] as THREE.Vector3);
+      return;
+    case 'turnGirdle':
+      putVec(into, a[0] as Vec3Tuple);
+      putVec(into, a[1] as THREE.Vector3);
+      return;
+    case 'aimShoulder':
+      side();
+      putOptVec(into, a[1] as VecLike | null);
+      return;
+    case 'aimArm':
+    case 'aimArmLegacy':
+      side();
+      putDirs(into, a[1] as Record<string, Vec3Tuple>);
+      into.push((a[2] as number | undefined) ?? 0);
+      putOptVec(into, a[3] as Vec3Tuple | null | undefined);
+      into.push((a[4] as number | undefined) ?? 1);
+      return;
+    case 'solveReachNatural':
+      side();
+      putVec(into, a[1] as THREE.Vector3);
+      putOptVec(into, a[2] as THREE.Vector3 | null);
+      putSolution(into, a[3] as ArmSolution);
+      putOptVec(into, a[4] as THREE.Vector3 | null | undefined);
+      return;
+    case 'solvePoint':
+      side();
+      putPointRequest(into, a[1] as PointRequest);
+      putSolution(into, a[2] as ArmSolution);
+      return;
+    case 'solveReach': {
+      side();
+      putVec(into, a[1] as THREE.Vector3);
+      into.push(a[2] as number);
+      const out = a[3] as ReachLinks;
+      putVec(into, out.upperArm);
+      putVec(into, out.lowerArm);
+      putOptBool(into, a[4] as boolean | undefined);
+      return;
+    }
+    case 'curlFinger':
+    case 'curlFingerLegacy':
+      putIndex(into, FINGER_NAMES, a[0] as string);
+      putSide(into, a[1] as Side);
+      into.push(a[2] as number);
+      return;
+    case 'curlHand':
+    case 'curlHandLegacy':
+      side();
+      putSpec(into, a[1] as FingerSpec);
+      putSpec(into, (a[2] as FingerSpec | undefined) ?? {});
+      return;
+    case 'limitsEnabled':
+      into.push(a[0] ? 1 : 0);
+      return;
+  }
+}
+
+/** What a `Rig` call returned and wrote into its arguments, as the replay checks it. */
+function rigResult(method: RigMethod, a: readonly unknown[], r: unknown, into: number[]): void {
+  const flag = () => into.push(r ? 1 : 0);
+  switch (method) {
+    case 'acceptedArmState':
+    case 'armStateForBodyInitialization':
+      putArmState(into, r as AcceptedArmState);
+      return;
+    case 'armDriver': {
+      const d = r as ArmDriver | null;
+      if (d) into.push(1, ...d.acceptedQ);
+      else into.push(0);
+      return;
+    }
+    case 'predictHandContact': {
+      const p = r as {
+        contact: THREE.Vector3;
+        shape: readonly THREE.Vector3[];
+        bindFrame: THREE.Matrix3;
+      } | null;
+      if (!p) {
+        into.push(0);
+        return;
+      }
+      into.push(1);
+      putVec(into, p.contact);
+      into.push(p.shape.length);
+      for (const v of p.shape) putVec(into, v);
+      into.push(...p.bindFrame.elements);
+      return;
+    }
+    case 'armForwardContext':
+    case 'armForwardContextFromUpdatedBody': {
+      const c = r as armConfiguration.ArmForwardContext | null;
+      if (c) into.push(1, ...contextValues(c));
+      else into.push(0);
+      return;
+    }
+    case 'applyBodyContext':
+    case 'fingerClearance':
+      into.push(r as number);
+      return;
+    case 'bootstrapStandingPose':
+    case 'beginBodyArmFrame':
+    case 'stageArmForward':
+    case 'commitArmFrame':
+    case 'commitArmTransport':
+    case 'aimArm':
+    case 'curlFinger':
+    case 'curlHand':
+      flag();
+      return;
+    case 'lastAcceptedHandPose':
+      putSense(into, r as HandSensePose | null);
+      return;
+    case 'readHeadOffset':
+      flag();
+      if (r) into.push(...(a[0] as THREE.Quaternion).toArray());
+      return;
+    case 'girdleRoom':
+      putVec(into, a[4] as THREE.Vector3);
+      return;
+    case 'turnGirdle':
+      putVec(into, a[0] as Vec3Tuple);
+      return;
+    case 'measure': {
+      const rows = r as JointReading[] | null;
+      if (!rows) {
+        into.push(0);
+        return;
+      }
+      into.push(1, rows.length);
+      for (const row of rows) {
+        into.push(row.deg, row.strain);
+        putIndex(into, READING_ZONES, row.zone);
+        into.push(...row.range, row.measured ? 1 : 0);
+      }
+      return;
+    }
+    case 'solveReachNatural':
+      flag();
+      putSolution(into, a[3] as ArmSolution);
+      return;
+    case 'solvePoint':
+      flag();
+      putSolution(into, a[2] as ArmSolution);
+      return;
+    case 'solveReach': {
+      flag();
+      const out = a[3] as ReachLinks;
+      putVec(into, out.upperArm);
+      putVec(into, out.lowerArm);
+      return;
+    }
+    case 'fingerShape':
+      into.push((r as THREE.Vector3[]).length);
+      for (const v of r as THREE.Vector3[]) putVec(into, v);
+      return;
+    case 'fingerFrame':
+      into.push(...(r as THREE.Matrix3).elements);
+      return;
+    case 'limitsEnabled':
+      into.push(r === 'threw' ? 1 : 0);
+      return;
+    default:
+      return;
+  }
+}
+
+/** The last context each side's driver calls carried, which a call repeating it does not. */
+type ContextCache = Record<Side, number[] | null>;
+
+function driverArguments(
+  driver: ArmDriver,
+  method: (typeof DRIVER_METHODS)[number],
+  a: readonly unknown[],
+  into: number[],
+  cache: ContextCache,
+): void {
+  const side = driverSideOf(driver);
+  const context = (i: number) => {
+    const values = contextValues(a[i] as armConfiguration.ArmForwardContext);
+    const last = cache[side];
+    if (last && values.every((v, k) => Object.is(v, last[k]))) into.push(0);
+    else {
+      into.push(1, ...values);
+      cache[side] = values;
+    }
+  };
+  const q = (i: number) => into.push(...(a[i] as Float64Array));
+  switch (method) {
+    case 'captureVolumeFrame':
+      return;
+    case 'composeRequest':
+      context(0);
+      for (const i of [1, 2, 3]) putVec(into, a[i] as THREE.Vector3);
+      putOptVec(into, a[4] as THREE.Vector3 | null);
+      into.push(a[5] as number, a[6] as number);
+      putSpec(into, a[7] as FingerSpec);
+      putSpec(into, a[8] as FingerSpec);
+      into.push((a[9] as boolean | undefined) === false ? 0 : 1);
+      return;
+    case 'configurationFromPose':
+      context(0);
+      for (const i of [1, 2, 3]) putVec(into, a[i] as THREE.Vector3);
+      putOptVec(into, a[4] as THREE.Vector3 | null);
+      return;
+    case 'fillBounds':
+      q(0);
+      into.push(a[1] as number, a[2] ? 1 : 0);
+      return;
+    case 'planFrom':
+    case 'restoreEndpointFrom':
+      q(0);
+      context(1);
+      into.push(a[2] as number, a[3] ? 1 : 0);
+      return;
+    case 'validateLockedPose': {
+      q(0);
+      context(1);
+      putSpec(into, a[2] as FingerSpec);
+      putSpec(into, a[3] as FingerSpec);
+      const out = (a[4] as armPath.ArmPathPlanOutput | undefined) ?? driver.bridgeOutput;
+      if (out !== driver.output && out !== driver.bridgeOutput) throw new Error('a foreign output');
+      into.push(out === driver.output ? 0 : 1);
+      return;
+    }
+    case 'requestForConfiguration':
+      into.push(...configurationValues(a[0] as armConfiguration.ArmConfiguration));
+      context(1);
+      putSpec(into, a[2] as FingerSpec);
+      putSpec(into, a[3] as FingerSpec);
+      return;
+    case 'refreshAcceptedForward':
+      context(0);
+      return;
+  }
+}
+
+function driverResult(
+  driver: ArmDriver,
+  method: (typeof DRIVER_METHODS)[number],
+  a: readonly unknown[],
+  r: unknown,
+  into: number[],
+): void {
+  switch (method) {
+    case 'captureVolumeFrame':
+      return;
+    case 'composeRequest':
+    case 'requestForConfiguration':
+      putRequest(into, r as armPath.ArmPathRequest);
+      into.push(driver.requestRollHistory);
+      return;
+    case 'configurationFromPose':
+      into.push(r ? 1 : 0, ...driver.targetQ, ...configurationValues(driver.targetConfiguration));
+      return;
+    case 'fillBounds': {
+      const b = r as armPath.ArmPathBounds;
+      into.push(...b.lower, ...b.upper);
+      return;
+    }
+    case 'planFrom':
+      putPlan(into, r as armPath.ArmPathPlanOutput);
+      return;
+    case 'restoreEndpointFrom':
+      into.push(r ? 1 : 0);
+      putPlan(into, driver.output);
+      return;
+    case 'validateLockedPose':
+      into.push(r ? 1 : 0);
+      putPlan(
+        into,
+        ((a[4] as armPath.ArmPathPlanOutput | undefined) ??
+          driver.bridgeOutput) as armPath.ArmPathPlanOutput,
+      );
+      return;
+    case 'refreshAcceptedForward':
+      into.push(...forwardValues(r as armConfiguration.ArmForwardResult));
+      return;
+  }
+}
+
+/** Everything the rig keeps that a caller can see or a later call reads, in a fixed order. */
+function rigStateValues(rig: Rig): number[] {
+  const v: number[] = [];
+  const get = <T>(name: string) => Reflect.get(rig, name) as T;
+  v.push(get<boolean>('_limitsEnabled') ? 1 : 0, get<boolean>('_armContinuationReady') ? 1 : 0);
+  v.push(
+    get<number>('_externalArmRevision'),
+    get<number>('_acceptedRise'),
+    get<number>('_acceptedTurn'),
+  );
+  v.push(
+    get<boolean>('_lastPlantSuccess') ? 1 : 0,
+    get<boolean>('_standingBootstrapClaimed') ? 1 : 0,
+  );
+  v.push(rig.dt, rig.foreRoll.L, rig.foreRoll.R, rig.upperRoll.L, rig.upperRoll.R);
+  for (const x of [rig.anat.up, rig.anat.right, rig.anat.fwd]) putVec(v, x);
+  const posedCurls = get<Record<Side, Record<FingerName, number>>>('_posedCurls');
+  const posedSpread = get<Record<Side, Record<FingerName, number>>>('_posedSpread');
+  for (const side of ['L', 'R'] as const) {
+    putArmState(v, get<Record<Side, AcceptedArmState>>('_acceptedArmState')[side]);
+    for (const f of FINGER_NAMES) v.push(posedCurls[side][f]);
+    for (const f of FINGER_NAMES) v.push(posedSpread[side][f]);
+    putSense(v, get<Record<Side, HandSensePose | null>>('_acceptedHandPose')[side]);
+    const d = get<Record<Side, ArmDriver | null>>('_armDrivers')[side];
+    if (!d) {
+      v.push(0);
+      continue;
+    }
+    v.push(1, ...d.acceptedQ, ...configurationValues(d.acceptedConfiguration));
+    for (const f of FINGER_NAMES) v.push(d.acceptedCurls[f]);
+    for (const f of FINGER_NAMES) v.push(d.acceptedSpread[f]);
+    v.push(d.requestRollHistory, ...forwardValues(d.acceptedForward));
+    v.push(...d.output.q, ...d.bridgeOutput.q, ...d.targetQ);
+  }
+  for (const name of ['_acceptedBodyPose', '_proposedBodyPose']) {
+    const pose = get<RigBodyPoseSnapshot>(name);
+    for (const slot of BODY_SNAPSHOT_SLOTS) {
+      const q = pose.slots[slot];
+      if (q) v.push(1, ...q.toArray());
+      else v.push(0);
+    }
+    putVec(v, pose.hipsPosition);
+    v.push(pose.rise, pose.turn);
+  }
+  for (const name of ['_prePlantHips', '_postPlantHips']) putVec(v, get<THREE.Vector3>(name));
+  for (const name of ['_preTurnHipsQ', '_postTurnHipsQ'])
+    v.push(...get<THREE.Quaternion>(name).toArray());
+  return v;
+}
+
+/** Short director scripts on the base avatar, each reaching a different part of the rig. */
+const RIG_BATTERY_FIXTURES: readonly DirectorFixture[] = (() => {
+  const steady = 1 / 60;
+  const capped = (frame: number) => (frame % 10 === 9 ? 0.05 : steady);
+  const script = (
+    id: string,
+    frames: number,
+    at: Record<number, DirectorFixture['steps'][number]['actions']>,
+    dt: (frame: number) => number = () => steady,
+    idle = false,
+  ): DirectorFixture => ({
+    id,
+    variant: BASE_VARIANT,
+    idle,
+    steps: Array.from({ length: frames }, (_, frame) => ({
+      dt: dt(frame),
+      ...(at[frame] ? { actions: at[frame] } : {}),
+    })),
+  });
+  return [
+    script('reach point clasp hop spin', 80, {
+      0: [{ gesture: 'chin', side: 'R' }],
+      10: [{ point: 'R', spec: { azimuth: 35, elevation: 15, extent: 0.85 } }],
+      20: [{ gesture: 'handsClasp', side: 'L' }],
+      30: [{ hop: 'leap' }],
+      55: [{ hop: 'spin' }],
+    }),
+    script('limits off and back', 30, {
+      0: [{ limits: false }, { perform: 'explain' }],
+      4: [
+        { curl: 'index', side: 'L', amount: 0.4 },
+        { hand: 'R', curls: { ring: 0.9 } },
+      ],
+      6: [{ aim: 'L', upperArm: [-0.42, -0.79, 0.44] }],
+      8: [{ gesture: 'blowKiss', side: 'R' }],
+      20: [{ limits: true }, { perform: 'bravo' }],
+    }),
+    script(
+      'outside edits',
+      30,
+      {
+        0: [{ aim: 'R', upperArm: [Number.NaN, 0.2, 0.9] }],
+        1: [{ aim: 'R', upperArm: [0.38, -0.79, 0.48] }],
+        2: [{ curl: 'index', side: 'R', amount: 0.7 }, { measure: 'R' }],
+        3: [{ hand: 'L', curls: { thumb: 0.3, index: 0.8 } }, { measure: 'L' }],
+        4: [{ gesture: 'cover', side: 'R' }],
+        16: [{ point: 'L', spec: { point: [-0.2, 0.2, 0.9], palm: [0, -1, 0.2], extent: 0.85 } }],
+        24: [{ perform: 'selfHug' }],
+      },
+      capped,
+    ),
+    script('idle', 20, {}, capped, true),
+  ];
+})();
+
+/**
+ * Every call the director's layers make into the base avatar's `Rig`, its anatomy, its face
+ * and its arm drivers through `RIG_BATTERY_FIXTURES`, with what the other layers did to the
+ * tree in between; see the file comment.
+ */
+function recordRigCallBattery(): Map<string, Recorded> {
+  const stream = new RecordStream('rig-battery');
+  const coverage = new Map<string, number>();
+  const count = (what: string) => coverage.set(what, (coverage.get(what) ?? 0) + 1);
+  const state = {
+    rig: null as Rig | null,
+    nodes: [] as THREE.Object3D[],
+    models: [] as Float64Array[],
+    depth: 0,
+    constructing: false,
+    pendingNew: null as number[] | null,
+    begin: null as number[] | null,
+    dt: 1 / 60,
+  };
+  const read = (o: THREE.Object3D, out: Float64Array) => {
+    out.set(o.position.toArray(), 0);
+    out.set(o.quaternion.toArray(), 3);
+    out.set(o.scale.toArray(), 7);
+    out.set(o.matrix.elements, 10);
+    out.set(o.matrixWorld.elements, 26);
+    out[42] = o.matrixWorldNeedsUpdate ? 1 : 0;
+  };
+  const scratch = new Float64Array(43);
+  /** The nodes the other layers changed since the last record, as `index, mask, parts`. */
+  const diff = (into: number[]) => {
+    const slot = into.length;
+    into.push(0);
+    let changed = 0;
+    state.nodes.forEach((o, i) => {
+      read(o, scratch);
+      const model = state.models[i];
+      let mask = 0;
+      NODE_PARTS.forEach(([from, to], k) => {
+        for (let j = from; j < to; j++) {
+          if (!Object.is(scratch[j], model[j])) {
+            mask |= 1 << k;
+            break;
+          }
+        }
+      });
+      if (mask === 0) return;
+      changed++;
+      into.push(i, mask);
+      NODE_PARTS.forEach(([from, to], k) => {
+        if (mask & (1 << k)) for (let j = from; j < to; j++) into.push(scratch[j]);
+      });
+      model.set(scratch);
+    });
+    into[slot] = changed;
+  };
+  const settleTree = () => {
+    state.nodes.forEach((o, i) => {
+      read(o, state.models[i]);
+    });
+  };
+  const treeHash = (): [number, number] => {
+    const h = makeFnv64();
+    for (const o of state.nodes) {
+      h.f64s(o.position.toArray());
+      h.f64s(o.quaternion.toArray());
+      h.f64s(o.scale.toArray());
+      h.f64s(o.matrix.elements);
+      h.f64s(o.matrixWorld.elements);
+      h.bool(o.matrixWorldNeedsUpdate);
+    }
+    const d = h.digest();
+    return [Number.parseInt(d.slice(0, 8), 16), Number.parseInt(d.slice(8), 16)];
+  };
+  const emit = (tag: RigBatteryTag, body: number[]) => {
+    stream.push([RIG_BATTERY_TAGS.indexOf(tag), ...body]);
+    count(tag);
+  };
+  /**
+   * Open a record: the construction's own record if it is due, then dt, then, for a call that
+   * may read or write the tree, the diff.
+   */
+  const open = (heavy: boolean, prefix: number[]): number[] => {
+    const rig = must(state.rig, 'a rig');
+    if (state.pendingNew) {
+      emit('new', [...state.pendingNew, ...hashHalves(rigStateValues(rig))]);
+      state.pendingNew = null;
+    }
+    if (!Object.is(rig.dt, state.dt)) {
+      state.dt = rig.dt;
+      emit('dt', [rig.dt]);
+    }
+    const body = [...prefix];
+    if (heavy) diff(body);
+    return body;
+  };
+  /**
+   * Close a record: what the call returned, when it returns or writes anything, then, for a
+   * heavy one, the rig's state and the tree.
+   */
+  const close = (tag: RigBatteryTag, body: number[], output: number[], heavy = true) => {
+    const rig = must(state.rig, 'a rig');
+    if (output.length > 0) body.push(...hashHalves(output));
+    if (heavy) body.push(...hashHalves(rigStateValues(rig)), ...treeHash());
+    emit(tag, body);
+    if (heavy) settleTree();
+  };
+
+  const restore: Array<() => void> = [];
+  type Method = (this: unknown, ...args: unknown[]) => unknown;
+  const patch = (
+    proto: object,
+    name: string,
+    wrap: (original: Method) => (this: never, ...args: unknown[]) => unknown,
+  ) => {
+    const target = proto as Record<string, Method>;
+    const original = target[name];
+    if (typeof original !== 'function') throw new Error(`${name} is not a method`);
+    target[name] = wrap(original) as Method;
+    restore.push(() => {
+      target[name] = original;
+    });
+  };
+  /** Count nesting, and record the outermost call `record` accepts. */
+  const watch = (
+    proto: object,
+    name: string,
+    accept: (self: unknown) => boolean,
+    record: (self: unknown, args: unknown[], run: () => unknown) => unknown,
+  ) =>
+    patch(
+      proto,
+      name,
+      (original) =>
+        function (this: unknown, ...args: unknown[]) {
+          if (state.depth > 0 || state.constructing || !accept(this)) {
+            state.depth++;
+            try {
+              return original.apply(this, args);
+            } finally {
+              state.depth--;
+            }
+          }
+          return record(this, args, () => {
+            state.depth++;
+            try {
+              return original.apply(this, args);
+            } finally {
+              state.depth--;
+            }
+          });
+        },
+    );
+
+  const isRig = (self: unknown) => self === state.rig;
+  patch(
+    Rig.prototype,
+    'captureArmFrameMetrics',
+    (original) =>
+      function (this: Rig, ...args: unknown[]) {
+        if (state.depth === 0 && !state.constructing) {
+          if (state.rig) throw new Error('a second rig in one fixture');
+          state.rig = this;
+          state.nodes = [];
+          this.p.root.traverse((o) => {
+            state.nodes.push(o);
+          });
+          if (this.p.root.parent) throw new Error('the battery avatar has no ancestor');
+          state.models = state.nodes.map(() => new Float64Array(43));
+          const dump: number[] = [];
+          state.nodes.forEach((o, i) => {
+            read(o, state.models[i]);
+            dump.push(...state.models[i]);
+          });
+          // A fixture starting where the last one did says so instead of repeating the dump.
+          const same =
+            state.begin !== null &&
+            state.begin.length === dump.length &&
+            dump.every((v, k) => Object.is(v, (state.begin as number[])[k]));
+          emit('begin', same ? [state.nodes.length, 0] : [state.nodes.length, 1, ...dump]);
+          state.begin = dump;
+          state.dt = this.dt;
+          state.constructing = true;
+        }
+        return original.apply(this, args);
+      },
+  );
+  patch(
+    Rig.prototype,
+    'bothArmFramesSupported',
+    (original) =>
+      function (this: Rig, ...args: unknown[]) {
+        const result = original.apply(this, args);
+        if (state.constructing && state.depth === 0 && this === state.rig) {
+          state.constructing = false;
+          const off: number[] = [this.armSolverOff.length];
+          for (const line of this.armSolverOff) off.push(line.startsWith('L') ? 0 : 1);
+          state.pendingNew = [...hashHalves(off), ...treeHash()];
+          settleTree();
+        }
+        return result;
+      },
+  );
+  for (const method of RIG_METHODS) {
+    if (method === 'limitsEnabled') continue;
+    const heavy = !(RIG_READS as readonly string[]).includes(method);
+    watch(Rig.prototype, method, isRig, (_self, args, run) => {
+      const body = open(heavy, [RIG_METHODS.indexOf(method)]);
+      rigArguments(must(state.rig, 'a rig'), method, args, body);
+      const result = run();
+      const output: number[] = [];
+      rigResult(method, args, result, output);
+      close('rig', body, output, heavy);
+      count(method);
+      return result;
+    });
+  }
+  const limits = must(Object.getOwnPropertyDescriptor(Rig.prototype, 'limitsEnabled'), 'limits');
+  const setLimits = must(limits.set, 'a limits setter');
+  Object.defineProperty(Rig.prototype, 'limitsEnabled', {
+    ...limits,
+    set(this: Rig, on: boolean) {
+      if (state.depth > 0 || state.constructing || this !== state.rig) {
+        setLimits.call(this, on);
+        return;
+      }
+      const body = open(true, [RIG_METHODS.indexOf('limitsEnabled')]);
+      rigArguments(this, 'limitsEnabled', [on], body);
+      let threw = false;
+      state.depth++;
+      try {
+        setLimits.call(this, on);
+      } catch {
+        threw = true;
+      } finally {
+        state.depth--;
+      }
+      const output: number[] = [];
+      rigResult('limitsEnabled', [on], threw ? 'threw' : null, output);
+      close('rig', body, output);
+      count('limitsEnabled');
+      if (threw)
+        throw new Error(
+          'Could not restore a feasible arm pose; anatomical limits remain disabled.',
+        );
+    },
+  });
+  restore.push(() => Object.defineProperty(Rig.prototype, 'limitsEnabled', limits));
+
+  const isAnat = (self: unknown) => self === state.rig?.anat;
+  for (const method of ANAT_METHODS) {
+    watch(ArmAnatomy.prototype, method, isAnat, (_self, _args, run) => {
+      const body = open(true, [ANAT_METHODS.indexOf(method)]);
+      const result = run();
+      const output = [result ? 1 : 0];
+      close('anat', body, output);
+      count(`anat.${method}`);
+      return result;
+    });
+  }
+  const isFace = (self: unknown) => self !== null && self === state.rig?.anat.face;
+  for (const method of FACE_METHODS) {
+    watch(FaceSurface.prototype, method, isFace, (_self, _args, run) => {
+      const body = open(true, [FACE_METHODS.indexOf(method)]);
+      const result = run();
+      close('face', body, []);
+      count(`face.${method}`);
+      return result;
+    });
+  }
+  const contexts: ContextCache = { L: null, R: null };
+  const driverSide = (self: unknown): Side | null => {
+    const drivers = state.rig && (Reflect.get(state.rig, '_armDrivers') as Record<Side, unknown>);
+    return drivers?.L === self ? 'L' : drivers?.R === self ? 'R' : null;
+  };
+  for (const method of DRIVER_METHODS) {
+    watch(
+      ArmDriver.prototype,
+      method,
+      (self) => driverSide(self) !== null,
+      (self, args, run) => {
+        const driver = self as ArmDriver;
+        const heavy = method === 'captureVolumeFrame';
+        const prefix = [DRIVER_METHODS.indexOf(method)];
+        putSide(prefix, must(driverSide(driver), 'a side'));
+        const body = open(heavy, prefix);
+        driverArguments(driver, method, args, body, contexts);
+        const result = run();
+        const output: number[] = [];
+        driverResult(driver, method, args, result, output);
+        close('driver', body, output, heavy);
+        count(`driver.${method}`);
+        return result;
+      },
+    );
+  }
+
+  /**
+   * The frame's close: the director's full pass has run, so the tree is its TRS alone. The
+   * record carries the TRS the other layers changed since the last record, for the replay to
+   * write and run the same pass over.
+   */
+  const endFrame = () => {
+    const rig = must(state.rig, 'a rig');
+    const body = open(false, []);
+    const slot = body.length;
+    body.push(0);
+    let changed = 0;
+    state.nodes.forEach((o, i) => {
+      read(o, scratch);
+      const model = state.models[i];
+      for (let j = 0; j < 10; j++) {
+        if (!Object.is(scratch[j], model[j])) {
+          changed++;
+          body.push(i, ...scratch.subarray(0, 10));
+          break;
+        }
+      }
+    });
+    body[slot] = changed;
+    body.push(...hashHalves(rigStateValues(rig)), ...treeHash());
+    emit('frame', body);
+    settleTree();
+  };
+
+  try {
+    for (const fixture of RIG_BATTERY_FIXTURES) {
+      state.rig = null;
+      contexts.L = null;
+      contexts.R = null;
+      runDirectorFixture(fixture, { tamper: endFrame });
+      const rig = must(state.rig as Rig | null, `a rig in ${fixture.id}`);
+      const body = open(true, []);
+      close('end', body, [rig.armSolverOff.length]);
+    }
+  } finally {
+    for (const undo of restore.reverse()) undo();
+  }
+  // Every part of the rig the scripts are there for.
+  for (const what of [
+    'bootstrapStandingPose',
+    'applyBodyContext',
+    'commitArmFrame',
+    'armForwardContextFromUpdatedBody',
+    'stageArmForward',
+    'plantLegs',
+    'aimArm',
+    'aimArmLegacy',
+    'curlFinger',
+    'curlHand',
+    'curlHandLegacy',
+    'measure',
+    'solveReachNatural',
+    'solvePoint',
+    'predictHandContact',
+    'finishLegacyBodyFrame',
+    'limitsEnabled',
+    'driver.planFrom',
+    'face.refresh',
+  ]) {
+    expect(coverage.get(what), what).toBeGreaterThan(0);
+  }
+  return stream.finish();
+}
+
 // --- the files ----------------------------------------------------------------------------
 
 function settle(name: string, recorded: Recorded): void {
@@ -5239,5 +6360,9 @@ describe('the recorded corpora', () => {
   it('match a fresh recording of the arm driver, route, twists and chain battery', () => {
     for (const [name, recorded] of recordRigDBattery()) settle(name, recorded);
     settle('rig-d-battery-box', recordRigDBox());
+  });
+
+  it('match a fresh recording of the rig call battery', () => {
+    for (const [name, recorded] of recordRigCallBattery()) settle(name, recorded);
   });
 });

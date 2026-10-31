@@ -71,6 +71,14 @@ pub struct Shape {
     pub bones: usize,
 }
 
+/// A node's parent as three sees it: a node of the table, or a level of the root's ancestor
+/// mirror (0 the root's own parent).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Parent {
+    Node(u32),
+    Ancestor(usize),
+}
+
 /// The hierarchy. Every buffer is allocated at its final length by [`Graph::new`].
 #[derive(Debug)]
 pub struct Graph {
@@ -472,6 +480,46 @@ impl Graph {
     pub fn parent_of(&self, i: u32) -> Option<u32> {
         let p = self.parent[i as usize];
         (p != NO_NODE).then_some(p)
+    }
+
+    /// The node's parent as three's `parent` is: a table node, or for the root the mirror's
+    /// first ancestor level; none only for a root the mirror holds no level above.
+    pub fn three_parent_of(&self, i: u32) -> Option<Parent> {
+        match self.parent_of(i) {
+            Some(p) => Some(Parent::Node(p)),
+            None => (i == 0 && self.ancestor_count > 0).then_some(Parent::Ancestor(0)),
+        }
+    }
+
+    // three r186 Object3D.updateWorldMatrix(true, false) on a parent
+    pub fn update_parent_world(&mut self, parent: Parent) {
+        match parent {
+            Parent::Node(i) => self.update_world_matrix(i, true, false, false),
+            Parent::Ancestor(k) => {
+                self.assert_built();
+                self.begin_pass();
+                self.update_ancestor(k);
+            }
+        }
+    }
+
+    /// A parent's `matrixWorld` as it stands, without updating it.
+    pub fn current_parent_world(&self, parent: Parent) -> Mat4 {
+        match parent {
+            Parent::Node(i) => self.current_matrix_world(i),
+            Parent::Ancestor(k) => self.ancestor_world(k),
+        }
+    }
+
+    // three r186 Object3D.getWorldQuaternion on a parent
+    pub fn parent_world_quaternion(&mut self, parent: Parent) -> Quat {
+        self.update_parent_world(parent);
+        let mut position = Vec3::default();
+        let mut out = Quat::default();
+        let mut scale = Vec3::default();
+        self.current_parent_world(parent)
+            .decompose(&mut position, &mut out, &mut scale);
+        out
     }
 
     /// The node's local `position`.

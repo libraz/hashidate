@@ -1,0 +1,16 @@
+{
+ "fn": "rig-battery-h",
+ "cases": 1,
+ "in": [
+  {
+   "name": "records",
+   "len": 1
+  }
+ ],
+ "out": [
+  {
+   "name": "stream",
+   "len": 11515
+  }
+ ]
+}

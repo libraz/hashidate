@@ -915,6 +915,7 @@ mod tests {
     use crate::anatomy::joints::JointTable;
     use crate::math::f::acos;
     use crate::math::{Mat4, clamp};
+    use crate::rig::Rig;
     use crate::rig::testkit::{
         avatar, bone, centimetre, close, euler, rest_of, rest_table, with_frame_above_hips,
     };
@@ -1587,33 +1588,6 @@ mod tests {
     const TURNS: [f64; 3] = [PI / 2.0, PI, -PI / 2.0];
     const UP: Vec3 = Vec3::new(0.0, 1.0, 0.0);
 
-    /// `Rig.plantLegs` with its `turnHips`: the hips turned about the stance centre, then the
-    /// legs planted through the same turn.
-    fn plant_legs(g: &mut Graph, p: &Profile, legs: &mut GroundedLegs, rise: f64, turn: f64) {
-        let hips = bone(p, BoneSlot::Hips);
-        if turn != 0.0 {
-            let parent = g.parent_of(hips).unwrap();
-            g.update_world_matrix(parent, true, false, false);
-            g.update_matrix(hips);
-            let mut w = Mat4::default();
-            w.multiply_matrices(&g.current_matrix_world(parent), &g.local_matrix(hips));
-            let pivot = legs.stance_pivot(g);
-            let mut scratch = Mat4::default();
-            w.premultiply(scratch.make_translation(-pivot.x, -pivot.y, -pivot.z));
-            w.premultiply(scratch.make_rotation_y(turn));
-            w.premultiply(scratch.make_translation(pivot.x, pivot.y, pivot.z));
-            let mut inverse = g.current_matrix_world(parent);
-            inverse.invert();
-            w.premultiply(&inverse);
-            let (mut position, mut q) = (Vec3::default(), Quat::default());
-            w.decompose(&mut position, &mut q, &mut Vec3::default());
-            g.set_local_position(hips, &position);
-            g.set_local_quaternion(hips, &q);
-            g.update_matrix(hips);
-        }
-        legs.apply(p, g, rise, turn, None);
-    }
-
     fn turn_world(g: &mut Graph, p: &Profile, slot: BoneSlot) -> Vec3 {
         update(g);
         at(g, p, slot)
@@ -1641,8 +1615,8 @@ mod tests {
         a.angle_to(ankle.sub(&knee))
     }
 
-    /// A plain armature, a centimetre armature, and a rebased, turned parent.
-    fn turn_setup(parent: usize) -> (Graph, Profile, GroundedLegs) {
+    /// A plain armature, a centimetre armature, and a rebased, turned parent, under a `Rig`.
+    fn turn_setup(parent: usize) -> (Graph, Profile, Rig) {
         let (mut g, p) = avatar();
         if parent == 1 {
             centimetre(&mut g);
@@ -1672,15 +1646,19 @@ mod tests {
             }
             update(&mut g);
         }
-        let legs = create(&mut g, &p).expect("turned standing legs were not accepted");
-        (g, p, legs)
+        assert!(
+            create(&mut g, &p).is_some(),
+            "turned standing legs were not accepted"
+        );
+        let rig = Rig::new(p.clone(), &mut g);
+        (g, p, rig)
     }
 
     #[test]
     fn turn_lands_the_rest_pose_rotated_about_the_stance_centre() {
         for parent in 0..3 {
             for turn in TURNS {
-                let (mut g, p, mut legs) = turn_setup(parent);
+                let (mut g, p, mut rig) = turn_setup(parent);
                 let rest = SLOTS.map(|slot| turn_world(&mut g, &p, slot));
                 let rest_q = SLOTS.map(|slot| turn_world_q(&mut g, &p, slot));
                 let bend = Side::BOTH.map(|side| knee_bend(&mut g, &p, side));
@@ -1689,7 +1667,7 @@ mod tests {
                     .add(&turn_world(&mut g, &p, BoneSlot::FootR))
                     .multiply_scalar(0.5);
 
-                plant_legs(&mut g, &p, &mut legs, 0.0, turn);
+                rig.plant_legs(&mut g, 0.0, turn, false);
 
                 let mut yaw = Quat::default();
                 yaw.set_from_axis_angle(&UP, turn);
@@ -1714,10 +1692,11 @@ mod tests {
     #[test]
     fn turn_keeps_the_feet_where_a_plain_plant_puts_them_when_the_turn_is_zero() {
         for parent in 0..3 {
-            let (mut a, p, mut la) = turn_setup(parent);
-            let (mut b, _, mut lb) = turn_setup(parent);
-            la.apply(&p, &mut a, 0.03, 0.0, None);
-            plant_legs(&mut b, &p, &mut lb, 0.03, 0.0);
+            let (mut a, p, mut ra) = turn_setup(parent);
+            let (mut b, _, mut rb) = turn_setup(parent);
+            // The TS calls `plantLegs(0.03)` against `plantLegs(0.03, 0)`: one default, one stated.
+            ra.plant_legs(&mut a, 0.03, 0.0, false);
+            rb.plant_legs(&mut b, 0.03, 0.0, false);
             let dump = |g: &mut Graph| {
                 let mut out = Vec::new();
                 for slot in SLOTS {
@@ -1739,13 +1718,13 @@ mod tests {
     #[test]
     fn turn_plants_the_same_feet_at_a_height_whatever_the_turn() {
         for parent in 0..3 {
-            let (mut g, p, mut legs) = turn_setup(parent);
+            let (mut g, p, mut rig) = turn_setup(parent);
             let mut pivot = turn_world(&mut g, &p, BoneSlot::FootL);
             pivot
                 .add(&turn_world(&mut g, &p, BoneSlot::FootR))
                 .multiply_scalar(0.5);
             let rest = FEET.map(|f| turn_world(&mut g, &p, f));
-            plant_legs(&mut g, &p, &mut legs, 0.04, PI / 2.0);
+            rig.plant_legs(&mut g, 0.04, PI / 2.0, false);
             for i in 0..2 {
                 let mut expected = turned(&rest[i], &pivot, PI / 2.0);
                 expected.add_scaled_vector(&UP, 0.04);
@@ -1761,5 +1740,71 @@ mod tests {
         mid.add(&at(&mut s.g, &s.p, BoneSlot::FootR))
             .multiply_scalar(0.5);
         assert!(s.solver.stance_pivot(&mut s.g).distance_to(&mid) < 1e-12);
+    }
+    // --- legs-turn.test.ts, the cases that use the rig's body context ------------------------
+
+    #[test]
+    fn turn_is_rebuilt_from_the_snapshot_never_stacked_on_itself() {
+        let (mut g, p) = avatar();
+        let mut rig = Rig::new(p.clone(), &mut g);
+        let turn = PI / 2.0;
+        rig.capture_proposed_body_context(&mut g, 0.0, turn);
+        rig.apply_body_context(&mut g, 1.0, 1.0, false);
+        let once = turn_world_q(&mut g, &p, BoneSlot::Hips);
+        // The commit captures again once the pelvis is already turned.
+        rig.capture_proposed_body_context(&mut g, 0.0, turn);
+        rig.apply_body_context(&mut g, 1.0, 1.0, false);
+        assert!(turn_world_q(&mut g, &p, BoneSlot::Hips).angle_to(&once) < 1e-9);
+    }
+
+    #[test]
+    fn turn_without_standing_legs_yaws_the_hips_about_their_own_vertical() {
+        for rebase in [false, true] {
+            let (mut g, mut p) = avatar();
+            for side in Side::BOTH {
+                for slot in leg_slots(side) {
+                    p.bones[slot as usize] = NO_NODE;
+                }
+            }
+            if rebase {
+                g.set_local_quaternion(ROOT, &euler(0.0, 0.0, PI / 2.0));
+            }
+            update(&mut g);
+            let mut rig = Rig::new(p.clone(), &mut g);
+            let before = turn_world(&mut g, &p, BoneSlot::Hips);
+            let before_q = turn_world_q(&mut g, &p, BoneSlot::Hips);
+            rig.plant_legs(&mut g, 0.0, PI / 2.0, false);
+            assert!(turn_world(&mut g, &p, BoneSlot::Hips).distance_to(&before) < 1e-9);
+            let mut expected = *Quat::default().set_from_axis_angle(&UP, PI / 2.0);
+            expected.multiply(&before_q);
+            assert!(turn_world_q(&mut g, &p, BoneSlot::Hips).angle_to(&expected) < 1e-7);
+        }
+    }
+
+    // --- legs-soft.test.ts, the case that uses the rig's body context ------------------------
+
+    #[test]
+    fn soft_reconstructs_uncorrected_rig_contexts_through_alpha_zero_and_retries_without_drift() {
+        let mut h = soft(1.0, false);
+        let mut rig = Rig::new(h.p.clone(), &mut h.g);
+        let rest = h.snapshot();
+        let gap = h.upper + h.lower - h.span;
+        let hips = h.hips;
+        nudge(&mut h.g, hips, 0.0, gap * 0.5, 0.0);
+        let raw = h.g.local_position(hips);
+        rig.plant_legs(&mut h.g, 0.0, 0.0, false);
+        assert!(raw.y - h.g.local_position(hips).y > gap * 0.05);
+        rig.capture_proposed_body_context(&mut h.g, 0.0, 0.0);
+        rig.apply_body_context(&mut h.g, 1.0, 1.0, false);
+        let expected = h.snapshot();
+        for _ in 0..6 {
+            rig.capture_proposed_body_context(&mut h.g, 0.0, 0.0);
+            rig.apply_body_context(&mut h.g, 0.0, 0.0, false);
+            expect_same(&h.snapshot(), &rest);
+            rig.apply_body_context(&mut h.g, 0.5, 0.5, false);
+            rig.apply_body_context(&mut h.g, 1.0, 1.0, false);
+            expect_same(&h.snapshot(), &expected);
+            h.expect_anchors();
+        }
     }
 }
