@@ -2960,7 +2960,7 @@ pub(crate) mod testkit {
 
     /// 64-bit FNV-1a over every node's position, quaternion, scale, matrix, matrixWorld and
     /// matrixWorldNeedsUpdate, in node order: f64 little-endian with NaN as one pattern, the
-    /// flag as a byte. `record-corpora.test.ts` hashes the TS tree the same way.
+    /// flag as a byte, as the recorded batteries hash the TypeScript tree.
     pub fn graph_hash(g: &Graph) -> u64 {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         let mut byte = |b: u8| {
@@ -3711,7 +3711,7 @@ pub(crate) mod testkit {
 }
 
 /// `tests/corpora/rig-a-battery`: the TS rig leaf modules on the base avatar through a fixed run
-/// of their calls, replayed step by step on the port. See `record-corpora.test.ts`.
+/// of their calls, replayed step by step on the port. The recording is a fixed golden.
 #[cfg(test)]
 mod battery {
     use super::elbow::ElbowSearch;
@@ -5504,8 +5504,8 @@ pub(crate) mod tests {
 
     /// `tests/corpora/rig-battery-*`: every call the director's layers make into the base
     /// avatar's TS `Rig`, its anatomy, its face and its arm drivers through a few short scripts,
-    /// with what the other layers did to the tree in between, replayed on the port. See
-    /// `record-corpora.test.ts`.
+    /// with what the other layers did to the tree in between, replayed on the port. The
+    /// recording is a fixed golden.
     pub(crate) mod battery {
         use super::*;
         use crate::anatomy::strain::StrainZone;

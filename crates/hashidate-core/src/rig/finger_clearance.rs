@@ -575,7 +575,7 @@ mod tests {
 
 /// `tests/corpora/rig-b-battery`: the TS finger, hand-geometry, clearance and arm-configuration
 /// modules on the base avatar through a fixed run of their calls, replayed step by step on the
-/// port. See `record-corpora.test.ts`.
+/// port. The recording is a fixed golden.
 #[cfg(test)]
 mod battery {
     use super::super::arm_configuration::{

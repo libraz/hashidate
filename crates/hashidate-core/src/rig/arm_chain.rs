@@ -947,8 +947,8 @@ mod tests {
 }
 
 /// `tests/corpora/rig-d-battery-{a,b,c}`: the TS arm drivers, routes, twist helpers and chain on
-/// the base avatar through a fixed run of their calls, replayed record by record on the port. See
-/// `record-corpora.test.ts`.
+/// the base avatar through a fixed run of their calls, replayed record by record on the port.
+/// The recording is a fixed golden.
 #[cfg(test)]
 mod battery {
     use super::*;

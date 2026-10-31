@@ -772,8 +772,8 @@ mod tests {
 
     /// `tests/corpora/motion-battery-*`: the rig battery's director scripts and two more, with
     /// every `ArmTransaction` and `CharacterFrame` call Body makes recorded as one unit and
-    /// replayed here on the port, beside every other call Body makes into the rig. See
-    /// `record-corpora.test.ts`.
+    /// replayed here on the port, beside every other call Body makes into the rig. The
+    /// recording is a fixed golden.
     #[test]
     fn replays_the_ts_arm_transaction_and_character_frame_bit_for_bit() {
         let mut tx: Option<ArmTransaction> = None;

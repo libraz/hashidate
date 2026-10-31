@@ -1132,7 +1132,7 @@ mod tests {
 #[cfg(test)]
 mod battery {
     //! `tests/corpora/arm-battery`: the TS `ArmAnatomy` on the base avatar through a fixed run
-    //! of its queries, replayed step by step on the port. See `record-corpora.test.ts`.
+    //! of its queries, replayed step by step on the port. The recording is a fixed golden.
     use super::super::face::FaceSurfaceSample;
     use super::super::testkit::body;
     use super::super::volumes::{BodyClearance, make_body_volume_frame, make_clearances};

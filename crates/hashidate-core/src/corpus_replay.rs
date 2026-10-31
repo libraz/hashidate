@@ -1,5 +1,5 @@
-//! Reader for the corpora under `tests/corpora/`, recorded from the TS engine by
-//! `tests/parity/record-corpora.test.ts`.
+//! Reader for the corpora under `tests/corpora/`: fixed goldens recorded from the TypeScript
+//! implementation these modules replaced.
 //!
 //! A function corpus is `<fn>.bin`, little-endian f64 with one case after another (the inputs,
 //! then the outputs), and `<fn>.json`, which names the fields of each half and their lengths.
