@@ -133,10 +133,6 @@ impl GroundedLegs {
     // `restOf` is supplied by `Rig`, which owns the complete rest-quaternion
     // table. Keeping that callback at this boundary means the leg pass does not
     // need to know how the rest pose was captured.
-    //
-    // The TS captures every side's knee into one `kneeMetric` vector declared outside the loop,
-    // and a side whose rest pole is long enough keeps that vector itself as its `kneePole`; so
-    // such a side ends up holding the value the last side left in it. The port keeps that.
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
     pub fn create(
         profile: &Profile,
@@ -168,9 +164,6 @@ impl GroundedLegs {
         let mut built: [Option<LegState>; 2] = [None, None];
         let mut world_foot_l = Vec3::default();
         let mut world_foot_r = Vec3::default();
-        // The one `kneeMetric` of the TS, and which sides hold it as their pole.
-        let mut knee_metric = Vec3::default();
-        let mut holds_knee_metric = [false; 2];
 
         for side in Side::BOTH {
             let [upper, lower, foot, toe] = leg_slots(side).map(|slot| profile.bone(slot));
@@ -263,7 +256,7 @@ impl GroundedLegs {
 
             let mut hip_metric = graph.world_position(upper);
             hip_metric.apply_matrix4(&metric_inverse);
-            knee_metric = graph.world_position(lower);
+            let mut knee_metric = graph.world_position(lower);
             knee_metric.apply_matrix4(&metric_inverse);
             let mut foot_metric = graph.world_position(foot);
             foot_metric.apply_matrix4(&metric_inverse);
@@ -273,7 +266,6 @@ impl GroundedLegs {
             if !(rest_reach_sq > Self::EPS) {
                 return None;
             }
-            // `restKnee` and `restPole` are `kneeMetric` itself in the TS.
             knee_metric.sub(&hip_metric);
             let along = -knee_metric.dot(&rest_reach) / rest_reach_sq;
             knee_metric.add_scaled_vector(&rest_reach, along);
@@ -303,7 +295,6 @@ impl GroundedLegs {
 
             let mut anchor_root = graph.world_position(foot);
             anchor_root.apply_matrix4(&root_inverse);
-            holds_knee_metric[side as usize] = knee_metric.length_sq() > Self::EPS;
             let mut state = LegState {
                 upper,
                 lower,
@@ -323,7 +314,7 @@ impl GroundedLegs {
                 upper_rest_dir,
                 lower_rest_dir,
                 anchor_root,
-                knee_pole: if holds_knee_metric[side as usize] {
+                knee_pole: if knee_metric.length_sq() > Self::EPS {
                     knee_metric
                 } else {
                     Vec3::default()
@@ -356,17 +347,9 @@ impl GroundedLegs {
             built[side as usize] = Some(state);
         }
 
-        let (Some(mut left), Some(mut right)) = (built[0], built[1]) else {
+        let (Some(left), Some(right)) = (built[0], built[1]) else {
             return None;
         };
-        for (state, holds) in [
-            (&mut left, holds_knee_metric[0]),
-            (&mut right, holds_knee_metric[1]),
-        ] {
-            if holds {
-                state.knee_pole = knee_metric;
-            }
-        }
 
         let world_hip = graph.world_position(hips);
         // Standing classification is intentionally expressed in world geometry.
@@ -1337,20 +1320,19 @@ mod tests {
     }
 
     #[test]
-    fn a_bent_rest_pole_is_the_one_both_sides_share() {
-        // The TS keeps one `kneeMetric` for both sides and a bent side's pole is that vector,
-        // so both sides end up with the last side's rest pole. Splay the left knee so the two
-        // sides' own poles differ.
+    fn each_side_keeps_its_own_bent_rest_pole() {
+        // Splay the left knee so the two sides' rest poles differ; neither may take the other's.
         let (mut g, p) = avatar();
         nudge(&mut g, bone(&p, BoneSlot::LowerLegL), 0.03, 0.0, 0.0);
         update(&mut g);
         let legs = create(&mut g, &p).expect("splayed standing legs were not accepted");
-        let (left, right) = (legs.legs[0].knee_pole, legs.legs[1].knee_pole);
-        assert_eq!(left, right);
-        let (_, p0) = avatar();
-        let (mut g0, _) = avatar();
+        let (mut g0, p0) = avatar();
         let symmetric = create(&mut g0, &p0).unwrap();
+        let (left, right) = (legs.legs[0].knee_pole, legs.legs[1].knee_pole);
+        assert_ne!(left, right);
+        assert_ne!(left, symmetric.legs[0].knee_pole);
         assert_eq!(right, symmetric.legs[1].knee_pole);
+        assert!((left.length() - 1.0).abs() < 1e-12);
         assert!((right.length() - 1.0).abs() < 1e-12);
     }
 
