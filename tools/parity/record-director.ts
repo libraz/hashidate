@@ -3,7 +3,7 @@
  *
  *     yarn tsx tools/parity/record-director.ts --avatars manuka,yoka,neru --frames 1800
  *     yarn tsx tools/parity/record-director.ts --avatars neru --frames 1800 --compare
- *     yarn tsx tools/parity/record-director.ts --avatars neru --frames 1800 --time
+ *     yarn tsx tools/parity/record-director.ts --avatars neru --frames 1800 --time --label head
  *
  * The page is made deterministic before any of its own scripts run: animation frames are
  * delivered by hand, `performance.now` and `Date.now` read a clock that advances 1/60 s per
@@ -19,12 +19,14 @@
  * `--compare` records again and reports the first frame that differs. `--time` keeps the host's
  * `Math`, measures each frame with the real clock, split into the part the Rust core runs
  * (rig and anatomy calls, the root's world updates, `Skeleton.update`, the sway update) and the
- * rest, and writes the medians to `backup/parity/<avatar>.director-time.json`. `backup/` is
- * ignored because the files describe a purchased model.
+ * rest, and writes the medians to `backup/parity/<avatar>.director-time-<label>.json`, or to the
+ * file `--out` names (one avatar only), so a run never replaces a file it was not asked to.
+ * `Skeleton.update` is timed on the prototype and on any skeleton that carries its own, as a
+ * core-backed one does. `backup/` is ignored because the files describe a purchased model.
  */
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { chromium, type Page } from 'playwright';
 import { BOUNDARY } from '../../tests/helpers/director-fixtures';
@@ -214,16 +216,17 @@ function installParity({
     const root = d.p.root;
     root.updateMatrixWorld = timed('rootUpdate', root.updateMatrixWorld);
     d.spring.update = timed('spring', d.spring.update.bind(d.spring));
-    let skeletonProto: Proto | null = null;
+    // A core-backed skeleton carries its own `update`, which hides the prototype's.
+    const skeletons = new Set<{ update: Fn }>();
     root.traverse((o) => {
-      if (!skeletonProto && o.isSkinnedMesh && o.skeleton) {
-        skeletonProto = Object.getPrototypeOf(o.skeleton) as Proto;
-      }
+      if (o.isSkinnedMesh && o.skeleton) skeletons.add(o.skeleton);
     });
-    if (skeletonProto) {
-      const proto = skeletonProto as Proto;
-      proto.update = timed('skeleton', proto.update as Fn);
+    let proto: Proto | null = null;
+    for (const skeleton of skeletons) {
+      if (Object.hasOwn(skeleton, 'update')) skeleton.update = timed('skeleton', skeleton.update);
+      else proto ??= Object.getPrototypeOf(skeleton) as Proto;
     }
+    if (proto) proto.update = timed('skeleton', proto.update as Fn);
   };
 
   const installed = (async () => {
@@ -358,7 +361,7 @@ function installParity({
 function usage(message: string): never {
   console.error(message);
   console.error(
-    'usage: tsx tools/parity/record-director.ts --avatars manuka,yoka,neru --frames 1800 [--compare | --time]',
+    'usage: tsx tools/parity/record-director.ts --avatars manuka,yoka,neru --frames 1800 [--compare | --time (--label <name> | --out <file>)]',
   );
   process.exit(2);
 }
@@ -485,6 +488,7 @@ async function settle(
   frames: number,
   mode: Mode,
   result: PageResult,
+  timeFile: string | null,
 ): Promise<void> {
   const base = join(ROOT, OUT_DIR, avatar);
   if (mode === 'time') {
@@ -507,7 +511,8 @@ async function settle(
         spring: median(s.spring),
       },
     };
-    await writeFile(`${base}.director-time.json`, `${JSON.stringify(timing, null, 1)}\n`);
+    if (timeFile === null) throw new Error('--time needs a timing file');
+    await writeFile(timeFile, `${JSON.stringify(timing, null, 1)}\n`);
     console.log(
       `${avatar}: median ms per frame, moved ${timing.median.moved.toFixed(3)} ` +
         `(rig and anatomy ${timing.parts.boundary.toFixed(3)}, root updates ` +
@@ -538,6 +543,8 @@ async function main(): Promise<number> {
       frames: { type: 'string' },
       compare: { type: 'boolean' },
       time: { type: 'boolean' },
+      label: { type: 'string' },
+      out: { type: 'string' },
     },
   });
   const avatars = (values.avatars ?? '')
@@ -551,6 +558,23 @@ async function main(): Promise<number> {
   if (!Number.isInteger(frames) || frames < 1) usage('--frames takes a positive integer');
   if (values.compare && values.time) usage('--compare and --time are separate runs');
   const mode: Mode = values.compare ? 'compare' : values.time ? 'time' : 'record';
+  const { label, out } = values;
+  if (mode !== 'time' && (label !== undefined || out !== undefined)) {
+    usage('--label and --out name the file a --time run writes');
+  }
+  if (mode === 'time') {
+    if ((label === undefined) === (out === undefined))
+      usage('--time takes one of --label or --out');
+    if (label !== undefined && !NAME.test(label)) usage('--label takes a file-name-safe word');
+    if (out !== undefined && avatars.length !== 1) usage('--out takes a single avatar');
+  }
+  // A label names a new file beside the recordings, so no baseline is ever written over.
+  const timeFile = (avatar: string): string | null =>
+    mode !== 'time'
+      ? null
+      : out !== undefined
+        ? resolve(out)
+        : join(ROOT, OUT_DIR, `${avatar}.director-time-${label}.json`);
 
   await mkdir(join(ROOT, OUT_DIR), { recursive: true });
   const [control, vite] = [await freePort(), await freePort()];
@@ -577,7 +601,7 @@ async function main(): Promise<number> {
         try {
           const page = await context.newPage();
           const result = await runAvatar(page, avatar, control, vite, frames, mode);
-          await settle(avatar, frames, mode, result);
+          await settle(avatar, frames, mode, result, timeFile(avatar));
         } finally {
           await context.close();
           const proc = controlProc;
