@@ -13,6 +13,7 @@
 use crate::anatomy::arm::ArmAnatomy;
 use crate::anatomy::joints::JointTable;
 use crate::math::Vec3;
+use crate::math::clamp;
 use crate::math::f::{acos, atan2, cos, js_max, js_min, sin, sqrt};
 use crate::profile::{ArmSlot, BoneSlot, Profile, Side};
 use crate::scene::graph::Graph;
@@ -300,6 +301,37 @@ pub fn swivel_of(
     w: &Vec3,
     framed: Option<bool>,
 ) -> Option<f64> {
+    let (r, sine) = projected_pole(n, w)?;
+    if sine < POLE_MIN_SINE {
+        return None;
+    }
+    Some(swivel_angle(graph, anat, n, r, framed))
+}
+
+/// Swivel angle plus how much a pole should influence the elbow search.
+///
+/// Unlike `swivel_of`, this keeps a finite angle as the projected vector gets
+/// close to the reach line. The public conversion keeps rejecting that range;
+/// only the internal optimizer needs the gradual reliability ramp.
+pub(crate) fn swivel_with_reliability(
+    graph: &mut Graph,
+    anat: &mut ArmAnatomy,
+    n: &Vec3,
+    w: &Vec3,
+    framed: Option<bool>,
+) -> Option<(f64, f64)> {
+    let (r, sine) = projected_pole(n, w)?;
+    if sine < 1e-12 {
+        return None;
+    }
+    let phase = clamp(sine / POLE_MIN_SINE, 0.0, 1.0);
+    // The same minimum-jerk ramp used for deliberate motion gives zero slope
+    // at both ends, so authored guidance enters without a visible threshold.
+    let reliability = phase * phase * phase * (10.0 + phase * (-15.0 + 6.0 * phase));
+    Some((swivel_angle(graph, anat, n, r, framed), reliability))
+}
+
+fn projected_pole(n: &Vec3, w: &Vec3) -> Option<(Vec3, f64)> {
     let len = w.length();
     if len < 1e-6 {
         return None;
@@ -311,15 +343,23 @@ pub fn swivel_of(
     // A bare length test does not: the residue of a long, almost-collinear
     // offset is still long, and the direction it points is noise. That is the
     // hole the earlier pole-as-vector attempt fell through.
-    if r.length() / len < POLE_MIN_SINE {
-        return None;
-    }
+    let sine = r.length() / len;
+    Some((r, sine))
+}
+
+fn swivel_angle(
+    graph: &mut Graph,
+    anat: &mut ArmAnatomy,
+    n: &Vec3,
+    mut r: Vec3,
+    framed: Option<bool>,
+) -> f64 {
     r.normalize();
     let mut reference = Vec3::default();
     reach_ref(graph, anat, n, &mut reference, framed);
     let mut bi = *n;
     bi.cross(&reference);
-    Some(atan2(r.dot(&bi), r.dot(&reference)))
+    atan2(r.dot(&bi), r.dot(&reference))
 }
 
 #[cfg(test)]

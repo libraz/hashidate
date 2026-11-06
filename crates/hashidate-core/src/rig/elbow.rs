@@ -10,7 +10,9 @@
 //! The search holds no state between calls: what it remembers lives in the caller's
 //! `ArmSolution::swivel_dir`. Its scratch is per call.
 
-use super::reach::{ArmSolution, ReachLinks, reach_ref, refresh_frame, swivel_of};
+use super::reach::{
+    ArmSolution, ReachLinks, reach_ref, refresh_frame, swivel_of, swivel_with_reliability,
+};
 use crate::anatomy::arm::ArmAnatomy;
 use crate::anatomy::cost::contact_cost;
 use crate::math::Vec3;
@@ -132,15 +134,71 @@ struct Line {
 }
 
 /// One search's inputs, held so the scoring of a candidate reads like the TS closure.
+#[derive(Clone, Copy)]
 struct Request<'a> {
     side: Side,
     wrist_target: &'a Vec3,
     hand_dir: Option<&'a Vec3>,
     palm_n: Option<&'a Vec3>,
     framed: bool,
-    authored: bool,
-    prior: Option<f64>,
+    authored_weight: f64,
+    authored_prior: Option<f64>,
+    natural_prior: Option<f64>,
     prev: Option<f64>,
+}
+
+fn blend_strain(natural: f64, authored: f64, reliability: f64) -> f64 {
+    if reliability <= 0.0 {
+        natural
+    } else if reliability >= 1.0 {
+        authored
+    } else {
+        natural + (authored - natural) * reliability
+    }
+}
+
+fn strain_cost(anat: &mut ArmAnatomy, reliability: f64) -> f64 {
+    if reliability <= 0.0 {
+        anat.cost()
+    } else if reliability >= 1.0 {
+        // The authored branch deliberately does not update `anat.strain`; keep
+        // that observable state contract when the pole is fully reliable.
+        contact_cost(&anat.m)
+    } else {
+        let natural = anat.cost();
+        let authored = contact_cost(&anat.m);
+        blend_strain(natural, authored, reliability)
+    }
+}
+
+/// The wrapped difference from one swivel angle to another. The antipode has
+/// two equally short routes; choose the positive one so the result is stable at
+/// the exact tie.
+fn swivel_delta(delta: f64) -> f64 {
+    let wrapped = atan2(sin(delta), cos(delta));
+    if wrapped == -PI { PI } else { wrapped }
+}
+
+/// Interpolate the two solved answers on the elbow circle. A slot's existing
+/// answer only selects an equivalent arc in the unreliable transition band;
+/// it adds no state and has no effect at either reliability endpoint.
+fn blended_swivel(natural: f64, authored: f64, reliability: f64, prev: Option<f64>) -> f64 {
+    let shortest = swivel_delta(authored - natural);
+    let Some(prev) = prev else {
+        return natural + reliability * shortest;
+    };
+
+    let mut selected = shortest;
+    let mut best_distance = swivel_delta(natural + reliability * selected - prev).abs();
+    for turns in [-1.0, 1.0] {
+        let candidate = shortest + turns * 2.0 * PI;
+        let distance = swivel_delta(natural + reliability * candidate - prev).abs();
+        if distance < best_distance {
+            selected = candidate;
+            best_distance = distance;
+        }
+    }
+    natural + reliability * selected
 }
 
 /// The TS instance holds only scratch (`_lineS`, `_cand`, …), none of it read before it is
@@ -169,14 +227,17 @@ impl ElbowSearch {
     // `palmN` likewise: null means the palm is free to roll.
     //
     // `pole` is a world point the elbow is drawn toward, as the gesture table
-    // states one. It replaces the predicted elbow as the prior, and it silences
-    // every strain term but the body: an authored pole was placed by eye against
-    // a render, and the inside of the chest is the one thing a render does not
-    // show. Solved at the pole outright, a hand brought inside the shoulder line
-    // had its elbow in the chest and left the limiter to lift it out, part by
-    // part and a frame at a time; scored on strain as well, the search moved
-    // elbows the author had placed — the hand behind the ear by a forearm's
-    // length — because the stop the pole leans on reads as a cost.
+    // states one. When its projection is reliable it replaces the predicted
+    // elbow as the prior and silences every strain term but the body: an authored
+    // pole was placed by eye against a render, and the inside of the chest is the
+    // one thing a render does not show. Solved at the pole outright, a hand
+    // brought inside the shoulder line had its elbow in the chest and left the
+    // limiter to lift it out, part by part and a frame at a time; scored on
+    // strain as well, the search moved elbows the author had placed — the hand
+    // behind the ear by a forearm's length — because the stop the pole leans on
+    // reads as a cost. As the pole approaches the reach line, both rules blend
+    // back to the predicted elbow and full anatomy cost instead of switching at
+    // one exact sine threshold.
     //
     // `out` carries the slot's own elbow state in `swivelDir`, so two slots
     // solving one side in a frame do not pull a shared elbow between them. Zero,
@@ -213,26 +274,26 @@ impl ElbowSearch {
         };
         // Computed before the sweep, not inside it: the prior is a function of the
         // target, and the target does not change while the circle is being sampled.
-        let pole_a = match (pole, &line) {
+        let pole_influence = match (pole, &line) {
             (Some(pole), Some(line)) => {
                 let mut w = *pole;
                 w.sub(&line.s);
-                swivel_of(graph, anat, &line.n, &w, Some(framed))
+                swivel_with_reliability(graph, anat, &line.n, &w, Some(framed))
             }
             _ => None,
         };
-        // A pole on the reach line says nothing, and the frame is searched as a
-        // pose with no pole; the slot's elbow memory carries it across either way.
-        // Holding the pole's rule there instead, with no strain scored, hung the
-        // forearm bent backward until the pole came off the line and flipped it.
-        let authored = pole_a.is_some();
-        let prior = if authored {
-            pole_a
-        } else {
+        // A pole on the reach line says nothing. The prediction and the slot's
+        // remembered elbow carry the solve through that degeneracy, while the
+        // reliability weight hands authority to a meaningful pole gradually.
+        let (authored_prior, authored_weight) =
+            pole_influence.map_or((None, 0.0), |(angle, weight)| (Some(angle), weight));
+        let natural_prior = if authored_weight < 1.0 {
             match &line {
                 Some(line) => Self::predict(p, graph, anat, side, line, framed),
                 None => None,
             }
+        } else {
+            None
         };
         let request = Request {
             side,
@@ -240,27 +301,83 @@ impl ElbowSearch {
             hand_dir,
             palm_n,
             framed,
-            authored,
-            prior,
+            authored_weight,
+            authored_prior,
+            natural_prior,
             prev,
         };
 
         let step = (PI * 2.0) / SWIVEL_SAMPLES as f64;
 
-        let mut best_a = prev.unwrap_or(0.0);
-        let mut best_c = f64::INFINITY;
-        for i in 0..SWIVEL_SAMPLES {
-            let a = -PI + i as f64 * step;
-            let c = Self::score(graph, anat, ctx, &request, &mut cand, a);
-            if c < best_c {
-                best_c = c;
-                best_a = a;
+        let best_a = if authored_weight > 0.0 && authored_weight < 1.0 {
+            // Do not minimize a blended cost here. Two shallow anatomy minima
+            // can exchange order as reliability moves, even when neither pure
+            // answer moved. Find each answer on the same geometry sweep, refine
+            // each in its own mode, then interpolate the solved swivel angles.
+            let mut natural_request = request;
+            natural_request.authored_weight = 0.0;
+            let mut authored_request = request;
+            authored_request.authored_weight = 1.0;
+
+            let mut best_natural_a = prev.unwrap_or(0.0);
+            let mut best_natural_c = f64::INFINITY;
+            let mut best_authored_a = prev.unwrap_or(0.0);
+            let mut best_authored_c = f64::INFINITY;
+            for i in 0..SWIVEL_SAMPLES {
+                let a = -PI + i as f64 * step;
+                let (natural_c, authored_c) =
+                    Self::score_modes(graph, anat, ctx, &request, &mut cand, a);
+                if natural_c < best_natural_c {
+                    best_natural_c = natural_c;
+                    best_natural_a = a;
+                }
+                if authored_c < best_authored_c {
+                    best_authored_c = authored_c;
+                    best_authored_a = a;
+                }
             }
-        }
-        if !best_c.is_finite() {
-            return None;
-        }
-        best_a = Self::refine(graph, anat, ctx, &request, &mut cand, step, best_a, best_c);
+            if !best_natural_c.is_finite() || !best_authored_c.is_finite() {
+                return None;
+            }
+            let natural_a = Self::refine(
+                graph,
+                anat,
+                ctx,
+                &natural_request,
+                &mut cand,
+                step,
+                best_natural_a,
+                best_natural_c,
+            );
+            let authored_a = Self::refine(
+                graph,
+                anat,
+                ctx,
+                &authored_request,
+                &mut cand,
+                step,
+                best_authored_a,
+                best_authored_c,
+            );
+            blended_swivel(natural_a, authored_a, authored_weight, prev)
+        } else {
+            // Keep both established endpoint modes byte-for-byte in their
+            // single-mode search order.
+            let mut best_a = prev.unwrap_or(0.0);
+            let mut best_c = f64::INFINITY;
+            for i in 0..SWIVEL_SAMPLES {
+                let a = -PI + i as f64 * step;
+                let c = Self::score(graph, anat, ctx, &request, &mut cand, a);
+                if c < best_c {
+                    best_c = c;
+                    best_a = a;
+                }
+            }
+            if !best_c.is_finite() {
+                return None;
+            }
+            Self::refine(graph, anat, ctx, &request, &mut cand, step, best_a, best_c)
+        };
 
         // Track toward the answer instead of jumping to it.
         //
@@ -275,10 +392,10 @@ impl ElbowSearch {
         // Damping costs a few frames of lag on a genuine move, which the direction
         // blend was going to smooth anyway.
         //
-        // This smooths a value; it does not choose one. What is being tracked toward
-        // is a function of the target alone, so the elbow still ends up in the same
-        // place whatever route it took there — which is the property the prior
-        // exists for, and the reason the stickiness that used to sit here is gone.
+        // This smooths a value; it does not choose one. The pure natural and
+        // fully authored answers are functions of the target alone. In between,
+        // the slot's previous angle selects the equivalent authored arc when the
+        // shortest arc crosses its antipode; tracking then smooths that target.
         let mut settled = best_a;
         if let Some(prev) = prev {
             let mut d = best_a - prev;
@@ -315,11 +432,7 @@ impl ElbowSearch {
             0.0,
             0.0,
         );
-        Some(if authored {
-            contact_cost(&anat.m)
-        } else {
-            anat.cost()
-        })
+        Some(strain_cost(anat, authored_weight))
     }
 
     // elbow.ts ElbowSearch.search, its `score` closure
@@ -343,21 +456,68 @@ impl ElbowSearch {
             0.0,
             0.0,
         );
-        let strain = if r.authored {
-            contact_cost(&anat.m)
+        let strain = strain_cost(anat, r.authored_weight);
+        let natural_prior_cost = if let Some(prior) = r.natural_prior {
+            // Cosine rather than a squared difference so the penalty wraps with
+            // the circle: a difference of just under a turn is a small move.
+            ELBOW_PRIOR * (1.0 - cos(angle - prior))
         } else {
-            anat.cost()
+            // Continuity carries the natural solve when its predicted point lands
+            // on the reach line and therefore cannot name an elbow direction.
+            let d = angle - r.prev.unwrap_or(0.0);
+            SWIVEL_INERTIA * (1.0 - cos(d))
         };
-        if let Some(prior) = r.prior {
-            // Cosine rather than a squared difference so the penalty wraps with the
-            // circle: the angle is periodic, and a difference of just under a turn
-            // is a small move and must not be charged as a large one.
-            return strain + ELBOW_PRIOR * (1.0 - cos(angle - prior));
+        let authored_prior_cost = r
+            .authored_prior
+            .map_or(0.0, |prior| ELBOW_PRIOR * (1.0 - cos(angle - prior)));
+        let prior_cost = if r.authored_weight <= 0.0 {
+            natural_prior_cost
+        } else if r.authored_weight >= 1.0 {
+            authored_prior_cost
+        } else {
+            natural_prior_cost * (1.0 - r.authored_weight) + authored_prior_cost * r.authored_weight
+        };
+        strain + prior_cost
+    }
+
+    /// Score both pure objectives after solving and measuring a candidate once.
+    /// The two endpoint searches continue to use `score` directly.
+    fn score_modes(
+        graph: &mut Graph,
+        anat: &mut ArmAnatomy,
+        ctx: &mut dyn ElbowContext,
+        r: &Request,
+        cand: &mut ReachLinks,
+        angle: f64,
+    ) -> (f64, f64) {
+        if !ctx.solve_reach(graph, anat, r.side, r.wrist_target, angle, cand, r.framed) {
+            return (f64::INFINITY, f64::INFINITY);
         }
-        // Continuity, so a target drifting between two equally comfortable elbow
-        // positions does not flip between them.
-        let d = angle - r.prev.unwrap_or(0.0);
-        strain + SWIVEL_INERTIA * (1.0 - cos(d))
+        anat.measure(
+            r.side,
+            &cand.upper_arm,
+            &cand.lower_arm,
+            r.hand_dir.unwrap_or(&cand.lower_arm),
+            r.palm_n,
+            0.0,
+            0.0,
+        );
+
+        let natural_strain = anat.cost();
+        let authored_strain = contact_cost(&anat.m);
+        let natural_prior = if let Some(prior) = r.natural_prior {
+            ELBOW_PRIOR * (1.0 - cos(angle - prior))
+        } else {
+            let d = angle - r.prev.unwrap_or(0.0);
+            SWIVEL_INERTIA * (1.0 - cos(d))
+        };
+        let authored_prior = r
+            .authored_prior
+            .map_or(0.0, |prior| ELBOW_PRIOR * (1.0 - cos(angle - prior)));
+        (
+            natural_strain + natural_prior,
+            authored_strain + authored_prior,
+        )
     }
 
     // elbow.ts ElbowSearch.search, its `refine` closure
@@ -513,6 +673,7 @@ mod tests {
     //! so neither a second slot solving the same arm nor a faster display changes
     //! where one slot's elbow is after a given time.
     use super::*;
+    use crate::anatomy::cost::ArmStrain;
     use crate::math::f::{js_round, sqrt};
     use crate::rig::reach::FRAME_REFRESHES;
     use crate::rig::testkit::{Arms, close};
@@ -542,6 +703,123 @@ mod tests {
             ahead,
             across,
         }
+    }
+
+    fn pole_at_sine(arms: &mut Arms, shoulder: &Vec3, target: &Vec3, sine: f64) -> Vec3 {
+        pole_at_sine_azimuth(arms, shoulder, target, sine, 0.0)
+    }
+
+    fn pole_at_sine_azimuth(
+        arms: &mut Arms,
+        shoulder: &Vec3,
+        target: &Vec3,
+        sine: f64,
+        azimuth: f64,
+    ) -> Vec3 {
+        let limb = arms.profile.limb[Side::R as usize];
+        let span = limb.upper.unwrap_or(0.0) + limb.lower.unwrap_or(0.0);
+        let mut n = *target;
+        n.sub(shoulder).normalize();
+        let mut radial = Vec3::default();
+        reach_ref(&mut arms.graph, &mut arms.anat, &n, &mut radial, None);
+        if azimuth != 0.0 {
+            radial.apply_axis_angle(&n, azimuth);
+        }
+        let mut offset = n;
+        offset
+            .multiply_scalar(sqrt(1.0 - sine * sine))
+            .add_scaled_vector(&radial, sine)
+            .multiply_scalar(span);
+        let mut pole = *shoulder;
+        pole.add(&offset);
+        pole
+    }
+
+    fn pole_reliability(arms: &mut Arms, shoulder: &Vec3, target: &Vec3, pole: &Vec3) -> f64 {
+        let mut n = *target;
+        n.sub(shoulder).normalize();
+        let mut offset = *pole;
+        offset.sub(shoulder);
+        swivel_with_reliability(&mut arms.graph, &mut arms.anat, &n, &offset, None)
+            .unwrap()
+            .1
+    }
+
+    fn fresh_reliability_at_sine(sine: f64) -> f64 {
+        let Setup {
+            mut arms,
+            shoulder,
+            ahead,
+            ..
+        } = setup();
+        let pole = pole_at_sine(&mut arms, &shoulder, &ahead, sine);
+        pole_reliability(&mut arms, &shoulder, &ahead, &pole)
+    }
+
+    fn remembered_angle(arms: &mut Arms, shoulder: &Vec3, target: &Vec3, out: &ArmSolution) -> f64 {
+        let mut n = *target;
+        n.sub(shoulder).normalize();
+        let line = Line { s: *shoulder, n };
+        ElbowSearch::remembered(&mut arms.graph, &mut arms.anat, &line, out, true).unwrap()
+    }
+
+    fn tracked_pole_peak(reverse: bool) -> f64 {
+        let Setup {
+            mut arms,
+            shoulder,
+            ahead,
+            ..
+        } = setup();
+        arms.dt = 1.0 / 60.0;
+        let mut sines: Vec<f64> = (0..=250).map(|i| i as f64 * 0.001).collect();
+        if reverse {
+            sines.reverse();
+        }
+
+        let mut slot = ArmSolution::default();
+        let first_sine = sines[0];
+        let first_pole =
+            (first_sine > 0.0).then(|| pole_at_sine(&mut arms, &shoulder, &ahead, first_sine));
+        let mut previous_reliability = first_pole.as_ref().map_or(0.0, |pole| {
+            pole_reliability(&mut arms, &shoulder, &ahead, pole)
+        });
+        arms.solve_reach_natural(Side::R, &ahead, None, &mut slot, first_pole.as_ref());
+
+        let mut peak = 0.0_f64;
+        for &sine in sines.iter().skip(1) {
+            let pole = (sine > 0.0).then(|| pole_at_sine(&mut arms, &shoulder, &ahead, sine));
+            let reliability = pole.as_ref().map_or(0.0, |pole| {
+                pole_reliability(&mut arms, &shoulder, &ahead, pole)
+            });
+            let previous = slot;
+            arms.solve_reach_natural(Side::R, &ahead, None, &mut slot, pole.as_ref());
+            let delta = previous.swivel_dir.angle_to(&slot.swivel_dir);
+            let bound = PI * (reliability - previous_reliability).abs() + SWIVEL_SETTLE + 1e-6;
+            assert!(
+                delta <= bound,
+                "tracked swivel step at sine {sine}: {delta} rad exceeds {bound} rad"
+            );
+            peak = js_max(peak, delta);
+            previous_reliability = reliability;
+        }
+        peak
+    }
+
+    fn fresh_at_sine(sine: Option<f64>) -> ArmSolution {
+        let Setup {
+            mut arms,
+            shoulder,
+            ahead,
+            ..
+        } = setup();
+        let mut out = ArmSolution::default();
+        if let Some(sine) = sine {
+            let pole = pole_at_sine(&mut arms, &shoulder, &ahead, sine);
+            arms.solve_reach_natural(Side::R, &ahead, None, &mut out, Some(&pole));
+        } else {
+            arms.solve_reach_natural(Side::R, &ahead, None, &mut out, None);
+        }
+        out
     }
 
     /// Run one slot for `seconds` at `hz` from an elbow offset from its answer; the angle still
@@ -667,5 +945,185 @@ mod tests {
         let before = FRAME_REFRESHES.with(|c| c.get());
         arms.solve_reach_natural(Side::R, &ahead, None, &mut slot, None);
         assert_eq!(FRAME_REFRESHES.with(|c| c.get()) - before, 1);
+    }
+
+    #[test]
+    fn tiny_pole_azimuth_motion_cannot_switch_the_solved_elbow() {
+        let sine_a = 0.042_872_911_453;
+        let sine_b = 0.042_872_912_407;
+        let lower = fresh_at_sine(Some(sine_a));
+        let upper = fresh_at_sine(Some(sine_b));
+        let reliability_delta =
+            (fresh_reliability_at_sine(sine_b) - fresh_reliability_at_sine(sine_a)).abs();
+        let bound = PI * reliability_delta + 1e-6;
+        let swivel_delta = lower.swivel_dir.angle_to(&upper.swivel_dir);
+        assert!(
+            swivel_delta <= bound,
+            "swivel step {swivel_delta} rad exceeds {bound} rad"
+        );
+        assert!(
+            lower.links.upper_arm.angle_to(&upper.links.upper_arm) < 0.01,
+            "upper-arm discontinuity: {} rad",
+            lower.links.upper_arm.angle_to(&upper.links.upper_arm)
+        );
+        assert!(
+            lower.links.lower_arm.angle_to(&upper.links.lower_arm) < 0.01,
+            "forearm discontinuity: {} rad",
+            lower.links.lower_arm.angle_to(&upper.links.lower_arm)
+        );
+        assert!(
+            lower.swivel_dir.angle_to(&upper.swivel_dir) < 0.01,
+            "elbow direction discontinuity: {} rad",
+            lower.swivel_dir.angle_to(&upper.swivel_dir)
+        );
+    }
+
+    #[test]
+    fn fresh_fixed_radial_sweep_obeys_the_reliability_interpolation_bound() {
+        let mut previous = fresh_at_sine(None);
+        let mut previous_reliability = 0.0;
+        for i in 1..=250 {
+            let sine = i as f64 * 0.001;
+            let current = fresh_at_sine(Some(sine));
+            let reliability = fresh_reliability_at_sine(sine);
+            let delta = previous.swivel_dir.angle_to(&current.swivel_dir);
+            let bound = PI * (reliability - previous_reliability).abs() + 1e-6;
+            assert!(
+                delta <= bound,
+                "fresh swivel step at sine {sine}: {delta} rad exceeds {bound} rad"
+            );
+            previous = current;
+            previous_reliability = reliability;
+        }
+    }
+
+    #[test]
+    fn reused_slot_tracks_a_dense_reliability_sweep_with_a_bounded_step() {
+        let forward_peak = tracked_pole_peak(false);
+        let reverse_peak = tracked_pole_peak(true);
+        assert!(
+            forward_peak < 0.03,
+            "forward sweep jump: {forward_peak} rad"
+        );
+        assert!(
+            reverse_peak < 0.03,
+            "reverse sweep jump: {reverse_peak} rad"
+        );
+    }
+
+    #[test]
+    fn tracked_arc_stays_continuous_when_authored_azimuth_crosses_the_antipode() {
+        let Setup {
+            mut arms,
+            shoulder,
+            ahead,
+            ..
+        } = setup();
+        arms.dt = 100.0;
+        let mut slot = ArmSolution::default();
+        arms.solve_reach_natural(Side::R, &ahead, None, &mut slot, None);
+        let natural = remembered_angle(&mut arms, &shoulder, &ahead, &slot);
+        let epsilon = 0.01;
+        let first_pole =
+            pole_at_sine_azimuth(&mut arms, &shoulder, &ahead, 0.1, natural + PI - epsilon);
+        let reliability = pole_reliability(&mut arms, &shoulder, &ahead, &first_pole);
+        arms.solve_reach_natural(Side::R, &ahead, None, &mut slot, Some(&first_pole));
+        let first = remembered_angle(&mut arms, &shoulder, &ahead, &slot);
+
+        let second_pole =
+            pole_at_sine_azimuth(&mut arms, &shoulder, &ahead, 0.1, natural - PI + epsilon);
+        close(
+            reliability,
+            pole_reliability(&mut arms, &shoulder, &ahead, &second_pole),
+            12,
+        );
+        arms.solve_reach_natural(Side::R, &ahead, None, &mut slot, Some(&second_pole));
+        let second = remembered_angle(&mut arms, &shoulder, &ahead, &slot);
+        assert!(
+            swivel_delta(second - first).abs() < 0.05,
+            "tracked answer crossed the antipode: {} rad",
+            swivel_delta(second - first).abs()
+        );
+    }
+
+    #[test]
+    fn interpolation_uses_the_previous_branch_across_the_antipode() {
+        let epsilon = 0.01;
+        let first = blended_swivel(0.0, PI - epsilon, 0.5, None);
+        let fresh_after = blended_swivel(0.0, -PI + epsilon, 0.5, None);
+        let tracked_after = blended_swivel(0.0, -PI + epsilon, 0.5, Some(first));
+        assert!((fresh_after - first).abs() > 3.0);
+        assert!(swivel_delta(tracked_after - first).abs() <= epsilon);
+    }
+
+    #[test]
+    fn exact_antipode_tie_uses_the_positive_shortest_arc_and_keeps_k0_on_ties() {
+        assert_eq!(swivel_delta(-PI), PI);
+        assert_eq!(blended_swivel(0.0, -PI, 0.5, None), PI * 0.5);
+        assert_eq!(blended_swivel(0.0, -PI, 0.5, Some(0.0)), PI * 0.5);
+    }
+
+    #[test]
+    fn authored_and_natural_endpoint_answers_keep_their_existing_branches() {
+        // A well-conditioned authored pole retains the exact authored branch;
+        // a pole that gives no direction retains the natural branch.
+        let authored_a = fresh_at_sine(Some(0.5));
+        let authored_b = fresh_at_sine(Some(0.8));
+        assert!(authored_a.swivel_dir.angle_to(&authored_b.swivel_dir) < 1e-12);
+        assert!(
+            authored_a
+                .links
+                .upper_arm
+                .angle_to(&authored_b.links.upper_arm)
+                < 1e-12
+        );
+        assert!(
+            authored_a
+                .links
+                .lower_arm
+                .angle_to(&authored_b.links.lower_arm)
+                < 1e-12
+        );
+        let natural = fresh_at_sine(None);
+        let degenerate = fresh_at_sine(Some(0.0));
+        assert!(natural.swivel_dir.angle_to(&degenerate.swivel_dir) < 1e-12);
+        assert!(
+            natural
+                .links
+                .upper_arm
+                .angle_to(&degenerate.links.upper_arm)
+                < 1e-12
+        );
+        assert!(
+            natural
+                .links
+                .lower_arm
+                .angle_to(&degenerate.links.lower_arm)
+                < 1e-12
+        );
+    }
+
+    #[test]
+    fn fully_authored_pole_keeps_the_previous_strain_record() {
+        let Setup {
+            mut arms,
+            shoulder,
+            ahead,
+            ..
+        } = setup();
+        let sentinel = ArmStrain {
+            elevation: 0.11,
+            rotation: 0.22,
+            elbow: 0.33,
+            forearm: 0.44,
+            wrist_flex: 0.55,
+            wrist_dev: 0.66,
+            torso: 0.77,
+        };
+        arms.anat.strain = sentinel;
+        let pole = pole_at_sine(&mut arms, &shoulder, &ahead, 0.5);
+        let mut slot = ArmSolution::default();
+        arms.solve_reach_natural(Side::R, &ahead, None, &mut slot, Some(&pole));
+        assert_eq!(arms.anat.strain, sentinel);
     }
 }

@@ -12,5 +12,22 @@
    "name": "stream",
    "len": 25462
   }
- ]
+ ],
+ "expectations": {
+  "schemaVersion": 1,
+  "generator": "yarn tsx tools/rust-core/record-battery-expectations.ts --write",
+  "nativeOutput": {
+   "runtime": "native-rust",
+   "gitHead": "cd02490066d5b325968ba9f8b7d297de0a6fef88",
+   "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+   "sourceSnapshotSha256": "4904ff97bdb2d033c759ff6d27699b19eaac8d2de48db20be087bbd4c52aa241",
+   "corpusBinarySha256": "e02b3c7b74dc39a39105f537829a04a28b5222bc2927997c3933943fa52caae9",
+   "deterministicRuns": 2
+  },
+  "originalInputs": {
+   "marker": "preserved; caller inputs embedded in out.stream remain in unpatched bytes",
+   "method": "SHA-256 of the full corpus binary with patched 16-byte hash pairs zeroed",
+   "preservedBytesSha256": "ed578a2795d5b6618e0adc9c6ce6d06ad97ffe594dab89789f83c114cc6be40a"
+  }
+ }
 }
