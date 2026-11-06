@@ -220,10 +220,13 @@ export class ReachAnchors {
    * way in its fingers ran into the cheek at speed and stopped the arm dead
    * there: a cuteSalute entrance peaked at 58 m/s². Clearing the request with
    * the reached hand as well, on the way in and at the hold, brought it to 15.
+   *
+   * Return false only when the finite search exhausts its bound. True also
+   * covers poses needing no correction, so it is not a clearance certificate.
    */
-  clearReached(target: THREE.Vector3, r: ReachSpec, side: Side, frameReady?: boolean): void {
-    if (!(r.hand && r.palm && r.space !== 'body')) return;
-    this.clearFace(
+  clearReached(target: THREE.Vector3, r: ReachSpec, side: Side, frameReady?: boolean): boolean {
+    if (!(r.hand && r.palm && r.space !== 'body')) return true;
+    return this.clearFace(
       target,
       this._clearAt,
       r.hand,
@@ -263,9 +266,9 @@ export class ReachAnchors {
     frameReady?: boolean,
     predictedShape?: readonly THREE.Vector3[],
     contactRotation?: THREE.Matrix3,
-  ): void {
+  ): boolean {
     const face = this.rig.anat?.face;
-    if (!face) return;
+    if (!face) return true;
     const F =
       contactRotation ??
       handFrame(
@@ -273,15 +276,15 @@ export class ReachAnchors {
         this.axes.toWorld(this._clearY, palm, side, sideMirror(side), frameReady),
         this._clearF,
       );
-    if (!F) return;
+    if (!F) return true;
     const shape = predictedShape ?? this.rig.fingerShape(side);
     const clear = this.rig.fingerClearance(side);
-    if (!(shape.length && clear > 0)) return;
+    if (!(shape.length && clear > 0)) return true;
     face.refresh();
     // The anchor is on the skin, where its normal can be read.
     let out = this._clearN;
     if (this._anchorOutward) out = this._anchorOutward;
-    else if (face.shortfall(anchor, Number.POSITIVE_INFINITY, out) <= 0) return;
+    else if (face.shortfall(anchor, Number.POSITIVE_INFINITY, out) <= 0) return true;
     let reach = 0;
     for (const local of shape) reach = Math.max(reach, local.length());
     const clearAt = (s: number) => {
@@ -291,13 +294,24 @@ export class ReachAnchors {
       }
       return true;
     };
-    if (clearAt(0)) return;
+    if (clearAt(0)) return true;
     let lo = 0;
     let hi = clear;
-    while (!clearAt(hi)) {
+    const limit = reach + clear;
+    hi = Math.min(hi, limit);
+    let cleared = clearAt(hi);
+    while (!cleared && hi < limit) {
       lo = hi;
-      hi += clear;
-      if (hi > reach + clear) return;
+      hi = Math.min(hi + clear, limit);
+      cleared = clearAt(hi);
+    }
+    if (!cleared) {
+      // The bounded search did not find a clear pose. Move as far as its
+      // existing reach budget allows so a 1µm change at the horizon cannot
+      // switch between an unchanged target and a wrist-sized jump. This is a
+      // best-effort target, not a clearance certificate.
+      target.addScaledVector(out, hi);
+      return false;
     }
     for (let i = 0; i < CLEAR_REFINE; i++) {
       const mid = 0.5 * (lo + hi);
@@ -305,6 +319,7 @@ export class ReachAnchors {
       else lo = mid;
     }
     target.addScaledVector(out, hi);
+    return true;
   }
 
   /**

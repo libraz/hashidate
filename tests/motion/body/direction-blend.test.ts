@@ -12,7 +12,7 @@ interface Observation {
   _rest: Arms;
   _fading: unknown[];
   _armBlend: Record<'L' | 'R', Arms>;
-  _armEnv: Record<ArmSlot, { entrance: number; exit: number }>;
+  _armEnv: Record<'L' | 'R', Record<ArmSlot, { entrance: number; exit: number }>>;
   _palm: Record<
     'L' | 'R',
     { step(target: THREE.Vector3, dt: number, rate: number): THREE.Vector3 }
@@ -105,8 +105,8 @@ describe('Body direction blending', () => {
     let largestPalmError = 0;
     for (let frame = 0; frame < 50; frame++) {
       h.step();
-      const upper = h.observed._armEnv.upperArm;
-      const hand = h.observed._armEnv.hand;
+      const upper = h.observed._armEnv.R.upperArm;
+      const hand = h.observed._armEnv.R.hand;
       const armShare = upper.entrance * upper.exit;
       const palmShare = hand.entrance * hand.exit;
       if (armShare > 0.1 && armShare < 0.9 && palmShare > 0.1 && palmShare < 0.9) {

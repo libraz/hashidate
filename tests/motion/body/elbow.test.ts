@@ -189,9 +189,11 @@ describe('a reach behind the shoulder', () => {
     const floor = Math.min(first.z, last.z) - 0.01;
     const behind = Math.min(...run.wrist.map((w) => w.z));
     expect(behind).toBeGreaterThan(floor);
-    // The move itself is quick — a short lead over a long arc — so the claim is
-    // that the limiter adds nothing to it, where it used to flip the forearm.
+    // Min-jerk wrist travel eases the free path as well. Compare each path with
+    // the clean entrance seam bound: separate global maxima no longer show
+    // whether a relative increase came from the limiter or the directed path.
+    expect(run.acceleration).toBeLessThan(SEAM);
     const limited = entrance('listen', side, true, 120).acceleration;
-    expect(limited).toBeLessThan(run.acceleration * 1.25);
+    expect(limited).toBeLessThan(SEAM);
   });
 });

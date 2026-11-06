@@ -152,9 +152,9 @@ describe('the path between two poses', () => {
     const hand = h.profile.bones['hand.R'];
     if (!hand) throw new Error('rig incomplete');
 
-    const step = () => {
+    const step = (dt = DT) => {
       h.rig.reset();
-      h.body.update(DT);
+      h.body.update(dt);
     };
     step();
     h.body.play('listen');
@@ -169,6 +169,7 @@ describe('the path between two poses', () => {
     const heldWorldOrientation = hand.getWorldQuaternion(new THREE.Quaternion());
     const clearance = h.rig.fingerClearance('R');
     expect(clearance).toBeGreaterThan(0);
+    expect(fingerDepth(h, 'R')).toBeLessThan(clearance);
     let greatestHandTurn = 0;
 
     h.body.play('cover');
@@ -189,15 +190,63 @@ describe('the path between two poses', () => {
     }
     expect(greatestHandTurn).toBeGreaterThan(1e-3);
 
-    for (let i = 0; i < 120; i++) step();
-    const goal = actualWristDeviation(h);
+    const gesture = h.body.gesture;
+    if (gesture?.id !== 'cover') throw new Error('cover did not remain active');
+    // `cover` oscillates its mouth target at 1.7*v.rate in gestures/emote.ts;
+    // one 3s sample can precede wrist settling, so compare complete cycles.
+    const period = (2 * Math.PI) / (1.7 * gesture.v.rate * gesture.speed);
+    if (!(Number.isFinite(period) && period > 0))
+      throw new Error('cover has no finite oscillation period');
+    h.body.holdFor(4 * period + DT);
+
+    const [hardMinimum, hardMaximum] = JOINTS.wrist.dofs.deviation.max;
+    const observeReferenceFrame = (): number => {
+      const deviation = actualWristDeviation(h);
+      expect(Number.isFinite(deviation)).toBe(true);
+      expect(deviation).toBeGreaterThanOrEqual(hardMinimum - 1e-6);
+      expect(deviation).toBeLessThanOrEqual(hardMaximum + 1e-6);
+      expect(fingerDepth(h, 'R')).toBeLessThan(clearance);
+      return deviation;
+    };
+
+    let previousBounds: readonly [number, number] | null = null;
+    let settledBounds: readonly [number, number] | null = null;
+    for (let cycle = 0; cycle < 4; cycle++) {
+      const values = [observeReferenceFrame()];
+      const fullSteps = Math.floor(period / DT);
+      for (let i = 0; i < fullSteps; i++) {
+        step();
+        values.push(observeReferenceFrame());
+      }
+      const remainder = period - fullSteps * DT;
+      if (remainder > 1e-12) {
+        step(remainder);
+        values.push(observeReferenceFrame());
+      }
+      const bounds: readonly [number, number] = [Math.min(...values), Math.max(...values)];
+      if (
+        previousBounds &&
+        Math.abs(bounds[0] - previousBounds[0]) <= 1e-6 &&
+        Math.abs(bounds[1] - previousBounds[1]) <= 1e-6
+      ) {
+        settledBounds = bounds;
+        break;
+      }
+      previousBounds = bounds;
+    }
+    if (!settledBounds)
+      throw new Error('cover wrist-deviation envelope did not settle within four cycles');
+
     // The clearance turn is part of the solved wrist, so the path may not turn it
-    // past both the comfortable band and where the hold itself needs it (cover's
-    // palm needs the ulnar stop). With the hold on that stop the lower bound is the
-    // stop itself, so here it is the radial side that binds.
+    // past both the comfortable band and where the held pose actually needs it.
+    const [minimumRequiredDeviation, maximumRequiredDeviation] = settledBounds;
     for (const deviation of deviations) {
-      expect(deviation).toBeGreaterThanOrEqual(Math.min(minimumDeviation, goal) - 1e-6);
-      expect(deviation).toBeLessThanOrEqual(Math.max(maximumDeviation, goal) + 1e-6);
+      expect(deviation).toBeGreaterThanOrEqual(
+        Math.min(minimumDeviation, minimumRequiredDeviation) - 1e-6,
+      );
+      expect(deviation).toBeLessThanOrEqual(
+        Math.max(maximumDeviation, maximumRequiredDeviation) + 1e-6,
+      );
     }
   });
 });

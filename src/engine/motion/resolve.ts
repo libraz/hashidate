@@ -549,6 +549,11 @@ export class ArmResolver {
     // started, so this composes with whatever the arm was doing rather than
     // starting from a rest pose it may be nowhere near.
     //
+    // Clear the intended endpoint before carrying the wrist toward it. Clearing
+    // the interpolated point after travel makes a destination correction appear
+    // as a sudden hand step in whichever frame first needs the extra clearance.
+    this.anchors.clearReached(target, r, side, frameReady);
+
     // On the entrance only. The way back to rest is `retreat`'s, which every
     // kind of pose takes.
     if (timed && this._wristKnown[side]) {
@@ -556,7 +561,6 @@ export class ArmResolver {
       if (e < 1) this.anchors.travel(target, this._wristFrom[side], side, e);
       this._travelling[side] = true;
     }
-    this.anchors.clearReached(target, r, side, frameReady);
 
     const out = reach[side];
     out.clasp = false;
