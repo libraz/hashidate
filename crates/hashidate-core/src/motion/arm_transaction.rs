@@ -676,7 +676,9 @@ mod tests {
     use super::*;
     use crate::profile::{BoneSlot, base};
     use crate::rig::testkit::{Stream, hash_halves};
-    use crate::rig::tests::battery::{apply_diff, replay, same_close};
+    use crate::rig::tests::battery::{
+        ReplayResult, apply_diff, replay, replay_recording, same_close,
+    };
 
     const DT: f64 = 1.0 / 60.0;
     const LEAD_FLOOR: f64 = 0.12;
@@ -770,12 +772,12 @@ mod tests {
         v
     }
 
-    /// `tests/corpora/motion-battery-*`: the rig battery's director scripts and two more, with
-    /// every `ArmTransaction` and `CharacterFrame` call Body makes recorded as one unit and
-    /// replayed here on the port, beside every other call Body makes into the rig. The
-    /// recording is a fixed golden.
-    #[test]
-    fn replays_the_ts_arm_transaction_and_character_frame_bit_for_bit() {
+    /// `tests/corpora/motion-battery-*`: the director scripts and two extra fixtures, with every
+    /// recorded `ArmTransaction` and `CharacterFrame` call replayed beside the surrounding rig
+    /// calls. Expected hashes are the current reviewed baseline.
+    fn replay_arm_transaction_battery(
+        recording: bool,
+    ) -> (ReplayResult, std::collections::BTreeMap<String, usize>) {
         let mut tx: Option<ArmTransaction> = None;
         let mut seen = std::collections::BTreeMap::<String, usize>::new();
         let mut extra = |tag: &str, g: &mut Graph, rig: &mut Rig, s: &mut Stream| match tag {
@@ -888,8 +890,20 @@ mod tests {
             }
             other => panic!("{}: no replay for {other}", s.what),
         };
-        let (rig_seen, fixtures) = replay("motion-battery", &mut extra);
-        assert_eq!(fixtures, 6);
+        let replay = if recording {
+            replay_recording("motion-battery", &mut extra)
+        } else {
+            replay("motion-battery", &mut extra)
+        };
+        (replay, seen)
+    }
+
+    fn assert_motion_battery_coverage(
+        replay: &ReplayResult,
+        seen: &std::collections::BTreeMap<String, usize>,
+    ) {
+        assert_eq!(replay.files, 13);
+        assert_eq!(replay.fixtures, 6);
         for what in [
             "tx.beginFrame",
             "tx.retime",
@@ -912,10 +926,36 @@ mod tests {
             "limitsEnabled",
         ] {
             assert!(
-                rig_seen.get(what).is_some_and(|&c| c > 0),
+                replay.seen.get(what).is_some_and(|&c| c > 0),
                 "{what} never replayed"
             );
         }
+    }
+
+    fn emit_recorded_expectations(battery: &str, replay: ReplayResult) {
+        for change in &replay.changes {
+            println!("HASHIDATE_EXPECTATIONS {}", change.json_line());
+        }
+        println!(
+            "HASHIDATE_EXPECTATIONS {{\"type\":\"end\",\"battery\":\"{battery}\",\"files\":{},\"fixtures\":{},\"changes\":{}}}",
+            replay.files,
+            replay.fixtures,
+            replay.changes.len(),
+        );
+    }
+
+    #[test]
+    fn replays_recorded_arm_transaction_and_character_frame_calls_bit_for_bit() {
+        let (replay, seen) = replay_arm_transaction_battery(false);
+        assert_motion_battery_coverage(&replay, &seen);
+    }
+
+    #[test]
+    #[ignore = "run through tools/rust-core/record-battery-expectations.ts"]
+    fn record_current_motion_battery_expectations() {
+        let (replay, seen) = replay_arm_transaction_battery(true);
+        assert_motion_battery_coverage(&replay, &seen);
+        emit_recorded_expectations("motion-battery", replay);
     }
 
     /// The base avatar's rig at its standing pose, a transaction whose routes start there, and

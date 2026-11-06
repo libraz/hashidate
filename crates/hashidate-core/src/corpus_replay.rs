@@ -1,5 +1,7 @@
 //! Reader for the corpora under `tests/corpora/`: fixed goldens recorded from the TypeScript
-//! implementation these modules replaced.
+//! implementation these modules replaced. The rig and motion batteries keep those inputs, but
+//! hash pairs changed by a deliberate behaviour change are re-recorded from the port by
+//! `tools/rust-core/record-battery-expectations.ts`, which notes this in the corpus index.
 //!
 //! A function corpus is `<fn>.bin`, little-endian f64 with one case after another (the inputs,
 //! then the outputs), and `<fn>.json`, which names the fields of each half and their lengths.

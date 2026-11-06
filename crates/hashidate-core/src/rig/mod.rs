@@ -3288,11 +3288,55 @@ pub(crate) mod testkit {
         [u, l, h, n]
     }
 
-    /// A battery's records, read front to back, with what each one wrote checked as it is read.
+    /// One changed expected hash at a call's output field.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct ExpectedHashChange {
+        pub corpus: String,
+        pub stream_offset: usize,
+        pub record: String,
+        pub field: String,
+        pub before: [u64; 2],
+        pub after: [u64; 2],
+    }
+
+    impl ExpectedHashChange {
+        pub fn json_line(&self) -> String {
+            let bits =
+                |values: [u64; 2]| format!("[\"{:016x}\",\"{:016x}\"]", values[0], values[1]);
+            format!(
+                "{{\"type\":\"change\",\"corpus\":\"{}\",\"streamOffset\":{},\"record\":\"{}\",\"field\":\"{}\",\"before\":{},\"after\":{}}}",
+                json_escape(&self.corpus),
+                self.stream_offset,
+                json_escape(&self.record),
+                json_escape(&self.field),
+                bits(self.before),
+                bits(self.after),
+            )
+        }
+    }
+
+    fn json_escape(value: &str) -> String {
+        let mut out = String::with_capacity(value.len());
+        for ch in value.chars() {
+            match ch {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                ch if ch < ' ' => out.push_str(&format!("\\u{:04x}", ch as u32)),
+                ch => out.push(ch),
+            }
+        }
+        out
+    }
+
+    /// A battery's records, read front to back, with expected writes checked as they are read.
     pub struct Stream<'a> {
         values: &'a [f64],
         at: usize,
         pub what: String,
+        recording: Option<(String, Vec<ExpectedHashChange>)>,
     }
 
     impl<'a> Stream<'a> {
@@ -3301,7 +3345,22 @@ pub(crate) mod testkit {
                 values,
                 at: 0,
                 what: String::new(),
+                recording: None,
             }
+        }
+
+        /// Record changed hash expectations while consuming the immutable original stream.
+        pub fn recording(values: &'a [f64], corpus: &str) -> Stream<'a> {
+            Stream {
+                values,
+                at: 0,
+                what: String::new(),
+                recording: Some((corpus.to_owned(), Vec::new())),
+            }
+        }
+
+        pub fn into_recorded_changes(self) -> Vec<ExpectedHashChange> {
+            self.recording.expect("a recording stream").1
         }
 
         pub fn done(&self) -> bool {
@@ -3360,12 +3419,42 @@ pub(crate) mod testkit {
             Side::BOTH[self.index()]
         }
 
-        /// The next values are what the TS wrote; they must be `got`, bit for bit.
+        /// Compare an expected value by default; recording mode collects supported changed hashes.
         pub fn same(&mut self, got: &[f64], name: &str) {
+            let offset = self.at;
             let want = self.take(got.len());
             let g: Vec<u64> = got.iter().map(|v| v.to_bits()).collect();
             let w: Vec<u64> = want.iter().map(|v| v.to_bits()).collect();
-            assert_eq!(g, w, "{}: {name}: {got:?} against {want:?}", self.what);
+            if let Some((corpus, changes)) = &mut self.recording {
+                assert!(
+                    matches!(name, "output" | "state" | "tree" | "armSolverOff"),
+                    "{}: recorder cannot patch field {name}",
+                    self.what
+                );
+                assert_eq!(g.len(), 2, "{}: {name} is not a hash pair", self.what);
+                let valid_half = |value: f64| {
+                    value.is_finite()
+                        && value.fract() == 0.0
+                        && (0.0..=f64::from(u32::MAX)).contains(&value)
+                };
+                assert!(
+                    want.iter().chain(got).all(|&value| valid_half(value)),
+                    "{}: {name} contains a non-u32 hash half: before={want:?} after={got:?}",
+                    self.what
+                );
+                if g != w {
+                    changes.push(ExpectedHashChange {
+                        corpus: corpus.clone(),
+                        stream_offset: offset,
+                        record: self.what.clone(),
+                        field: name.to_owned(),
+                        before: [w[0], w[1]],
+                        after: [g[0], g[1]],
+                    });
+                }
+            } else {
+                assert_eq!(g, w, "{}: {name}: {got:?} against {want:?}", self.what);
+            }
         }
 
         pub fn same_flag(&mut self, b: bool, name: &str) {
@@ -5504,8 +5593,8 @@ pub(crate) mod tests {
 
     /// `tests/corpora/rig-battery-*`: every call the director's layers make into the base
     /// avatar's TS `Rig`, its anatomy, its face and its arm drivers through a few short scripts,
-    /// with what the other layers did to the tree in between, replayed on the port. The
-    /// recording is a fixed golden.
+    /// with what the other layers did to the tree in between, replayed on the port. The inputs
+    /// are a fixed golden; changed hash pairs are re-recorded through `replay_recording`.
     pub(crate) mod battery {
         use super::*;
         use crate::anatomy::strain::StrainZone;
@@ -6307,12 +6396,25 @@ pub(crate) mod tests {
         /// the stream at the record's body.
         pub(crate) type Extra<'e> = dyn FnMut(&str, &mut Graph, &mut Rig, &mut Stream) + 'e;
 
+        pub(crate) struct ReplayResult {
+            pub seen: std::collections::BTreeMap<String, usize>,
+            pub fixtures: usize,
+            pub files: usize,
+            pub changes: Vec<crate::rig::testkit::ExpectedHashChange>,
+        }
+
         /// Replay the call battery `name`, handing the motion tags to `extra`. Returns how often
         /// each tag and method was replayed, and the fixtures that ended.
-        pub(crate) fn replay(
-            name: &str,
-            extra: &mut Extra,
-        ) -> (std::collections::BTreeMap<String, usize>, usize) {
+        pub(crate) fn replay(name: &str, extra: &mut Extra) -> ReplayResult {
+            replay_inner(name, extra, false)
+        }
+
+        /// Replay against the original immutable input stream and collect only changed hash pairs.
+        pub(crate) fn replay_recording(name: &str, extra: &mut Extra) -> ReplayResult {
+            replay_inner(name, extra, true)
+        }
+
+        fn replay_inner(name: &str, extra: &mut Extra, recording: bool) -> ReplayResult {
             let files = files(name);
             assert!(!files.is_empty(), "no {name} files");
             let mut begin: Vec<f64> = Vec::new();
@@ -6320,11 +6422,17 @@ pub(crate) mod tests {
             let mut live: Option<(Graph, Rig)> = None;
             let mut contexts = Contexts([None, None]);
             let mut seen = std::collections::BTreeMap::<String, usize>::new();
+            let mut changes = Vec::new();
             let mut fixtures = 0;
             let mut n = 0;
             for file in &files {
                 let corpus = Corpus::load(file);
-                let mut s = Stream::new(corpus.case(0).output("stream"));
+                let values = corpus.case(0).output("stream");
+                let mut s = if recording {
+                    Stream::recording(values, file)
+                } else {
+                    Stream::new(values)
+                };
                 while !s.done() {
                     let tag = TAGS[s.index()];
                     s.what = format!("{file} #{n} {tag}");
@@ -6426,16 +6534,23 @@ pub(crate) mod tests {
                         }
                     }
                 }
+                if recording {
+                    changes.extend(s.into_recorded_changes());
+                }
             }
             assert!(live.is_none(), "the last fixture did not end");
-            (seen, fixtures)
+            ReplayResult {
+                seen,
+                fixtures,
+                files: files.len(),
+                changes,
+            }
         }
 
-        #[test]
-        fn replays_the_ts_rig_through_the_director_bit_for_bit() {
-            let (seen, fixtures) = replay("rig-battery", &mut |tag, _, _, s| {
-                panic!("{}: no replay for {tag}", s.what)
-            });
+        fn assert_director_battery_coverage(
+            seen: &std::collections::BTreeMap<String, usize>,
+            fixtures: usize,
+        ) {
             assert_eq!(fixtures, 4);
             for method in [
                 "bootstrapStandingPose",
@@ -6463,6 +6578,37 @@ pub(crate) mod tests {
                     "{method} never replayed"
                 );
             }
+        }
+
+        fn emit_recorded_expectations(battery: &str, result: ReplayResult) {
+            for change in &result.changes {
+                println!("HASHIDATE_EXPECTATIONS {}", change.json_line());
+            }
+            println!(
+                "HASHIDATE_EXPECTATIONS {{\"type\":\"end\",\"battery\":\"{battery}\",\"files\":{},\"fixtures\":{},\"changes\":{}}}",
+                result.files,
+                result.fixtures,
+                result.changes.len(),
+            );
+        }
+
+        #[test]
+        fn replays_recorded_director_rig_calls_bit_for_bit() {
+            let replay = replay("rig-battery", &mut |tag, _, _, s| {
+                panic!("{}: no replay for {tag}", s.what)
+            });
+            assert_director_battery_coverage(&replay.seen, replay.fixtures);
+        }
+
+        #[test]
+        #[ignore = "run through tools/rust-core/record-battery-expectations.ts"]
+        fn record_current_rig_battery_expectations() {
+            let replay = replay_recording("rig-battery", &mut |tag, _, _, s| {
+                panic!("{}: no replay for {tag}", s.what)
+            });
+            assert_director_battery_coverage(&replay.seen, replay.fixtures);
+            assert_eq!(replay.files, 8);
+            emit_recorded_expectations("rig-battery", replay);
         }
     }
 }
