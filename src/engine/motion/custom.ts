@@ -26,15 +26,14 @@ import { GESTURES, isBuiltInGestureName } from './gestures';
  *
  * A built-in gesture is a function of time: `wave` is a sine whose amplitude
  * decays because a wave held at constant amplitude for three seconds is a
- * metronome, `nod` is a damped oscillation because one beat reads as a twitch.
- * Those are not values anybody types into a file — they were arrived at by
- * watching a render, and the comments beside them say which failure each number
- * exists to prevent.
+ * metronome; `nod` has a preparation, one downstroke and a slower return.
+ * The curves are authored in code and checked against a render, and the
+ * comments beside them explain the tuning.
  *
  * So this format is keyframes, which is what a person editing a text file can
  * actually control: poses at times, interpolated between. It expresses less
  * than `build` does and is meant to. The built-in table is not migrated to it
- * and must not be — a keyframed `nod` is a nod with the tuning taken out.
+ * and must not be — a keyframed nod leaves those timing choices to its author.
  *
  * ## Directions and offsets only
  *

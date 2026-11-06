@@ -1,4 +1,5 @@
 import type { GestureDef, HandContact } from '../../types';
+import { nodShape } from '../prosody';
 import { V } from './base';
 import { both, reach, torso } from './builders';
 import { OPEN_HAND, POINT_HAND } from './hands';
@@ -27,9 +28,13 @@ export const REACTION = {
     lead: 0.12,
     hold: 0.55,
     build(t, v, _phase?, out?) {
-      // A damped oscillation, not a single dip: one beat reads as a twitch, and
-      // the second, smaller beat is what makes it read as agreement.
-      const a = Math.exp(-t * 1.5) * Math.sin(t * 7.6 * v.rate);
+      // One nod as deep as the first peak of exp(-1.5t)·sin(7.6t), then rest.
+      // A long hold leaves the head still instead of adding unrequested
+      // agreement beats.
+      const frequency = 7.6 * v.rate;
+      const peakAt = Math.atan2(frequency, 1.5) / frequency;
+      const amplitude = Math.exp(-1.5 * peakAt) * Math.sin(frequency * peakAt);
+      const a = nodShape(t * v.rate, amplitude);
       return torso(out, {
         head: [0.15 * a, 0, 0],
         neck: [0.06 * a, 0, 0],

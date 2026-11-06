@@ -67,6 +67,7 @@ const pauseAfter =
     s >= t && s < t + 0.25 ? 0 : 1;
 
 const loud = (): number => 1;
+const MIN_NOD_AMP = NOD_PITCH * 0.8;
 
 const SEEDS = 1000;
 
@@ -153,6 +154,23 @@ describe('planHeadBeats', () => {
     const last = track.events[track.events.length - 1];
     const beats = planHeadBeats(track, { random: constant(0) });
     expect(beats.map((b) => b.t)).toEqual([last.t + last.dur]);
+  });
+
+  it('does not invent an end boundary for a continuation chunk', () => {
+    expect(planHeadBeats(line([]), { closes: false, random: constant(0) })).toEqual([]);
+    // The default remains the final line of a run, and an explicit major
+    // boundary remains eligible even when more text is expected afterwards.
+    const last = line([]).events.at(-1);
+    if (!last) throw new Error('line has no events');
+    expect(planHeadBeats(line([]), { random: constant(0) })).toEqual([
+      { t: last.t + last.dur, amp: MIN_NOD_AMP },
+    ]);
+    expect(
+      planHeadBeats(line([{ t: 1, kind: 'major' }]), {
+        closes: false,
+        random: constant(0),
+      }),
+    ).toContainEqual({ t: 1, amp: MIN_NOD_AMP });
   });
 
   it('plans nothing for a line with no events', () => {
@@ -252,6 +270,8 @@ class Model {
   private plan: readonly HeadBeat[] = [];
   private next = 0;
   private line = 0;
+  private elapsed = 0;
+  private lastStart = Number.NEGATIVE_INFINITY;
   private live: Live[] = [];
 
   start(beats: readonly HeadBeat[]): void {
@@ -279,10 +299,14 @@ class Model {
       const late = this.line - (b.t - NOD_LEAD);
       if (late < 0) break;
       this.next++;
-      if (late <= LATE_START) this.live.push({ amp: b.amp, u: 0 });
+      if (late <= LATE_START && this.elapsed - this.lastStart >= 0.6 - 1e-9) {
+        this.live.push({ amp: b.amp, u: 0 });
+        this.lastStart = this.elapsed;
+      }
     }
     const seen = this.live.map((ref) => ({ ref, u: ref.u }));
     this.line += dt;
+    this.elapsed += dt;
     for (const l of this.live) l.u += dt;
     this.live = this.live.filter((l) => l.u < NOD_LENGTH);
     return seen;
@@ -384,16 +408,29 @@ describe('HeadBeats', () => {
       expect(out.slice(Math.ceil(1.6 / dt)).every((v) => v === 0)).toBe(true);
     });
 
-    it(`adds a new line's nods to one still in flight at dt ${dt.toFixed(4)}`, () => {
+    it(`drops a cross-line nod that is too close and keeps the next spaced nod at dt ${dt.toFixed(4)}`, () => {
       let restarted = false;
       const out = drive(dt, Math.ceil(2 / dt), PLAN, (_f, both) => {
         if (!restarted && both.clock >= 1) {
-          both.start([{ t: 0.3, amp: 0.06 }]);
+          // The .3 s nod is too close to the previous start. It is consumed,
+          // not deferred; the .6 s event can still start on schedule.
+          both.start([
+            { t: 0.3, amp: 0.06 },
+            { t: 0.6, amp: 0.05 },
+          ]);
           restarted = true;
         }
       });
       expect(restarted).toBe(true);
-      expect(out.some((v) => v !== 0)).toBe(true);
+      const peaks = out.flatMap((value, i) =>
+        i > 0 && i + 1 < out.length && value > out[i - 1] && value >= out[i + 1] && value > 0
+          ? [i * dt]
+          : [],
+      );
+      // The first peak is at .5 s; the early cross-line .3 s beat is dropped,
+      // and the next peak stays at least .6 s later.
+      expect(peaks.length).toBeGreaterThanOrEqual(2);
+      expect(peaks[1] - peaks[0]).toBeGreaterThanOrEqual(0.6 - dt);
     });
 
     it(`does not re-seek a nod when the line clock jumps 0.5 s at dt ${dt.toFixed(4)}`, () => {
@@ -407,6 +444,32 @@ describe('HeadBeats', () => {
       expect(jumped).toBe(true);
     });
   }
+
+  it.each([1 / 30, 1 / 60, 1 / 120])(
+    'keeps real nod starts at least .6 s apart when a new line restarts at dt %s',
+    (dt) => {
+      let restarted = false;
+      const out = drive(dt, Math.ceil(2 / dt), [{ t: 0.5, amp: 0.06 }], (_frame, both) => {
+        if (!restarted && both.clock >= 0.5 - 1e-9) {
+          both.start([
+            { t: 0.3, amp: 0.06 },
+            { t: 1.1, amp: 0.05 },
+          ]);
+          restarted = true;
+        }
+      });
+      expect(restarted).toBe(true);
+      const peaks = out.flatMap((value, i) =>
+        i > 0 && i + 1 < out.length && value > out[i - 1] && value >= out[i + 1] && value > 0
+          ? [i * dt]
+          : [],
+      );
+      expect(peaks.length).toBe(2);
+      expect(peaks[0]).toBeCloseTo(0.5, 1);
+      expect(peaks[1]).toBeCloseTo(1.6, 1);
+      expect(peaks[1] - peaks[0]).toBeGreaterThanOrEqual(0.6 - dt);
+    },
+  );
 
   it('reaches the planned amplitude at the peak when started on time', () => {
     const beat = { t: 1, amp: 0.06 };

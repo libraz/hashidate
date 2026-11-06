@@ -110,10 +110,11 @@ function pauseAt(level: (seconds: number) => number, t: number, duration: number
  * Decide which of a line's phrase boundaries nod, and how far.
  *
  * A boundary with no event starting at or after it ends the line; a line whose
- * text has no closing punctuation gets a major boundary at the end of its last
- * event. Draws are spent only where a nod is possible: none for a boundary
- * skipped or weak, one for a strong boundary that does not nod, two (the roll,
- * then the amplitude) for one that does. That keeps the plan stable when a rule
+ * text closes without a boundary gets a major boundary at the end of its last
+ * event. A continuation chunk gets no invented boundary. Draws are spent only
+ * where a nod is possible: none for a boundary skipped or weak, one for a
+ * strong boundary that does not nod, two (the roll, then the amplitude) for
+ * one that does. That keeps the plan stable when a rule
  * upstream of the roll changes.
  */
 export function planHeadBeats(track: VisemeTrack, opts: BeatPlanOptions = {}): HeadBeat[] {
@@ -123,7 +124,7 @@ export function planHeadBeats(track: VisemeTrack, opts: BeatPlanOptions = {}): H
   const endsLine = (t: number): boolean => !events.some((ev) => ev.t >= t);
 
   const bounds = track.breaks.slice();
-  if (!bounds.some((b) => endsLine(b.t))) {
+  if (closes && !bounds.some((b) => endsLine(b.t))) {
     const last = events[events.length - 1];
     bounds.push({ t: last.t + last.dur, kind: 'major' });
   }
@@ -156,14 +157,19 @@ export function planHeadBeats(track: VisemeTrack, opts: BeatPlanOptions = {}): H
  *
  * The line clock only places nods that have not started. Once one starts it
  * runs on its own clock from zero — the frame it starts on evaluates to zero —
- * so nothing that moves the line clock can move a nod already in the head.
- * Overlapping nods add. `update` allocates nothing.
+ * so nothing that moves the line clock can move a nod already in the head. A
+ * cooldown spans line restarts, so adjacent short lines cannot stack nods.
+ * `update` allocates nothing.
  */
 export class HeadBeats {
   private _plan: readonly HeadBeat[] = [];
   /** Index of the first plan entry not yet started or dropped. */
   private _next = 0;
   private _line = 0;
+  /** Monotone playback time; line starts and syncs affect only `_line`. */
+  private _elapsed = 0;
+  /** Start of the last accepted nod, across every line. */
+  private _lastStart = Number.NEGATIVE_INFINITY;
   // Active nods as parallel arrays, reused across frames; only `_count` entries are live.
   private readonly _amp: number[] = [];
   private readonly _clock: number[] = [];
@@ -198,13 +204,17 @@ export class HeadBeats {
       const late = this._line - (beat.t - NOD_LEAD);
       if (late < 0) break;
       this._next++;
-      if (late <= LATE_START) this._activate(beat.amp);
+      if (late <= LATE_START && this._elapsed - this._lastStart >= MIN_SPACING - 1e-9) {
+        this._activate(beat.amp);
+        this._lastStart = this._elapsed;
+      }
     }
 
     let pitch = 0;
     for (let i = 0; i < this._count; i++) pitch += nodShape(this._clock[i], this._amp[i]);
 
     this._line += dt;
+    this._elapsed += dt;
     for (let i = 0; i < this._count; ) {
       this._clock[i] += dt;
       if (this._clock[i] < NOD_LENGTH) {

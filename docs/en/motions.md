@@ -13,7 +13,7 @@ The renderer reads the directory when it connects, so the edit loop is: edit the
 
 ## Keyframes, not procedural motion
 
-A built-in gesture is a function of time. `wave` is a sine whose amplitude decays, because a wave held at constant amplitude for three seconds reads as a metronome rather than a greeting; `nod` is a damped oscillation, because one beat reads as a twitch and it is the second, smaller beat that makes it read as agreement. Those are not values that can be typed into a file. They were arrived at by watching a render, and the comments beside them in `src/engine/motion/gestures/` say which failure each number prevents.
+A built-in gesture is a function of time. `wave` is a sine whose amplitude decays, because a wave held at constant amplitude for three seconds reads as a metronome rather than a greeting. `nod` has a short preparation, one downstroke and a slower return, then stays at rest even if its hold is extended. These curves are authored in code. Their values were chosen against a render, and the comments beside them in `src/engine/motion/gestures/` explain the tuning.
 
 This format is therefore poses at times, interpolated between, which is what a person editing a text file can control. It expresses less than the built-in form does, by design. The gesture table is not migrated to it: a keyframed `nod` is a nod with the tuning taken out.
 
