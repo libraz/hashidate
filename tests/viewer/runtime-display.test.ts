@@ -26,6 +26,7 @@ function bareRuntime(fields: Record<string, unknown>): Internals {
     hudAcc: 0,
     frameListeners: new Set(),
     hudListeners: new Set(),
+    scene: new THREE.Scene(),
     shotCamera: { update: vi.fn(), camera: new THREE.PerspectiveCamera() },
     slides: { up: false },
     backdrop: { update: vi.fn() },
@@ -197,6 +198,9 @@ describe('the focus follows the avatar', () => {
       current: {
         root,
         session: { update: vi.fn() },
+        transparentTriangles: {
+          withDraw: (_camera: THREE.Camera, draw: () => unknown) => draw(),
+        },
         director: { update: vi.fn() },
       },
       focusSphere: { centre: new THREE.Vector3(0, 1.2, 0), radius: 0.9 },
