@@ -38,6 +38,16 @@ Three processes and a page. A caller posts commands to the control server; the s
 
 **The speech sidecar is proxied, not called.** The viewer reaches it through `POST /api/speech` rather than directly. Having one caller is what lets the voice answer on a UNIX socket instead of a port: no page can name a socket, and nothing outside this machine can reach one. That is the same rule the rest of the runtime follows by binding loopback, applied more strictly. Putting the voice back on a port to make a direct call work is a licensing decision before it is a code change.
 
+## Motion timing
+
+A gesture has an entrance, a held movement and a release. The entrance grows with the distance from the current pose. A body-contact reach carries its wrist along a shoulder-centred arc with a monotone minimum-jerk time profile, so it slows into the contact at the end of the entrance. When that hand is already posed by an outgoing gesture, its pointing direction follows the same progress, including the outgoing gesture's share. Palm rotation keeps its earlier preparation so the wrist does not twist sideways as the forearm moves. A reach from rest keeps its preparatory hand motion; direction-authored poses keep their expressive overshoot. `comeHere` and `bravo` begin their opening sweep after the actual entrance; a longer reach does not consume the sweep while the hands are still arriving.
+
+This timing uses the hand-motion model of [Flash and Hogan (1985)](https://pubmed.ncbi.nlm.nih.gov/4020415/), while preparation and the following movement are kept distinct as in [Kopp and Wachsmuth (2004)](https://doi.org/10.1002/cav.6). The runtime still checks joint limits and body clearance: a smooth time profile alone does not make a path reachable.
+
+Face clearance adjusts the destination before the wrist travels toward it. The elbow solver gradually reduces an authored pole's influence as it approaches the shoulder-to-wrist line, where it no longer gives a reliable bend direction. The final arm transaction still checks the posed joints and fingers before accepting the motion.
+
+An explicit `nod` performs one preparation, downstroke and recovery. Extending its hold does not repeat it. Automatic speech nods use phrase boundaries, following the observations in [Ishi et al. (2007)](https://www.isca-archive.org/interspeech_2007/ishi07_interspeech.pdf). They keep at least 0.6 seconds between starts across consecutive lines. A too-close or late beat is dropped rather than postponed; a nod already in flight finishes. An unpunctuated continuation does not invent a final phrase boundary, while explicit punctuation and the end of a turn remain eligible.
+
 ## Next
 
 - [The control API](control-api.md)
