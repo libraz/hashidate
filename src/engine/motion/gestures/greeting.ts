@@ -1,4 +1,5 @@
 import type { GestureDef } from '../../types';
+import { heldTime, minJerk } from '../timing';
 import { V } from './base';
 import type { ArmPose } from './builders';
 import { both, one } from './builders';
@@ -51,15 +52,16 @@ export const GREETING = {
     group: 'greeting',
     lead: 0.4,
     hold: 2.6,
-    build(t, v, _phase?, out?) {
-      // Both arms opened forward, palms up. The opening is the gesture — held
-      // spread from the first frame it reads as a shrug — so the arms travel
-      // outward over the first second and settle.
+    build(t, v, phase?, out?) {
+      // Both arms open forward, palms up. The invitation starts after the
+      // entrance and takes 0.9 seconds to reach its full spread, so a long
+      // entrance does not make the beckon arrive as a shrug.
       const openingDuration = 0.9;
-      const o = Math.min(1, t / openingDuration);
+      const h = heldTime(t, 0.4, phase);
+      const o = minJerk(h / openingDuration);
       const b = Math.sin(t * 1.6 * v.rate) * 0.03;
       // The fingers curl between the open invitation and the existing FIST.
-      const beckonTime = Math.max(0, t - openingDuration) * v.rate;
+      const beckonTime = Math.max(0, h - openingDuration) * v.rate;
       const curl = (1 - Math.cos((2 * Math.PI * beckonTime) / BECKON_PERIOD)) / 2;
       const fingers = mixHand(BECKON_OPEN, BECKON_HAND, curl);
       // The palm has to be stated. Aiming the hand forward leaves the roll

@@ -1,15 +1,11 @@
 import type { GestureDef } from '../../types';
+import { heldTime, minJerk } from '../timing';
 import { V } from './base';
 import type { ArmPose } from './builders';
 import { both, one, pair } from './builders';
 import { FIST, OPEN_HAND } from './hands';
 
 /** Encouragement — compact cheers that keep the hands in the shot. */
-
-const ease = (t: number, duration: number): number => {
-  const x = Math.min(1, Math.max(0, t / duration));
-  return x * x * (3 - 2 * x);
-};
 
 export const CHEER = {
   fistPump: {
@@ -101,9 +97,11 @@ export const CHEER = {
     group: 'cheer',
     lead: 0.46,
     hold: 1.9,
-    build(t, v, _phase?, out?) {
-      // Open from a compact chest position into a broad, frame-safe sweep.
-      const k = ease(t, 0.7);
+    build(t, v, phase?, out?) {
+      // Sweep from a compact chest position after the entrance, over 0.7
+      // seconds. Distance extensions therefore lengthen preparation without
+      // spending the applause sweep before the hands reach the frame.
+      const k = minJerk(heldTime(t, 0.46, phase) / 0.7);
       const b = Math.sin(t * 2.3 * v.rate) * 0.02 * v.scale;
       return both(
         out,

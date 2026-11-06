@@ -13,6 +13,7 @@ import {
 } from '@/engine/motion/gestures';
 import { V } from '@/engine/motion/gestures/base';
 import { FIST } from '@/engine/motion/gestures/hands';
+import { minJerk } from '@/engine/motion/timing';
 import { BODY_ANCHORS, FACE_ANCHORS } from '@/engine/profile';
 import type {
   FingerName,
@@ -212,22 +213,25 @@ describe('phase-aware submovements', () => {
 });
 
 describe('comeHere beckon cycle', () => {
+  const LEAD = TABLE.comeHere.lead;
   const OPEN_INVITATION = { thumb: 0.18, index: 0.14, middle: 0.16, ring: 0.2, little: 0.26 };
   const CLOSED_BECKON = { ...FIST.curl, thumb: 0.18 };
   const fingersAt = (t: number, side: Side, variation: GestureVariation) =>
     TABLE.comeHere.build(t, variation).fingers?.[side];
+  const fingersHeldAt = (held: number, side: Side, variation: GestureVariation) =>
+    fingersAt(LEAD + held, side, variation);
 
   it('holds the open invitation, then closes and opens on repeated cycles', () => {
     for (const [side, variation] of [
       ['L', LEFT],
       ['R', RIGHT],
     ] as const) {
-      expect(fingersAt(0.45, side, variation)).toEqual(OPEN_INVITATION);
-      expect(fingersAt(0.9, side, variation)).toEqual(OPEN_INVITATION);
-      expect(fingersAt(1.35, side, variation)).toEqual(CLOSED_BECKON);
-      expect(fingersAt(1.8, side, variation)).toEqual(OPEN_INVITATION);
-      expect(fingersAt(2.25, side, variation)).toEqual(CLOSED_BECKON);
-      expect(fingersAt(2.7, side, variation)).toEqual(OPEN_INVITATION);
+      expect(fingersHeldAt(0.45, side, variation)).toEqual(OPEN_INVITATION);
+      expect(fingersHeldAt(0.9, side, variation)).toEqual(OPEN_INVITATION);
+      expect(fingersHeldAt(1.35, side, variation)).toEqual(CLOSED_BECKON);
+      expect(fingersHeldAt(1.8, side, variation)).toEqual(OPEN_INVITATION);
+      expect(fingersHeldAt(2.25, side, variation)).toEqual(CLOSED_BECKON);
+      expect(fingersHeldAt(2.7, side, variation)).toEqual(OPEN_INVITATION);
     }
   });
 
@@ -237,23 +241,24 @@ describe('comeHere beckon cycle', () => {
       ['R', RIGHT],
     ] as const) {
       const fast: GestureVariation = { ...variation, rate: 2 };
-      expect(fingersAt(1.125, side, fast)).toEqual(CLOSED_BECKON);
-      expect(fingersAt(1.35, side, fast)).toEqual(OPEN_INVITATION);
-      expect(fingersAt(1.575, side, fast)).toEqual(CLOSED_BECKON);
+      expect(fingersHeldAt(1.125, side, fast)).toEqual(CLOSED_BECKON);
+      expect(fingersHeldAt(1.35, side, fast)).toEqual(OPEN_INVITATION);
+      expect(fingersHeldAt(1.575, side, fast)).toEqual(CLOSED_BECKON);
     }
 
-    for (const t of [0.45, 1.35, 2.25]) {
-      const o = Math.min(1, t / 0.9);
+    for (const held of [0.45, 1.35, 2.25]) {
+      const t = LEAD + held;
+      const o = minJerk(held / 0.9);
       const b = Math.sin(t * 1.6) * 0.03;
-      const legacyArm = {
+      const expectedArm = {
         upperArm: V(0.3 + 0.08 * o, -0.76 + 0.12 * o + b, 0.54 + 0.18 * o),
         lowerArm: V(0.14 + 0.08 * o, 0.24 + b, 0.95),
         hand: V(0.14, 0.2, 0.97),
         palm: V(-0.68, 0.48, -0.16),
       };
       const arms = TABLE.comeHere.build(t, RIGHT).arms;
-      expect(arms?.L).toEqual(legacyArm);
-      expect(arms?.R).toEqual(legacyArm);
+      expect(arms?.L).toEqual(expectedArm);
+      expect(arms?.R).toEqual(expectedArm);
     }
   });
 });
