@@ -12,7 +12,7 @@ import {
   tuningSchema,
   voiceReportSchema,
 } from './reports';
-import { sessionEventSchema, sessionStateSchema, vocabularySchema } from './session';
+import { sessionEventsSchema, sessionStateSchema, vocabularySchema } from './session';
 
 /**
  * Everything the control server knows, in one object.
@@ -85,7 +85,7 @@ export const snapshotSchema = z.object({
   seq: z.number(),
   state: sessionStateSchema.partial(),
   vocabulary: vocabularySchema.partial(),
-  events: z.array(sessionEventSchema),
+  events: sessionEventsSchema,
   /** The renderer's avatar lifecycle, if a renderer has reported one. */
   avatar: avatarStatusSchema.nullable().optional(),
   /** What the voice is running. Null until a viewer with a voice has reported. */
@@ -171,7 +171,7 @@ export type Snapshot = z.infer<typeof snapshotSchema>;
 /** The reply to `GET /api/events`, which is the snapshot's event tail alone. */
 export const eventsResponseSchema = z.object({
   seq: z.number(),
-  events: z.array(sessionEventSchema),
+  events: sessionEventsSchema,
 });
 
 export type EventsResponse = z.infer<typeof eventsResponseSchema>;

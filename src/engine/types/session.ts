@@ -16,7 +16,9 @@ export type SessionEventType =
   | 'queue.dropped'
   | 'queue.replaced'
   | 'queue.empty'
-  | 'cue.fire';
+  | 'cue.fire'
+  | 'touch.tap'
+  | 'touch.hold';
 
 export interface SessionEvent {
   type: SessionEventType;
@@ -30,6 +32,12 @@ export interface SessionEvent {
   cueId?: string;
   /** The BGM action requested by the cue. */
   cue?: InlineCueAction;
+  /** Which part of the avatar a touch landed on. */
+  part?: 'head' | 'torso' | 'arm' | 'hand' | 'leg';
+  /** Which side of the body, for a part that has one. */
+  side?: Side;
+  /** Taps in a run, 1 to 10. */
+  count?: number;
   /** Stamped by the server, not by the engine. */
   seq?: number;
   at?: number;

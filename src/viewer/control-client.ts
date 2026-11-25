@@ -273,6 +273,16 @@ export class ControlClient {
     }
   }
 
+  /**
+   * Report one event that did not come from the session, such as a touch on the
+   * page. Goes up at once, like a turn boundary, rather than on the next tick of
+   * the reporting timer.
+   */
+  pushEvent(event: SessionEvent): void {
+    this.pending.push(event);
+    void this.report();
+  }
+
   private flush(): void {
     const held = this.held;
     this.held = null;

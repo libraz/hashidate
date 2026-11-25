@@ -37,10 +37,15 @@ export const sessionEventTypeSchema = z.enum([
   'queue.replaced',
   'queue.empty',
   'cue.fire',
+  'touch.tap',
+  'touch.hold',
 ]);
 type _EventTypesMatchEngine = Expect<
   Equals<z.infer<typeof sessionEventTypeSchema>, SessionEventType>
 >;
+
+/** The parts of an avatar a touch is reported against. */
+export const touchPartSchema = z.enum(['head', 'torso', 'arm', 'hand', 'leg']);
 
 /**
  * One thing that happened, as the viewer reports it. Which of the optional
@@ -65,6 +70,12 @@ export const sessionEventSchema = z.object({
    * renderer that attaches later.
    */
   cue: inlineCueActionSchema.optional(),
+  /** Which part a touch landed on. */
+  part: touchPartSchema.optional(),
+  /** Which side of the body, for a part that has one. */
+  side: sideSchema.optional(),
+  /** Taps in a run. */
+  count: z.number().int().min(1).max(10).optional(),
   /** Stamped by the server on arrival, not by the engine. */
   seq: z.number().optional(),
   at: z.number().optional(),
@@ -72,6 +83,20 @@ export const sessionEventSchema = z.object({
 
 export type SessionEvent = z.infer<typeof sessionEventSchema>;
 type _EventMatchesEngine = Expect<Equals<SessionEvent, EngineSessionEvent>>;
+
+/**
+ * A list of events read by someone who may be older than the writer: an element
+ * that does not validate, such as a type or a `part` added later, is dropped
+ * rather than failing the whole reply. Only the readers use it; what a renderer
+ * reports stays strict.
+ */
+export const sessionEventsSchema = z.preprocess(
+  (value) =>
+    Array.isArray(value)
+      ? value.filter((item) => sessionEventSchema.safeParse(item).success)
+      : value,
+  z.array(sessionEventSchema),
+);
 
 /** Everything an orchestrator might branch on, cheap enough to poll. */
 export const sessionStateSchema = z.object({

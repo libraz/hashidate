@@ -127,8 +127,10 @@ export {
   type SessionEvent,
   type SessionState,
   sessionEventSchema,
+  sessionEventsSchema,
   sessionEventTypeSchema,
   sessionStateSchema,
+  touchPartSchema,
   type Vocabulary,
   vocabularySchema,
 } from './session';
