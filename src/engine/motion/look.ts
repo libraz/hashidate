@@ -206,9 +206,12 @@ function nearestEyeBranch(angles: THREE.Euler, rawX: number, rawY: number): void
   else angles.set(x0, y0, z0, 'XYZ');
 }
 
-/** Compensate against the head pose actually displayed after body acceptance. */
-export function aimEyes(rig: Rig, p: Profile, frame: GazeFrame): void {
-  if (!(frame.active && rig.readHeadOffset(_headOffset))) return;
+/**
+ * Compensate against the head pose actually displayed after body acceptance.
+ * Returns the applied eye pitch against the head, positive down, or null when no aim ran.
+ */
+export function aimEyes(rig: Rig, p: Profile, frame: GazeFrame): number | null {
+  if (!(frame.active && rig.readHeadOffset(_headOffset))) return null;
   _gazeQ.setFromEuler(_gazeEuler.set(-frame.eyePitch * 0.5, frame.eyeYaw * 0.5, 0, 'XYZ'));
   _headOffset.invert().multiply(frame.gazeHead).multiply(_gazeQ);
   _gazeEuler.setFromQuaternion(_headOffset, 'XYZ');
@@ -219,4 +222,5 @@ export function aimEyes(rig: Rig, p: Profile, frame: GazeFrame): void {
   const ey = saturate(_gazeEuler.y, p.gaze.eyeYaw);
   const ep = saturate(_gazeEuler.x, p.gaze.eyePitch);
   for (const side of ['L', 'R'] as const) rig.addOffset(`eye.${side}`, ep, ey, 0);
+  return ep;
 }

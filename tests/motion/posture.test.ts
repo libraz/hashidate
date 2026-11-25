@@ -3,10 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { DROOP_RATE } from '@/engine/face/blink';
 import { Body } from '@/engine/motion/body';
 import { ScalarFollower } from '@/engine/motion/follow';
-import { breathCurve, INHALE, settle } from '@/engine/motion/idle';
+import { breathCurve, INHALE } from '@/engine/motion/idle';
 import { planJump, sampleJump } from '@/engine/motion/jump';
 import { IdlePosture, type PostureInput } from '@/engine/motion/posture';
 import { minJerk } from '@/engine/motion/timing';
+import { DWELL_MIN, TRANSFER_MIN } from '@/engine/motion/weight-shift';
 import { buildProfile } from '@/engine/profile';
 import { Rig } from '@/engine/rig';
 import { buildRig } from '../helpers/scene';
@@ -19,12 +20,17 @@ const DEPTH_STEP = 0.3 * BREATH_DEPTH;
 const DEPTH_FRAME_BOUND = 0.15 * DEPTH_STEP;
 /** Long enough for the depth follower to land within 1e-9 of its target. */
 const SETTLE_SECONDS = 8;
+/** Under `random: () => 0` the weight dwells `DWELL_MIN`, then leaves for +1 over `TRANSFER_MIN`. */
+const zeroRandom = () => 0;
+const shiftAt = (t: number) => minJerk((t - DWELL_MIN) / TRANSFER_MIN);
+/** Halfway through the first transfer, where the shift is 0.5. */
+const SHIFT_PROBE = DWELL_MIN + TRANSFER_MIN / 2;
 
 function postureHarness(breathDepth = BREATH_DEPTH) {
   const scene = buildRig({ armatureScale: 0.01 });
   const profile = buildProfile(scene.root, scene.descriptor);
   const rig = new Rig(profile);
-  const posture = new IdlePosture();
+  const posture = new IdlePosture(() => 0.5);
   const hips = profile.bones.hips;
   if (!hips?.parent) throw new Error('test profile is missing the hips parent');
   profile.root.updateMatrixWorld(true);
@@ -82,12 +88,16 @@ function phaseStep(phase: number, t: number, dt: number, breathPeriod: number, s
   return (phase + dt / period) % 1;
 }
 
-function quietBody(scene: ReturnType<typeof buildRig>, withoutBodyFrame = false) {
+function quietBody(
+  scene: ReturnType<typeof buildRig>,
+  withoutBodyFrame = false,
+  random?: () => number,
+) {
   scene.root.updateMatrixWorld(true);
   const profile = buildProfile(scene.root, scene.descriptor);
   if (withoutBodyFrame) profile.body = null;
   const rig = new Rig(profile);
-  const body = new Body(rig, profile);
+  const body = new Body(rig, profile, { random });
   body.breathDepth = 0;
   body.idleAmount = 0;
   body.weightShift = 0;
@@ -102,12 +112,12 @@ function worldHips(profile: ReturnType<typeof buildProfile>): THREE.Vector3 {
   return hips.getWorldPosition(new THREE.Vector3());
 }
 
-function dynamicBody(withBodyFrame: boolean, armatureScale = 1) {
+function dynamicBody(withBodyFrame: boolean, armatureScale = 1, random?: () => number) {
   const scene = buildRig({ armatureScale });
   const profile = buildProfile(scene.root, scene.descriptor);
   if (!withBodyFrame) profile.body = null;
   const rig = new Rig(profile);
-  const body = new Body(rig, profile);
+  const body = new Body(rig, profile, { random });
   body.idleAmount = 0;
   body.gazeAmount = 0;
   return { ...scene, body, profile, rig };
@@ -327,7 +337,7 @@ describe('IdlePosture world-space hips translation', () => {
     for (const [name, bone] of scene.bones) {
       if (/_L$/.test(name) || /_R$/.test(name)) bone.position.x *= -1;
     }
-    const h = quietBody(scene);
+    const h = quietBody(scene, false, zeroRandom);
     const hips = h.profile.bones.hips;
     const chest = h.profile.bones.chest ?? h.profile.bones.spine;
     const bodyFrame = h.profile.body;
@@ -340,7 +350,7 @@ describe('IdlePosture world-space hips translation', () => {
     const rest = worldHips(h.profile);
     h.body.weightShift = 1;
     h.rig.reset();
-    h.body.update(0.5);
+    h.body.update(SHIFT_PROBE);
     const delta = worldHips(h.profile).sub(rest);
     const hipsRight = new THREE.Vector3(1, 0, 0)
       .applyQuaternion(hips.getWorldQuaternion(new THREE.Quaternion()))
@@ -382,7 +392,7 @@ describe('IdlePosture world-space hips translation', () => {
     scene.root.rotation.z = Math.PI / 2;
     scene.root.scale.set(0.01, 0.02, 0.03);
     scene.root.updateMatrixWorld(true);
-    const h = quietBody(scene, true);
+    const h = quietBody(scene, true, zeroRandom);
     const hips = h.profile.bones.hips;
     if (!hips?.parent) throw new Error('synthetic rig has no hips parent');
     const parentLinear = new THREE.Matrix3().setFromMatrix4(hips.parent.matrixWorld);
@@ -390,10 +400,10 @@ describe('IdlePosture world-space hips translation', () => {
     const rest = worldHips(h.profile);
     h.body.weightShift = 1;
     h.rig.reset();
-    h.body.update(0.5);
+    h.body.update(SHIFT_PROBE);
     const delta = worldHips(h.profile).sub(rest);
 
-    expect(delta.length()).toBeCloseTo(0.012 * settle(Math.sin(0.5 * 0.31)), 12);
+    expect(delta.length()).toBeCloseTo(0.012 * shiftAt(SHIFT_PROBE), 12);
     expect(delta.clone().normalize().dot(localXWorld)).toBeCloseTo(1, 12);
     const worldUpFromFallback = h.body.hipsUp.clone().applyMatrix3(parentLinear).normalize();
     expect(worldUpFromFallback.dot(new THREE.Vector3(0, 1, 0))).toBeCloseTo(1, 12);
@@ -433,7 +443,7 @@ describe('IdlePosture world-space hips translation', () => {
   it.each([true, false])(
     'keeps weight shift at its metre amplitude after live parent changes (%s)',
     (withBodyFrame) => {
-      const h = dynamicBody(withBodyFrame, 0.01);
+      const h = dynamicBody(withBodyFrame, 0.01, zeroRandom);
       h.body.breathDepth = 0;
       h.body.weightShift = 1;
       turnAndScaleAfterBodyConstruction(h);
@@ -445,9 +455,10 @@ describe('IdlePosture world-space hips translation', () => {
         h.root.updateMatrixWorld(true);
         const rest = worldHips(h.profile);
         h.rig.reset();
-        h.body.update(0.5);
+        // Two seconds a frame keeps every probe inside the first transfer, where the shift moves.
+        h.body.update(2);
         const delta = worldHips(h.profile).sub(rest);
-        const expected = 0.012 * settle(Math.sin(h.body.t * 0.31));
+        const expected = 0.012 * shiftAt(h.body.t);
         const parentLinear = currentParentLinear(h.profile);
         const expectedDirection = new THREE.Vector3(1, 0, 0).applyMatrix3(parentLinear);
         if (withBodyFrame) expectedDirection.y = 0;
@@ -479,7 +490,7 @@ describe('IdlePosture world-space hips translation', () => {
     scene.root.updateMatrixWorld(true);
     const profile = buildProfile(scene.root, scene.descriptor);
     const rig = new Rig(profile);
-    const body = new Body(rig, profile);
+    const body = new Body(rig, profile, { random: zeroRandom });
     body.breathDepth = 0;
     body.idleAmount = 0;
     body.gazeAmount = 0;
@@ -487,7 +498,7 @@ describe('IdlePosture world-space hips translation', () => {
 
     const rest = worldHips(profile);
     rig.reset();
-    body.update(0.5);
+    body.update(SHIFT_PROBE);
     const delta = worldHips(profile).sub(rest);
     // The floor-projected anatomical right is +X. A full 3D dot against the
     // tilted hips X would have the opposite sign for this deliberately stressed

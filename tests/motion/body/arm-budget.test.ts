@@ -91,7 +91,8 @@ describe('arm commit budget', () => {
     scene.root.updateMatrixWorld(true);
     const profile = buildProfile(scene.root, scene.descriptor);
     const rig = new Rig(profile);
-    const body = new Body(rig, profile);
+    // Dwell 1.5 s, transfer 5.8 s: the pre-roll below lands mid-transfer toward +1.
+    const body = new Body(rig, profile, { random: () => 0 });
     body.breathDepth = 0;
     body.idleAmount = 0;
     body.gazeAmount = 0;
@@ -102,6 +103,10 @@ describe('arm commit budget', () => {
     if (!(hips && chest && frame)) throw new Error('missing mirrored body fixture');
     expect(frame.right.x).toBeLessThan(-0.99);
     const rest = hips.getWorldPosition(new THREE.Vector3());
+    for (let i = 0; i < 234; i++) {
+      rig.reset();
+      body.update(1 / 60);
+    }
     rig.reset();
     body.update(0.5);
     const delta = hips.getWorldPosition(new THREE.Vector3()).sub(rest);

@@ -152,7 +152,10 @@ describe('cute gesture runtime', () => {
     still.body.weightShift = 0;
 
     const dt = 1 / 60;
-    for (const h of [breathing, flat, shifting, still]) frame(h, dt);
+    // Past the first weight-shift dwell (3.8 s at a draw of 0.5), so the hips are travelling.
+    for (let i = 0; i < 5 / dt; i++) {
+      for (const h of [breathing, flat, shifting, still]) frame(h, dt);
+    }
     for (const h of [breathing, flat, shifting, still]) h.body.play('catPaw', 'L');
 
     let breathMin = Number.POSITIVE_INFINITY;

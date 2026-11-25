@@ -67,8 +67,8 @@ describe('Body random source', () => {
     'consumes variation draws in order with side %s, then shares the source with gaze',
     (side) => {
       const values = side === undefined ? [0.1, 0.2, 0.8, 0.3] : [0.1, 0.2, 0.3];
-      // Wander, yaw, pitch, and next fixation time follow the variation draws.
-      values.push(0.9, 0.8, 0.7, 0.6);
+      // The first weight-shift dwell, then wander, yaw, pitch, and next fixation time.
+      values.push(0.5, 0.9, 0.8, 0.7, 0.6);
       let draws = 0;
       const h = fixture(() => {
         const value = values[draws++];

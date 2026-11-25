@@ -36,4 +36,6 @@ export {
   nodShape,
   planHeadBeats,
 } from './prosody';
+export { BEAT_FALL, BEAT_LIFT, BEAT_RISE, BEAT_SIDE, SpeechBeats } from './speech-beats';
 export { FINGER_ONSET, LINK_ONSET, minJerk, onset, reachEnvelope } from './timing';
+export { WeightShift } from './weight-shift';

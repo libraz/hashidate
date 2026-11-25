@@ -34,6 +34,7 @@ import type { HopSpec } from './jump';
 import { aimEyes, LOOK_FOLLOW, makeGazeFrame, prepareGaze } from './look';
 import { type BreathTerms, IdlePosture, type PostureInput } from './posture';
 import { ArmResolver, mkReachScratch, type ResolvedArm } from './resolve';
+import { SpeechBeats } from './speech-beats';
 import { SpineCarry } from './spine-carry';
 import { FINGER_ONSET, LINK_ONSET, minJerk, onset, reachEnvelope, UNTHREAD } from './timing';
 
@@ -160,6 +161,16 @@ const LEAD_CAP = 0.95;
  * `nod`, 0.12 s to 0.149 s; from rest it moves none.
  */
 const LEAD_FLOOR = 0.12;
+
+/**
+ * Lid droop at a full downward eye pitch against the head, 0..1. The lid rides
+ * the eye as it does in life; a starting value awaiting a look at the render.
+ */
+const LID_FOLLOW = 0.2;
+
+/** Scratch for the speech beat's lift axis. */
+const _beatAxis = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
 
 /**
  * A fingertip aim as a caller states it: angles in **degrees**, because the
@@ -419,6 +430,10 @@ export class Body {
   speechOpens: boolean;
   /** Nothing is queued behind the line, so the run ends with it. */
   speechCloses: boolean;
+  /** A phrase head is reached this frame; the director raises it for that frame only. */
+  speechOnset: boolean;
+  /** Lid droop the eyes' downward pitch asks for this frame, 0..1. */
+  gazeLid: number;
 
   gesture: ActiveGesture | null;
   blend: number;
@@ -526,7 +541,9 @@ export class Body {
   /** Where a reach is going, in world space. See `anchors.ts`. */
   private readonly anchors: ReachAnchors;
   /** Breathing, weight, drift — what a standing body does. See `posture.ts`. */
-  private readonly _posture = new IdlePosture();
+  private readonly _posture: IdlePosture;
+  /** The forearm and hand lift at each phrase head. See `speech-beats.ts`. */
+  private readonly _beats = new SpeechBeats();
   /** A mood's held spine offsets. See `attitude.ts`. */
   private readonly _attitude = new Attitude();
   private _attitudeHeld: HeldAttitude | null = null;
@@ -591,6 +608,7 @@ export class Body {
 
   constructor(rig: Rig, profile: Profile, { random = Math.random }: BodyOptions = {}) {
     this._random = random;
+    this._posture = new IdlePosture(random);
     this.rig = rig;
     this.p = profile;
     this._rest = restPose(profile.avatar.armRest);
@@ -614,6 +632,8 @@ export class Body {
     this.speechRemaining = 0;
     this.speechOpens = true;
     this.speechCloses = true;
+    this.speechOnset = false;
+    this.gazeLid = 0;
 
     // The current gesture, and `_fading` for whatever is on its way out, so a
     // switch crossfades instead of cutting.
@@ -759,6 +779,8 @@ export class Body {
     const v = this._armVec[side][slot].copy(
       carry(this._rest[slot], parent ? this._rest[parent] : undefined),
     );
+    // What rest still holds of the link after the blend; the speech beat rides only that.
+    let rest = outgoing || !cDir ? 1 : 1 - cw;
     // Outgoing first, then incoming: the incoming gesture takes over as its
     // blend rises, and the two never both sit at full weight.
     if (outgoing && !cDir) {
@@ -766,7 +788,10 @@ export class Body {
       // the incoming lead was never sized to cover.
       for (const f of this._fading) {
         const pDir = this.outgoingDir(f, side, slot);
-        if (pDir) slerpDir(v, v, carry(pDir, parentOf(f.arm[side])), f.w);
+        if (pDir) {
+          slerpDir(v, v, carry(pDir, parentOf(f.arm[side])), f.w);
+          rest *= 1 - f.w;
+        }
       }
     } else if (outgoing) {
       // Each slerp takes a slot's share of what the chain holds so far, so every
@@ -775,6 +800,7 @@ export class Body {
       let pool = 1 - cw;
       for (const f of this._fading) if (this.outgoingDir(f, side, slot)) pool -= f.armW[side][slot];
       pool = Math.max(0, pool);
+      rest = pool;
       for (const f of this._fading) {
         const pDir = this.outgoingDir(f, side, slot);
         const share = f.armW[side][slot];
@@ -797,6 +823,14 @@ export class Body {
     v.y += w * Math.sin(this.t * 0.27 + ph);
     v.z += w * 0.8 * Math.sin(this.t * 0.19 + ph + 0.6);
     v.x += w * 0.5 * Math.sin(this.t * 0.23 + ph + 1.3);
+
+    // The speech beat lifts the link about the horizontal axis across it,
+    // after the blend like the breath, so the arm transaction sees it too.
+    const lift = this._beats.angle(side, slot) * rest;
+    if (lift !== 0) {
+      const n = _beatAxis.crossVectors(v, _up).length();
+      if (n >= 1e-6) v.applyAxisAngle(_beatAxis.divideScalar(n), lift);
+    }
     return v.normalize();
   }
 
@@ -1807,6 +1841,9 @@ export class Body {
     const g = this.advanceGesture(elapsed);
 
     const handSource = this.ageOutgoing(elapsed);
+    // On the turn's clock, as the gesture it stands in for would be.
+    if (this.speechOnset && this.speaking) this._beats.trigger();
+    this._beats.step(elapsed);
 
     const { br, d } = this.stepPosture(dt, g);
     const idle = this.idleAmount;
@@ -1973,7 +2010,10 @@ export class Body {
     if (armTransaction) this._transaction.commit(dt, this._hop.rise, this._hop.yaw);
     else rig.finishLegacyBodyFrame(this._hop.rise, this._hop.yaw);
     this.retireSpentArmSlots(g, handSource);
-    aimEyes(rig, p, this._gazeFrame);
+    const ep = aimEyes(rig, p, this._gazeFrame);
+    const L = p.gaze.eyePitch;
+    this.gazeLid =
+      ep === null || L <= 0 ? 0 : LID_FOLLOW * THREE.MathUtils.clamp(Math.max(0, ep) / L, 0, 1);
     rig.commitEyes();
   }
 }

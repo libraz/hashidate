@@ -5,6 +5,7 @@ import type { Profile } from '../types';
 import { ScalarFollower } from './follow';
 import { breathCurve, INHALE, settle } from './idle';
 import { minJerk } from './timing';
+import { WeightShift } from './weight-shift';
 
 /**
  * What a character does while nothing is being asked of it.
@@ -75,8 +76,15 @@ export class IdlePosture {
   private _appliedD = 0;
   private _hasAppliedBreath = false;
   private readonly _depth = new ScalarFollower(0);
+  private readonly _shift = new WeightShift();
+  /** Free-running stream for the weight shift's dwells. */
+  private readonly _random: () => number;
   /** Returned from `apply` and refilled each frame; read it before the next call. */
   private readonly _terms: BreathTerms = { br: 0, d: 0 };
+
+  constructor(random: () => number) {
+    this._random = random;
+  }
 
   /** Applied breath, 0..1, exposed so the UI can show it. */
   get breath(): number {
@@ -143,9 +151,10 @@ export class IdlePosture {
     // --- weight shift -----------------------------------------------------
     // Slow lateral transfer of weight with the spine counter-leaning above it,
     // so the head stays roughly over the same point. Deliberately very slow —
-    // a ~20 s cycle — and out of phase with the breath so the two never lock
-    // into a visible rhythm. Anything faster reads as fidgeting.
-    const shift = settle(Math.sin(s.t * 0.31)) * s.weightShift;
+    // drawn dwells between slow transfers, see `weight-shift.ts` — and out of
+    // phase with the breath so the two never lock into a visible rhythm.
+    // Anything faster reads as fidgeting.
+    const shift = this._shift.step(dt, this._random) * s.weightShift;
     const shiftSlow = settle(Math.sin(s.t * 0.13 + 1.1)) * s.weightShift;
 
     rig.addOffset('hips', 0, 0.01 * shiftSlow, -0.03 * shift);
@@ -210,6 +219,14 @@ export class IdlePosture {
         0.011 * talk * Math.sin(s.t * 1.29 + 2.0),
       );
       rig.addOffset('chest', -0.008 * talk * Math.sin(s.t * 2.31 + 0.5), 0, 0);
+      // Slower second terms at ~0.3x, as idle has: a single sine reads as a mechanical nod.
+      rig.addOffset(
+        'head',
+        -0.007 * talk * Math.sin(s.t * 0.97 + 2.6),
+        0.005 * talk * Math.sin(s.t * 0.83 + 1.1),
+        0.003 * talk * Math.sin(s.t * 0.53 + 0.3),
+      );
+      rig.addOffset('chest', -0.0023 * talk * Math.sin(s.t * 0.97 + 2.6), 0, 0);
     }
     // Phrase-final nod; the head carries most of it, the split set by eye.
     rig.addOffset('head', 0.7 * s.nod, 0, 0);
