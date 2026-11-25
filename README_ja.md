@@ -69,7 +69,7 @@ yarn install
 make dev
 ```
 
-ビューアが `127.0.0.1:5173`、制御 API が `127.0.0.1:8765`、音声サイドカーは環境が作ってあれば `tools/tts/.run/speech.sock` のソケットに立ちます。`yarn dev` なら前の 2 つだけで、`yarn shell` ならパネルとステージをネイティブのウィンドウで開き、3 つとも下で動かします。
+ビューアが `127.0.0.1:5173`、制御 API が `127.0.0.1:8765`、音声サイドカーは環境が作ってあれば `tools/tts/.run/speech.sock` のソケットに立ちます。`yarn dev` なら前の 2 つだけで、`yarn shell` ならパネルとステージをネイティブのウィンドウで開き、3 つとも下で動かします。`yarn mascot` なら、キャラクターを透明なウィンドウでデスクトップに出し、接触を報告します（[デスクトップのマスコット](docs/ja/mascot.md)）。
 
 別のターミナルから動かします。
 
@@ -95,7 +95,7 @@ yarn ctl watch                                  # 発話のイベントを追う
 
 動かす：[制御 API](docs/ja/control-api.md)、[コマンド](docs/ja/commands.md)、[プリセット](docs/ja/performances.md)、[原稿と演出](docs/ja/lines-and-cues.md)、[台本](docs/ja/scripts.md)、[MCP アダプタ](docs/ja/mcp.md)。
 
-絵と音：[音声](docs/ja/speech.md)、[BGM](docs/ja/bgm.md)、[ステージ](docs/ja/stage.md)、[スライド](docs/ja/slides.md)、[モーション](docs/ja/motions.md)、[録画](docs/ja/recording.md)、[操作面](docs/ja/surfaces.md)、[ネイティブシェル](docs/ja/shell.md)。
+絵と音：[音声](docs/ja/speech.md)、[BGM](docs/ja/bgm.md)、[ステージ](docs/ja/stage.md)、[スライド](docs/ja/slides.md)、[モーション](docs/ja/motions.md)、[録画](docs/ja/recording.md)、[操作面](docs/ja/surfaces.md)、[ネイティブシェル](docs/ja/shell.md)、[デスクトップのマスコット](docs/ja/mascot.md)。
 
 その下：[構成](docs/ja/architecture.md)、[アバター](docs/ja/avatars.md)。
 

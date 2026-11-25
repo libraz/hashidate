@@ -16,6 +16,7 @@ Three processes and a page. A caller posts commands to the control server; the s
 | `src/panel` | The broadcast panel, on `/panel/`. Everything it does goes through the control API, so what it can do is what an orchestrator can do. |
 | `src/monitor` | The stage, on `/monitor/`. The same renderer letterboxed to 16:9 with nothing around it — the page an operator watches and OBS monitors. |
 | `src/shell` | The native launcher: the two pages as windows, with the server and the sidecar started underneath. A convenience for a development checkout, deliberately not packaged. See [The native shell](shell.md). |
+| `src/mascot` | The desktop mascot: one transparent, click-through window that shows the viewer's mascot page, with a tray. Like the shell it is a development launcher and is not packaged. See [The desktop mascot](mascot.md). |
 | `src/server` | The local control API. Serves all three pages and carries commands to the renderer. |
 | `src/control` | The node-side client for that API, shared by `ctl` and the MCP adapter. |
 | `src/cli` | `ctl` — a thin client, for driving the avatar by hand. |
@@ -29,6 +30,8 @@ Three processes and a page. A caller posts commands to the control server; the s
 ## Design boundaries
 
 **The wire vocabulary lives once**, in `src/protocol`, as zod schemas. Adding a command means adding it there first; the viewer, the server and the CLI follow. That is what keeps three processes on separate release cycles from drifting apart.
+
+**Session events are closed on the way in and open on the way out.** A renderer's report is validated strictly. The readers of the event tail (`GET /api/state`, `GET /api/events`) drop an event they cannot validate and keep the rest, so a type or a field added later does not make an older reader throw. The turn and queue events (`turn.queued`, `turn.start`, `turn.end`, `turn.interrupted`, `queue.dropped`, `queue.replaced`, `queue.empty`) and `cue.fire` come from the session; the touches `touch.tap` and `touch.hold` carry an optional `part`, `side` and `count` and are emitted only by the mascot. See [The desktop mascot](mascot.md#touches).
 
 **The engine does not know it is in a browser.** It depends on three.js and on the core, which is computation and not a browser API — no `AudioContext`, no DOM, no `fetch`. The engine calls the core and never loads it; the viewer and the tests do. The avatar's three.js nodes are backed by the core: their position, quaternion, scale and matrices live in the core's memory, and three.js and the TypeScript layers read them unchanged. The rig, anatomy, character frame and arm transaction keep their TypeScript names as facades over the core, and the sway solver and the triangle kernel read the same scene graph. Motion, face, profile, director and session stay in TypeScript. It states what a spoken line is, and the viewer, which has the audio, provides one. That is why the test suite can run the whole engine headlessly against a synthetic avatar.
 
@@ -55,3 +58,4 @@ A turn's clocks advance by the frame's real length: gesture time, nods, the gap 
 - [The control API](control-api.md)
 - [Avatars](avatars.md)
 - [The surfaces](surfaces.md)
+- [The desktop mascot](mascot.md)

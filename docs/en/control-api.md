@@ -96,6 +96,10 @@ The viewer sends the same page identity as `?renderer=<id>` on its SSE connectio
 
 A `turn.end` event with `interrupted: true` means the active turn ended during avatar replacement or renderer recovery. The server files that line as interrupted in history and retains pending lines.
 
+The event tail also carries touches on [the desktop mascot](mascot.md): `touch.tap` and `touch.hold`, each with an optional `part` (`head`, `torso`, `arm`, `hand` or `leg`), `side` (`L` or `R`) and `count` (1 to 10 for a run of taps). They are reported by the page and not caused by a command, and the server records them like any other event, so two taps within two seconds are two entries. What to do about one is the caller's decision.
+
+The tail is read tolerantly. In `GET /api/state` and `GET /api/events`, an event whose type or `part` the reader does not know is dropped and the rest of the list is returned, so an event added later does not make an older client fail the whole reply. The renderer's report to `POST /api/report` is not read that way: a malformed event there is refused. A reader started before the touch events existed throws when one arrives and has to be restarted; a control server started before then rejects the report of a page that sends one, turn events included. See [After an update](mascot.md#after-an-update).
+
 The server's queue is the only one that counts. `say`, `clear`, `interrupt` and `queue` posted to `/api/command` change it on arrival, before any renderer hears of them, and a renderer's `turn.interrupted` or `queue.dropped` afterwards only files the line that was cut. That is why a rewind that cuts the line on air keeps the list it put back, however many renderers answer the cut.
 
 A renderer that attaches while a line is on air is handed the queue held, and released when that line ends, so it joins in step rather than running a line ahead of the others. It is also handed the shot, the set, the page and the mood as the lines said so far left them, not only as commands set them.
@@ -109,3 +113,4 @@ A renderer that attaches while a line is on air is handed the queue held, and re
 - [Background music](bgm.md) — the library and its server-owned transport
 - [Performances](performances.md) — what a turn is usually delivered with
 - [The MCP adapter](mcp.md) — the same API, as tools
+- [The desktop mascot](mascot.md) — where the touch events come from

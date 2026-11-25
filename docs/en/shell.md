@@ -103,10 +103,12 @@ Those two log files are where to look for "there is no sound" and "the renderer 
 
 The shell is a browser with the address bar taken away, so the things a browser would ordinarily let a page reach are closed rather than left at their defaults.
 
-- **Two URLs, exactly.** A top-level window may load `http://127.0.0.1:<port>/panel/` or `http://127.0.0.1:<port>/monitor/` and nothing else — not `/`, not `/api/`, not `localhost`, not another port. Navigation and redirects to anything else are cancelled. The monitor's own iframe is a child frame and is deliberately left alone, because that viewer URL is part of what the monitor page is.
+- **Two URLs, exactly.** A top-level window may load `http://127.0.0.1:<port>/panel/` or `http://127.0.0.1:<port>/monitor/` and nothing else — not `/`, not `/api/`, not `localhost`, not another port. The one other window, [the desktop mascot](mascot.md), is held to the same rule from its own side: it may load `/?mascot=1&transparent=1`, with or without `&mute=1`, and nothing else. Navigation and redirects to anything else are cancelled. The monitor's own iframe is a child frame and is deliberately left alone, because that viewer URL is part of what the monitor page is.
 - **No new windows and no webviews.** `window.open` is denied outright.
 - **One permission.** Everything is refused except sanitised clipboard *writes*. That one is necessary because taking the address bar away leaves no other way out: the panel composes a URL for OBS, and a button is the only way to get it out of a window with nothing to select from. Reading the clipboard is refused, as are device permissions.
 - **The window keeps the menu's name.** Both pages set a title meant for a browser tab strip, and two of those are hard to tell apart in a window list, so a page changing its own title is ignored.
+
+The shell and the mascot take the same profile, the same Chromium switches and the same single-instance lock, so only one of them runs from a checkout. A shell started while the mascot is running cannot take the lock and quits with status 0, as it does for any second launch. A mascot started while the shell is running exits with status 75 and the shell raises its windows. See [The desktop mascot](mascot.md#sharing-the-profile-with-the-shell).
 
 Four Chromium switches are set before the application becomes ready: three that stop a backgrounded or occluded window being throttled, because a stage behind the panel has to keep rendering, and the autoplay policy that lets the stage make a sound without a click.
 
@@ -123,5 +125,6 @@ Shipping a build would also change what has to travel with it: the bundled IBM P
 ## Next
 
 - [The surfaces](surfaces.md) — all three pages, two of which this opens as windows
+- [The desktop mascot](mascot.md) — the other native window, and the lock it shares with this one
 - [Recording](recording.md) — what `Open Recordings Folder` is for
 - [Getting started](getting-started.md) — running it without the shell
