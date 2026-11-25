@@ -11,7 +11,6 @@
 import { buildProfile } from '../src/engine/profile';
 import { Spring } from '../src/engine/secondary';
 import { withCoreMath } from '../tests/helpers/core-math';
-import { applyFrame, SPRING_FIXTURES } from '../tests/helpers/spring-fixtures';
 import {
   ByteWriter,
   type HashFile,
@@ -25,6 +24,8 @@ const GENERATOR = 'yarn tsx tools/record-spring-parity.ts';
 const output = process.argv[2] ?? 'tests/secondary/spring-parity.json';
 
 await loadCoreForNode();
+// The fixtures compute their frames at module load under the core's transcendentals.
+const { applyFrame, SPRING_FIXTURES } = await import('../tests/helpers/spring-fixtures');
 
 const file: HashFile = { generator: GENERATOR, fixtures: {} };
 for (const fixture of SPRING_FIXTURES) {

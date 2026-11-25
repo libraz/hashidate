@@ -1,14 +1,17 @@
 import * as THREE from 'three';
+import { cos, sin } from '@/core/math';
 import type { Spring } from '@/engine/secondary';
 import type { AvatarDescriptor, ColliderSpec } from '@/engine/types';
+import { withCoreMath } from './core-math';
 import { must } from './must';
 import { addBoneChain, buildRig, type SyntheticRig } from './scene';
 
 /**
  * Deterministic rigs and motion for recording and checking the sway solver's per-frame hashes.
  *
- * Every number a frame applies is computed here, at module load, with the host's `Math`, so every
- * run receives the same values and only the solver runs under the fixed transcendentals.
+ * Every number a frame applies is computed here, at module load. The host's `Math` differs between
+ * platforms in the last bit, so the sines and cosines are the core's, and three's own calls (axis
+ * angles, Euler rotations) run under `withCoreMath`: the hashes have to hold on every machine.
  */
 
 export interface FixtureRig {
@@ -47,6 +50,10 @@ const STEP = 1 / 60;
 
 /** Apply one frame's script to a rig and its solver. */
 export function applyFrame(rig: SyntheticRig, spring: Spring, frame: FrameScript): void {
+  withCoreMath(() => poseFrame(rig, spring, frame));
+}
+
+function poseFrame(rig: SyntheticRig, spring: Spring, frame: FrameScript): void {
   const node = (name: string): THREE.Object3D =>
     name === 'root' ? rig.root : must(rig.bones.get(name), name);
   for (const [name, x, y, z] of frame.rotations ?? []) node(name).rotation.set(x, y, z);
@@ -75,7 +82,7 @@ function script(
   for (let frame = 0; frame < FRAMES; frame++) {
     const dt = frame === 0 ? 0 : dts[frame % dts.length];
     t += dt;
-    out.push({ dt, ...make(frame, t) });
+    out.push({ dt, ...withCoreMath(() => make(frame, t)) });
   }
   return out;
 }
@@ -83,8 +90,8 @@ function script(
 /** The trajectory fixture's body motion: Hips and Head on incommensurate sines. */
 function trajectoryMotion(t: number): FrameScript['rotations'] {
   return [
-    ['Hips', Math.sin(t * 2.1) * 0.3, Math.cos(t * 1.3) * 0.25, 0],
-    ['Head', 0, Math.sin(t * 3.7) * 0.5, Math.sin(t * 2.9) * 0.2],
+    ['Hips', sin(t * 2.1) * 0.3, cos(t * 1.3) * 0.25, 0],
+    ['Head', 0, sin(t * 3.7) * 0.5, sin(t * 2.9) * 0.2],
   ];
 }
 
@@ -165,8 +172,8 @@ const F2: SpringFixture = {
         parent: 'SkirtHub',
         root: `Skirt${k}`,
         joints: 3,
-        rootOffset: [Math.cos(a) * 0.12, -0.02, Math.sin(a) * 0.1],
-        segmentOffset: [Math.cos(a) * 0.02, -0.09, Math.sin(a) * 0.02],
+        rootOffset: [cos(a) * 0.12, -0.02, sin(a) * 0.1],
+        segmentOffset: [cos(a) * 0.02, -0.09, sin(a) * 0.02],
       });
     }
     // Hangs just in front of the torso, so the swing grazes its colliders.
@@ -180,11 +187,7 @@ const F2: SpringFixture = {
     const torso: ColliderSpec[] = [];
     for (let k = 0; k < 20; k++) {
       const a = (k / 20) * Math.PI * 2;
-      const at: [number, number, number] = [
-        Math.cos(a) * 0.1,
-        (k % 3) * 0.05 - 0.05,
-        Math.sin(a) * 0.08,
-      ];
+      const at: [number, number, number] = [cos(a) * 0.1, (k % 3) * 0.05 - 0.05, sin(a) * 0.08];
       torso.push(
         k % 2
           ? { bone: 'UpperChest', offset: at, radius: 0.04 }
@@ -249,10 +252,10 @@ const F2: SpringFixture = {
   // Frames between steps, so a carried link is held clear of what it would enter.
   script: script([STEP, 1 / 144, 1 / 72, 1 / 144], (_, t) => ({
     rotations: [
-      ['Hips', Math.sin(t * 2.1) * 0.6, Math.cos(t * 1.3) * 0.9, 0],
-      ['UpperChest', Math.sin(t * 1.7) * 0.4, 0, Math.cos(t * 2.3) * 0.3],
-      ['Head', Math.sin(t * 4.1) * 0.8, Math.sin(t * 3.7) * 1.2, 0],
-      ['root', 0, Math.sin(t * 0.5) * 2, 0],
+      ['Hips', sin(t * 2.1) * 0.6, cos(t * 1.3) * 0.9, 0],
+      ['UpperChest', sin(t * 1.7) * 0.4, 0, cos(t * 2.3) * 0.3],
+      ['Head', sin(t * 4.1) * 0.8, sin(t * 3.7) * 1.2, 0],
+      ['root', 0, sin(t * 0.5) * 2, 0],
     ],
   })),
 };
@@ -316,15 +319,13 @@ const F3: SpringFixture = {
   },
   script: script([STEP, 1 / 50, 1 / 144], (_, t) => {
     const q = new THREE.Quaternion().fromArray(
-      axisAngle(new THREE.Vector3(0, 1, 0), Math.sin(t * 1.9) * 0.5),
+      axisAngle(new THREE.Vector3(0, 1, 0), sin(t * 1.9) * 0.5),
     );
     q.multiply(
-      new THREE.Quaternion().fromArray(
-        axisAngle(new THREE.Vector3(1, 0, 0), 0.3 * Math.sin(t * 0.7)),
-      ),
+      new THREE.Quaternion().fromArray(axisAngle(new THREE.Vector3(1, 0, 0), 0.3 * sin(t * 0.7))),
     );
     return {
-      rotations: [['Hips', Math.sin(t * 1.1) * 0.1, Math.cos(t * 0.9) * 0.15, 0]],
+      rotations: [['Hips', sin(t * 1.1) * 0.1, cos(t * 0.9) * 0.15, 0]],
       drive: q.toArray() as [number, number, number, number],
     };
   }),
@@ -370,7 +371,7 @@ const F4: SpringFixture = {
     };
     return {
       rotations: trajectoryMotion(t),
-      drive: axisAngle(new THREE.Vector3(0, 0, 1), Math.sin(t * 2.3) * 0.4),
+      drive: axisAngle(new THREE.Vector3(0, 0, 1), sin(t * 2.3) * 0.4),
       ...events[frame],
     };
   }),
@@ -395,7 +396,7 @@ const F5: SpringFixture = {
   },
   script: script([1 / 60, 1 / 50, 1 / 72, 1 / 144, 0, 0.05, 0.2], (frame, t) => ({
     rotations: trajectoryMotion(t),
-    rootPosition: [Math.sin(frame * 0.13) * 0.04, Math.cos(frame * 0.07) * 0.03, 0],
+    rootPosition: [sin(frame * 0.13) * 0.04, cos(frame * 0.07) * 0.03, 0],
   })),
 };
 
@@ -415,8 +416,8 @@ function branching(scale: number): SpringFixture {
           parent: 'Hub',
           root: `Hem${k}`,
           joints: 2,
-          rootOffset: [Math.cos(a) * 0.1, -0.01, Math.sin(a) * 0.08],
-          segmentOffset: [Math.cos(a) * 0.015, -0.07, Math.sin(a) * 0.015],
+          rootOffset: [cos(a) * 0.1, -0.01, sin(a) * 0.08],
+          segmentOffset: [cos(a) * 0.015, -0.07, sin(a) * 0.015],
         });
       }
       addBoneChain(rig, {
@@ -487,8 +488,8 @@ function branching(scale: number): SpringFixture {
     },
     script: script([STEP, 1 / 50], (_, t) => ({
       rotations: [
-        ['Hips', Math.sin(t * 2.3) * 0.5, Math.cos(t * 1.1) * 0.7, Math.sin(t * 0.8) * 0.2],
-        ['Head', Math.sin(t * 3.1) * 0.6, Math.sin(t * 2.7) * 0.9, 0],
+        ['Hips', sin(t * 2.3) * 0.5, cos(t * 1.1) * 0.7, sin(t * 0.8) * 0.2],
+        ['Head', sin(t * 3.1) * 0.6, sin(t * 2.7) * 0.9, 0],
       ],
     })),
   };
