@@ -378,9 +378,12 @@ describe('BrowserVoice with an in-memory Web Audio graph', () => {
     expect(chainGains[2].gain?.value).toBe(0);
     expect(chainGains[3].connections).toContain(fake.output.voiceBus);
 
+    let wall = 1_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => wall);
     take?.play();
     expect(fake.sources[0].startCalls).toBe(1);
     fake.context.currentTime = 10.25;
+    wall += 250;
     expect(take?.elapsed).toBeCloseTo(0.25);
     expect(take?.amplitude).toBeGreaterThan(0.9);
     take?.stop();
@@ -714,6 +717,8 @@ describe('BrowserVoice with an in-memory Web Audio graph', () => {
 
   it('runs a take on the wall clock once the audio clock stalls, so the line still ends', async () => {
     const fake = webAudioEnvironment();
+    fake.context.sampleRate = 48_000;
+    const window = (2 * 128) / 48_000;
     let wall = 1_000;
     vi.spyOn(performance, 'now').mockImplementation(() => wall);
     const take = await fake.voice.prepare('hello');
@@ -722,11 +727,63 @@ describe('BrowserVoice with an in-memory Web Audio graph', () => {
     wall += 100;
     expect(take?.elapsed).toBeCloseTo(0.1);
 
-    // The device stops: currentTime never moves again.
+    // The device stops: currentTime never moves again, and the smoothed clock
+    // runs on no further than the quantisation window past it.
     wall += 100;
-    expect(take?.elapsed).toBeCloseTo(0.1);
+    const held = take?.elapsed ?? 0;
+    expect(held).toBeGreaterThanOrEqual(0.1);
+    expect(held).toBeLessThanOrEqual(0.1 + window + 1e-9);
     wall += 2_000;
     expect(take?.elapsed).toBeGreaterThan(take?.seconds ?? Number.POSITIVE_INFINITY);
+
+    fake.voice.dispose();
+    fake.output.dispose();
+  });
+
+  it('smooths a quantised, jittery audio clock to the frame interval and still falls back when it freezes', async () => {
+    const fake = webAudioEnvironment();
+    fake.context.sampleRate = 48_000;
+    const quantum = 128 / 48_000;
+    const window = 2 * quantum;
+    const frame = 1 / 72;
+    let wall = 1_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => wall);
+    const take = await fake.voice.prepare('hello');
+    take?.play();
+
+    // currentTime steps in whole quanta and its phase against the frame wanders.
+    const jitter = [0, 0.9, -0.8, 0.5, -1, 1, -0.3, 0.7];
+    const clockAt = (frameIndex: number) =>
+      Math.floor(
+        (10 + frameIndex * frame + jitter[frameIndex % jitter.length] * quantum) / quantum,
+      ) * quantum;
+
+    let previous = take?.elapsed ?? 0;
+    for (let i = 1; i <= 300; i++) {
+      wall = 1_000 + i * frame * 1_000;
+      fake.context.currentTime = clockAt(i);
+      const elapsed = take?.elapsed ?? 0;
+      // A second read in the same frame (the mouth reads amplitude too) adds nothing.
+      expect(take?.elapsed).toBe(elapsed);
+      expect(Math.abs(elapsed - (fake.context.currentTime - 10))).toBeLessThanOrEqual(
+        window + 1e-9,
+      );
+      expect(Math.abs(elapsed - (previous + frame))).toBeLessThan(1e-9);
+      previous = elapsed;
+    }
+
+    // The device stops: elapsed settles within the window, then the wall clock takes over.
+    const frozenAt = previous;
+    let last = frozenAt;
+    for (let i = 1; i <= 14; i++) {
+      wall += frame * 1_000;
+      last = take?.elapsed ?? 0;
+      expect(last - frozenAt).toBeLessThanOrEqual(window + 1e-9);
+    }
+    wall += frame * 1_000;
+    expect(take?.elapsed).toBe(last);
+    wall += 1_000;
+    expect(take?.elapsed).toBeGreaterThan(last + 0.9);
 
     fake.voice.dispose();
     fake.output.dispose();

@@ -174,6 +174,9 @@ class BufferTake implements Take {
   private wallStartedAt: number | null = null;
   private wallOrigin = 0;
   private movedAt = 0;
+  /** `currentTime` smoothed to wall-clock rate, and the wall time of its last update. */
+  private smoothed = 0;
+  private smoothedAt = 0;
 
   constructor(
     ctx: AudioContext,
@@ -199,6 +202,8 @@ class BufferTake implements Take {
     this.source = source;
     this.startedAt = this.ctx.currentTime;
     this.movedAt = wallSeconds();
+    this.smoothed = this.startedAt;
+    this.smoothedAt = this.movedAt;
     this.onPlay();
   }
 
@@ -225,8 +230,18 @@ class BufferTake implements Take {
     // Not clamped to `seconds`. The mouth ends its track by this clock passing
     // the end of it, so a clock that stopped at the last mora would hold the
     // line open until something interrupted it.
-    const audio = this.ctx.currentTime - this.startedAt;
     const wall = wallSeconds();
+    // `currentTime` advances in 128-sample quanta, measured at +-2 quanta per
+    // frame. Advance at wall rate inside that window; a frozen clock still
+    // stops, at `currentTime + window`.
+    const ct = this.ctx.currentTime;
+    const window = (2 * 128) / this.ctx.sampleRate;
+    this.smoothed = Math.min(
+      Math.max(this.smoothed + (wall - this.smoothedAt), ct - window),
+      ct + window,
+    );
+    this.smoothedAt = wall;
+    const audio = this.smoothed - this.startedAt;
     if (this.wallStartedAt === null && audio > this.reached) {
       this.reached = audio;
       this.movedAt = wall;
