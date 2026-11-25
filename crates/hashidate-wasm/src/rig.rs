@@ -1457,8 +1457,8 @@ impl Transaction {
         let b = &self.buffer[FOLLOWED..FOLLOWED + FOLLOWED_LEN];
         let mut f = ArmFollowed::default();
         for s in 0..2 {
-            for slot in 0..4 {
-                f.arm_dirs[s][slot] = tuple(b, 12 * s + 3 * slot);
+            for (slot, dir) in f.arm_dirs[s].iter_mut().enumerate() {
+                *dir = tuple(b, 12 * s + 3 * slot);
             }
             f.palm_out[s] = tuple(b, 24 + 3 * s);
             f.palm_w[s] = b[30 + s];

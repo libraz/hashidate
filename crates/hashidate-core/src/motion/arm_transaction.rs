@@ -712,8 +712,8 @@ mod tests {
     fn followed_of(s: &mut Stream) -> ArmFollowed {
         let mut f = ArmFollowed::default();
         for side in 0..2 {
-            for slot in 0..4 {
-                f.arm_dirs[side][slot] = [s.f64(), s.f64(), s.f64()];
+            for dir in &mut f.arm_dirs[side] {
+                *dir = [s.f64(), s.f64(), s.f64()];
             }
             f.palm_out[side] = [s.f64(), s.f64(), s.f64()];
             f.palm_w[side] = s.f64();
