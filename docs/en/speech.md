@@ -39,7 +39,7 @@ The same value is on `GET /api/state` and in the native shell's Window menu. See
 
 Three things follow from having the finished take before playback starts, which is what the added second buys.
 
-- **The viseme track is stretched onto the real length.** The estimate's constants only ever produce proportions, so normalising to a measurement cancels them, which is what makes the timing survive a voice retrained to speak at a different rate. On the development machine the estimate runs 15 % short on a long line and further short on a brief one, consistently.
+- **The viseme track is fitted onto the real length.** The estimate's constants only ever produce proportions, so normalising to a measurement cancels them, which is what makes the timing survive a voice retrained to speak at a different rate. The track is fitted segment by segment at the take's silences, each silence paired in order with a phrase break, so a pause lands where the voice paused. When the silences cannot be paired, the track is stretched as a whole. On the development machine the estimate runs 15 % short on a long line and further short on a brief one, consistently.
 - **The mouth is put on the audio's clock rather than the frame's.** Frames drop and audio does not, so a mouth adding up frame deltas can only run ahead. Cues read the same clock and are corrected by the same call.
 - **Mouth travel is scaled by the take's own loudness.** It is measured off the decoded buffer once and normalised against that take's own level, so there is no gain to retune when the voice changes. That is what closes the mouth through a pause the text never predicted, and it hides most of what the stretch cannot fix.
 
@@ -87,7 +87,7 @@ Anything that answers those can stand in. The `/speak` contract requires `text` 
 
 `HASHIDATE_TTS_SOCKET` is read by both the control server and `tools/tts/server.py`. The control server uses `HASHIDATE_TTS_PORT` only when no socket override is set. The bundled sidecar always uses a private UNIX socket and accepts no `--port` option. Start a TCP replacement service separately; the native shell does not start the bundled sidecar for a TCP endpoint.
 
-What the renderer does with the answer is the same either way: it measures the buffer, stretches the viseme track onto the real length, and drives the mouth off the measurement. A synthesiser that returns a plain WAV gets all of that.
+What the renderer does with the answer is the same either way: it measures the buffer, fits the viseme track onto the real length (segment by segment at the take's silences when they pair with the phrase breaks, as a whole otherwise), and drives the mouth off the measurement. A synthesiser that returns a plain WAV gets all of that.
 
 ## Why it is a separate process
 

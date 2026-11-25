@@ -49,7 +49,9 @@ The idle autopilot draws from a selected pool in the same table. The six groups 
 
 ## What runs continuously
 
-Under all of it the character is never still. Breathing, a weight shift from one foot to the other, blinks on a scheduler, gaze with saccades and a head that springs after it, hair and garments catching up a beat late: none of it is a command and none of it waits for a caller.
+Under all of it the character is never still. Breathing, a weight shift that rests on one foot for an irregular while before moving to the other, blinks on a scheduler, gaze with saccades and a head that springs after it, hair and garments catching up a beat late: none of it is a command and none of it waits for a caller.
+
+While the character speaks, the arms beat at phrase heads: at the start of a line and at the first word after a break that is not a minor one, the forearm and hand lift a little, the right hand leading. The beat is silenced on an arm a gesture is using. The lids follow a downward look, closing a little further the lower the eyes point, except while a surprise holds them open.
 
 While the character speaks, the head also nods at phrase ends. Most nods land at sentence ends and at commas the voice actually pauses on, fewer where the floor is handed over, and none at commas the voice runs through. A gesture that moves the head or neck takes precedence, so no phrase-end nod is added while one is playing.
 
