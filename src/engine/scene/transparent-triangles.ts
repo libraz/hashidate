@@ -265,8 +265,10 @@ function morphAttributesMatch(map: MorphAttributeMap, snapshot: MorphAttributeSn
   return count === snapshot.entries.size;
 }
 
-function copyMatrixValues(matrix: Matrix4): Float64Array {
-  return Float64Array.from(matrix.elements);
+function storeMatrixValues(target: Float64Array | null, matrix: Matrix4): Float64Array {
+  if (target === null) return Float64Array.from(matrix.elements);
+  target.set(matrix.elements);
+  return target;
 }
 
 function matricesMatch(left: Matrix4, right: Float64Array | null): boolean {
@@ -639,50 +641,67 @@ function syncOwnedIndex(record: TargetRecord): boolean {
   return replaced;
 }
 
-function poseDependenciesMatch(record: TargetRecord): boolean {
+/** Why a pose is stale: `attributes` when the attribute snapshots no longer hold, else `pose`. */
+type PoseMismatch = 'attributes' | 'pose';
+
+/** The reason the cached pose cannot be reused, or null when it can. */
+function poseDependenciesMatch(record: TargetRecord): PoseMismatch | null {
   const geometry = record.originalGeometry;
   const index = geometry.index;
   const attributeSnapshot = record.attributeSnapshot;
   const morphSnapshot = record.morphSnapshot;
   if (
-    record.poseDirty ||
-    index === null ||
     attributeSnapshot === null ||
     morphSnapshot === null ||
+    !attributeMapMatches(geometry.attributes, attributeSnapshot) ||
+    !morphAttributesMatch(geometry.morphAttributes as unknown as MorphAttributeMap, morphSnapshot)
+  ) {
+    return 'attributes';
+  }
+  if (
+    record.poseDirty ||
+    index === null ||
     record.poseIndex !== index ||
     record.poseIndexArray !== index.array ||
     record.poseIndexVersion !== index.version ||
     record.poseIndexCount !== index.count ||
-    record.originalGeometry.morphTargetsRelative !== record.morphTargetsRelative ||
-    !attributeMapMatches(geometry.attributes, attributeSnapshot) ||
-    !morphAttributesMatch(geometry.morphAttributes as unknown as MorphAttributeMap, morphSnapshot)
+    record.originalGeometry.morphTargetsRelative !== record.morphTargetsRelative
   ) {
-    return false;
+    return 'pose';
   }
   const influences = record.mesh.morphTargetInfluences;
-  if (influences !== record.morphInfluences) return false;
+  if (influences !== record.morphInfluences) return 'pose';
   const influenceCount = influences?.length ?? 0;
-  if (influenceCount !== record.morphInfluenceValues.length) return false;
+  if (influenceCount !== record.morphInfluenceValues.length) return 'pose';
   for (let index = 0; index < influenceCount; index += 1) {
-    if (influences![index] !== record.morphInfluenceValues[index]) return false;
+    if (influences![index] !== record.morphInfluenceValues[index]) return 'pose';
   }
-  return record.kernel !== null && !record.kernel.skinChanged();
+  return record.kernel !== null && !record.kernel.skinChanged() ? null : 'pose';
 }
 
-function markPoseDependencies(record: TargetRecord): void {
+function markPoseDependencies(record: TargetRecord, mismatch: PoseMismatch | null): void {
   const geometry = record.originalGeometry;
   const index = geometry.index!;
-  record.attributeSnapshot = snapshotAttributeMap(geometry.attributes);
-  record.morphSnapshot = snapshotMorphAttributes(
-    geometry.morphAttributes as unknown as MorphAttributeMap,
-  );
+  if (mismatch === 'attributes') {
+    record.attributeSnapshot = snapshotAttributeMap(geometry.attributes);
+    record.morphSnapshot = snapshotMorphAttributes(
+      geometry.morphAttributes as unknown as MorphAttributeMap,
+    );
+  }
   record.poseIndex = index;
   record.poseIndexArray = index.array;
   record.poseIndexVersion = index.version;
   record.poseIndexCount = index.count;
   record.morphTargetsRelative = geometry.morphTargetsRelative;
   record.morphInfluences = record.mesh.morphTargetInfluences;
-  record.morphInfluenceValues = record.morphInfluences?.slice() ?? [];
+  const influences = record.morphInfluences;
+  if (influences !== undefined && influences.length === record.morphInfluenceValues.length) {
+    for (let slot = 0; slot < influences.length; slot += 1) {
+      record.morphInfluenceValues[slot] = influences[slot]!;
+    }
+  } else {
+    record.morphInfluenceValues = influences?.slice() ?? [];
+  }
   record.poseDirty = false;
 }
 
@@ -692,8 +711,11 @@ function recordSort(
   counters: TransparentTriangleCounters,
 ): void {
   counters.sorts += 1;
-  record.sortedCameraValues = copyMatrixValues(camera.matrixWorldInverse);
-  record.sortedMeshValues = copyMatrixValues(record.mesh.matrixWorld);
+  record.sortedCameraValues = storeMatrixValues(
+    record.sortedCameraValues,
+    camera.matrixWorldInverse,
+  );
+  record.sortedMeshValues = storeMatrixValues(record.sortedMeshValues, record.mesh.matrixWorld);
   record.sortedPoseRevision = record.poseRevision;
 }
 
@@ -703,6 +725,7 @@ function refreshPose(
   root: Object3D,
   camera: Camera,
   counters: TransparentTriangleCounters,
+  mismatch: PoseMismatch | null,
 ): string | null {
   record.kernel ??= new TriangleKernel(root, record.mesh);
   const kernel = record.kernel;
@@ -719,7 +742,7 @@ function refreshPose(
   }
   counters.vertexEvaluations += kernel.vertices.length;
   record.poseRevision += 1;
-  markPoseDependencies(record);
+  markPoseDependencies(record, mismatch);
   recordSort(record, camera, counters);
   return null;
 }
@@ -1031,9 +1054,10 @@ export class TransparentTriangleController {
           ensureShell(record, this.counters);
           syncBorrowedAttributes(record);
           const indexReplaced = syncOwnedIndex(record);
-          if (!poseDependenciesMatch(record)) {
+          const mismatch = poseDependenciesMatch(record);
+          if (mismatch !== null) {
             record.poseDirty = true;
-            const poseError = refreshPose(record, this.root, camera, this.counters);
+            const poseError = refreshPose(record, this.root, camera, this.counters, mismatch);
             if (poseError !== null) {
               record.reason = poseError;
               continue;

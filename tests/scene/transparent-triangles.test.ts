@@ -223,6 +223,55 @@ describe('TransparentTriangleController', () => {
     controller.dispose();
   });
 
+  it('keeps its snapshot and sort matrix buffers across frames of a moving avatar', () => {
+    const { mesh, bone } = skinnedTarget([-1, -5, -2, -4], -12);
+    const camera = cameraAt(10);
+    const controller = new TransparentTriangleController(mesh);
+    controller.reconcile([{ key: 'sleeve', mesh }]);
+    const records = (
+      controller as unknown as {
+        records: Map<
+          string,
+          {
+            attributeSnapshot: object | null;
+            morphSnapshot: object | null;
+            morphInfluenceValues: number[];
+            sortedCameraValues: Float64Array | null;
+            sortedMeshValues: Float64Array | null;
+          }
+        >;
+      }
+    ).records;
+    const record = records.get('sleeve')!;
+    withIndexOrder(controller, camera, mesh);
+    const snapshot = record.attributeSnapshot;
+    const morphSnapshot = record.morphSnapshot;
+    const influenceValues = record.morphInfluenceValues;
+    const cameraValues = record.sortedCameraValues;
+    const meshValues = record.sortedMeshValues;
+    expect(snapshot).not.toBeNull();
+    expect(cameraValues).not.toBeNull();
+
+    for (let frame = 1; frame <= 3; frame += 1) {
+      bone.position.z = -frame;
+      mesh.morphTargetInfluences![0] = frame / 4;
+      updateWorld(mesh);
+      withIndexOrder(controller, camera, mesh);
+      expect(record.attributeSnapshot).toBe(snapshot);
+      expect(record.morphSnapshot).toBe(morphSnapshot);
+      expect(record.morphInfluenceValues).toBe(influenceValues);
+      expect(record.morphInfluenceValues[0]).toBe(frame / 4);
+      expect(record.sortedCameraValues).toBe(cameraValues);
+      expect(record.sortedMeshValues).toBe(meshValues);
+      expect(Array.from(record.sortedCameraValues!)).toEqual(
+        Array.from(camera.matrixWorldInverse.elements),
+      );
+    }
+    expect(controller.inspect().counters.vertexEvaluations).toBe(48);
+    expect(controller.inspect().counters.sorts).toBe(4);
+    controller.dispose();
+  });
+
   it('tracks interleaved buffer versions and index attribute identity', () => {
     const { geometry, mesh } = skinnedTarget([-1, -5]);
     const positions = geometry.getAttribute('position') as THREE.BufferAttribute;
