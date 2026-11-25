@@ -177,4 +177,9 @@ export interface Turn extends TurnRequest {
   take?: Take | null;
   /** When the line entered the queue, on the queue's own clock: where a run of speech breaks. */
   queuedAt: number;
+  /**
+   * The request carried its id, so the turn's draws are seeded from it and every
+   * renderer plays it alike. A minted id holds the clock and seeds nothing.
+   */
+  seeded: boolean;
 }

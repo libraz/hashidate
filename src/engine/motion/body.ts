@@ -308,6 +308,8 @@ export interface BodyContext {
   headWorldTarget?: THREE.Vector3 | null;
   /** The target got where it is by a cut this frame. See `DirectorContext`. */
   cameraCut?: boolean;
+  /** The frame's real length, uncapped. See `DirectorContext`. */
+  elapsed?: number;
 }
 
 const mkDirs = (): Record<ArmSlot, Vec3Tuple> => ({
@@ -394,6 +396,8 @@ export interface BodyOptions {
 
 export class Body {
   private readonly _random: () => number;
+  /** The current turn's stream for gesture variation and attitude side, or null for `random`. */
+  turnRandom: (() => number) | null = null;
   rig: Rig;
   p: Profile;
   t: number;
@@ -566,9 +570,18 @@ export class Body {
       this._attitude.set(null, 1);
       return;
     }
-    const s: Side = side ?? (this._random() < 0.5 ? 'L' : 'R');
+    const s: Side = side ?? ((this.turnRandom ?? this._random)() < 0.5 ? 'L' : 'R');
     this._attitudeHeld = { offsets, side: s };
     this._attitude.set(offsets, sideMirror(s) as 1 | -1);
+  }
+
+  /** The current turn's stream for the speech-onset aversion, or null for `random`. */
+  get turnGazeRandom(): (() => number) | null {
+    return this._gaze.turnRandom;
+  }
+
+  set turnGazeRandom(random: (() => number) | null) {
+    this._gaze.turnRandom = random;
   }
 
   /** Joint strain from the last fingertip solve, per arm. */
@@ -906,18 +919,19 @@ export class Body {
     // completely different pose, and the arms teleport on the switch frame —
     // the most visible artefact this layer had.
     this.handoff();
+    const random = this.turnRandom ?? this._random;
     const v: GestureVariation = {
       // Frequency and amplitude, never phase: `build` is called from t=0 and a
       // phase offset would put every oscillation mid-swing on frame one, which
       // snaps the limb into the gesture instead of easing it in.
-      rate: 0.92 + this._random() * 0.16,
-      scale: 0.9 + this._random() * 0.2,
+      rate: 0.92 + random() * 0.16,
+      scale: 0.9 + random() * 0.2,
       // Random unless the caller named a hand. Left random on purpose when it
       // did not: a character that greets with the same arm every single time
       // reads as a mechanism, and the table was authored so that either hand
       // works. What a caller pins is a hand it has a reason for — the one away
       // from the slide, the one it used on the line before.
-      side: side === undefined ? (this._random() < 0.5 ? -1 : 1) : sideMirror(side),
+      side: side === undefined ? (random() < 0.5 ? -1 : 1) : sideMirror(side),
     };
     const pose: Pose = {};
     const lead = this.entranceLead(def, v, pose);
@@ -938,7 +952,7 @@ export class Body {
       v,
       time: 0,
       released: false,
-      speed: 0.93 + this._random() * 0.14,
+      speed: 0.93 + random() * 0.14,
       lead,
       phase: { entrance: 0, held: 0 },
       exitAt: lead + def.hold,
@@ -1788,9 +1802,11 @@ export class Body {
     rig.dt = dt;
 
     // --- gesture envelopes ------------------------------------------------
-    const g = this.advanceGesture(dt);
+    // On the frame's real length, so the gesture keeps pace with the voice.
+    const elapsed = ctx?.elapsed ?? dt;
+    const g = this.advanceGesture(elapsed);
 
-    const handSource = this.ageOutgoing(dt);
+    const handSource = this.ageOutgoing(elapsed);
 
     const { br, d } = this.stepPosture(dt, g);
     const idle = this.idleAmount;

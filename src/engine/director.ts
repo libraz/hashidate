@@ -37,6 +37,7 @@ import {
   planHeadBeats,
 } from './motion';
 import { holdsUntilReleased, type PerformanceDef, performanceDef } from './performance';
+import { turnRandom } from './random';
 import { Rig } from './rig';
 import { Spring, Tail } from './secondary';
 import type {
@@ -61,6 +62,12 @@ export interface DirectorContext {
    * the look re-seeds on it instead of following it there.
    */
   cameraCut?: boolean;
+  /**
+   * The frame's real length, which `dt` is capped from; defaults to `dt`. The
+   * turn's clocks run on it — gestures, nods, an unsynced mouth — while the
+   * integrators stay on `dt`.
+   */
+  elapsed?: number;
 }
 
 /** What `speak` may know about a line beyond its words. */
@@ -74,7 +81,8 @@ export interface DirectorOptions {
   /**
    * Every draw the director, its blink and its body make; injectable so a run
    * can be replayed. Cosmetic draws only — blink, saccade, per-play variation —
-   * since the idle choices arrive as commands.
+   * since the idle choices arrive as commands. A seeded turn's own draws come
+   * from its turn id instead; see `beginTurn`.
    */
   random?: () => number;
 }
@@ -217,6 +225,9 @@ export class Director {
   private _breakTimes: number[] = [];
   /** Index of the first break the mouth clock has not yet crossed. */
   private _breakCursor = 0;
+  /** The current seeded turn's streams for the nod plan and the break blinks; null draws from `random`. */
+  private _turnNod: (() => number) | null = null;
+  private _turnBlink: (() => number) | null = null;
 
   /**
    * `avatar` defaults to the profile's own descriptor rather than to an empty
@@ -486,7 +497,7 @@ export class Director {
         closes: this.speechCloses,
         rate: this.nodRate,
         depth: this.nodDepth,
-        random: this.#random,
+        random: this._turnNod ?? this.#random,
       }),
     );
     this._beatsLive = true;
@@ -495,6 +506,18 @@ export class Director {
     if (end > (this._breakTimes[this._breakTimes.length - 1] ?? 0)) this._breakTimes.push(end);
     this._breakCursor = 0;
     return this.mouth.schedule(scheduled);
+  }
+
+  /**
+   * Open a turn's draws: with an id, its gesture variation, nod plan, break
+   * blinks and onset aversion draw from streams seeded by it, so every renderer
+   * playing that turn plays it alike. Null goes back to `random`.
+   */
+  beginTurn(id: string | null): void {
+    this._turnNod = id === null ? null : turnRandom(id, 'nod');
+    this._turnBlink = id === null ? null : turnRandom(id, 'blink');
+    this.body.turnRandom = id === null ? null : turnRandom(id, 'gesture');
+    this.body.turnGazeRandom = id === null ? null : turnRandom(id, 'gaze');
   }
 
   /**
@@ -671,7 +694,8 @@ export class Director {
     this.easeEmotion(this.emotion, this.target, k);
     if (this._auto) this.easeEmotion(this._idleEmotion, this._idleTarget, k);
 
-    this.mouth.update(dt);
+    const elapsed = ctx?.elapsed ?? dt;
+    this.mouth.update(dt, elapsed);
     this.updatePreset(dt);
 
     // The body breathes around the speech: it takes a breath before a line and
@@ -695,13 +719,13 @@ export class Director {
         this._breakTimes[this._breakCursor] <= this.mouth.time
       ) {
         this._breakCursor++;
-        if (this.#random() < P_BREAK_BLINK) this.triggerBlink();
+        if ((this._turnBlink ?? this.#random)() < P_BREAK_BLINK) this.triggerBlink();
       }
     } else if (this._breakTimes.length) {
       this._breakTimes = [];
       this._breakCursor = 0;
     }
-    this.body.speechNod = this._beats.update(dt);
+    this.body.speechNod = this._beats.update(dt, elapsed);
     this.body.speechRemaining = track ? Math.max(0, track.duration - this.mouth.time) : 0;
     this.body.speechOpens = this.speechOpens;
     this.body.speechCloses = this.speechCloses;

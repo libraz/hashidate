@@ -422,9 +422,10 @@ export class Session {
 
   // --- per-frame ----------------------------------------------------------
 
-  update(dt: number): void {
+  /** `elapsed` is the frame's real length, which `dt` is capped from; defaults to `dt`. */
+  update(dt: number, elapsed = dt): void {
     if (this._disposed) return;
-    this._turns.update(dt);
+    this._turns.update(dt, elapsed);
 
     // The idle is suspended while a turn is in flight and for a moment after,
     // so the autopilot cannot overwrite the emotion the orchestrator just set

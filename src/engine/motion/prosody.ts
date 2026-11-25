@@ -196,8 +196,11 @@ export class HeadBeats {
     this._line = seconds;
   }
 
-  /** Evaluate this frame's pitch in rad, positive down, then advance by `dt`. */
-  update(dt: number): number {
+  /**
+   * Evaluate this frame's pitch in rad, positive down, then advance by `elapsed`:
+   * the frame's real length, so nods keep pace with the voice after a long frame.
+   */
+  update(dt: number, elapsed = dt): number {
     const plan = this._plan;
     while (this._next < plan.length) {
       const beat = plan[this._next];
@@ -213,10 +216,10 @@ export class HeadBeats {
     let pitch = 0;
     for (let i = 0; i < this._count; i++) pitch += nodShape(this._clock[i], this._amp[i]);
 
-    this._line += dt;
-    this._elapsed += dt;
+    this._line += elapsed;
+    this._elapsed += elapsed;
     for (let i = 0; i < this._count; ) {
-      this._clock[i] += dt;
+      this._clock[i] += elapsed;
       if (this._clock[i] < NOD_LENGTH) {
         i++;
         continue;

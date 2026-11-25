@@ -299,6 +299,8 @@ export class Mouth {
   readonly #state: MouthWeights = { a: 0, i: 0, u: 0, e: 0, o: 0, n: 0 };
   /** How shut a bilabial closure holds the lips, 0..1. */
   #closure = 0;
+  /** `sync` ran since the last `update`, so the clock gets only the half-frame on top. */
+  #synced = false;
 
   constructor() {
     this.track = null;
@@ -345,6 +347,7 @@ export class Mouth {
    */
   sync(seconds: number): void {
     this.time = seconds;
+    this.#synced = true;
   }
 
   /** External audio envelope, 0..1. Scales mouth travel when driving from TTS. */
@@ -356,13 +359,20 @@ export class Mouth {
     return !!this.track && this.time <= this.track.duration + 0.2;
   }
 
-  update(dt: number): void {
+  /**
+   * Advance one frame. Without a `sync` since the last update the track clock
+   * is the only clock the line has, so it moves by `elapsed`, the frame's real
+   * length; the shape smoothing stays on `dt`.
+   */
+  update(dt: number, elapsed = dt): void {
     const target = this.#target;
     for (const v in target) target[v as VisemeName] = 0;
     let closure = 0;
+    const synced = this.#synced;
+    this.#synced = false;
 
     if (this.track) {
-      this.time += dt;
+      this.time += synced ? dt : elapsed;
       const PRE = 0.045;
       const POST = 0.055;
       const events = this.track.events;

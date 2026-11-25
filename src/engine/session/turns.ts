@@ -234,6 +234,7 @@ export class TurnQueue {
       // with no words in it, are settled as null right away so nothing waits.
       ...(this.voice && line.text ? {} : { take: null }),
       queuedAt: this._clock,
+      seeded: id !== undefined,
     };
     if (this.voice && line.text) this.synthesise(turn, this.voice);
     return turn;
@@ -402,6 +403,7 @@ export class TurnQueue {
   /** Stop mid-sentence and drop everything pending. The stream's kill switch. */
   interrupt(): void {
     if (this._disposed) return;
+    this.d.beginTurn(null);
     const dropped = this.queue.map((t) => t.id);
     this.discard(this.queue);
     this.queue.length = 0;
@@ -473,6 +475,7 @@ export class TurnQueue {
     // A new avatar inherits this pause state when the control client rebinds.
 
     this.d.auto = false;
+    this.d.beginTurn(null);
     this.d.mouth.stop();
     this.d.body.stopGesture();
     if (!active) {
@@ -486,9 +489,10 @@ export class TurnQueue {
     this.events.emit('turn.end', { turn: active.id, interrupted: true });
   }
 
-  update(dt: number): void {
+  /** `elapsed` is the frame's real length; the queue's clocks run on it. Defaults to `dt`. */
+  update(dt: number, elapsed = dt): void {
     if (this._disposed) return;
-    this._clock += dt;
+    this._clock += elapsed;
     const d = this.d;
 
     if (this.turn) {
@@ -523,7 +527,7 @@ export class TurnQueue {
         if (!this.queue.length) this.events.emit('queue.empty', {});
       }
     } else if (this.queue.length && !this.paused) {
-      this._gap -= dt;
+      this._gap -= elapsed;
       // The gap runs down whether or not the voice has answered, so the wait
       // for a take and the beat between turns overlap instead of adding up.
       const head = this.queue[0];
@@ -535,7 +539,7 @@ export class TurnQueue {
           waiting = { turn: head, seconds: 0, limit: voiceWait(head) };
           this._waiting = waiting;
         }
-        waiting.seconds += dt;
+        waiting.seconds += elapsed;
         waited = waiting.seconds;
         limit = waiting.limit;
       } else {
@@ -560,6 +564,8 @@ export class TurnQueue {
   private start(turn: Turn): void {
     this.turn = turn;
     const d = this.d;
+    // Before anything below draws: the performance and gesture are this turn's too.
+    d.beginTurn(turn.seeded ? turn.id : null);
     // The shot first, and before the audio below, so the frame the line opens
     // on is already the right one. See `Stage.apply` for the order the six
     // axes go in and why it is that order.
@@ -724,6 +730,7 @@ export class TurnQueue {
     // Whatever is left unfired goes with the turn. A line that was cut short
     // should not go on changing face after it stopped being spoken.
     this._cues.length = 0;
+    this.d.beginTurn(null);
     // Stopping a take that has already finished is a no-op; stopping one that
     // has not is the difference between `interrupt` being a kill switch and
     // being a kill switch for everything except the voice.

@@ -130,6 +130,9 @@ export class Gaze {
    */
   saccade = 0;
 
+  /** The current turn's stream for the onset aversion, or null to draw it from `random`. */
+  turnRandom: (() => number) | null = null;
+
   private readonly _vel = new THREE.Vector2(); // spring velocity for `settled`
   private readonly _spring = { x: 0, v: 0 };
   private readonly _target = new THREE.Vector2();
@@ -171,22 +174,23 @@ export class Gaze {
       this._avert = 'settle';
     }
 
+    const onset = this.turnRandom ?? this._random;
     if (
       speech &&
       rising &&
       speech.opens &&
       speech.remaining >= END_RETURN + AVERT_MIN &&
-      this._random() < ONSET_AVERT
+      onset() < ONSET_AVERT
     ) {
-      const r = this._random();
+      const r = onset();
       let ax = 0;
       let ay = 0;
       if (r < AVERT_UP) ay = AVERT_VERT;
       else if (r < AVERT_DOWN) ay = -AVERT_VERT;
-      else ax = this._random() < 0.5 ? -AVERT_SIDE : AVERT_SIDE;
+      else ax = onset() < 0.5 ? -AVERT_SIDE : AVERT_SIDE;
       // Box-Muller, cosine half only; 1 - u keeps the log finite.
-      const u1 = 1 - this._random();
-      const u2 = this._random();
+      const u1 = 1 - onset();
+      const u2 = onset();
       const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
       let hold = THREE.MathUtils.clamp(HOLD_MEAN + HOLD_SD * z, HOLD_MIN, HOLD_MAX);
       if (speech.closes) hold = Math.min(hold, speech.remaining - END_RETURN);

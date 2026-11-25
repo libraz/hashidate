@@ -55,7 +55,10 @@ function headPitchDown(h: Harness): number {
   return Math.asin(THREE.MathUtils.clamp(-scratchFwd.y, -1, 1));
 }
 
-/** Play one line with `Math.random` pinned, sampling head pitch against the line's clock. */
+/**
+ * Play one line with `Math.random` pinned, sampling head pitch against the line's clock. The
+ * request carries no id, so the turn is not seeded and its nod plan draws from `Math.random`.
+ */
 async function pitchTrace(
   random: number,
   request: TurnRequest,
@@ -63,9 +66,9 @@ async function pitchTrace(
   const spy = vi.spyOn(Math, 'random').mockReturnValue(random);
   try {
     const h = session4();
-    h.session.say({ id: 'line', ...request });
+    const id = h.session.say(request);
     await settle();
-    h.runUntil(() => h.session.turn?.id === 'line', 2);
+    h.runUntil(() => h.session.turn?.id === id, 2);
     const out: Array<{ t: number; pitch: number }> = [];
     while (h.session.turn) {
       out.push({ t: h.director.mouth.time, pitch: headPitchDown(h) });
