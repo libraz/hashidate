@@ -14,6 +14,8 @@
     "dev:control": "tsx watch src/server/main.ts",
     "build": "vite build",
     "shell": "yarn build && NODE_OPTIONS=--import=tsx electron src/shell/main.ts",
+    "mascot:build": "vite build && vite build -c vite.preload.config.ts",
+    "mascot": "yarn mascot:build && NODE_OPTIONS=--import=tsx electron src/mascot/main.ts",
     "start": "tsx src/server/main.ts --root dist",
     "ctl": "tsx src/cli/main.ts",
     "mcp": "tsx src/mcp/main.ts",

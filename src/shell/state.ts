@@ -71,6 +71,82 @@ export function isVisibleWindowBounds(
   });
 }
 
+/**
+ * How the mascot window is placed: filling the display's height, standing in
+ * a bottom corner, or wherever it was last dragged to.
+ */
+export const MASCOT_MODES = ['full', 'bottom-right', 'bottom-left', 'free'] as const;
+
+export type MascotMode = (typeof MASCOT_MODES)[number];
+
+/** The mascot's size, as a share of the height it has to stand in. */
+export const MASCOT_SCALE_MIN = 0.25;
+export const MASCOT_SCALE_MAX = 1;
+
+/**
+ * Where a dragged mascot stands: the middle of its bottom edge, in screen
+ * pixels, and enough about the display it was on to find that display again
+ * after its id has changed.
+ */
+export interface MascotSaved {
+  x: number;
+  y: number;
+  display: { id: number; label: string; width: number; height: number };
+}
+
+/**
+ * What the mascot window remembers. The shell's own windows never read it and
+ * the mascot never reads theirs; the two share a profile, so they share a file.
+ */
+export interface MascotState {
+  mode: MascotMode;
+  scale: number;
+  /** Whether the mascot opens silent. See `mascotPageURL`. */
+  muted: boolean;
+  saved?: MascotSaved;
+}
+
+function isValidMascotSaved(value: unknown): value is MascotSaved {
+  if (typeof value !== 'object' || value === null) return false;
+  const { x, y, display } = value as Partial<Record<keyof MascotSaved, unknown>>;
+  if (!(Number.isFinite(x) && Number.isFinite(y))) return false;
+  if (typeof display !== 'object' || display === null) return false;
+  const { id, label, width, height } = display as Partial<
+    Record<keyof MascotSaved['display'], unknown>
+  >;
+  return (
+    Number.isInteger(id) &&
+    typeof label === 'string' &&
+    typeof width === 'number' &&
+    typeof height === 'number' &&
+    Number.isFinite(width) &&
+    Number.isFinite(height) &&
+    width > 0 &&
+    height > 0
+  );
+}
+
+/** A placement read off disk is used whole or not at all. */
+export function isValidMascotState(value: unknown): value is MascotState {
+  if (typeof value !== 'object' || value === null) return false;
+  const { mode, scale, muted, saved } = value as Partial<Record<keyof MascotState, unknown>>;
+  return (
+    (MASCOT_MODES as readonly unknown[]).includes(mode) &&
+    typeof scale === 'number' &&
+    scale >= MASCOT_SCALE_MIN &&
+    scale <= MASCOT_SCALE_MAX &&
+    typeof muted === 'boolean' &&
+    (saved === undefined || isValidMascotSaved(saved))
+  );
+}
+
+/** What the settings file holds. `mascot` is absent until a mascot has run. */
+interface StoredState {
+  windows: Partial<Record<WindowKey, WindowBounds>>;
+  stageMuted: boolean;
+  mascot?: MascotState;
+}
+
 /** Restore only a valid, currently visible rectangle. */
 export function restoreWindowBounds(
   value: unknown,
@@ -93,6 +169,7 @@ export function restoreWindowBounds(
 export class ShellState {
   private readonly windows: Partial<Record<WindowKey, WindowBounds>> = {};
   private muted = false;
+  private mascotState: MascotState | undefined;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private pending = false;
 
@@ -100,6 +177,7 @@ export class ShellState {
     const read = this.read();
     this.windows = read.windows;
     this.muted = read.stageMuted;
+    this.mascotState = read.mascot;
   }
 
   restore(
@@ -143,6 +221,19 @@ export class ShellState {
     this.flush();
   }
 
+  /** How the mascot was left, or null when none has been placed. */
+  get mascot(): MascotState | null {
+    return this.mascotState === undefined ? null : structuredClone(this.mascotState);
+  }
+
+  /** Written straight through, as `setStageMuted` is: the caller has already waited. */
+  setMascot(value: MascotState): void {
+    if (!isValidMascotState(value)) return;
+    this.mascotState = structuredClone(value);
+    this.pending = true;
+    this.flush();
+  }
+
   /** Take any delayed write now. Safe to call when there is nothing to take. */
   flush(): void {
     if (this.timer !== null) {
@@ -167,8 +258,12 @@ export class ShellState {
     }
   }
 
-  private snapshot(): { windows: Partial<Record<WindowKey, WindowBounds>>; stageMuted: boolean } {
-    return { windows: this.windows, stageMuted: this.muted };
+  private snapshot(): StoredState {
+    return {
+      windows: this.windows,
+      stageMuted: this.muted,
+      ...(this.mascotState === undefined ? {} : { mascot: this.mascotState }),
+    };
   }
 
   private schedule(): void {
@@ -182,15 +277,12 @@ export class ShellState {
     this.timer.unref?.();
   }
 
-  private read(): {
-    windows: Partial<Record<WindowKey, WindowBounds>>;
-    stageMuted: boolean;
-  } {
+  private read(): StoredState {
     const empty = { windows: {}, stageMuted: false };
     try {
       const value: unknown = JSON.parse(readFileSync(this.filePath, 'utf8'));
       if (typeof value !== 'object' || value === null) return empty;
-      const record = value as { windows?: unknown; stageMuted?: unknown };
+      const record = value as { windows?: unknown; stageMuted?: unknown; mascot?: unknown };
       const windows: Partial<Record<WindowKey, WindowBounds>> = {};
       const saved = (
         typeof record.windows === 'object' && record.windows !== null ? record.windows : {}
@@ -198,7 +290,11 @@ export class ShellState {
       for (const key of ['control', 'stage'] as const) {
         if (isValidWindowBounds(saved[key])) windows[key] = saved[key];
       }
-      return { windows, stageMuted: record.stageMuted === true };
+      return {
+        windows,
+        stageMuted: record.stageMuted === true,
+        ...(isValidMascotState(record.mascot) ? { mascot: record.mascot } : {}),
+      };
     } catch {
       return empty;
     }

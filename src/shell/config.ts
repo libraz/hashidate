@@ -14,6 +14,11 @@ export const STAGE_TITLE = 'hashidate — Stage';
 
 export const CONTROL_PATH = '/panel/';
 export const STAGE_PATH = '/monitor/';
+/** The viewer's own page, which the mascot window shows. */
+export const MASCOT_PATH = '/';
+
+const MASCOT_QUERY = '?mascot=1&transparent=1';
+const MASCOT_MUTED_QUERY = `${MASCOT_QUERY}&mute=1`;
 
 /**
  * A checkout layout as seen by the Electron main process.
@@ -129,6 +134,16 @@ export function stageURL(port: number, muted: boolean): string {
   return loopbackURL(port, muted ? `${STAGE_PATH}?mute=1` : STAGE_PATH);
 }
 
+/**
+ * Where the mascot window opens, silent or not.
+ *
+ * The viewer's page with the two switches that make it a mascot, and the mute
+ * on the address for the reason `stageURL` gives.
+ */
+export function mascotPageURL(port: number, { muted }: { muted: boolean }): string {
+  return loopbackURL(port, `${MASCOT_PATH}${muted ? MASCOT_MUTED_QUERY : MASCOT_QUERY}`);
+}
+
 export function controlURL(port: number): string {
   return loopbackURL(port, '/api/state');
 }
@@ -139,6 +154,10 @@ export function controlURL(port: number): string {
  * The path is exact, while a query and fragment are allowed for future page
  * settings.  In particular, this does not accept `/api/`, `/`, another port,
  * `localhost`, or any non-HTTP origin.
+ *
+ * The mascot's page is the exception, because it is the root: there the query
+ * has to be one of the two `mascotPageURL` writes, with no fragment, so the
+ * window cannot be steered to the bare viewer.
  */
 export function isAllowedPageURL(url: string, path: string, port: number): boolean {
   try {
@@ -147,7 +166,10 @@ export function isAllowedPageURL(url: string, path: string, port: number): boole
       parsed.protocol === 'http:' &&
       parsed.hostname === LOOPBACK_HOST &&
       parsed.port === String(port) &&
-      parsed.pathname === path
+      parsed.pathname === path &&
+      (path !== MASCOT_PATH ||
+        (parsed.hash === '' &&
+          (parsed.search === MASCOT_QUERY || parsed.search === MASCOT_MUTED_QUERY)))
     );
   } catch {
     return false;

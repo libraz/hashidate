@@ -30,6 +30,7 @@
     "tests/**/*.ts",
     "tools/**/*.ts",
     "vite.config.ts",
+    "vite.preload.config.ts",
     "vitest.config.ts"
   ],
   "exclude": ["src/backup"]

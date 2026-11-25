@@ -1,6 +1,7 @@
 import type { Locale } from '../locale';
 import { commonEn, commonJa } from './common';
 import { consoleEn, consoleJa } from './console';
+import { mascotEn, mascotJa } from './mascot';
 import { panelEn, panelJa } from './panel';
 
 /**
@@ -16,6 +17,7 @@ export const EN = {
   ...commonEn,
   ...panelEn,
   ...consoleEn,
+  ...mascotEn,
 } as const;
 
 export type MessageKey = keyof typeof EN;
@@ -24,6 +26,7 @@ const JA: Record<MessageKey, string> = {
   ...commonJa,
   ...panelJa,
   ...consoleJa,
+  ...mascotJa,
 };
 
 export const CATALOGS: Record<Locale, Record<MessageKey, string>> = {

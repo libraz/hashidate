@@ -1,4 +1,3 @@
-import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   app,
@@ -18,10 +17,8 @@ import {
   CONTROL_PATH,
   CONTROL_TITLE,
   checkoutPaths,
-  checkoutProfileId,
   controlPort,
   expectedRoots,
-  isAllowedPageURL,
   loopbackURL,
   STAGE_PATH,
   STAGE_TITLE,
@@ -30,42 +27,12 @@ import {
 } from './config';
 import { boundsOn, type DisplayInfo, displayLabel, displayUnder } from './displays';
 import { ControlProcess, TtsProcess } from './process';
+import { claimProfile, guardNavigation, logDirectory } from './profile';
 import { type DisplayBounds, ShellState, STATE_FILE_NAME } from './state';
 import type { WindowBounds } from './types';
 
-/**
- * The stage must keep rendering and its audio context must be allowed to start
- * while the control window has focus. These switches are process-wide and have
- * to be installed before Electron becomes ready.
- *
- * The autoplay policy is one of them rather than a line of its own, so that the
- * list is the list: a switch applied outside it is a switch nobody reading this
- * knows about. It is what lets the stage window make a sound without anybody
- * having clicked it first — in a browser that click is the operator's to give,
- * and here there is no page for them to give it to.
- */
-export const CHROMIUM_SWITCHES: ReadonlyArray<readonly [string, string?]> = [
-  ['disable-background-timer-throttling'],
-  ['disable-renderer-backgrounding'],
-  ['disable-backgrounding-occluded-windows'],
-  ['autoplay-policy', 'no-user-gesture-required'],
-];
-
-for (const [name, value] of CHROMIUM_SWITCHES) {
-  if (value === undefined) app.commandLine.appendSwitch(name);
-  else app.commandLine.appendSwitch(name, value);
-}
 const paths = checkoutPaths();
-// Electron otherwise defaults to a generic `Electron` profile. Apart from
-// producing opaque SQLite warnings, that makes separate checkout runs share
-// state and window geometry. One profile per checkout also gives each its own
-// single-instance lock, which Electron keys on the profile directory.
-const profileId = checkoutProfileId(paths.root);
-app.setName('hashidate');
-app.setPath('userData', join(app.getPath('appData'), 'hashidate', profileId));
-app.setAppLogsPath();
-app.setAppLogsPath(join(app.getPath('logs'), profileId));
-const singleInstance = app.requestSingleInstanceLock();
+const singleInstance = claimProfile(paths.root);
 
 const appIcon = join(paths.root, 'src/shell/assets/hashidate-icon.png');
 const port = controlPort();
@@ -149,17 +116,6 @@ const STARTING_STATUS: Status = {
 
 let status: Status = STARTING_STATUS;
 
-/** Where a child's output goes, or null when the directory cannot be made. */
-function logDirectory(): string | null {
-  try {
-    const directory = app.getPath('logs');
-    mkdirSync(directory, { recursive: true });
-    return directory;
-  } catch {
-    return null;
-  }
-}
-
 function installPermissionPolicy(): void {
   const defaultSession = session.defaultSession;
   defaultSession.setPermissionCheckHandler((_contents, permission) =>
@@ -199,7 +155,7 @@ function makeWindow(kind: WindowKind): BrowserWindow {
   });
 
   window.setTitle(spec.title);
-  guardNavigation(window, spec.path);
+  guardWindow(window, spec.path);
   window.webContents.on('context-menu', (_event, params) => {
     contextMenu(params.isEditable).popup({ window });
   });
@@ -254,32 +210,16 @@ function makeWindow(kind: WindowKind): BrowserWindow {
 }
 
 /**
- * Keep top-level pages on the two exact loopback entry points. The monitor's
- * own iframe is a child frame and is intentionally left alone; its viewer URL
- * is part of the monitor page's contract.
+ * Keep a window on its page, and under the name the menu gives it.
  */
-function guardNavigation(window: BrowserWindow, expectedPath: string): void {
-  const { webContents } = window;
-  const allowed = (url: string) => isAllowedPageURL(url, expectedPath, port);
-
-  webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  webContents.on('will-navigate', (event, url) => {
-    if (!allowed(url)) event.preventDefault();
-  });
-  webContents.on('will-redirect', (event, url) => {
-    if (!allowed(url)) event.preventDefault();
-  });
-  webContents.on('will-attach-webview', (event) => {
-    // No page in this application needs a webview. Blocking one also prevents
-    // a future page edit from bypassing the navigation and permission policy.
-    event.preventDefault();
-  });
+function guardWindow(window: BrowserWindow, expectedPath: string): void {
+  guardNavigation(window, expectedPath, port);
   // The page inside sets its own title, and both of these pages set one meant
   // for a browser tab strip — the panel says "hashidate panel", the viewer
   // follows the locale switch. In a window list two of those are hard to tell
   // apart, and the menu that raises them names them differently again. The
   // window keeps the name the menu uses.
-  webContents.on('page-title-updated', (event) => {
+  window.webContents.on('page-title-updated', (event) => {
     event.preventDefault();
   });
 }
