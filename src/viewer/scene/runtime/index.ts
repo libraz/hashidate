@@ -14,6 +14,7 @@ import type {
   CameraFrame,
   LabelledId,
   PlacementReport,
+  Profile,
   Shot,
   SlidePlacement,
   SlideReport,
@@ -26,7 +27,7 @@ import { BrowserBgm } from '../../bgm';
 import { StageRecorder } from '../../record';
 import { rendererId } from '../../renderer-id';
 import { StageFeed } from '../../stage-feed';
-import { stageMode } from '../../stage-mode';
+import { openingFrame, stageMode } from '../../stage-mode';
 import { BrowserVoice } from '../../voice';
 import { BackdropStage } from '../backdrop';
 import { MetalEnvironment, StudioEnvironment } from '../environment';
@@ -60,6 +61,12 @@ export type { LoadedAvatar, RuntimeStatus, StageFrame, StageFrameGetter } from '
 /** Narrow loader seam for lifecycle tests; production uses GLTFLoader itself. */
 export interface AvatarRuntimeOptions {
   loader?: Pick<GLTFLoader, 'loadAsync'>;
+}
+
+/** What a ray from the pointer is tested against. See `AvatarRuntime.raycastTargets`. */
+export interface RaycastTargets {
+  meshes: THREE.Mesh[];
+  bones: Profile['bones'];
 }
 
 /**
@@ -257,7 +264,7 @@ export class AvatarRuntime {
 
     this.shotCamera = new ShotCamera(
       this.renderer.domElement,
-      { pointer: stageMode().console },
+      { pointer: stageMode().console, frame: openingFrame(stageMode()) },
       () => this.resize(),
     );
     this.postStage = new PostStage(this.renderer, undefined, { multisample: !this.preview });
@@ -309,6 +316,20 @@ export class AvatarRuntime {
   /** The camera the scene is drawn through. */
   get camera(): THREE.PerspectiveCamera {
     return this.shotCamera.camera;
+  }
+
+  /**
+   * What a pointer on the page can land on: the meshes of the standing avatar
+   * that are being drawn, and the bones its profile resolved. Null with none up.
+   */
+  get raycastTargets(): RaycastTargets | null {
+    const cur = this.current;
+    if (!cur) return null;
+    const meshes: THREE.Mesh[] = [];
+    cur.root.traverseVisible((o) => {
+      if (o instanceof THREE.Mesh) meshes.push(o);
+    });
+    return { meshes, bones: cur.profile.bones };
   }
 
   /** The orbit controls over it, for the console's own pointer handling. */

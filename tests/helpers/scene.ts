@@ -764,3 +764,37 @@ export function addRigidMesh(
   rig.root.updateMatrixWorld(true);
   return mesh;
 }
+
+/**
+ * Wrap a skinned ring around a bone the rig gives no surface to — a limb, a
+ * hand, a finger — weighted entirely to it. It joins the scene graph's table
+ * when the graph is built, so call this before anything core-backs the rig.
+ */
+export function addSkinnedRing(
+  rig: SyntheticRig,
+  bone: string,
+  name: string,
+  radius = 0.03,
+): THREE.SkinnedMesh {
+  const target = rig.bones.get(bone);
+  const skeleton = rig.meshes.get('Body')?.skeleton;
+  if (!(target && skeleton)) throw new Error(`the rig has no ${bone}`);
+  const y = target.getWorldPosition(new THREE.Vector3()).y;
+  const mesh = makeMesh(
+    name,
+    skeleton,
+    target,
+    [],
+    rig.root,
+    rig.root.scale.x || 1,
+    {},
+    {
+      rx: radius,
+      rz: radius,
+      top: y + radius,
+      bottom: y - radius,
+    },
+  );
+  rig.meshes.set(name, mesh);
+  return mesh;
+}

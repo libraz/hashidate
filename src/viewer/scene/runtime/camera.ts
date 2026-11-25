@@ -41,6 +41,8 @@ export function lensShift(camera: THREE.PerspectiveCamera, shift: number): void 
 export interface ShotCameraOptions {
   /** Whether the pointer may move the camera at all. */
   pointer: boolean;
+  /** The framing to open on, where the default is not what the page is for. */
+  frame?: CameraFrame;
 }
 
 export class ShotCamera {
@@ -62,9 +64,10 @@ export class ShotCamera {
    */
   constructor(
     domElement: HTMLElement,
-    { pointer }: ShotCameraOptions,
+    { pointer, frame }: ShotCameraOptions,
     private readonly onFramed: () => void,
   ) {
+    if (frame !== undefined) this.frame = frame;
     this.camera = new THREE.PerspectiveCamera(FOV, 1, 0.01, 100);
     this.controls = new OrbitControls(this.camera, domElement);
     this.controls.enableDamping = true;

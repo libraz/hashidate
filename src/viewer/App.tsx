@@ -7,6 +7,7 @@ import styles from './App.module.css';
 import { chooseAvatar, pinnedAvatar, rememberAvatar, rememberedAvatar } from './avatar-selection';
 import { Console } from './console/Console';
 import { ControlClient, type ControlStatus, type RendererControls } from './control-client';
+import { mountMascot } from './mascot';
 import { Hud } from './scene/Hud';
 import { AvatarRuntime, type RuntimeStatus } from './scene/runtime';
 import { Telemetry } from './scene/Telemetry';
@@ -109,8 +110,10 @@ export function App() {
         client.setAvatarStatus({ phase: next.phase });
       }
     });
+    const unmountMascot = MODE.mascot ? mountMascot(rt, client) : null;
     client.start();
     return () => {
+      unmountMascot?.();
       off();
       client.stop();
       if (controlRef.current === client) controlRef.current = null;

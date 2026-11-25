@@ -42,7 +42,7 @@
  * bare `?stage=1` on a desktop browser wants.
  */
 
-import type { Placement, SlidePlacement } from '@/engine/types';
+import type { CameraFrame, Placement, SlidePlacement } from '@/engine/types';
 import { PLACEMENT_LIMITS } from '@/engine/types';
 import { backdropList } from './scene/backdrop';
 import { FULL_FRAME, FULL_SLIDE, isAnchor } from './scene/placement';
@@ -147,6 +147,16 @@ export interface StageMode {
    * the projector.
    */
   preview: boolean;
+  /**
+   * Stand on the desktop: answer the pointer and report touches. Off unless
+   * `?mascot=1`.
+   *
+   * The mascot window opens `/?mascot=1&transparent=1`, with `&mute=1` when it
+   * has been silenced. On the URL for the reason the mute is; without the
+   * window's bridge it changes the opening shot and nothing else. See
+   * `src/viewer/mascot`.
+   */
+  mascot: boolean;
   /**
    * Which document to open on, or null for none.
    *
@@ -275,6 +285,7 @@ export function readStageMode(search: string): StageMode {
     muted: isOn(params.get('mute')),
     feed: isOn(params.get('feed')),
     preview: isOn(params.get('preview')),
+    mascot: isOn(params.get('mascot')),
     deck: parseDeck(params.get('deck')),
     place: parsePlace(params.get('place')),
   };
@@ -282,6 +293,16 @@ export function readStageMode(search: string): StageMode {
 
 /** Read the mode off the live location. */
 export const stageMode = (): StageMode => readStageMode(location.search);
+
+/**
+ * The framing a page opens on, or undefined for the camera's own default.
+ *
+ * A mascot stands on the desktop at full length. That is how it looks rather
+ * than what it says, so the page decides it and no caller sends a `camera`
+ * command to get it.
+ */
+export const openingFrame = (mode: StageMode): CameraFrame | undefined =>
+  mode.mascot ? 'full' : undefined;
 
 /**
  * Write the room back onto the address bar.
