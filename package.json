@@ -44,11 +44,11 @@
     "@biomejs/biome": "^2.6.9",
     "@types/node": "^26",
     "@types/pngjs": "^6.0.5",
-    "@types/react": "^19.3.1",
+    "@types/react": "^19.3.3",
     "@types/react-dom": "^19.3.0",
     "@types/three": "^0.187.0",
     "@vitejs/plugin-react": "^6.3.0",
-    "@vitest/coverage-v8": "^5.1.1",
+    "@vitest/coverage-v8": "^5.1.2",
     "concurrently": "^10.0.7",
     "electron": "^45.5.0",
     "happy-dom": "^21.0.4",
@@ -57,6 +57,6 @@
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.8",
-    "vitest": "^5.1.1"
+    "vitest": "^5.1.2"
   }
 }
