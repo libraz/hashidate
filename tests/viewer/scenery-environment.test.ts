@@ -130,8 +130,8 @@ describe('furniture reflection strength', () => {
 describe('reflection map after a lost context', () => {
   it('forgets the map without disposing it and builds a fresh one next', () => {
     vi.stubGlobal('document', {});
-    const first = new THREE.WebGLRenderTarget(16, 8);
-    const second = new THREE.WebGLRenderTarget(16, 8);
+    const first = new THREE.WebGLCubeRenderTarget(16);
+    const second = new THREE.WebGLCubeRenderTarget(16);
     vi.spyOn(THREE.PMREMGenerator.prototype, 'fromScene')
       .mockReturnValueOnce(first)
       .mockReturnValueOnce(second);

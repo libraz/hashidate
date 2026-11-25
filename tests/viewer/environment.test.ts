@@ -20,7 +20,7 @@ describe('studio environment', () => {
 
   it('caches the generated texture and disposes its owning render target', () => {
     vi.stubGlobal('document', {});
-    const target = new THREE.WebGLRenderTarget(16, 8);
+    const target = new THREE.WebGLCubeRenderTarget(16);
     const fromScene = vi.spyOn(THREE.PMREMGenerator.prototype, 'fromScene').mockReturnValue(target);
     const generatorDispose = vi.spyOn(THREE.PMREMGenerator.prototype, 'dispose');
     const targetDispose = vi.spyOn(target, 'dispose');
@@ -40,8 +40,8 @@ describe('studio environment', () => {
 
   it('can build a fresh map after disposal', () => {
     vi.stubGlobal('document', {});
-    const first = new THREE.WebGLRenderTarget(16, 8);
-    const second = new THREE.WebGLRenderTarget(16, 8);
+    const first = new THREE.WebGLCubeRenderTarget(16);
+    const second = new THREE.WebGLCubeRenderTarget(16);
     const fromScene = vi
       .spyOn(THREE.PMREMGenerator.prototype, 'fromScene')
       .mockReturnValueOnce(first)
@@ -133,7 +133,7 @@ describe('metal environment', () => {
 
   it('is what a studio environment renders and releases when built with it', () => {
     vi.stubGlobal('document', {});
-    const target = new THREE.WebGLRenderTarget(16, 8);
+    const target = new THREE.WebGLCubeRenderTarget(16);
     const fromScene = vi.spyOn(THREE.PMREMGenerator.prototype, 'fromScene').mockReturnValue(target);
     const sceneDispose = vi.spyOn(MetalEnvironment.prototype, 'dispose');
     const roomDispose = vi.spyOn(RoomEnvironment.prototype, 'dispose');
