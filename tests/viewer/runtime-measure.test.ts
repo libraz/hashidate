@@ -22,7 +22,7 @@ vi.mock('@/viewer/scene/runtime/mount', async (importActual) => ({
   ...(await importActual<typeof import('@/viewer/scene/runtime/mount')>()),
   mountAvatar: () => ({
     profile: mounted.profile,
-    director: { update: vi.fn() },
+    director: { update: vi.fn(), refreshScene: vi.fn() },
     wardrobe: mounted.wardrobe,
     materials: { apply: vi.fn(), dispose: vi.fn() },
     transparentTriangles: {
@@ -108,13 +108,14 @@ describe('measuring the worn state', () => {
   it('leaves an unworn garment out of the shots and the focus', async () => {
     const { rig, hat, runtime, rebuilt, focus, tick } = staged();
     await runtime.load(avatar);
-    tick();
-
-    expect(rebuilt).toHaveLength(1);
-    // The avatar as it would be without the hat in the file at all.
+    // The avatar as it would be without the hat in the file at all. Taken before the first tick,
+    // which builds the graph that fixes the hierarchy.
     rig.root.remove(hat);
     const sphere = new THREE.Box3().setFromObject(rig.root).getBoundingSphere(new THREE.Sphere());
     rig.root.add(hat);
+    tick();
+
+    expect(rebuilt).toHaveLength(1);
     expect(focus[0].radius).toBeCloseTo(sphere.radius, 9);
     // The post stage is handed the avatar, so its blended meshes keep their focus.
     expect(focus[0].avatar).toBe(rig.root);

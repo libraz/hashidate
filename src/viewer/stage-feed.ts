@@ -1,6 +1,6 @@
 import { compose, SlideComposite } from './record';
 import type { StageSize } from './scene/placement';
-import type { StageFrame } from './scene/runtime';
+import type { StageFrameGetter } from './scene/runtime';
 
 /**
  * The stage's picture, handed to the panel's preview so it does not draw its own.
@@ -137,7 +137,7 @@ export function pace(credit: number, elapsedMs: number): { due: boolean; credit:
 
 export interface StageFeedOptions {
   /** Every drawn frame, as the runtime publishes it. Returns the unsubscribe. */
-  onFrame: (fn: (frame: StageFrame) => void) => () => void;
+  onFrame: (fn: (frame: StageFrameGetter) => void) => () => void;
   source: string;
   port?: FeedPort;
   now?: () => number;
@@ -244,7 +244,7 @@ export class StageFeed {
     if (encoder !== null && encoder.state !== 'closed') encoder.close();
   }
 
-  private frame(frame: StageFrame): void {
+  private frame(getFrame: StageFrameGetter): void {
     const now = this.now();
     if (now - this.lastWant > WANT_TTL_MS) {
       this.stop();
@@ -260,7 +260,7 @@ export class StageFeed {
     // costs the preview less than a growing delay.
     if (encoder.encodeQueueSize > 2) return;
     const ctx = this.context();
-    if (ctx === null || !compose(ctx, frame, FEED_SIZE, this.slideCache)) return;
+    if (ctx === null || !compose(ctx, getFrame(), FEED_SIZE, this.slideCache)) return;
 
     const key = this.keyWanted || now - this.lastKey >= KEYFRAME_INTERVAL_MS;
     const video = new VideoFrame(ctx.canvas, { timestamp: Math.round(now * 1000) });

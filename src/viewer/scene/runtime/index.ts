@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { initCore } from '@/core';
 import wasmUrl from '@/core/generated/hashidate.wasm?url';
+import { SceneGraph } from '@/core/scene';
 import type { WornState } from '@/engine/scene';
 import { drawnBounds } from '@/engine/scene/drawn';
 import { Session } from '@/engine/session';
@@ -43,16 +44,17 @@ import { PostStage } from '../post';
 import { DefaultRig } from '../rig';
 import { SlideStage } from '../slides';
 import { FOV, ShotCamera } from './camera';
+import { drawFrame } from './draw';
 import { buildHud, HUD_INTERVAL, type Hud } from './hud';
 import { disposeAvatar, disposeCore, disposeRawAvatar, type Mounted, mountAvatar } from './mount';
 import { bloomPort, sceneryPort, shadingPort } from './ports';
 import { loadToonTextures } from './toon-textures';
 import { createAvatarLoader } from './transparent-triangle-policy';
-import type { Listener, LoadedAvatar, RuntimeStatus, StageFrame } from './types';
+import type { Listener, LoadedAvatar, RuntimeStatus, StageFrame, StageFrameGetter } from './types';
 
 export { FOV } from './camera';
 export type { Hud } from './hud';
-export type { LoadedAvatar, RuntimeStatus, StageFrame } from './types';
+export type { LoadedAvatar, RuntimeStatus, StageFrame, StageFrameGetter } from './types';
 
 /** Narrow loader seam for lifecycle tests; production uses GLTFLoader itself. */
 export interface AvatarRuntimeOptions {
@@ -201,7 +203,7 @@ export class AvatarRuntime {
    * later would get an empty one — which is why this is called from inside the
    * loop rather than promised on a timer, and why nothing here is throttled.
    */
-  private readonly frameListeners = new Set<Listener<StageFrame>>();
+  private readonly frameListeners = new Set<Listener<StageFrameGetter>>();
 
   private fpsAcc = 0;
   private fpsFrames = 0;
@@ -356,7 +358,7 @@ export class AvatarRuntime {
    * Subscribed only while a take is recording or a preview is watching the
    * stage feed, and costs one empty loop a frame otherwise.
    */
-  onFrame(fn: Listener<StageFrame>): () => void {
+  onFrame(fn: Listener<StageFrameGetter>): () => void {
     this.frameListeners.add(fn);
     return () => this.frameListeners.delete(fn);
   }
@@ -733,6 +735,9 @@ export class AvatarRuntime {
     // Alongside the GLB rather than after it. Never rejects: a missing file is
     // a finding on the console, not a failed load.
     const toonLoad = loadToonTextures(avatar);
+    // The wasm is fetched alongside the GLB; the catch keeps a failed GLB from leaving it unhandled.
+    const coreLoad = initCore(() => fetch(wasmUrl).then((r) => r.arrayBuffer()));
+    coreLoad.catch(() => {});
     let gltf: Awaited<ReturnType<GLTFLoader['loadAsync']>>;
     try {
       gltf = await this.loader.loadAsync(avatar.url);
@@ -743,7 +748,7 @@ export class AvatarRuntime {
       return;
     }
     const toonTextures = await toonLoad;
-    await initCore(() => fetch(wasmUrl).then((r) => r.arrayBuffer()));
+    await coreLoad;
 
     if (!this.isLoadCurrent(generation, avatar.id)) {
       disposeRawAvatar(gltf.scene);
@@ -1050,14 +1055,14 @@ export class AvatarRuntime {
       this.postStage.setFocus(this.focusWorld, focus.radius, cur.root);
       this.defaultRig.fitShadow(this.focusWorld, focus.radius);
     }
-    const draw = () => this.postStage.render(this.scene, this.camera);
-    if (cur) {
-      this.scene.updateMatrixWorld(true);
-      this.camera.updateMatrixWorld(true);
-      cur.transparentTriangles.withDraw(this.camera, draw);
-    } else {
-      draw();
-    }
+    drawFrame({
+      graph: cur ? SceneGraph.of(cur.root) : null,
+      refresh: () => cur?.director.refreshScene(),
+      scene: this.scene,
+      camera: this.camera,
+      transparentTriangles: cur?.transparentTriangles ?? null,
+      draw: () => this.postStage.render(this.scene, this.camera),
+    });
     // The composer exists from the first frame bloom or a finish is on, and its
     // target is what the scene's programs are keyed on, so warm again when it
     // appears or goes.
@@ -1068,11 +1073,12 @@ export class AvatarRuntime {
 
     // After the render and inside the same frame, which is the whole contract:
     // the drawing buffer is readable here and is gone by the next tick. See
-    // `frameListeners`. The frame is built only when somebody is listening,
+    // `frameListeners`. The frame is built only when a listener asks for it,
     // because assembling it reads a computed style.
     if (this.frameListeners.size > 0) {
-      const frame = this.stageFrame();
-      for (const fn of this.frameListeners) fn(frame);
+      let frame: StageFrame | null = null;
+      const getFrame: StageFrameGetter = () => (frame ??= this.stageFrame());
+      for (const fn of this.frameListeners) fn(getFrame);
     }
   }
 }

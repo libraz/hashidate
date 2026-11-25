@@ -10,7 +10,7 @@ import {
   VIDEO_BITS_PER_SECOND,
 } from '@/viewer/record';
 import type { Rect } from '@/viewer/scene/placement';
-import type { StageFrame } from '@/viewer/scene/runtime';
+import type { StageFrame, StageFrameGetter } from '@/viewer/scene/runtime';
 
 /**
  * The second compositor.
@@ -450,7 +450,7 @@ function recorderEnvironment(opts: { openAudio?: () => Promise<MediaStream | nul
     },
   );
 
-  const frameListeners = new Set<(frame: StageFrame) => void>();
+  const frameListeners = new Set<(frame: StageFrameGetter) => void>();
   const recorder = new StageRecorder({
     base: '/api',
     rendererId: 'renderer-test',

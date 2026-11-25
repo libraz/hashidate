@@ -64,6 +64,7 @@ describe('camera cut', () => {
       postStage: { render: vi.fn() },
       timer: { update: vi.fn(), getDelta: () => 1 / 60 },
       current: {
+        root: new THREE.Group(),
         session: { update: () => shot.setShot({ frame: 'full', yaw: 40 }) },
         transparentTriangles: {
           withDraw: (_camera: THREE.Camera, draw: () => unknown) => draw(),
@@ -71,6 +72,7 @@ describe('camera cut', () => {
         director: {
           update: (_dt: number, ctx: { headWorldTarget: THREE.Vector3; cameraCut: boolean }) =>
             seen.push({ target: ctx.headWorldTarget.clone(), cut: ctx.cameraCut }),
+          refreshScene: () => {},
         },
       },
     });

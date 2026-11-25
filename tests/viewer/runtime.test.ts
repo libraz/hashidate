@@ -303,6 +303,10 @@ describe('transparent triangle runtime draw', () => {
           order.push('director');
           root.position.x = 5;
         },
+        refreshScene: () => {
+          root.updateMatrix();
+          root.matrixWorld.copy(root.matrix);
+        },
       },
       transparentTriangles: controller,
     };

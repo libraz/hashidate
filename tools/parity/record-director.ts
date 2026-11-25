@@ -21,7 +21,9 @@
  * (rig and anatomy calls, the root's world updates, `Skeleton.update`, the sway update) and the
  * rest, and writes the medians to `backup/parity/<avatar>.director-time-<label>.json`, or to the
  * file `--out` names (one avatar only), so a run never replaces a file it was not asked to.
- * `Skeleton.update` is timed on the prototype and on any skeleton that carries its own, as a
+ * `--finish` also puts a room on the stage (`?backdrop=`), which switches on the focus-blur
+ * depth pass and its second skeleton update; toon is the runtime default and stays on. Recording
+ * then writes `<avatar>.director-finish.json`. `Skeleton.update` is timed on the prototype and on any skeleton that carries its own, as a
  * core-backed one does. `backup/` is ignored because the files describe a purchased model.
  */
 
@@ -50,6 +52,8 @@ const SIZE = '160x90';
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 /** Frames delivered per round trip to the page. */
 const BATCH = 30;
+/** The room `--finish` shows; any room carries a finish. */
+const FINISH_ROOM = 'morning';
 
 type Mode = 'record' | 'compare' | 'time';
 
@@ -361,7 +365,7 @@ function installParity({
 function usage(message: string): never {
   console.error(message);
   console.error(
-    'usage: tsx tools/parity/record-director.ts --avatars manuka,yoka,neru --frames 1800 [--compare | --time (--label <name> | --out <file>)]',
+    'usage: tsx tools/parity/record-director.ts --avatars manuka,yoka,neru --frames 1800 [--compare | --time (--label <name> | --out <file>)] [--finish]',
   );
   process.exit(2);
 }
@@ -384,6 +388,7 @@ async function runAvatar(
   vite: number,
   frames: number,
   mode: Mode,
+  finish: boolean,
 ): Promise<PageResult> {
   await page.addInitScript('globalThis.__name = (f) => f;');
   // The frame writer is `parityKit` itself, handed over as source.
@@ -429,6 +434,7 @@ async function runAvatar(
     );
   }
   const query = new URLSearchParams({ mute: '1', size: SIZE, avatar });
+  if (finish) query.set('backdrop', FINISH_ROOM);
   await page.goto(`http://${HOST}:${vite}/?${query}`, { timeout: READY_TIMEOUT_MS });
   const pageState = () =>
     page.evaluate(() => {
@@ -489,6 +495,7 @@ async function settle(
   mode: Mode,
   result: PageResult,
   timeFile: string | null,
+  finish: boolean,
 ): Promise<void> {
   const base = join(ROOT, OUT_DIR, avatar);
   if (mode === 'time') {
@@ -521,7 +528,7 @@ async function settle(
     );
     return;
   }
-  const path = `${base}.director.json`;
+  const path = `${base}.director${finish ? '-finish' : ''}.json`;
   if (mode === 'record') {
     await writeFile(path, `${JSON.stringify({ avatar, frames, hashes: result.hashes })}\n`);
     console.log(`${avatar}: recorded ${result.hashes.length} frames`);
@@ -545,6 +552,7 @@ async function main(): Promise<number> {
       time: { type: 'boolean' },
       label: { type: 'string' },
       out: { type: 'string' },
+      finish: { type: 'boolean' },
     },
   });
   const avatars = (values.avatars ?? '')
@@ -600,8 +608,16 @@ async function main(): Promise<number> {
         const context = await browser.newContext({ viewport: { width, height } });
         try {
           const page = await context.newPage();
-          const result = await runAvatar(page, avatar, control, vite, frames, mode);
-          await settle(avatar, frames, mode, result, timeFile(avatar));
+          const result = await runAvatar(
+            page,
+            avatar,
+            control,
+            vite,
+            frames,
+            mode,
+            values.finish === true,
+          );
+          await settle(avatar, frames, mode, result, timeFile(avatar), values.finish === true);
         } finally {
           await context.close();
           const proc = controlProc;

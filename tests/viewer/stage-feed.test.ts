@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import type { StageFrame } from '@/viewer/scene/runtime';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { StageFrameGetter } from '@/viewer/scene/runtime';
 import {
   FEED_FPS,
   type FeedMessage,
@@ -29,7 +29,7 @@ class Port implements FeedPort {
 
 function feed() {
   let clock = 0;
-  const listeners = new Set<(frame: StageFrame) => void>();
+  const listeners = new Set<(frame: StageFrameGetter) => void>();
   const port = new Port();
   const stage = new StageFeed({
     onFrame: (fn) => {
@@ -47,8 +47,8 @@ function feed() {
     at: (t: number) => {
       clock = t;
     },
-    frame: () => {
-      for (const fn of [...listeners]) fn({} as StageFrame);
+    frame: (getFrame: StageFrameGetter = () => ({}) as ReturnType<StageFrameGetter>) => {
+      for (const fn of [...listeners]) fn(getFrame);
     },
   };
 }
@@ -95,6 +95,37 @@ describe('StageFeed', () => {
     busy.port.onmessage?.({ data: { type: 'want', watcher: 'w', key: true } });
     busy.stage.dispose();
     expect(busy.port.sent).toEqual([{ type: 'end', source: 's' }]);
+  });
+});
+
+describe('StageFeed frame getter', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('builds the frame only for a frame that is due', async () => {
+    class Encoder {
+      static isConfigSupported = async () => ({ supported: true });
+      state = 'configured';
+      encodeQueueSize = 0;
+      configure(): void {}
+      close(): void {
+        this.state = 'closed';
+      }
+    }
+    vi.stubGlobal('VideoEncoder', Encoder);
+    vi.stubGlobal('document', { createElement: () => ({ getContext: () => ({}) }) });
+    const f = feed();
+    f.port.onmessage?.({ data: { type: 'want', watcher: 'w', key: false } });
+    await vi.waitFor(() => expect(f.stage.running).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // A frame of no size composes to nothing, which is all the getter's caller needs here.
+    const getFrame = vi.fn(() => ({ stage: { width: 0, height: 0 } }) as never);
+    // The first frame is due; the same instant again is not.
+    f.frame(getFrame);
+    expect(getFrame).toHaveBeenCalledTimes(1);
+    f.frame(getFrame);
+    f.frame(getFrame);
+    expect(getFrame).toHaveBeenCalledTimes(1);
+    f.stage.dispose();
   });
 });
 

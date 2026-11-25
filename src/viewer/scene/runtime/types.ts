@@ -61,6 +61,13 @@ export interface StageFrame {
   background: string;
 }
 
+/**
+ * What a frame listener is handed: the frame, built on the first call and the same object on every
+ * later call within the tick. It is valid only synchronously inside the listener — the next tick
+ * builds a new one — so a listener that has no use for a frame never pays for assembling it.
+ */
+export type StageFrameGetter = () => StageFrame;
+
 export type RuntimeStatus =
   | { phase: 'idle' }
   | { phase: 'loading'; avatar: AvatarDescriptor }

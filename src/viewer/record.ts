@@ -1,7 +1,7 @@
 import type { RendererId } from '@/protocol';
 import { rendererId as pageRendererId } from './renderer-id';
 import type { Rect, StageSize } from './scene/placement';
-import type { StageFrame } from './scene/runtime';
+import type { StageFrame, StageFrameGetter } from './scene/runtime';
 
 /**
  * Recording the composed frame, and posting it to the control server.
@@ -312,7 +312,7 @@ export interface RecordRequest {
 
 export interface StageRecorderOptions {
   /** Every drawn frame, as the runtime publishes it. Returns the unsubscribe. */
-  onFrame: (fn: (frame: StageFrame) => void) => () => void;
+  onFrame: (fn: (frame: StageFrameGetter) => void) => () => void;
   /** Everything the voice makes, as a stream. See `BrowserVoice.captureStream`. */
   openAudio: () => Promise<MediaStream | null>;
   base?: string;
@@ -522,7 +522,7 @@ export class StageRecorder {
     this.refused = null;
     try {
       take.unsubscribe = this.onFrame((frame) => {
-        if (this.take === take) compose(take.ctx, frame, take.out, this.slideCache);
+        if (this.take === take) compose(take.ctx, frame(), take.out, this.slideCache);
       });
       recorder.start(CHUNK_MS);
     } catch (error) {
