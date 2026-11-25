@@ -42,6 +42,19 @@ impl SkeletonRefresh {
         }
     }
 
+    /// [`SkeletonRefresh::run`] as one pass: the force each visited node hands its plain children
+    /// is recorded as the full pass records it, so the caller can replay them. Plain children of
+    /// the skipped subtrees are left unvisited.
+    pub fn run_once(&self, graph: &mut Graph) {
+        graph.begin_node_pass();
+        for &node in &self.path {
+            graph.update_forced_self(node);
+        }
+        for &node in &self.subtrees {
+            graph.update_forced_subtree(node);
+        }
+    }
+
     // skeleton.ts SkeletonRefresh.collect
     //
     // Whether `node` holds a bone; ancestors land in `path` before their descendants.
@@ -91,7 +104,7 @@ mod tests {
     //! differently.
     use super::*;
     use crate::math::{Mat4, Quat};
-    use crate::scene::graph::{NO_NODE, RECORD, Shape};
+    use crate::scene::graph::{NO_NODE, RECORD, Shape, force};
 
     const AUTO: u8 = flag::MATRIX_AUTO_UPDATE | flag::MATRIX_WORLD_AUTO_UPDATE;
     const ROOT: u32 = 0;
@@ -243,6 +256,46 @@ mod tests {
             actual.update_matrix_world(ROOT, true);
             let all: Vec<u32> = (0..9).collect();
             assert_eq!(state(&actual, &all), state(&reference, &all), "step {step}");
+        }
+    }
+
+    #[test]
+    fn run_once_records_the_force_a_full_pass_hands_each_visited_plain_parent() {
+        let mut actual = scene();
+        let mut reference = scene();
+        // On the path, inside a bone's subtree, and in a skipped subtree.
+        for g in [&mut actual, &mut reference] {
+            for node in [ROOT, ARMATURE, SPINE, BESIDE] {
+                g.set_plain_children(node, true);
+            }
+        }
+        let refresh = SkeletonRefresh::new(&actual, ROOT);
+        for step in 0..3 {
+            move_nodes(&mut actual, step);
+            move_nodes(&mut reference, step);
+            // The arm transaction's refresh leaves the force bytes of its last call only.
+            refresh.run(&mut actual);
+            refresh.run_once(&mut actual);
+            reference.update_matrix_world(ROOT, true);
+            assert_eq!(
+                state(&actual, &FRESH),
+                state(&reference, &FRESH),
+                "step {step}"
+            );
+            for node in [ROOT, ARMATURE, SPINE] {
+                let n = node as usize;
+                assert_eq!(actual.force[n], force::TRUE, "step {step} node {node}");
+                assert_eq!(
+                    actual.force[n], reference.force[n],
+                    "step {step} node {node}"
+                );
+            }
+            assert_eq!(
+                actual.force[BESIDE as usize],
+                force::UNVISITED,
+                "step {step}"
+            );
+            actual.update_matrix_world(ROOT, true);
         }
     }
 }

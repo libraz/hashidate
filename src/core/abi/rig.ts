@@ -61,6 +61,7 @@
  * | hd_rig_read_head_offset                      | —                                           | out quat in/out 0 | 0/1 |
  * | hd_rig_commit_eyes                           | —                                           | — | — |
  * | hd_rig_plant_legs                            | rise, turn, afterPlant 0/1                  | — | — |
+ * | hd_rig_refresh_scene                         | afterPlant 0/1; the caller replays the plain leaves as after `updateMatrixWorld` | — | — |
  * | hd_rig_begin_body_arm_frame                  | —                                           | — | 0/1 |
  * | hd_rig_finish_legacy_body_frame              | rise, turn                                  | — | — |
  * | hd_rig_arm_forward_context                   | SIDE_*                                      | CONTEXT out 0 | 0 for null |
@@ -360,6 +361,7 @@ export const RIG_EXPORTS = [
   'hd_rig_read_head_offset',
   'hd_rig_commit_eyes',
   'hd_rig_plant_legs',
+  'hd_rig_refresh_scene',
   'hd_rig_begin_body_arm_frame',
   'hd_rig_finish_legacy_body_frame',
   'hd_rig_arm_forward_context',
@@ -433,6 +435,7 @@ export interface RigExports {
   hd_rig_read_head_offset(h: number): number;
   hd_rig_commit_eyes(h: number): void;
   hd_rig_plant_legs(h: number, rise: number, turn: number, afterPlant: number): void;
+  hd_rig_refresh_scene(h: number, afterPlant: number): void;
   hd_rig_begin_body_arm_frame(h: number): number;
   hd_rig_finish_legacy_body_frame(h: number, rise: number, turn: number): void;
   hd_rig_arm_forward_context(h: number, side: number): number;

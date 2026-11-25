@@ -103,6 +103,7 @@ import {
 } from './records';
 import {
   arrayView,
+  checkHeap,
   float64View,
   heap,
   matrix3View,
@@ -626,6 +627,19 @@ export class Rig {
   plantLegs(rise: number, turn = 0, afterPlant = false): void {
     const after = afterPlant ? 1 : 0;
     this.#rig.run((c, h) => c.hd_rig_plant_legs(h, rise, turn, after));
+  }
+
+  /**
+   * `root.updateMatrixWorld(true)`, plain leaves included. `afterPlant` as for `plantLegs`: the
+   * caller planted this frame and has moved nothing but bones since, so the skeleton is all it
+   * refreshes.
+   */
+  refreshScene(afterPlant: boolean): void {
+    const r = this.#rig;
+    const h = r.h;
+    const after = afterPlant ? 1 : 0;
+    checkHeap();
+    r.graph.run(() => allocating(() => core().hd_rig_refresh_scene(h, after)), 'matrixWorld');
   }
 
   /**

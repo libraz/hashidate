@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { core } from '@/core';
+import { core, views } from '@/core';
+import { JOINT_OUT, LAYOUT, LAYOUT_JOINT_STATES } from '@/core/abi/spring';
 import { SceneGraph } from '@/core/scene';
 import { buildProfile } from '@/engine/profile';
 import { Spring } from '@/engine/secondary';
@@ -109,9 +110,13 @@ describe('Spring against the recorded hashes', () => {
     const { hashes } = run(fixture, (spring, frame) => {
       if (frame !== 300) return;
       const joint = must(spring.groups[0]?.joints[0], 'joint');
-      bits[0] = joint.cur.x;
+      const c = core();
+      const layout = new Uint32Array(c.memory.buffer, c.hd_spring_layout(spring.handle), LAYOUT);
+      const at = (layout[LAYOUT_JOINT_STATES] >>> 3) + JOINT_OUT * joint.slot;
+      const { f64 } = views();
+      bits[0] = f64[at];
       word[0] ^= 1n;
-      joint.cur.x = bits[0];
+      f64[at] = bits[0];
     });
     expect(firstDifference(fixture, hashes)).toBe(300);
   });

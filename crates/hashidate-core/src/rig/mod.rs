@@ -64,6 +64,11 @@ use spine::{OffsetSlot, SpineOffsets};
 /// The avatar's root, the first node of the table.
 const ROOT: u32 = 0;
 
+/// A node's current world matrix as bits, so `-0` and `0` count as different.
+fn world_bits(graph: &Graph, node: u32) -> [u64; 16] {
+    graph.current_matrix_world(node).elements.map(f64::to_bits)
+}
+
 /// The bones the body snapshot holds, in the TS `BODY_SNAPSHOT_SLOTS` order.
 const BODY_SNAPSHOT_SLOTS: [BoneSlot; 7] = [
     BoneSlot::Hips,
@@ -621,6 +626,9 @@ pub struct Rig {
     legs: Option<GroundedLegs>,
     /// The pass that stands in for a full one once only bones have moved; see `skeleton_only`.
     skeleton: SkeletonRefresh,
+    /// The root's world, bit for bit, as the last full replayed refresh left it; see
+    /// `refresh_scene_once`.
+    replayed_root: Option<[u64; 16]>,
     /// The fingers, which are curled rather than aimed. See `hands`.
     hands: Hands,
     /// Fingers held off the face, and the shape they last took. See `finger_clearance`.
@@ -747,6 +755,7 @@ impl Rig {
             girdle,
             legs,
             skeleton,
+            replayed_root: None,
             hands,
             fingers,
             chain,
@@ -1421,6 +1430,26 @@ impl Rig {
             self.skeleton.run(graph);
         } else {
             self.full_pass(graph);
+        }
+    }
+
+    /// `root.updateMatrixWorld(true)` for a caller that replays the plain leaves after it:
+    /// `SkeletonRefresh::run_once` when `after_plant` holds as for `apply_body_context`, a full
+    /// pass otherwise.
+    ///
+    /// The skeleton pass replays no plain leaf under a subtree it skips, so it also needs the
+    /// root where the last full refresh left it: a moved root moves those leaves too.
+    pub fn refresh_scene_once(&mut self, graph: &mut Graph, after_plant: bool) {
+        let root = world_bits(graph, ROOT);
+        if self.skeleton_only(after_plant) && self.replayed_root == Some(root) {
+            #[cfg(test)]
+            {
+                self.passes.skeleton += 1;
+            }
+            self.skeleton.run_once(graph);
+        } else {
+            self.full_pass(graph);
+            self.replayed_root = Some(world_bits(graph, ROOT));
         }
     }
 
@@ -4605,6 +4634,74 @@ pub(crate) mod tests {
                 let expected = if legs { (0, 1) } else { (1, 0) };
                 assert_eq!(since(&rig, start), expected, "legs={legs}");
             }
+        }
+    }
+
+    #[test]
+    fn refreshes_a_planted_frame_with_the_plant_as_its_only_full_pass() {
+        let (mut ga, mut actual) = plain();
+        let (mut gb, mut reference) = plain();
+        let hips = bone(&actual.p, BoneSlot::Hips);
+        let head = bone(&actual.p, BoneSlot::Head);
+        let mesh = ga.mesh_nodes[0];
+        for g in [&mut ga, &mut gb] {
+            for node in [ROOT, head, mesh] {
+                g.set_plain_children(node, true);
+            }
+        }
+        let flags = |g: &Graph| -> Vec<u8> {
+            g.flags
+                .iter()
+                .map(|f| f & flag::MATRIX_WORLD_NEEDS_UPDATE)
+                .collect()
+        };
+        for step in 0..4 {
+            let start = passes(&actual);
+            // Moved on even frames: the plant's pass catches the root, but leaves under the
+            // subtrees a skeleton pass skips would miss it, so the refresh goes in full.
+            let moved = step % 2 == 0;
+            for (g, rig) in [(&mut ga, &mut actual), (&mut gb, &mut reference)] {
+                if moved {
+                    let q = turn_y(&g.local_quaternion(ROOT), 0.05);
+                    g.set_local_quaternion(ROOT, &q);
+                    g.position[0] += 0.01;
+                }
+                rig.reset(g);
+                rig.plant_legs(g, 0.0, 0.0, false);
+                nudge(g, hips, [0.0, 0.001, 0.0]);
+                let mut q = g.local_quaternion(head);
+                q.multiply(Quat::default().set_from_axis_angle(&Vec3::new(1.0, 0.0, 0.0), 0.02));
+                g.set_local_quaternion(head, &q);
+            }
+            actual.refresh_scene_once(&mut ga, true);
+            gb.update_matrix_world(ROOT, true);
+            // The plant's pass, then the refresh: in full after a move, else standing in for it.
+            let expected = if moved { (2, 0) } else { (1, 1) };
+            assert_eq!(since(&actual, start), expected, "step {step}");
+            assert_eq!(matrices(&ga), matrices(&gb), "step {step}");
+            assert_eq!(flags(&ga), flags(&gb), "step {step}");
+            for node in [ROOT, head] {
+                let n = node as usize;
+                assert_eq!(ga.force[n], gb.force[n], "step {step} node {node}");
+            }
+        }
+    }
+
+    #[test]
+    fn refreshes_in_full_without_a_plant_to_rely_on() {
+        for (legs, after_plant) in [(true, false), (false, true), (false, false)] {
+            let (mut g, mut rig) = build(|g, p| {
+                if !legs {
+                    no_legs(g, p);
+                }
+            });
+            let start = passes(&rig);
+            rig.refresh_scene_once(&mut g, after_plant);
+            assert_eq!(
+                since(&rig, start),
+                (1, 0),
+                "legs={legs} after_plant={after_plant}"
+            );
         }
     }
 

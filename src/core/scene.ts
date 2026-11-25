@@ -242,6 +242,12 @@ export class SceneGraph {
   readonly #chain: THREE.Object3D[] = [];
   /** Nodes that have plain leaves among their children. */
   readonly #plainParents = new Set<number>();
+  #drawing = false;
+  #refresh: (() => void) | null = null;
+  /** Whether the open draw scope has run its refresher. */
+  #refreshed = false;
+  /** Per skeleton, 1 once it has updated in the open draw scope. */
+  readonly #drawn: Uint8Array;
 
   /**
    * The graph for `root`, created on the first call. That call fixes the hierarchy: from then on
@@ -331,6 +337,7 @@ export class SceneGraph {
     this.#nodes = nodes;
     this.#meshes = meshes;
     this.#skeletons = skeletons;
+    this.#drawn = new Uint8Array(skeletons.length);
     this.#at = at;
     this.#handle = h;
     this.#ref = new WeakRef(this);
@@ -386,6 +393,31 @@ export class SceneGraph {
     this.#writeBack();
     if (replay !== 'none') this.#replay(replay === 'matrixWorld');
     return result;
+  }
+
+  /** Whether a `drawScope` is open. */
+  get drawing(): boolean {
+    return this.#drawing;
+  }
+
+  /**
+   * Runs `fn`, a draw, with the root and the skeletons gated. The root's first `updateMatrixWorld`
+   * must be forced and runs `refresh` in place of the core's pass; later unforced ones do nothing
+   * and a second forced one throws. Each skeleton's `update` runs once. Every other node's updates
+   * pass through. Scopes do not nest.
+   */
+  drawScope(refresh: () => void, fn: () => void): void {
+    if (this.#drawing) throw new Error('SceneGraph: drawScope does not nest');
+    this.#drawing = true;
+    this.#refresh = refresh;
+    this.#refreshed = false;
+    this.#drawn.fill(0);
+    try {
+      fn();
+    } finally {
+      this.#drawing = false;
+      this.#refresh = null;
+    }
   }
 
   /**
@@ -639,6 +671,18 @@ export class SceneGraph {
 
     function updateMatrixWorld(this: THREE.Object3D, force?: boolean): void {
       const { graph, index } = binding(this);
+      if (graph.#drawing && this === graph.root) {
+        if (graph.#refreshed) {
+          if (force === true) throw new Error('SceneGraph: root refreshed twice in one draw scope');
+          return;
+        }
+        if (force !== true) {
+          throw new Error('SceneGraph: the first root update in a draw scope must be forced');
+        }
+        graph.#refreshed = true;
+        (graph.#refresh as () => void)();
+        return;
+      }
       const c = core();
       graph.run((h) => c.hd_scene_update_matrix_world(h, index, force ? 1 : 0), 'matrixWorld');
     }
@@ -661,6 +705,10 @@ export class SceneGraph {
 
     skeletonUpdate = function update(this: THREE.Skeleton): void {
       const b = (this as BoundSkeleton)[BOUND];
+      if (b.graph.#drawing) {
+        if (b.graph.#drawn[b.index] === 1) return;
+        b.graph.#drawn[b.index] = 1;
+      }
       b.graph.#check();
       core().hd_scene_skeleton_update(b.graph.#handle, b.index);
       // `computeBoneTexture` replaces `boneMatrices`, so it is read on every call.

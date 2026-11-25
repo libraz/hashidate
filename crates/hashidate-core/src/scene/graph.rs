@@ -468,6 +468,25 @@ impl Graph {
         self.update_world_matrix_node(i, update_parents, update_children, force);
     }
 
+    /// Starts a pass made of the per-node steps below, which begin none of their own.
+    pub(crate) fn begin_node_pass(&mut self) {
+        self.assert_built();
+        self.begin_pass();
+    }
+
+    /// Node `i`'s own step of a forced `updateMatrixWorld` from above, inside a pass begun with
+    /// [`Graph::begin_node_pass`]; records the force its plain children get.
+    pub(crate) fn update_forced_self(&mut self, i: u32) {
+        let force = self.update_self(i, true);
+        self.note_force(i, force);
+    }
+
+    /// `updateMatrixWorld(true)` on node `i`, inside a pass begun with
+    /// [`Graph::begin_node_pass`].
+    pub(crate) fn update_forced_subtree(&mut self, i: u32) {
+        self.update_matrix_world_node(i, true);
+    }
+
     // three r186 Skeleton.update
     pub fn skeleton_update(&mut self, s: u32) {
         self.assert_built();

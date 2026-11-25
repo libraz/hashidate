@@ -112,8 +112,9 @@ const finalizer = handleFinalizer((c, h) => c.hd_spring_free(h));
  * descriptor defaults, the anchor spec's checks and every `missing` message — and hands the core
  * numbers only: graph indices of the colliders' bones and of each group's roots and anchor. Per
  * frame it runs its own world update, copies the switches, scales and drives in, runs one
- * `hd_spring_update`, and reads the joints, groups, diagnostics and colliders back. The layouts
- * are tabled in `src/core/abi/spring.ts`. `dispose` frees the core's half.
+ * `hd_spring_update`, and reads the groups, diagnostics and colliders back; a joint reads its own
+ * outputs when first asked for. The layouts are tabled in `src/core/abi/spring.ts`. `dispose`
+ * frees the core's half.
  */
 
 const GROUP_DEFAULTS = {
@@ -128,7 +129,7 @@ const boneChildren = (bone: THREE.Object3D): THREE.Bone[] =>
   bone.children.filter((c): c is THREE.Bone => c instanceof THREE.Bone);
 
 /**
- * One simulated joint, mirrored from the core after every update and reset.
+ * One simulated joint, its outputs read from the core when first asked for after an update.
  *
  * The tail is stored in world space rather than as an angle: a bone is itself moving, so an angle
  * has no frame to be measured in, and a world-space point needs none.
@@ -143,18 +144,20 @@ export class Joint {
   driven = false;
   /** Written by a drive each frame; copied into the core while `driven`. */
   readonly drive = new THREE.Quaternion();
-  readonly cur = new THREE.Vector3();
-  readonly prev = new THREE.Vector3();
-  readonly solvedQ = new THREE.Quaternion();
-  readonly prevSolvedQ = new THREE.Quaternion();
-  readonly swing = new THREE.Vector3();
+  readonly #cur = new THREE.Vector3();
+  readonly #prev = new THREE.Vector3();
+  readonly #solvedQ = new THREE.Quaternion();
+  readonly #prevSolvedQ = new THREE.Quaternion();
+  readonly #swing = new THREE.Vector3();
   /** Clearance per collider of this joint's group, as calibrated (Float32, as in the core). */
   readonly limits: Float32Array;
   readonly spans: Float32Array;
   /** Position across every group's joints, which the core's joint buffers are indexed by. */
   readonly slot: number;
+  readonly #owner: Spring;
 
   constructor(
+    owner: Spring,
     bone: THREE.Bone,
     parent: THREE.Object3D,
     rest: THREE.Quaternion,
@@ -163,6 +166,7 @@ export class Joint {
     colliders: number,
     slot: number,
   ) {
+    this.#owner = owner;
     this.bone = bone;
     this.parent = parent;
     this.rest = rest;
@@ -171,6 +175,41 @@ export class Joint {
     this.limits = new Float32Array(colliders);
     this.spans = new Float32Array(colliders);
     this.slot = slot;
+  }
+
+  get cur(): THREE.Vector3 {
+    this.#owner.readJoints();
+    return this.#cur;
+  }
+
+  get prev(): THREE.Vector3 {
+    this.#owner.readJoints();
+    return this.#prev;
+  }
+
+  get solvedQ(): THREE.Quaternion {
+    this.#owner.readJoints();
+    return this.#solvedQ;
+  }
+
+  get prevSolvedQ(): THREE.Quaternion {
+    this.#owner.readJoints();
+    return this.#prevSolvedQ;
+  }
+
+  get swing(): THREE.Vector3 {
+    this.#owner.readJoints();
+    return this.#swing;
+  }
+
+  /** @internal Refresh the outputs from the joint state buffer at f64 index `base`. */
+  read(f64: Float64Array, base: number): void {
+    const at = base + JOINT_OUT * this.slot;
+    this.#cur.set(f64[at], f64[at + 1], f64[at + 2]);
+    this.#prev.set(f64[at + 3], f64[at + 4], f64[at + 5]);
+    this.#solvedQ.set(f64[at + 6], f64[at + 7], f64[at + 8], f64[at + 9]);
+    this.#prevSolvedQ.set(f64[at + 10], f64[at + 11], f64[at + 12], f64[at + 13]);
+    this.#swing.set(f64[at + 14], f64[at + 15], f64[at + 16]);
   }
 
   /** This joint's local rotation at rest, drive included. */
@@ -302,6 +341,12 @@ function statusText(kind: number, node: string, other: string): string {
   }
 }
 
+/** Construction options of a `Spring`. */
+export interface SpringOptions {
+  /** Called in place of `root.updateMatrixWorld(true)` before each update reads world matrices. */
+  refreshScene?: () => void;
+}
+
 /** f64 and u32 element index of a byte pointer. */
 const f64At = (ptr: number): number => ptr >>> 3;
 const u32At = (ptr: number): number => ptr >>> 2;
@@ -326,15 +371,20 @@ export class Spring {
   #registered: Registered[] = [];
   #pool: Collider[] = [];
   #joints: Joint[] = [];
+  /** Whether the joints have yet to read the last update's outputs. */
+  #jointsStale = false;
   #diagnostics = new Float64Array(0);
+  readonly #refreshScene: (() => void) | null;
 
   /**
    * @param profile  the avatar profile; only `root` is used
    * @param avatar   the avatar descriptor. No `sway` field means no secondary motion.
+   * @param options  `refreshScene` stands in for `root.updateMatrixWorld(true)` before each update
    */
-  constructor(profile: Profile, avatar?: AvatarDescriptor) {
+  constructor(profile: Profile, avatar?: AvatarDescriptor, { refreshScene }: SpringOptions = {}) {
     this.p = profile;
     this.root = profile.root;
+    this.#refreshScene = refreshScene ?? null;
 
     const spec = avatar?.sway;
     if (!spec?.groups?.length) return;
@@ -520,6 +570,7 @@ export class Spring {
         c.hd_spring_joint_info(h, g, k);
         const v = views().f64;
         const joint = new Joint(
+          this,
           nodes[v[scratch]] as THREE.Bone,
           this.#node(v[scratch + 1]) as THREE.Object3D,
           new THREE.Quaternion(v[scratch + 7], v[scratch + 8], v[scratch + 9], v[scratch + 10]),
@@ -678,7 +729,10 @@ export class Spring {
     const graph = this.#graph;
     if (!(this.groups.length && this.#handle && graph)) return;
     // The core reads world matrices only when the simulation is on, as `Spring` does.
-    if (this.enabled) this.root.updateMatrixWorld(true);
+    if (this.enabled) {
+      if (this.#refreshScene) this.#refreshScene();
+      else this.root.updateMatrixWorld(true);
+    }
     this.#writeInputs();
     const h = this.#handle;
     const statuses = graph.run(() => core().hd_spring_update(h, dt));
@@ -690,6 +744,8 @@ export class Spring {
   dispose(): void {
     const h = this.#handle;
     if (!h) return;
+    // Read while the core still holds them; the joints keep these afterwards.
+    this.readJoints();
     finalizer.unregister(this);
     allocating(() => core().hd_spring_free(h));
     this.#handle = 0;
@@ -726,19 +782,23 @@ export class Spring {
     }
   }
 
-  /** Read the core's joints, groups, diagnostics and colliders back; the nodes are its own. */
+  /** @internal Read every joint's outputs back, once per update and only when one is asked for. */
+  readJoints(): void {
+    if (!this.#jointsStale) return;
+    this.#jointsStale = false;
+    const { f64 } = views();
+    const joints = f64At(this.#layout[LAYOUT_JOINT_STATES]);
+    for (const j of this.#joints) j.read(f64, joints);
+  }
+
+  /**
+   * Read the core's groups, diagnostics and colliders back and mark the joints' outputs stale;
+   * the nodes are its own.
+   */
   #readOutputs(): void {
     const { f64, u32 } = views();
     const L = this.#layout;
-    const joints = f64At(L[LAYOUT_JOINT_STATES]);
-    for (const j of this.#joints) {
-      const at = joints + JOINT_OUT * j.slot;
-      j.cur.set(f64[at], f64[at + 1], f64[at + 2]);
-      j.prev.set(f64[at + 3], f64[at + 4], f64[at + 5]);
-      j.solvedQ.set(f64[at + 6], f64[at + 7], f64[at + 8], f64[at + 9]);
-      j.prevSolvedQ.set(f64[at + 10], f64[at + 11], f64[at + 12], f64[at + 13]);
-      j.swing.set(f64[at + 14], f64[at + 15], f64[at + 16]);
-    }
+    this.#jointsStale = true;
     const states = u32At(L[LAYOUT_GROUP_STATES]);
     for (let g = 0; g < this.groups.length; g++) {
       const group = this.groups[g];

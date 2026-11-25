@@ -580,6 +580,16 @@ pub unsafe extern "C" fn hd_rig_plant_legs(h: *mut Handle, rise: f64, turn: f64,
     unsafe { handle(h) }.run(|rig, g, _| rig.plant_legs(g, rise, turn, after != 0));
 }
 
+/// `rig.refreshScene(afterPlant)`.
+///
+/// # Safety
+/// As for `hd_rig_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hd_rig_refresh_scene(h: *mut Handle, after: u32) {
+    // SAFETY: forwarded from this function's contract.
+    unsafe { handle(h) }.run(|rig, g, _| rig.refresh_scene_once(g, after != 0));
+}
+
 /// `rig.beginBodyArmFrame()`.
 ///
 /// # Safety

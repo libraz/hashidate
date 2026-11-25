@@ -736,3 +736,31 @@ export function interposeBone(
   rig.root.updateMatrixWorld(true);
   return carrier;
 }
+
+/**
+ * Hang a rigid (unskinned) mesh under a bone, as an accessory parented to a
+ * hand or the head is. It joins the scene graph's table when the graph is
+ * built, so call this before anything core-backs the rig; an outline added
+ * under it afterwards is a plain leaf.
+ */
+export function addRigidMesh(
+  rig: SyntheticRig,
+  parent: string,
+  name: string,
+  offset: [number, number, number] = [0, 0.02, 0.03],
+): THREE.Mesh {
+  const bone = rig.bones.get(parent);
+  if (!bone) throw new Error(`the rig has no ${parent}`);
+  const scale = rig.root.scale.x || 1;
+  const size = 0.02 / scale;
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(size, size, size),
+    new THREE.MeshBasicMaterial(),
+  );
+  mesh.name = name;
+  mesh.position.set(offset[0] / scale, offset[1] / scale, offset[2] / scale);
+  mesh.rotation.set(0.3, -0.2, 0.1);
+  bone.add(mesh);
+  rig.root.updateMatrixWorld(true);
+  return mesh;
+}

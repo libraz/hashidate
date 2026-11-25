@@ -238,7 +238,7 @@ export class Director {
     this.mouth = new Mouth();
     // Driven by the pose rather than by anything semantic, so it takes no
     // commands — it only has to run last. See the note at the end of `update`.
-    this.spring = new Spring(profile, avatar);
+    this.spring = new Spring(profile, avatar, { refreshScene: () => this.refreshScene() });
     // The exception to that: a tail hangs off the hips and the hips barely
     // move, so it has to be posed rather than merely simulated. It reads the
     // emotion vector directly and writes into the sway layer's rest pose.
@@ -341,6 +341,14 @@ export class Director {
   get baselinePerformanceHeld(): boolean {
     const def = this._act ? performanceDef(this._act) : null;
     return !!def && holdsUntilReleased(def);
+  }
+
+  /**
+   * `root.updateMatrixWorld(true)` for the rest of a frame `update` has run: its body planted
+   * the legs, and nothing but bones has moved since, so the skeleton is all it refreshes.
+   */
+  refreshScene(): void {
+    this.rig.refreshScene(true);
   }
 
   /** Free what the director holds in the core. It must run before the scene graph is disposed. */
