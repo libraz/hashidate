@@ -18,6 +18,7 @@
  * something this file can know.
  */
 
+import { findSilences } from '../motion/prosody';
 import type { VisemeName } from '../types';
 
 /** The visemes the mouth actually drives. `sil` is the absence of all of them. */
@@ -248,6 +249,22 @@ export function textToVisemes(
 }
 
 /**
+ * A fast take would squeeze a closure below what reads as lips meeting. Hold
+ * it at CLOSURE, taken out of its own vowel, but never past half the mora.
+ */
+function holdClosures(events: VisemeEvent[]): void {
+  for (let i = 0; i < events.length - 1; i++) {
+    const shut = events[i];
+    if (!shut.closure) continue;
+    const vowel = events[i + 1];
+    const end = vowel.t + vowel.dur;
+    shut.dur = Math.max(shut.dur, Math.min(CLOSURE, (end - shut.t) * 0.5));
+    vowel.t = shut.t + shut.dur;
+    vowel.dur = end - vowel.t;
+  }
+}
+
+/**
  * Stretch a track to a measured length, keeping its shape.
  *
  * One factor over the whole line rather than a per-mora correction, because a
@@ -260,6 +277,9 @@ export function textToVisemes(
  * bounded by the line, where the error it removes accumulated down the queue —
  * a mouth that finishes early on every turn is a mouth that is visibly not
  * saying the words.
+ *
+ * This whole-line stretch is also where `retimeTrack` falls back to when the
+ * audio's silences cannot be paired with the text's breaks.
  */
 export function scaleTrack(track: VisemeTrack, seconds: number): VisemeTrack {
   // A line with no morae in it — punctuation, or nothing at all — has no shape
@@ -268,20 +288,81 @@ export function scaleTrack(track: VisemeTrack, seconds: number): VisemeTrack {
   if (!(track.duration > 0 && seconds > 0)) return { events: [], breaks: [], duration: seconds };
   const k = seconds / track.duration;
   const events = track.events.map((ev) => ({ ...ev, t: ev.t * k, dur: ev.dur * k }));
-  // A fast take would squeeze a closure below what reads as lips meeting. Hold
-  // it at CLOSURE, taken out of its own vowel, but never past half the mora.
-  for (let i = 0; i < events.length - 1; i++) {
-    const shut = events[i];
-    if (!shut.closure) continue;
-    const vowel = events[i + 1];
-    const end = vowel.t + vowel.dur;
-    shut.dur = Math.max(shut.dur, Math.min(CLOSURE, (end - shut.t) * 0.5));
-    vowel.t = shut.t + shut.dur;
-    vowel.dur = end - vowel.t;
-  }
+  holdClosures(events);
   return {
     events,
     breaks: track.breaks.map((b) => ({ t: b.t * k, kind: b.kind })),
+    duration: seconds,
+  };
+}
+
+/** Largest distance, in seconds, between a break's stretched midpoint and a silence's midpoint to pair them. */
+const PAIR_TOLERANCE = 0.3;
+
+/**
+ * Fit a track to a take segment by segment where the audio allows it.
+ *
+ * Each measured silence must pair with a phrase break, in order; then the first
+ * mora after every paired break starts when its silence ends. Any silence left
+ * unpaired, or pairs that cannot be mapped monotonically, put the whole line
+ * back on `scaleTrack`, because a wrong pairing is worse than a uniform stretch.
+ */
+export function retimeTrack(
+  track: VisemeTrack,
+  seconds: number,
+  level?: (seconds: number) => number,
+): VisemeTrack {
+  if (!level || track.duration <= 0 || seconds <= 0) return scaleTrack(track, seconds);
+  const silences = findSilences(level, seconds);
+  if (!silences.length) return scaleTrack(track, seconds);
+
+  // A break's span runs from the break to the first event after it, whatever kind that is.
+  const spans: Array<{ start: number; end: number }> = [];
+  for (const b of track.breaks) {
+    const next = track.events.find((ev) => ev.t > b.t);
+    if (next) spans.push({ start: b.t, end: next.t });
+  }
+
+  const k = seconds / track.duration;
+  const anchors: Array<[number, number]> = [[0, 0]];
+  let after = -1;
+  for (const sil of silences) {
+    const mid = (sil.start + sil.end) / 2;
+    let best = -1;
+    let bestGap = PAIR_TOLERANCE;
+    for (let i = after + 1; i < spans.length; i++) {
+      const gap = Math.abs(((spans[i].start + spans[i].end) / 2) * k - mid);
+      if (gap <= bestGap) {
+        best = i;
+        bestGap = gap;
+      }
+    }
+    if (best < 0) return scaleTrack(track, seconds);
+    after = best;
+    anchors.push([spans[best].start, sil.start], [spans[best].end, sil.end]);
+  }
+  anchors.push([track.duration, seconds]);
+  for (let i = 1; i < anchors.length; i++) {
+    if (anchors[i][0] <= anchors[i - 1][0] || anchors[i][1] <= anchors[i - 1][1]) {
+      return scaleTrack(track, seconds);
+    }
+  }
+
+  const map = (t: number): number => {
+    let i = 1;
+    while (i < anchors.length - 1 && t > anchors[i][0]) i++;
+    const [x0, y0] = anchors[i - 1];
+    const [x1, y1] = anchors[i];
+    return y0 + ((t - x0) * (y1 - y0)) / (x1 - x0);
+  };
+  const events = track.events.map((ev) => {
+    const t = map(ev.t);
+    return { ...ev, t, dur: map(ev.t + ev.dur) - t };
+  });
+  holdClosures(events);
+  return {
+    events,
+    breaks: track.breaks.map((b) => ({ t: map(b.t), kind: b.kind })),
     duration: seconds,
   };
 }

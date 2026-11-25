@@ -107,6 +107,34 @@ function pauseAt(level: (seconds: number) => number, t: number, duration: number
 }
 
 /**
+ * The inter-pausal silences of a take, in seconds.
+ *
+ * `start` is the first silent sample and `end` the first sound after it. A
+ * silence at the very start, or one that runs to the end of the take, is no
+ * boundary between two units and is left out, as is anything shorter than
+ * `IPU_PAUSE`.
+ */
+export function findSilences(
+  level: (seconds: number) => number,
+  seconds: number,
+): Array<{ start: number; end: number }> {
+  const out: Array<{ start: number; end: number }> = [];
+  let from = -1;
+  for (let i = 0; i * SCAN_STEP < seconds; i++) {
+    const silent = level(i * SCAN_STEP) < SILENCE_LEVEL;
+    if (silent && from < 0) {
+      from = i;
+    } else if (!silent && from >= 0) {
+      const start = from * SCAN_STEP;
+      const end = i * SCAN_STEP;
+      if (from > 0 && end - start >= IPU_PAUSE - 1e-9) out.push({ start, end });
+      from = -1;
+    }
+  }
+  return out;
+}
+
+/**
  * Decide which of a line's phrase boundaries nod, and how far.
  *
  * A boundary with no event starting at or after it ends the line; a line whose
