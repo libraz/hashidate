@@ -162,7 +162,8 @@ describe('cues in a line', () => {
     session.say({
       text: '[@camera full][@slide 3][@expression F_JITO][@gesture nod][@hop bounce]あ',
     });
-    step(1);
+    // Two frames: the expression's follower starts from rest and is reported past 0.02.
+    step(2);
 
     expect(shots).toEqual([{ frame: 'full' }]);
     expect(slides.calls).toEqual([{ call: 'setSlide', page: 3 }]);
@@ -271,7 +272,8 @@ describe('cues in a line', () => {
     const { session, director, step } = build();
     director.setExpression('F_DOYA');
     session.say({ text: '[@expression DOES_NOT_EXIST]あ' });
-    step(1);
+    // Two frames, so the face set before the line has risen past the reported threshold.
+    step(2);
     expect(director.expression).toBe('F_DOYA');
   });
 });

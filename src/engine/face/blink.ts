@@ -20,10 +20,30 @@ export const DROOP_RATE = 3.5;
  * a symmetric pulse reads as a flutter rather than as a blink.
  */
 export const BLINK_CLOSE = 0.32;
-export const blinkCurve = (u: number): number =>
-  u < BLINK_CLOSE
-    ? Math.sin((u / BLINK_CLOSE) * Math.PI * 0.5)
-    : Math.cos(((u - BLINK_CLOSE) / (1 - BLINK_CLOSE)) * Math.PI * 0.5) ** 0.75;
+/** Where the opening leaves the original curve for a landing at zero speed. */
+const BLINK_TAIL_FROM = 0.75;
+const openingAt = (x: number): number => Math.cos(x * Math.PI * 0.5) ** 0.75;
+// Derived from the curve, not tuned: its value and slope where the tail begins.
+const TAIL_V0 = openingAt(BLINK_TAIL_FROM);
+const TAIL_M0 =
+  0.75 *
+  Math.cos(BLINK_TAIL_FROM * Math.PI * 0.5) ** -0.25 *
+  -Math.sin(BLINK_TAIL_FROM * Math.PI * 0.5) *
+  Math.PI *
+  0.5 *
+  (1 - BLINK_TAIL_FROM);
+
+/**
+ * The last quarter of the opening lands at zero speed instead of snapping open:
+ * a cubic Hermite from the curve's own value and slope down to 0 with no slope.
+ */
+export const blinkCurve = (u: number): number => {
+  if (u < BLINK_CLOSE) return Math.sin((u / BLINK_CLOSE) * Math.PI * 0.5);
+  const x = (u - BLINK_CLOSE) / (1 - BLINK_CLOSE);
+  if (x < BLINK_TAIL_FROM) return openingAt(x);
+  const s = (x - BLINK_TAIL_FROM) / (1 - BLINK_TAIL_FROM);
+  return (2 * s ** 3 - 3 * s ** 2 + 1) * TAIL_V0 + (s ** 3 - 2 * s ** 2 + s) * TAIL_M0;
+};
 
 // A blink cannot follow another this soon. Without the floor, a saccade landing
 // on the frame after a blink completes fires the next one immediately and the

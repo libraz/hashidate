@@ -23,7 +23,7 @@ import {
   lidClosure,
   MorphFrame,
   Mouth,
-  scaleTrack,
+  retimeTrack,
   softMouthScale,
   textToVisemes,
 } from './face';
@@ -35,6 +35,7 @@ import {
   type HopDef,
   type PointCommand,
   planHeadBeats,
+  ScalarFollower,
 } from './motion';
 import { holdsUntilReleased, type PerformanceDef, performanceDef } from './performance';
 import { turnRandom } from './random';
@@ -92,6 +93,8 @@ const holdsEyesOpen = (emotion: EmotionVector): boolean => (emotion.surprise ?? 
 
 /** The fade rate of an authored face, shared by the single-preset fallback. */
 const PRESET_RATE = 6;
+/** Rate of the slow mouth-openness follower that sets the head's speech amplitude; about a phrase, not a mora. */
+const PHRASE_RATE = 1.2;
 
 /** Where a track's last mora ends, or 0 for a track with none. */
 function spokenEnd({ events }: VisemeTrack): number {
@@ -180,9 +183,16 @@ export class Director {
   /** the one currently faded in */
   private _preset: string | null = null;
   private _presetW = 0;
+  readonly #presetFollow = new ScalarFollower(0);
   /** The VRM preset shape the fallback is showing, and its own weight. */
   private _vrmPreset: string | null = null;
   private _vrmW = 0;
+  readonly #vrmFollow = new ScalarFollower(0);
+  /** Second-order followers behind each emotion channel; created when a key first appears. */
+  #emotionFollow = new Map<EmotionName, ScalarFollower>();
+  #idleFollow = new Map<EmotionName, ScalarFollower>();
+  /** Slow mouth openness; the phrase-scale part of the head's speech amplitude. */
+  readonly #phrase = new ScalarFollower(0);
 
   private readonly _extraFaces: string[];
 
@@ -225,6 +235,9 @@ export class Director {
   private _breakTimes: number[] = [];
   /** Index of the first break the mouth clock has not yet crossed. */
   private _breakCursor = 0;
+  /** Ascending mouth-clock times of the current line's phrase heads, for the arm beat. */
+  #phraseHeads: number[] = [];
+  #headCursor = 0;
   /** The current seeded turn's streams for the nod plan and the break blinks; null draws from `random`. */
   private _turnNod: (() => number) | null = null;
   private _turnBlink: (() => number) | null = null;
@@ -332,6 +345,7 @@ export class Director {
       // the caller has been driving rather than the mood idle happened to pick.
       this._idleEmotion = { ...this.emotion };
       this._idleTarget = { ...this.emotion };
+      this.#reseed(this.#idleFollow, this._idleEmotion);
       return;
     }
 
@@ -345,6 +359,7 @@ export class Director {
     // caller's target, so the face does not jump from idle's mood to it.
     for (const key of Object.keys(this.emotion) as EmotionName[]) delete this.emotion[key];
     Object.assign(this.emotion, this._idleEmotion);
+    this.#reseed(this.#emotionFollow, this.emotion);
     this._idleTarget = { ...this.target };
   }
 
@@ -479,7 +494,7 @@ export class Director {
    */
   speak(text: string, reading?: string, seconds?: number, opts: SpeakOptions = {}): number {
     const track = textToVisemes(reading ?? text);
-    const scheduled = seconds === undefined ? track : scaleTrack(track, seconds);
+    const scheduled = seconds === undefined ? track : retimeTrack(track, seconds, opts.level);
     // A reading is usually unpunctuated kana, so it borrows the text's breaks,
     // placed by share of the spoken span: the last one has to land on the last
     // mora's end to still read as the line's end.
@@ -505,6 +520,18 @@ export class Director {
     const end = spokenEnd(scheduled);
     if (end > (this._breakTimes[this._breakTimes.length - 1] ?? 0)) this._breakTimes.push(end);
     this._breakCursor = 0;
+    // A phrase head is the first event at the line's start and after each non-minor break.
+    this.#phraseHeads = [];
+    this.#headCursor = 0;
+    const heads: Array<number | undefined> = [scheduled.events[0]?.t];
+    for (const b of scheduled.breaks) {
+      if (b.kind !== 'minor') heads.push(scheduled.events.find((e) => e.t >= b.t)?.t);
+    }
+    for (const t of heads) {
+      if (t !== undefined && t > (this.#phraseHeads[this.#phraseHeads.length - 1] ?? -1)) {
+        this.#phraseHeads.push(t);
+      }
+    }
     return this.mouth.schedule(scheduled);
   }
 
@@ -690,9 +717,8 @@ export class Director {
     // The baseline emotion vector always eases toward its target, including
     // while idle is drawing another one. This keeps a caller's mood current
     // underneath the transient layer.
-    const k = 1 - Math.exp(-dt * this.emotionRate);
-    this.easeEmotion(this.emotion, this.target, k);
-    if (this._auto) this.easeEmotion(this._idleEmotion, this._idleTarget, k);
+    this.easeEmotion(this.emotion, this.target, this.#emotionFollow, dt);
+    if (this._auto) this.easeEmotion(this._idleEmotion, this._idleTarget, this.#idleFollow, dt);
 
     const elapsed = ctx?.elapsed ?? dt;
     this.mouth.update(dt, elapsed);
@@ -703,7 +729,8 @@ export class Director {
     // than individual morae — driving it off per-mora openness makes the head
     // stutter with the syllables.
     this.body.speaking = this.mouth.speaking;
-    this.body.speechEnergy = this.mouth.busy * (0.6 + 0.4 * this.mouth.openness);
+    this.#phrase.step(this.mouth.openness, dt, PHRASE_RATE);
+    this.body.speechEnergy = this.mouth.busy * (0.6 + 0.4 * this.#phrase.value);
     // Nods run on the mouth's clock. A track gone — ended or interrupted — drops
     // the nods not yet begun; one already in the head finishes on its own.
     const track = this.mouth.track;
@@ -725,6 +752,21 @@ export class Director {
       this._breakTimes = [];
       this._breakCursor = 0;
     }
+    // The arm beat fires on the frame the mouth clock crosses a phrase head.
+    let onset = false;
+    if (track) {
+      while (
+        this.#headCursor < this.#phraseHeads.length &&
+        this.#phraseHeads[this.#headCursor] <= this.mouth.time
+      ) {
+        this.#headCursor++;
+        onset = true;
+      }
+    } else if (this.#phraseHeads.length) {
+      this.#phraseHeads = [];
+      this.#headCursor = 0;
+    }
+    this.body.speechOnset = onset;
     this.body.speechNod = this._beats.update(dt, elapsed);
     this.body.speechRemaining = track ? Math.max(0, track.duration - this.mouth.time) : 0;
     this.body.speechOpens = this.speechOpens;
@@ -753,25 +795,48 @@ export class Director {
   }
 
   /** Ease one emotion channel without changing the ownership of either map. */
-  private easeEmotion(current: EmotionVector, target: EmotionVector, k: number): void {
+  private easeEmotion(
+    current: EmotionVector,
+    target: EmotionVector,
+    followers: Map<EmotionName, ScalarFollower>,
+    dt: number,
+  ): void {
     // Every key of either map once: the current ones, then target-only ones.
-    for (const key in current) this.easeKey(current, target, key as EmotionName, k);
+    for (const key in current) this.easeKey(current, target, followers, key as EmotionName, dt);
     for (const key in target) {
-      if (!(key in current)) this.easeKey(current, target, key as EmotionName, k);
+      if (!(key in current)) this.easeKey(current, target, followers, key as EmotionName, dt);
     }
   }
 
   private easeKey(
     current: EmotionVector,
     target: EmotionVector,
+    followers: Map<EmotionName, ScalarFollower>,
     key: EmotionName,
-    k: number,
+    dt: number,
   ): void {
-    const cur = current[key] ?? 0;
+    let follower = followers.get(key);
+    if (!follower) {
+      follower = new ScalarFollower(current[key] ?? 0);
+      followers.set(key, follower);
+    }
     const to = target[key] ?? 0;
-    const next = cur + (to - cur) * k;
-    if (next < 0.001 && to === 0) delete current[key];
-    else current[key] = next;
+    follower.step(to, dt, this.emotionRate);
+    if (follower.value < 0.001 && to === 0) {
+      delete current[key];
+      followers.delete(key);
+    } else {
+      // Critical damping can still overshoot a target that reverses; never below zero.
+      current[key] = Math.max(0, follower.value);
+    }
+  }
+
+  /** Rebuild a follower map from a vector that was just rewritten wholesale, at rest. */
+  #reseed(followers: Map<EmotionName, ScalarFollower>, vec: EmotionVector): void {
+    followers.clear();
+    for (const key in vec) {
+      followers.set(key as EmotionName, new ScalarFollower(vec[key as EmotionName] ?? 0));
+    }
   }
 
   // --- autopilot ---------------------------------------------------------
@@ -900,7 +965,7 @@ export class Director {
 
   private updatePreset(dt: number): void {
     const want = this.wantedPreset();
-    const k = 1 - Math.exp(-dt * PRESET_RATE);
+    const follow = this.#presetFollow;
 
     // Two authored faces cannot be crossfaded. They are finished drawings over
     // the same vertices, and adding one to the other lands somewhere neither of
@@ -913,12 +978,14 @@ export class Director {
       // leaves in one frame, which is how a drawn face changes anyway.
       if (this.swapsTheEye(this._preset)) {
         this._presetW = 0;
+        follow.reset(0);
         this._preset = null;
         return;
       }
-      this._presetW -= this._presetW * k;
+      this._presetW = Math.min(1, Math.max(0, follow.step(0, dt, PRESET_RATE)));
       if (this._presetW < 0.02) {
         this._presetW = 0;
+        follow.reset(0);
         this._preset = null;
       }
       return;
@@ -926,15 +993,17 @@ export class Director {
     if (!this._preset) {
       if (!want) {
         this._presetW = 0;
+        follow.reset(0);
         return;
       }
       this._preset = want.id;
     }
     if (this.swapsTheEye(this._preset)) {
       this._presetW = want?.w ?? 0;
+      follow.reset(this._presetW);
       return;
     }
-    this._presetW += ((want?.w ?? 0) - this._presetW) * k;
+    this._presetW = Math.min(1, Math.max(0, follow.step(want?.w ?? 0, dt, PRESET_RATE)));
   }
 
   /**
@@ -949,21 +1018,23 @@ export class Director {
     // and the slot empties, which is the whole of what this channel can do.
     const id = this.p.vrmEmotion[name as VrmEmotionName] ?? null;
     const w = Math.min(1, emotion[name] ?? 1);
-    const k = 1 - Math.exp(-dt * PRESET_RATE);
+    const follow = this.#vrmFollow;
     if (this._vrmPreset && id !== this._vrmPreset) {
-      this._vrmW -= this._vrmW * k;
+      this._vrmW = Math.min(1, Math.max(0, follow.step(0, dt, PRESET_RATE)));
       if (this._vrmW < 0.02) {
         this._vrmW = 0;
+        follow.reset(0);
         this._vrmPreset = null;
       }
       return;
     }
     if (!id) {
       this._vrmW = 0;
+      follow.reset(0);
       return;
     }
     this._vrmPreset = id;
-    this._vrmW += (w - this._vrmW) * k;
+    this._vrmW = Math.min(1, Math.max(0, follow.step(w, dt, PRESET_RATE)));
   }
 
   /**
@@ -1111,7 +1182,8 @@ export class Director {
     const blinkCtx = this._blinkCtx;
     blinkCtx.speaking = this.mouth.speaking;
     blinkCtx.suppressed = holdsEyesOpen(emotion);
-    this.#blink.droop = this.body.lids;
+    // Eyes turned down in the head lower the lids too, except while surprise holds them wide.
+    this.#blink.droop = Math.min(1, this.body.lids + (blinkCtx.suppressed ? 0 : this.body.gazeLid));
     this.#blink.update(dt, blinkCtx);
     const blink = this.#blink.weight;
     const preserveBlink = preset?.blink === 'preserve' && pw > 0.02;

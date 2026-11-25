@@ -338,7 +338,8 @@ describe('Director / declared preset composition', () => {
     expect(weight('OpenMouth')).toBeGreaterThan(0);
     expect(weight('OpenMouth')).toBeLessThan(0.02);
     expect(blinkWeight()).toBeGreaterThan(0);
-    step();
+    // The preset follower starts from rest, so it takes two frames past the threshold.
+    step(2);
     expect(weight('OpenMouth')).toBeGreaterThan(0.02);
     expect(director.blink).toBeGreaterThan(0);
     expect(blinkWeight()).toBe(0);

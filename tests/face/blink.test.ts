@@ -94,6 +94,45 @@ describe('blinkCurve', () => {
   });
 });
 
+describe('blinkCurve / opening tail', () => {
+  const old = (u: number): number =>
+    Math.cos(((u - BLINK_CLOSE) / (1 - BLINK_CLOSE)) * Math.PI * 0.5) ** 0.75;
+  const uAt = (x: number): number => BLINK_CLOSE + x * (1 - BLINK_CLOSE);
+
+  it('matches the original curve bit for bit before x = 0.75', () => {
+    for (let i = 0; i < 74; i++) {
+      const u = BLINK_CLOSE + (i / 100) * (1 - BLINK_CLOSE);
+      expect(blinkCurve(u)).toBe(old(u));
+    }
+  });
+
+  it('lands at zero speed', () => {
+    const e = 1e-4;
+    const slope = (blinkCurve(1) - blinkCurve(1 - e)) / e;
+    expect(Math.abs(slope)).toBeLessThan(1e-2);
+    expect(blinkCurve(1)).toBeCloseTo(0, 12);
+  });
+
+  it('falls monotonically through the whole opening', () => {
+    let prev = blinkCurve(BLINK_CLOSE);
+    for (let i = 1; i <= 400; i++) {
+      const w = blinkCurve(uAt(i / 400));
+      expect(w).toBeLessThanOrEqual(prev);
+      prev = w;
+    }
+  });
+
+  it('is continuous in value and slope at the seam', () => {
+    const x = 0.75;
+    const h = 1e-6;
+    const du = 1 - BLINK_CLOSE;
+    expect(blinkCurve(uAt(x + 1e-9))).toBeCloseTo(old(uAt(x)), 6);
+    const left = (blinkCurve(uAt(x - h)) - blinkCurve(uAt(x - 2 * h))) / (h * du);
+    const right = (blinkCurve(uAt(x + 2 * h)) - blinkCurve(uAt(x + h))) / (h * du);
+    expect(right).toBeCloseTo(left, 2);
+  });
+});
+
 describe('Blink / trigger and the minimum gap', () => {
   it('opens with the lids up and nothing in flight', () => {
     const blink = new Blink({ random: mulberry32(1) });
