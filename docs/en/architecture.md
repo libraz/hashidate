@@ -48,6 +48,8 @@ Face clearance adjusts the destination before the wrist travels toward it. The e
 
 An explicit `nod` performs one preparation, downstroke and recovery. Extending its hold does not repeat it. Automatic speech nods use phrase boundaries, following the observations in [Ishi et al. (2007)](https://www.isca-archive.org/interspeech_2007/ishi07_interspeech.pdf). They keep at least 0.6 seconds between starts across consecutive lines. A too-close or late beat is dropped rather than postponed; a nod already in flight finishes. An unpunctuated continuation does not invent a final phrase boundary, while explicit punctuation and the end of a turn remain eligible.
 
+A turn's clocks advance by the frame's real length: gesture time, nods, the gap between turns, the wait for a take, and a mouth with no take to sync to. The integrators (followers, sway, breath) stay on the capped frame step, so after a long frame the body catches up with the voice instead of staying late. A turn queued with an id draws its gesture variation, nod plan, phrase-break blinks and onset gaze aversion from streams seeded by that id, so every renderer playing the turn (preview, stage, OBS) performs it alike. Free-running blinks and gaze wander are not seeded.
+
 ## Next
 
 - [The control API](control-api.md)

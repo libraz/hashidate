@@ -44,6 +44,7 @@ import { PostStage } from '../post';
 import { DefaultRig } from '../rig';
 import { SlideStage } from '../slides';
 import { FOV, ShotCamera } from './camera';
+import { frameStep } from './clock';
 import { drawFrame } from './draw';
 import { buildHud, HUD_INTERVAL, type Hud } from './hud';
 import { disposeAvatar, disposeCore, disposeRawAvatar, type Mounted, mountAvatar } from './mount';
@@ -302,7 +303,7 @@ export class AvatarRuntime {
 
     // Opt into the Page Visibility API. Without this the timer is just a clock.
     this.timer.connect(document);
-    this.renderer.setAnimationLoop(() => this.tick());
+    this.renderer.setAnimationLoop((time) => this.tick(time));
   }
 
   /** The camera the scene is drawn through. */
@@ -997,14 +998,9 @@ export class AvatarRuntime {
 
   // --- frame loop -----------------------------------------------------------
 
-  private tick(): void {
+  private tick(time?: number): void {
     if (this.disposed) return;
-    this.timer.update();
-    // Capped at 50 ms whatever the frame took. Below 20 fps the simulation
-    // deliberately runs slow rather than integrating a step large enough to
-    // throw the sway chains, which is a far more visible failure than lag.
-    const elapsed = this.timer.getDelta();
-    const dt = Math.min(elapsed, 0.05);
+    const { dt, elapsed } = frameStep(this.timer, time);
     this.shotCamera.update();
     // A document is opened asynchronously and may never open at all, so the
     // moment it is actually up is not the moment it was asked for.
@@ -1024,7 +1020,7 @@ export class AvatarRuntime {
     if (cur) {
       // Before the director: a turn started this frame has to have its emotion
       // and gesture in place before the director composes the frame.
-      cur.session.update(dt);
+      cur.session.update(dt, elapsed);
       // A garment put on or taken off changes what the shots and the focus have to cover.
       const measured = this.measured;
       if (measured && !sameWorn(cur.wardrobe.state, measured.worn)) {
@@ -1037,6 +1033,7 @@ export class AvatarRuntime {
       // After the session, whose camera cue may have just cut to this shot.
       this.camera.getWorldPosition(this.camWorld);
       cur.director.update(dt, {
+        elapsed,
         headWorldTarget: this.camWorld,
         cameraCut: this.shotCamera.takeCut(),
       });
