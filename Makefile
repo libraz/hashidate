@@ -37,9 +37,7 @@ endif
 # HASHIDATE_VOICE_DIR moves both together.
 CLIPS    = $(TTS)/reference/clips
 
-.PHONY: help dev stop import textures glb \
-        voice tts-setup tts-vet tts-refs tts \
-        format format-check lint check-assets clean
+.PHONY: help dev stop format format-check lint check-assets clean
 
 help:
 	@echo "Model conversion and startup. Use yarn ctl for control."
@@ -182,92 +180,13 @@ stop:
 
 # ------------------------------------------------------------------- Model
 
-# A pack is data, so this runs no code a pack author wrote: the importer unpacks
-# the package and puts the pack's descriptor and profile in place, then the two
-# targets below build it as they would any other avatar.
-import:
-	@if [ -z "$(PACK)" ]; then python3 $(TOOLS)/import_pack.py $(PACKS); exit 0; fi; \
-	test -n "$(PACKAGE)" || { echo "usage: make $@ PACK=<id> PACKAGE=<path to the zip>" >&2; exit 2; }; \
-	python3 $(TOOLS)/import_pack.py $(PACKS) "$(PACK)" "$(PACKAGE)" $(AVATARS)
-	@if [ -n "$(PACK)" ]; then $(MAKE) --no-print-directory textures glb AVATAR=$(PACK); fi
-
-# Both targets read a profile rather than taking paths; see tools/blender.
-textures:
-	@test -n "$(AVATAR)" || { echo "usage: make $@ AVATAR=<id>" >&2; exit 2; }
-	@test -f $(PROFILE) || { echo "no export profile: $(PROFILE)" >&2; exit 2; }
-	python3 $(TOOLS)/textures.py $(PROFILE)
-
-# Run the export script and show only its markers and errors. The filter must not
-# hide the exit status, so Blender writes to a log first: the target fails on a
-# non-zero exit, on a missing EXPORTED marker, or on an absent output file.
-define blender-export
-log=$$(mktemp); \
-$(BLENDER) -b --python-exit-code 1 -P $(TOOLS)/export_glb.py $(2) >"$$log" 2>&1; rc=$$?; \
-grep -E '^@@@|Error' "$$log" || true; \
-if [ $$rc -ne 0 ] || ! grep -q '^@@@ EXPORTED' "$$log" || [ ! -s $(1) ]; then \
-	echo "glb export failed (blender exit $$rc): $(1)" >&2; rm -f "$$log"; exit 1; \
-fi; \
-rm -f "$$log"
-endef
-
-glb:
-	@test -n "$(AVATAR)" || { echo "usage: make $@ AVATAR=<id>" >&2; exit 2; }
-	@test -f $(PROFILE) || { echo "no export profile: $(PROFILE)" >&2; exit 2; }
-	mkdir -p $(OUT)
-	@$(call blender-export,$(OUT)/$(AVATAR).glb,-- --profile $(PROFILE) $(OUT)/$(AVATAR).glb)
-	python3 $(TOOLS)/toon_textures.py $(PROFILE) $(AVATARS)/$(AVATAR).json $(OUT)/$(AVATAR)
+# Recipes live in the fragment.
+include tools/blender/import.mk
 
 # -------------------------------------------------------------------- Speech
 
-# Everything the voice needs, in one command: put WAV clips in $(CLIPS) and run
-# this. It builds the Python environment if there is not one, then encodes the
-# clips into the latents the sidecar loads at startup.
-#
-# Both halves are safe to repeat. The environment is skipped when it already
-# exists, so re-running after adding a clip only redoes the encoding, which is
-# the part that is actually cheap.
-#
-# The clips themselves are the one thing that cannot be automated: they are
-# recordings of whoever the voice is supposed to be, and nobody else's are a
-# substitute.
-voice:
-	@if [ -z "$$HASHIDATE_VOICE_DIR" ] && [ -z "$$(ls $(CLIPS)/*.wav 2>/dev/null)" ] \
-	   && [ -z "$$(ls backup/voice/clips/*.wav 2>/dev/null)" ]; then \
-		echo "no reference clips in $(CLIPS)"; \
-		echo ""; \
-		echo "Put WAV files of the voice there and run this again. Clean speech, one"; \
-		echo "speaker, no music and no second voice. A minute or two is enough — this"; \
-		echo "is a reference, not a training set."; \
-		echo ""; \
-		echo "HASHIDATE_VOICE_DIR points all of this somewhere else."; \
-		exit 1; \
-	fi
-	@if [ ! -x $(TTS)/.venv/bin/python ]; then \
-		echo "no speech environment yet, building it first"; \
-		$(MAKE) tts-setup; \
-	fi
-	cd $(TTS) && .venv/bin/python refs.py
-
-# Irodori-TTS is installed straight from upstream. It carries torch, so it comes
-# to around 3 GB. Python 3.11 is libsonare's requirement (upstream TTS is happy
-# with anything from 3.10 up). Completely separate from the Node-side environment.
-tts-setup:
-	cd $(TTS) && uv venv --python 3.11 .venv
-	cd $(TTS) && uv pip install --python .venv -r pyproject.toml
-
-# Inspection of the reference clips. For when only a check is wanted, without
-# building latents. tts-refs runs the same inspection internally and stops if any
-# clip failed it.
-tts-vet:
-	cd $(TTS) && .venv/bin/python vet.py
-
-# The encoding half of `voice`, on its own, for when the environment is known to
-# be there and only the clips have changed.
-tts-refs:
-	cd $(TTS) && .venv/bin/python refs.py
-
-tts:
-	cd $(TTS) && .venv/bin/python server.py
+# Recipes live in the fragment.
+include tools/tts/speech.mk
 
 # ------------------------------------------------------------------ Common
 
