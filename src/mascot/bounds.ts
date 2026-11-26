@@ -1,3 +1,4 @@
+import { SHOT_LIMITS, type ShotAngle, wrapYaw } from '../engine/types/staging';
 import { type DisplayInfo, displayUnder } from '../shell/displays';
 import {
   MASCOT_SCALE_MAX,
@@ -29,7 +30,10 @@ export const WIDTH_RATIO = 0.45;
 /** How far a mascot in a corner stands from the edges of the work area, in pixels. */
 export const EDGE_MARGIN = 16;
 
-/** One step of size, and the number of them in a unit: sizes are kept on this grid. */
+/**
+ * One step of size, and the number of them in a unit. The grid is where the
+ * menu's steps land, not an invariant of a saved size.
+ */
 export const SCALE_STEP = 0.05;
 const STEPS_PER_UNIT = 20;
 
@@ -57,6 +61,11 @@ export type MascotAction =
   /** The window was dragged, and is now here. */
   | { type: 'move'; bounds: WindowBounds }
   | { type: 'stepScale'; dir: 1 | -1 }
+  /** A continuous resize by a factor. */
+  | { type: 'scaleBy'; factor: number }
+  /** The character turned to face this way. */
+  | { type: 'turn'; angle: ShotAngle }
+  | { type: 'faceFront' }
   /** A mode chosen from a menu. */
   | { type: 'mode'; mode: MascotMode }
   | { type: 'reset' };
@@ -199,20 +208,47 @@ function moved(
   };
 }
 
-function scaled(state: MascotState, dir: 1 | -1, displays: readonly DisplayInfo[]): MascotState {
+/** The state at a new size: a corner holds itself, and in the open the feet stay put. */
+function rescaled(
+  state: MascotState,
+  scale: number,
+  displays: readonly DisplayInfo[],
+): MascotState {
   if (state.mode === 'full') {
-    return dir === 1 ? state : { ...state, mode: RESET_MODE, scale: BELOW_FULL_SCALE };
+    return scale >= MASCOT_SCALE_MAX ? state : { ...state, mode: RESET_MODE, scale };
   }
-  const scale = step(state.scale, dir);
   if (scale === state.scale) return state;
-  // A corner holds itself. In the open the feet stay put, unless the new size
-  // no longer fits there — then the point it was pushed back to is the one kept.
+  // Unless the new size no longer fits there — then the point it was pushed back to is the one kept.
   const home = state.mode === 'free' && state.saved !== undefined ? homeOf(state, displays) : null;
   if (home === null || state.saved === undefined) return { ...state, scale };
   return {
     ...state,
     scale,
     saved: { ...settle(state.saved, scale, home), display: keyOf(home) },
+  };
+}
+
+function scaled(state: MascotState, dir: 1 | -1, displays: readonly DisplayInfo[]): MascotState {
+  if (state.mode === 'full') {
+    return rescaled(state, dir === 1 ? MASCOT_SCALE_MAX : BELOW_FULL_SCALE, displays);
+  }
+  return rescaled(state, step(state.scale, dir), displays);
+}
+
+function scaledBy(
+  state: MascotState,
+  factor: number,
+  displays: readonly DisplayInfo[],
+): MascotState {
+  // The full height is the largest size, so from there a factor is taken against that.
+  const base = state.mode === 'full' ? MASCOT_SCALE_MAX : state.scale;
+  return rescaled(state, clamp(base * factor, MASCOT_SCALE_MIN, MASCOT_SCALE_MAX), displays);
+}
+
+function turned(state: MascotState, { yaw, pitch }: ShotAngle): MascotState {
+  return {
+    ...state,
+    angle: { yaw: wrapYaw(yaw), pitch: clamp(pitch, SHOT_LIMITS.pitch.min, SHOT_LIMITS.pitch.max) },
   };
 }
 
@@ -250,6 +286,14 @@ export function nextMascotState(
       return moved(state, action.bounds, displays);
     case 'stepScale':
       return scaled(state, action.dir, displays);
+    case 'scaleBy':
+      return scaledBy(state, action.factor, displays);
+    case 'turn':
+      return turned(state, action.angle);
+    case 'faceFront': {
+      const { angle: _front, ...rest } = state;
+      return rest;
+    }
     case 'mode':
       return switched(state, action.mode, displays);
     case 'reset':

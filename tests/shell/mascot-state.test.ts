@@ -102,6 +102,60 @@ describe('what counts as a mascot placement', () => {
   });
 });
 
+describe('the direction a mascot faces', () => {
+  const withAngle = (angle: unknown) =>
+    isValidMascotState({ mode: 'free', scale: 0.5, muted: false, angle });
+
+  it('takes a missing angle, the front, and both ends of each range', () => {
+    expect(isValidMascotState({ mode: 'free', scale: 0.5, muted: false })).toBe(true);
+    for (const angle of [
+      { yaw: 0, pitch: 0 },
+      { yaw: 180, pitch: 85 },
+      { yaw: -180, pitch: -85 },
+      { yaw: 10, pitch: 5, zoom: 2 },
+    ]) {
+      expect(withAngle(angle), JSON.stringify(angle)).toBe(true);
+    }
+  });
+
+  it('refuses an angle that is not whole or is past the wire limits', () => {
+    for (const bad of [
+      null,
+      'front',
+      {},
+      { yaw: 10 },
+      { pitch: 10 },
+      { yaw: null, pitch: 0 },
+      { yaw: '10', pitch: 0 },
+      { yaw: Number.NaN, pitch: 0 },
+      { yaw: 0, pitch: Number.POSITIVE_INFINITY },
+      { yaw: 180.0001, pitch: 0 },
+      { yaw: -180.0001, pitch: 0 },
+      { yaw: 0, pitch: 85.0001 },
+      { yaw: 0, pitch: -85.0001 },
+    ]) {
+      expect(withAngle(bad), JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it('comes back as it was written, and a bad one drops the whole placement', () => {
+    const turned: MascotState = { ...SAVED, angle: { yaw: -120, pitch: 30 } };
+    new ShellState(file).setMascot(turned);
+    expect(new ShellState(file).mascot).toEqual(turned);
+
+    writeFileSync(
+      file,
+      JSON.stringify({
+        windows: {},
+        stageMuted: false,
+        mascot: { ...SAVED, angle: { yaw: 181, pitch: 0 } },
+      }),
+      'utf8',
+    );
+    expect(new ShellState(file).mascot).toBeNull();
+  });
+});
+
 describe('the mascot in the settings file', () => {
   it('is absent until one has been placed', () => {
     expect(new ShellState(file).mascot).toBeNull();

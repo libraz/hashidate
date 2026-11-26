@@ -1,11 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  dragShot,
-  SHOT_INTERVAL,
-  throttleShots,
-  wheelShot,
-  wrapYaw,
-} from '@/panel/preview/shot-drag';
+import { dragShot, SHOT_INTERVAL, throttleShots, wheelShot } from '@/panel/preview/shot-drag';
 import type { Shot } from '@/protocol';
 
 /**
@@ -48,16 +42,6 @@ describe('dragShot', () => {
       expect(moved.zoom).toBe(1);
     },
   );
-});
-
-describe('wrapYaw', () => {
-  it('lands in (-180, 180]', () => {
-    expect(wrapYaw(180)).toBe(180);
-    expect(wrapYaw(-180)).toBe(180);
-    expect(wrapYaw(190)).toBe(-170);
-    expect(wrapYaw(-190)).toBe(170);
-    expect(wrapYaw(720)).toBe(0);
-  });
 });
 
 describe('wheelShot', () => {

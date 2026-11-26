@@ -580,3 +580,101 @@ describe('each transition, in figures', () => {
     expect(placeMascot(next, displays)).toEqual(mascotBounds('bottom-left', 0.5, target));
   });
 });
+
+describe('a continuous resize', () => {
+  const { displays, target } = desk('internal', 'bottom');
+  const at = (mode: MascotMode, scale: number, saved?: MascotSaved): MascotState => ({
+    mode,
+    scale,
+    muted: false,
+    ...(saved ? { saved } : {}),
+  });
+  const by = (state: MascotState, factor: number) =>
+    nextMascotState(state, { type: 'scaleBy', factor }, displays);
+
+  it('multiplies the size and keeps the corner', () => {
+    expect(by(at('bottom-left', 0.5), 1.2)).toEqual(at('bottom-left', 0.5 * 1.2));
+  });
+
+  it('stops at each end of the range and then changes nothing', () => {
+    expect(by(at('bottom-right', 0.5), 0.1).scale).toBe(0.25);
+    expect(by(at('bottom-right', 0.5), 10).scale).toBe(1);
+    const small = at('bottom-right', 0.25);
+    expect(by(small, 0.5)).toBe(small);
+    const large = at('bottom-right', 1);
+    expect(by(large, 2)).toBe(large);
+  });
+
+  it('returns the same state for a factor of 1', () => {
+    for (const mode of ['full', 'bottom-right', 'free'] as const) {
+      const state = at(mode, 0.6);
+      expect(by(state, 1)).toBe(state);
+    }
+  });
+
+  it('leaves the full height alone when growing and steps down into the corner when shrinking', () => {
+    const full = at('full', 0.5);
+    expect(by(full, 1)).toBe(full);
+    expect(by(full, 1.5)).toBe(full);
+    expect(by(full, 0.8)).toEqual(at('bottom-right', 0.8));
+    expect(by(full, 0.1)).toEqual(at('bottom-right', 0.25));
+  });
+
+  it('keeps the feet in the open and the pushed-back point when the size no longer fits', () => {
+    const saved = { x: 700, y: 800, display: keyOf(target) };
+    expect(by(at('free', 0.5, saved), 0.8)).toEqual(at('free', 0.5 * 0.8, saved));
+    const edge = { x: 700, y: 400, display: keyOf(target) };
+    const grown = by(at('free', 0.5, edge), 2);
+    expect(grown.scale).toBe(1);
+    expect(grown.saved?.y).toBe(25 + 871);
+  });
+
+  it('does not match the menu steps off the grid and lands on it again at the next step', () => {
+    const off = by(at('bottom-right', 0.5), 1.04);
+    expect(off.scale).toBeCloseTo(0.52, 12);
+    expect(nextMascotState(off, { type: 'stepScale', dir: 1 }, displays).scale).toBe(0.55);
+  });
+});
+
+describe('the direction the character faces', () => {
+  const { displays, target } = desk('internal', 'bottom');
+  const base: MascotState = {
+    mode: 'free',
+    scale: 0.5,
+    muted: true,
+    saved: { x: 700, y: 800, display: keyOf(target) },
+  };
+  const turn = (state: MascotState, yaw: number, pitch: number) =>
+    nextMascotState(state, { type: 'turn', angle: { yaw, pitch } }, displays);
+
+  it('wraps the yaw and stops the pitch where the wire does', () => {
+    expect(turn(base, 270, 90).angle).toEqual({ yaw: -90, pitch: 85 });
+    expect(turn(base, -180, -100).angle).toEqual({ yaw: 180, pitch: -85 });
+    expect(turn(base, -0, 10).angle?.yaw).toBe(0);
+    expect(turn(base, 45, -30).angle).toEqual({ yaw: 45, pitch: -30 });
+  });
+
+  it('touches nothing else, and nothing else touches it', () => {
+    const turned = turn(base, 20, 10);
+    expect({ ...turned, angle: undefined }).toEqual({ ...base, angle: undefined });
+    for (const action of [
+      { type: 'reset' },
+      { type: 'stepScale', dir: -1 },
+      { type: 'scaleBy', factor: 0.8 },
+      { type: 'mode', mode: 'bottom-left' },
+    ] as const) {
+      expect(nextMascotState(turned, action, displays).angle, action.type).toEqual({
+        yaw: 20,
+        pitch: 10,
+      });
+    }
+  });
+
+  it('faces front by dropping the angle, and is a no-op where there is none', () => {
+    const turned = turn(base, 20, 10);
+    const front = nextMascotState(turned, { type: 'faceFront' }, displays);
+    expect(front).toEqual(base);
+    expect('angle' in front).toBe(false);
+    expect(nextMascotState(base, { type: 'faceFront' }, displays)).toEqual(base);
+  });
+});

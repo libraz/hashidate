@@ -169,6 +169,7 @@ const handlers: MascotMenuHandlers = {
   setAvatar: (id) => void send({ cmd: 'avatar', id }),
   setOutfit: (id) => void send({ cmd: 'wear', preset: id }),
   setMuted,
+  faceFront: () => apply({ type: 'faceFront' }),
   resetPosition: () => apply({ type: 'reset' }),
   quit: () => app.quit(),
 };

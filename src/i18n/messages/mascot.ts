@@ -21,6 +21,7 @@ export const mascotEn = {
   'mascot.outfit': 'Outfit',
   'mascot.outfit.none': 'No outfits',
   'mascot.mute': 'Mute',
+  'mascot.faceFront': 'Face Front',
   'mascot.resetPosition': 'Reset Position',
   'mascot.quit': 'Quit',
 } as const;
@@ -42,6 +43,7 @@ export const mascotJa: Record<keyof typeof mascotEn, string> = {
   'mascot.outfit': '衣装',
   'mascot.outfit.none': '衣装がありません',
   'mascot.mute': '黙らせる',
+  'mascot.faceFront': '正面を向く',
   'mascot.resetPosition': '位置を戻す',
   'mascot.quit': '終了',
 };

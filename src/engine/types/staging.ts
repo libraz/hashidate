@@ -109,6 +109,15 @@ export const SHOT_LIMITS = {
   zoom: { min: 0.25, max: 4 },
 } as const;
 
+/** A shot's direction alone: the two numbers a window keeps for itself. */
+export type ShotAngle = Required<Pick<Shot, 'yaw' | 'pitch'>>;
+
+/** Into (-180, 180], where a bearing read back off a camera lands. */
+export function wrapYaw(degrees: number): number {
+  const wrapped = ((((degrees + 180) % 360) + 360) % 360) - 180;
+  return wrapped === -180 ? 180 : wrapped;
+}
+
 /** Where in the output frame a layer sits. Nine positions, as a grid. */
 export type Anchor =
   | 'center'

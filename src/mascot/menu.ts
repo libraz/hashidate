@@ -42,6 +42,7 @@ export interface MascotMenuHandlers {
   setAvatar(id: string): void;
   setOutfit(id: string): void;
   setMuted(muted: boolean): void;
+  faceFront(): void;
   resetPosition(): void;
   quit(): void;
 }
@@ -160,7 +161,7 @@ export function trayMenu(
   ];
 }
 
-/** The right-click on the character: display mode, size, outfit, reset position, hide. */
+/** The right-click on the character: display mode, size, outfit, face front, reset position, hide. */
 export function contextMenu(
   model: MascotMenuModel,
   handlers: MascotMenuHandlers,
@@ -178,6 +179,7 @@ export function contextMenu(
       handlers.setOutfit,
     ),
     { type: 'separator' },
+    { label: translate('mascot.faceFront', locale), click: () => handlers.faceFront() },
     { label: translate('mascot.resetPosition', locale), click: () => handlers.resetPosition() },
     { label: translate('mascot.hide', locale), click: () => handlers.setVisible(false) },
   ];

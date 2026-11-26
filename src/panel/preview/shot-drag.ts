@@ -1,4 +1,4 @@
-import { SHOT_LIMITS } from '@/engine/types';
+import { SHOT_LIMITS, wrapYaw } from '@/engine/types';
 import type { Shot } from '@/protocol';
 
 /**
@@ -26,12 +26,6 @@ export const SHOT_INTERVAL = 100;
 
 const clamp = (value: number, { min, max }: { min: number; max: number }): number =>
   Math.min(max, Math.max(min, value));
-
-/** Into (-180, 180], where a bearing read back off a camera lands. */
-export function wrapYaw(degrees: number): number {
-  const wrapped = ((((degrees + 180) % 360) + 360) % 360) - 180;
-  return wrapped === -180 ? 180 : wrapped;
-}
 
 /**
  * Where a drag of `dx`, `dy` CSS pixels over a picture `height` tall puts the

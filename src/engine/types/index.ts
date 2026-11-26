@@ -143,10 +143,11 @@ export type {
   Placement,
   PlacementReport,
   Shot,
+  ShotAngle,
   SlidePlacement,
   SlideReport,
   Staging,
 } from './staging';
-export { PLACEMENT_LIMITS, SHOT_LIMITS } from './staging';
+export { PLACEMENT_LIMITS, SHOT_LIMITS, wrapYaw } from './staging';
 export type { Cue, Take, Turn, TurnRequest } from './turn';
 export type { VoiceChainRequest, VoiceReport } from './voice';

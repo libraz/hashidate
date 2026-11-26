@@ -1,4 +1,5 @@
 import { readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { SHOT_LIMITS, type ShotAngle } from '../engine/types/staging';
 import type { WindowBounds } from './types';
 
 /**
@@ -104,6 +105,8 @@ export interface MascotState {
   /** Whether the mascot opens silent. See `mascotPageURL`. */
   muted: boolean;
   saved?: MascotSaved;
+  /** Which way the character faces; absent is the front. */
+  angle?: ShotAngle;
 }
 
 function isValidMascotSaved(value: unknown): value is MascotSaved {
@@ -126,17 +129,33 @@ function isValidMascotSaved(value: unknown): value is MascotSaved {
   );
 }
 
+function isValidMascotAngle(value: unknown): value is ShotAngle {
+  if (typeof value !== 'object' || value === null) return false;
+  const { yaw, pitch } = value as Partial<Record<keyof ShotAngle, unknown>>;
+  return (
+    typeof yaw === 'number' &&
+    typeof pitch === 'number' &&
+    Number.isFinite(yaw) &&
+    Number.isFinite(pitch) &&
+    yaw >= SHOT_LIMITS.yaw.min &&
+    yaw <= SHOT_LIMITS.yaw.max &&
+    pitch >= SHOT_LIMITS.pitch.min &&
+    pitch <= SHOT_LIMITS.pitch.max
+  );
+}
+
 /** A placement read off disk is used whole or not at all. */
 export function isValidMascotState(value: unknown): value is MascotState {
   if (typeof value !== 'object' || value === null) return false;
-  const { mode, scale, muted, saved } = value as Partial<Record<keyof MascotState, unknown>>;
+  const { mode, scale, muted, saved, angle } = value as Partial<Record<keyof MascotState, unknown>>;
   return (
     (MASCOT_MODES as readonly unknown[]).includes(mode) &&
     typeof scale === 'number' &&
     scale >= MASCOT_SCALE_MIN &&
     scale <= MASCOT_SCALE_MAX &&
     typeof muted === 'boolean' &&
-    (saved === undefined || isValidMascotSaved(saved))
+    (saved === undefined || isValidMascotSaved(saved)) &&
+    (angle === undefined || isValidMascotAngle(angle))
   );
 }
 
