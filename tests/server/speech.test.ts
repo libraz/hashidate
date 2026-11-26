@@ -5,6 +5,7 @@ import { Hub } from '@/server/hub';
 import {
   forgetTakes,
   handleSpeech,
+  parseSpeechRequest,
   SpeechWatch,
   speak,
   TAKE_MAX,
@@ -525,5 +526,34 @@ describe('an HTTP renderer that goes away mid-synthesis', () => {
 
     expect(asked).not.toHaveBeenCalled();
     expect(res.listenerCount('close')).toBe(0);
+  });
+});
+
+describe('what counts as a line to speak', () => {
+  it('takes a non-empty text, with or without a reading', () => {
+    expect(parseSpeechRequest({ text: 'こんにちは' })).toEqual({ text: 'こんにちは' });
+    expect(parseSpeechRequest({ text: '今日', reading: 'きょう' })).toEqual({
+      text: '今日',
+      reading: 'きょう',
+    });
+  });
+
+  it('refuses anything else', () => {
+    for (const body of [
+      null,
+      'text',
+      42,
+      [],
+      {},
+      { text: '' },
+      { text: 1 },
+      { text: 'a', reading: 2 },
+    ]) {
+      expect(parseSpeechRequest(body)).toBeNull();
+    }
+  });
+
+  it('drops fields it does not know', () => {
+    expect(parseSpeechRequest({ text: 'a', voice: 'x' })).toEqual({ text: 'a' });
   });
 });

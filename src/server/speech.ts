@@ -295,7 +295,12 @@ function refusal(status: number, error: string): Take {
   };
 }
 
-const parse = (body: unknown): SpeechRequest | null => {
+/**
+ * The body of `POST /api/speech`, or null when it is not one: a non-empty
+ * `text` and, optionally, a string `reading`. Exported so a process that answers
+ * the same route without this server validates it by the same rule.
+ */
+export const parseSpeechRequest = (body: unknown): SpeechRequest | null => {
   if (typeof body !== 'object' || body === null) return null;
   const { text, reading } = body as { text?: unknown; reading?: unknown };
   if (typeof text !== 'string' || text === '') return null;
@@ -322,7 +327,7 @@ const fail = (res: ServerResponse, status: number, error: string): void => {
  * is the only source of it.
  */
 export async function handleSpeech(res: ServerResponse, body: unknown): Promise<void> {
-  const request = parse(body);
+  const request = parseSpeechRequest(body);
   if (!request) return fail(res, 400, 'speech needs a non-empty text');
 
   const controller = new AbortController();
