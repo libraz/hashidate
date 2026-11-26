@@ -18,8 +18,10 @@ import type { WindowBounds } from '../shell/types';
  * `screen.getAllDisplays()` with the primary display first, and applies the
  * rectangle it is given. A size is a share of the height the display leaves
  * between the menu bar and the dock, so the same setting reads the same on a
- * laptop and on the monitor beside it. A window taller than the work area is
- * lined up with its top and its feet hang below; its display is the one its head is on.
+ * laptop and on the monitor beside it. In a corner a window taller than the work
+ * area is lined up with its top and its feet hang below; in the open it stays
+ * where it was dropped while its head is on a work area. Its display is the one
+ * its head is on.
  */
 
 /**
@@ -28,6 +30,12 @@ import type { WindowBounds } from '../shell/types';
  * pixel of the window is one the pointer has to be tested against.
  */
 export const WIDTH_RATIO = 0.45;
+
+/**
+ * The head point is the window's horizontal centre, this share of its height
+ * below its top.
+ */
+export const HEAD_DEPTH = 0.08;
 
 /** How far a mascot in a corner stands from the edges of the work area, in pixels. */
 export const EDGE_MARGIN = 16;
@@ -97,16 +105,30 @@ function footOf(bounds: WindowBounds): Point {
 }
 
 /**
- * A foot point moved the least it has to be for the window to stand inside the
- * work area. A window taller than it keeps its top at the work area's top.
+ * A foot point moved the least it has to be for the head point to lie in the
+ * closed work area, on whole pixels that keep it there. A head already inside
+ * leaves the foot as it is; the rest of the window may hang outside.
  */
-function settle(foot: Point, scale: number, display: DisplayInfo): Point {
+function reach(foot: Point, scale: number, display: DisplayInfo): Point {
   const area = display.workArea;
-  const { width, height } = sizeAt(scale, display);
+  const { height } = sizeAt(scale, display);
+  const headY = (y: number): number => y - height + height * HEAD_DEPTH;
   return {
-    x: clamp(foot.x, area.x + width / 2, area.x + area.width - width / 2),
-    y: clamp(foot.y, area.y + height, area.y + area.height),
+    x: pull(foot.x, (x) => x, area.x, area.x + area.width),
+    y: pull(foot.y, headY, area.y, area.y + area.height),
   };
+}
+
+/** One axis of `reach`: `headOf` maps a foot coordinate to its head's. */
+function pull(foot: number, headOf: (foot: number) => number, low: number, high: number): number {
+  const head = headOf(foot);
+  if (head >= low && head <= high) return foot;
+  const target = head < low ? low : high;
+  let landed = Math.round(foot + (target - head));
+  // Rounding may land a hair outside: step back in, by whole pixels.
+  while (headOf(landed) < low) landed += 1;
+  while (headOf(landed) > high) landed -= 1;
+  return landed;
 }
 
 const keyOf = ({ id, label, bounds }: DisplayInfo): MascotSaved['display'] => ({
@@ -136,7 +158,7 @@ export function mascotBounds(
   }
   const { width, height } = sizeAt(scale, display);
   if (mode === 'free' && saved !== undefined) {
-    const foot = settle(saved, scale, display);
+    const foot = reach(saved, scale, display);
     return { x: Math.round(foot.x - width / 2), y: Math.round(foot.y - height), width, height };
   }
   return {
@@ -194,8 +216,8 @@ export function placeMascot(state: MascotState, displays: readonly DisplayInfo[]
 }
 
 /**
- * The display a window belongs to: the one its top-centre point is on, so a
- * tall window hanging below one display stays with the display of its head.
+ * The display a window belongs to: the one its head point is on, so a tall
+ * window hanging below one display stays with the display of its head.
  * Failing that the one its centre is over, then the primary.
  */
 export function mascotDisplayOf(
@@ -203,7 +225,7 @@ export function mascotDisplayOf(
   displays: readonly DisplayInfo[],
 ): DisplayInfo | undefined {
   const x = bounds.x + bounds.width / 2;
-  const y = bounds.y;
+  const y = bounds.y + bounds.height * HEAD_DEPTH;
   return (
     displays.find(
       ({ bounds: b }) => x >= b.x && x < b.x + b.width && y >= b.y && y < b.y + b.height,
@@ -234,7 +256,7 @@ function moved(
     ...state,
     mode: 'free',
     scale,
-    saved: { ...settle(footOf(bounds), scale, display), display: keyOf(display) },
+    saved: { ...reach(footOf(bounds), scale, display), display: keyOf(display) },
   };
 }
 
@@ -248,13 +270,13 @@ function rescaled(
     return scale === MASCOT_SCALE_FULL ? state : { ...state, mode: RESET_MODE, scale };
   }
   if (scale === state.scale) return state;
-  // Unless the new size no longer fits there — then the point it was pushed back to is the one kept.
+  // Unless the head no longer fits there — then the point it was pushed back to is the one kept.
   const home = state.mode === 'free' && state.saved !== undefined ? homeOf(state, displays) : null;
   if (home === null || state.saved === undefined) return { ...state, scale };
   return {
     ...state,
     scale,
-    saved: { ...settle(state.saved, scale, home), display: keyOf(home) },
+    saved: { ...reach(state.saved, scale, home), display: keyOf(home) },
   };
 }
 
@@ -297,7 +319,7 @@ function switched(
     ...state,
     mode,
     scale,
-    saved: { ...settle(foot, scale, primary), display: keyOf(primary) },
+    saved: { ...reach(foot, scale, primary), display: keyOf(primary) },
   };
 }
 

@@ -144,11 +144,30 @@ function ruleCorner(area: DisplayBounds, scale: number, side: 'left' | 'right'):
   };
 }
 
+/** The head point stands this share of the window's height below its top. */
+const DEPTH = 0.08;
+
+/** The foot point's head, for a window of this height. */
+const headOfFoot = (foot: { x: number; y: number }, height: number) => ({
+  x: foot.x,
+  y: foot.y - height + height * DEPTH,
+});
+
+function headInside(head: { x: number; y: number }, area: DisplayBounds): boolean {
+  return (
+    head.x >= area.x &&
+    head.x <= area.x + area.width &&
+    head.y >= area.y &&
+    head.y <= area.y + area.height
+  );
+}
+
 function ruleFree(area: DisplayBounds, scale: number, foot: { x: number; y: number }) {
   const { width, height } = sized(area, scale);
+  const reached = ruleReach(area, scale, foot);
   return {
-    x: clamp(Math.round(foot.x - width / 2), area.x, area.x + area.width - width),
-    y: clamp(Math.round(foot.y - height), area.y, area.y + area.height - height),
+    x: Math.round(reached.x - width / 2),
+    y: Math.round(reached.y - height),
     width,
     height,
   };
@@ -156,12 +175,21 @@ function ruleFree(area: DisplayBounds, scale: number, foot: { x: number; y: numb
 
 const footOf = (rect: WindowBounds) => ({ x: rect.x + rect.width / 2, y: rect.y + rect.height });
 
-/** A saved point moved the least it has to be for the mascot to stand wholly inside. */
-function ruleSettle(area: DisplayBounds, scale: number, foot: { x: number; y: number }) {
-  const { width, height } = sized(area, scale);
+/**
+ * A saved point moved the least it has to be for its head to lie in the closed
+ * work area, on whole pixels; a head already inside leaves it where it is.
+ */
+function ruleReach(area: DisplayBounds, scale: number, foot: { x: number; y: number }) {
+  const { height } = sized(area, scale);
+  const below = height - height * DEPTH;
+  const pull = (value: number, behind: number, low: number, high: number) => {
+    if (value - behind < low) return Math.ceil(low + behind);
+    if (value - behind > high) return Math.floor(high + behind);
+    return value;
+  };
   return {
-    x: clamp(foot.x, area.x + width / 2, area.x + area.width - width / 2),
-    y: clamp(foot.y, area.y + height, area.y + area.height),
+    x: pull(foot.x, 0, area.x, area.x + area.width),
+    y: pull(foot.y, below, area.y, area.y + area.height),
   };
 }
 
@@ -231,10 +259,15 @@ describe('where the mascot is put', () => {
 
     expect(placed).toEqual(rulePlace(state, scene, found));
     const home = saved !== undefined && found ? scene.target : (scene.displays[0] as DisplayInfo);
-    if (placed.height <= home.workArea.height) {
+    if (mode === 'free' && saved !== undefined && found) {
+      // In the open only the head has to be on the work area; the rest may hang over.
+      const foot = ruleReach(home.workArea, scale, saved);
+      expect(headInside(headOfFoot(foot, placed.height), home.workArea)).toBe(true);
+      expect(footOf(placed).y).toBe(foot.y);
+    } else if (placed.height <= home.workArea.height) {
       expect(inside(placed, home.workArea)).toBe(true);
     } else {
-      // Taller than the work area: top-aligned, feet below, and still within the sides.
+      // A corner taller than the work area: top-aligned, feet below, and still within the sides.
       expect(placed.y).toBe(home.workArea.y);
       expect(placed.x).toBeGreaterThanOrEqual(home.workArea.x);
       expect(placed.x + placed.width).toBeLessThanOrEqual(home.workArea.x + home.workArea.width);
@@ -279,19 +312,38 @@ describe('the rectangle of each mode, in figures', () => {
     });
   });
 
-  it('is pushed back inside the work area, not left hanging over its edge', () => {
+  it('is moved only as far as its head needs to stay on the work area', () => {
     expect(mascotBounds('free', 0.5, screen, { x: 5000, y: 5000 })).toEqual({
-      x: 1316,
-      y: 476,
+      x: 1414,
+      y: 877,
       width: 196,
       height: 436,
     });
     expect(mascotBounds('free', 0.5, screen, { x: -5000, y: -5000 })).toEqual({
-      x: 0,
-      y: 25,
+      x: -98,
+      y: -9,
       width: 196,
       height: 436,
     });
+  });
+
+  it('accepts a placement where only the head is on a work area', () => {
+    // The feet hang 288 px below the work area's bottom edge; the head, 35 px below the top, is on it.
+    const saved = { x: 700, y: 1200 };
+    const placed = mascotBounds('free', 0.5, screen, saved);
+    expect(placed).toEqual({ x: 602, y: 764, width: 196, height: 436 });
+    expect(placed.y + placed.height).toBeGreaterThan(screen.workArea.y + screen.workArea.height);
+    const state: MascotState = { mode: 'bottom-right', scale: 0.5, muted: false };
+    const dropped = nextMascotState(state, { type: 'move', bounds: placed }, [screen]);
+    expect(dropped.saved).toEqual({ ...saved, display: keyOf(screen) });
+  });
+
+  it('puts the head on the work area edge when it is off every display', () => {
+    const bounds = { x: 5000, y: -3000, width: 196, height: 436 };
+    const state: MascotState = { mode: 'free', scale: 0.5, muted: false };
+    const next = nextMascotState(state, { type: 'move', bounds }, [screen]);
+    // The head would be at 24.88 with the foot one pixel higher, which is outside.
+    expect(next.saved).toEqual({ x: 1512, y: 427, display: keyOf(screen) });
   });
 
   it('is 0.45 as wide as it is tall at every size', () => {
@@ -397,7 +449,7 @@ function ruleNext(
     case 'move': {
       // A mascot filling the height keeps that size when it is dragged out.
       const scale = state.mode === 'full' ? 1 : state.scale;
-      const foot = ruleSettle(area, scale, footOf(dragged(scene)));
+      const foot = ruleReach(area, scale, footOf(dragged(scene)));
       return {
         state: { ...state, mode: 'free', scale, saved: { ...foot, display: keyOf(scene.target) } },
         found: true,
@@ -418,7 +470,7 @@ function ruleNext(
       if (state.mode !== 'free' || state.saved === undefined || !found) {
         return { state: { ...state, scale }, found };
       }
-      const foot = ruleSettle(area, scale, state.saved);
+      const foot = ruleReach(area, scale, state.saved);
       return {
         state: { ...state, scale, saved: { ...foot, display: keyOf(scene.target) } },
         found,
@@ -485,13 +537,13 @@ describe('each transition, in figures', () => {
     expect(placeMascot(next, displays)).toEqual(bounds);
   });
 
-  it('saves the point it was pushed back to when dropped over an edge', () => {
+  it('saves the point its head was pulled back to when dropped past an edge', () => {
     const bounds = { x: 1450, y: 700, width: 196, height: 436 };
     const next = nextMascotState(at('free', 0.5), { type: 'move', bounds }, displays);
-    expect(next.saved).toEqual({ x: 1414, y: 912, display: keyOf(target) });
+    expect(next.saved).toEqual({ x: 1512, y: 1136, display: keyOf(target) });
   });
 
-  it('belongs to the display its centre is over when it straddles two', () => {
+  it('belongs to the display its head is over when it straddles two', () => {
     const two = desk('external', 'hidden');
     const edge = 1512;
     const mostlyRight = { x: edge - 80, y: 300, width: 196, height: 436 };
@@ -506,7 +558,52 @@ describe('each transition, in figures', () => {
     const bounds = { x: 9000, y: 9000, width: 196, height: 436 };
     const next = nextMascotState(at('free', 0.5), { type: 'move', bounds }, displays);
     expect(next.saved?.display).toEqual(keyOf(target));
-    expect(inside(placeMascot(next, displays), target.workArea)).toBe(true);
+    const placed = placeMascot(next, displays);
+    const head = { x: placed.x + placed.width / 2, y: placed.y + placed.height * DEPTH };
+    expect(headInside(head, target.workArea)).toBe(true);
+  });
+
+  it('keeps the feet and changes the size when moved to a display of another height', () => {
+    const two = desk('external', 'hidden');
+    const internal = two.displays[0] as DisplayInfo;
+    const saved = { x: 700, y: 800, display: keyOf(internal) };
+    const from = placeMascot(at('free', 0.5, saved), two.displays);
+    // (982 − 24 − 16) × 0.5 on the built-in display, 212 wide.
+    expect(from).toMatchObject({ width: 212, height: 471 });
+    const bounds = { x: 2300, y: 500, width: from.width, height: from.height };
+    const next = nextMascotState(at('free', 0.5), { type: 'move', bounds }, two.displays);
+    expect(next.saved).toEqual({ x: 2406, y: 971, display: keyOf(two.target) });
+    const placed = placeMascot(next, two.displays);
+    expect(footOf(placed).y).toBe(971);
+    expect(placed.height).toBe(700);
+  });
+
+  it('leaves the head inside the work area after rounding to whole pixels', () => {
+    const area = target.workArea;
+    for (let step = 5; step <= 40; step += 1) {
+      const scale = step / 20;
+      const height = mascotBounds('free', scale, target, { x: 0, y: 0 }).height;
+      for (const [x, y] of [
+        [-5000, -5000],
+        [5000, 5000],
+      ] as const) {
+        const bounds = { x, y, width: 100, height: 100 };
+        const saved = nextMascotState(at('free', scale), { type: 'move', bounds }, displays).saved;
+        expect(saved, `scale ${scale}`).toBeDefined();
+        const foot = saved as MascotSaved;
+        expect(Number.isInteger(foot.x) && Number.isInteger(foot.y)).toBe(true);
+        const head = headOfFoot(foot, height);
+        expect(headInside(head, area), `scale ${scale}`).toBe(true);
+        // One pixel less would leave it, so it is the least move.
+        if (x < 0) {
+          expect(head.x).toBe(area.x);
+          expect(head.y - area.y).toBeLessThan(1);
+        } else {
+          expect(head.x).toBe(area.x + area.width);
+          expect(area.y + area.height - head.y).toBeLessThan(1);
+        }
+      }
+    }
   });
 
   it('keeps its corner while it changes size', () => {
@@ -533,11 +630,11 @@ describe('each transition, in figures', () => {
   });
 
   it('saves its feet again when growing pushes it off an edge', () => {
-    // Standing against the top: 436 px tall with its feet at 470 leaves 9 px above.
-    const saved = { x: 700, y: 470, display: keyOf(target) };
+    // 436 px tall with its feet at 450 puts the head 24 px below the top of the work area.
+    const saved = { x: 700, y: 450, display: keyOf(target) };
     const next = nextMascotState(at('free', 0.5, saved), { type: 'stepScale', dir: 1 }, displays);
-    // 0.55 of 871 is 479 px, which no longer fits above 470.
-    expect(next.saved).toEqual({ x: 700, y: 25 + 479, display: keyOf(target) });
+    // 0.55 of 871 is 479 px, whose head would be 16 px above it; the feet rise to 466 to bring it back.
+    expect(next.saved).toEqual({ x: 700, y: 466, display: keyOf(target) });
   });
 
   it('steps down from the full height into the corner at 0.95', () => {
@@ -660,12 +757,13 @@ describe('a continuous resize', () => {
     const edge = { x: 700, y: 400, display: keyOf(target) };
     const grown = by(at('free', 0.5, edge), 2);
     expect(grown.scale).toBe(1);
-    expect(grown.saved?.y).toBe(25 + 871);
-    // Past the work area's height the feet hang below and the top is the work area's.
+    // The head, 70 px below the window's top, is brought to the work area's top.
+    expect(grown.saved?.y).toBe(827);
+    // Past the work area's height the window rises above the top and the head stays on it.
     const taller = by(at('free', 0.5, edge), 3);
     expect(taller.scale).toBe(1.5);
-    expect(taller.saved?.y).toBe(25 + 1307);
-    expect(footOf(placeMascot(taller, displays)).y - 1307).toBe(25);
+    expect(taller.saved?.y).toBe(1228);
+    expect(placeMascot(taller, displays).y).toBe(1228 - 1307);
   });
 
   it('does not match the menu steps off the grid and lands on it again at the next step', () => {
@@ -722,7 +820,7 @@ describe('a window taller than the work area', () => {
   const { displays, target } = desk('internal', 'bottom');
   const area = target.workArea;
 
-  it('keeps its top at the work area top in a corner and in the open', () => {
+  it('keeps its top at the work area top in a corner', () => {
     expect(mascotBounds('bottom-right', 2, target)).toEqual({
       x: 1512 - 16 - 784,
       y: 25,
@@ -730,20 +828,23 @@ describe('a window taller than the work area', () => {
       height: 1742,
     });
     expect(mascotBounds('bottom-left', 1.5, target).y).toBe(area.y);
+  });
+
+  it('rises above the work area in the open so that its head is on it', () => {
     const free = mascotBounds('free', 2, target, { x: 700, y: 400 });
-    expect(free.y).toBe(area.y);
+    expect(free.y).toBe(-114);
     expect(free.x).toBe(700 - 392);
   });
 
-  it('is settled back to the top when dragged down, keeping the sideways move', () => {
+  it('stays where it was dropped when dragged down while its head is on the work area', () => {
     const bounds = { x: 300, y: 400, width: 784, height: 1742 };
     const next = nextMascotState(
       { mode: 'free', scale: 2, muted: false },
       { type: 'move', bounds },
       displays,
     );
-    expect(next.saved?.x).toBe(692);
-    expect(placeMascot(next, displays).y).toBe(area.y);
+    expect(next.saved).toMatchObject({ x: 692, y: 2142 });
+    expect(placeMascot(next, displays).y).toBe(400);
   });
 
   it('caps the height so the width stays inside the work area, leaving the scale alone', () => {
@@ -769,10 +870,12 @@ describe('the display a window belongs to', () => {
   const lower = display(2, 'Lower', false, { x: 0, y: 982, width: 1512, height: 982 }, 'hidden');
   const displays = [upper, lower];
 
-  it('is the one the middle of the top edge is on, however far the window hangs down', () => {
+  it('is the one the head point is on, however far the window hangs down', () => {
     const tall = { x: 300, y: 25, width: 784, height: 1742 };
     expect(mascotDisplayOf(tall, displays)).toBe(upper);
     expect(mascotDisplayOf({ ...tall, y: 1000 }, displays)).toBe(lower);
+    // The top edge is on the upper display here; the head, 139 px lower, is on the lower one.
+    expect(mascotDisplayOf({ ...tall, y: 900 }, displays)).toBe(lower);
   });
 
   it('is the one the move action saves for a tall window hanging over the lower display', () => {
