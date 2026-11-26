@@ -32,31 +32,44 @@ It starts the control server and, if this checkout has one, the speech sidecar, 
 | Bottom right, bottom left | A corner of the work area, 16 px from the bottom and from the side |
 | Free | Where it was dragged to |
 
-In every mode the window is 0.45 times as wide as it is tall. In a corner or free it is `scale` times the work area's height less 16 px. `scale` runs from 0.25 to 1.0 in steps of 0.05 and stops at either end.
+In every mode the window is 0.45 times as wide as it is tall. In a corner or free it is `scale` times the work area's height less 16 px. `scale` runs from 0.25 to 1.0 and stops at either end. The menus move it in steps of 0.05; the wheel moves it continuously.
 
-- **Dragging.** Pressing on the character and moving it more than 4 px moves the window. The first movement switches the mode to Free, and 300 ms after the last one the position and scale are saved.
-- **Size.** Holding Option and turning the wheel steps the size, at most one step per 150 ms. The tray and the context menu do the same. A corner stays put while it grows; a free window keeps its feet where they were.
-- **From Fill the height**, one step smaller goes to bottom right at scale 0.95, and a larger step does nothing.
+- **Dragging.** While the character does not have focus, pressing on it and moving more than 4 px moves the window. The first movement switches the mode to Free, and 300 ms after the last one the position and scale are saved.
+- **Size.** While the character has focus, the wheel resizes it continuously: wheel up enlarges, wheel down shrinks, and the turns within a frame are applied together. The tray and the context menu step the size by 0.05. A corner stays put while it grows; a free window keeps its feet where they were.
+- **From Fill the height**, a smaller size goes to bottom right at that fraction of the full scale, and a larger one does nothing.
 - **Reset position** goes to bottom right at scale 0.5.
 - **Displays.** The window uses the display its centre is on. A saved position whose display is gone is shown in the primary display's bottom-right corner and is not overwritten, so the mascot goes back when the display does.
 
-Mode, scale, position and mute are kept in `shell-state.json` beside the Electron profile, in the same place the shell keeps its own state.
+### Focus and turning
+
+A tap on the character gives it focus, and the pointer shows a grab cursor. Focus ends when the pointer hands the mouse back or leaves the page, when the window loses focus, or when a shrink leaves the character out from under the pointer.
+
+| While the character | Dragging | Wheel |
+|---|---|---|
+| Has focus | Turns the camera round it, once per frame | Resizes the window; the page leaves it alone otherwise |
+| Does not have focus | Moves the window | Does nothing, and is not swallowed |
+
+The angle is the window's own. It travels over the bridge rather than as a `camera` command, because a command is followed by every renderer and would swing the panel's preview and OBS along with the mascot. It is kept in `shell-state.json`, shown again after every page load, and **Face Front** in the context menu returns it to the front. Reset position leaves it alone.
+
+Mode, scale, position, angle and mute are kept in `shell-state.json` beside the Electron profile, in the same place the shell keeps its own state.
 
 ### Menus
 
-The tray icon holds show or hide, display mode, size, avatar, mute and quit. The right-click on the character holds display mode, size, outfit, reset position and hide. Hiding leaves the process running and the tray is how it comes back. Mode and size are in both, because the tray is the one that can still be reached when the character is somewhere it cannot be clicked.
+The tray icon holds show or hide, display mode, size, avatar, mute and quit. The right-click on the character holds display mode, size, outfit, face front, reset position and hide. Hiding leaves the process running and the tray is how it comes back. Mode and size are in both, because the tray is the one that can still be reached when the character is somewhere it cannot be clicked.
 
 ## The window's bridge
 
-Whether the window takes the mouse, and moving or resizing it, are decided on the page and carried out by the shell. Going through the control server would be too slow for a pointer crossing an outline, so the preload script exposes `window.hashidateMascot` with three calls and nothing else:
+Whether the window takes the mouse, and moving or resizing it, are decided on the page and carried out by the shell. Going through the control server would be too slow for a pointer crossing an outline, so the preload script exposes `window.hashidateMascot` with five calls and nothing else:
 
 | Call | Effect |
 |---|---|
 | `setInteractive(on)` | The window takes the mouse, or lets it through |
 | `moveBy(dx, dy)` | Moves the window by that many screen pixels |
-| `stepScale(dir)` | One step larger (`1`) or smaller (`-1`) |
+| `scaleBy(factor)` | Multiplies the size by `factor`, from 0.5 to 2 |
+| `turnTo(angle)` | Hands over the yaw and pitch a turn settled on, for the shell to keep |
+| `onShot(fn)` | Hears the angle to show: the kept one after each load, the front after Face Front. Returns a function that stops listening |
 
-The main process accepts a call only from the mascot's own page and checks every argument. The object is absent on every other page, OBS and the stage included, and a page without it behaves as before. No command, report or file access crosses it.
+The main process accepts a call only from the mascot's own page and checks every argument. A resize or a turn is normalised and clamped there, and an argument that is not a finite number is refused. The object is absent on every other page, OBS and the stage included, and a page without it behaves as before. No command, report or file access crosses it.
 
 ## The page
 
