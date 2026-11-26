@@ -109,7 +109,11 @@ export function describe(d: Director, { wardrobe, voice, scenery }: VocabularyCo
     wardrobe: Object.fromEntries(
       Object.entries(wardrobe?.slots ?? {}).map(([slot, def]) => [
         slot,
-        { label: def.label, items: def.items.map((i) => ({ id: i.id, label: i.label })) },
+        {
+          label: def.label,
+          items: def.items.map((i) => ({ id: i.id, label: i.label })),
+          ...(def.accessory === true ? { accessory: true as const } : {}),
+        },
       ]),
     ),
     wardrobePresets: Object.entries(wardrobe?.presetDefs ?? {}).map(([id, p]) => ({

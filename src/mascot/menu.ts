@@ -1,5 +1,5 @@
 import type { MenuItemConstructorOptions } from 'electron';
-import { getLocale, type Locale, pick } from '../i18n/locale';
+import { getLocale, type Locale, type Localized, pick } from '../i18n/locale';
 import type { MessageKey } from '../i18n/messages';
 import { translate } from '../i18n/translate';
 import type { LabelledId } from '../protocol';
@@ -33,6 +33,17 @@ export interface MascotMenuModel {
   avatar: string | null;
   /** The whole outfits the avatar on screen can be put in. */
   outfits: readonly LabelledId[];
+  /** The pieces the avatar on screen lets be put on and taken off one by one. */
+  accessories: readonly MascotAccessory[];
+}
+
+/** One accessory slot of the avatar on screen. */
+export interface MascotAccessory {
+  id: string;
+  label: Localized;
+  items: readonly LabelledId[];
+  /** The item worn, `null` for none, `undefined` when it is not known. */
+  worn: string | null | undefined;
 }
 
 export interface MascotMenuHandlers {
@@ -41,6 +52,7 @@ export interface MascotMenuHandlers {
   stepScale(dir: 1 | -1): void;
   setAvatar(id: string): void;
   setOutfit(id: string): void;
+  setAccessory(slot: string, item: string | null): void;
   setMuted(muted: boolean): void;
   faceFront(): void;
   resetPosition(): void;
@@ -117,6 +129,61 @@ function choiceItem(
   };
 }
 
+/** One accessory slot: a checkbox for a single piece, a submenu of radios for several. */
+function accessoryItem(
+  { id, label, items, worn }: MascotAccessory,
+  handlers: MascotMenuHandlers,
+  locale: Locale,
+): Item {
+  const known = worn !== undefined;
+  if (items.length === 1) {
+    const piece = items[0].id;
+    return known
+      ? {
+          label: pick(label, locale),
+          type: 'checkbox',
+          checked: worn === piece,
+          click: () => handlers.setAccessory(id, worn === piece ? null : piece),
+        }
+      : { label: pick(label, locale), click: () => handlers.setAccessory(id, piece) };
+  }
+  // A worn item that is not offered would leave every radio unchecked, which
+  // Electron answers by checking the first; None is what is on, then.
+  const current = worn !== undefined && items.some((item) => item.id === worn) ? worn : null;
+  return {
+    label: pick(label, locale),
+    submenu: [
+      {
+        label: translate('mascot.accessory.none', locale),
+        ...(known ? { type: 'radio' as const, checked: current === null } : {}),
+        click: () => handlers.setAccessory(id, null),
+      },
+      ...items.map(
+        (item): Item => ({
+          label: pick(item.label, locale),
+          ...(known ? { type: 'radio' as const, checked: current === item.id } : {}),
+          click: () => handlers.setAccessory(id, item.id),
+        }),
+      ),
+    ],
+  };
+}
+
+/** The accessories submenu, or one greyed line saying there are none. */
+function accessoriesItem(
+  { accessories }: MascotMenuModel,
+  handlers: MascotMenuHandlers,
+  locale: Locale,
+): Item {
+  return {
+    label: translate('mascot.accessories', locale),
+    submenu:
+      accessories.length === 0
+        ? [{ label: translate('mascot.accessories.none', locale), enabled: false }]
+        : accessories.map((accessory) => accessoryItem(accessory, handlers, locale)),
+  };
+}
+
 function visibilityItem(
   { visible }: MascotMenuModel,
   handlers: MascotMenuHandlers,
@@ -161,7 +228,7 @@ export function trayMenu(
   ];
 }
 
-/** The right-click on the character: display mode, size, outfit, face front, reset position, hide. */
+/** The right-click on the character: display mode, size, outfit, accessories, face front, reset position, hide. */
 export function contextMenu(
   model: MascotMenuModel,
   handlers: MascotMenuHandlers,
@@ -178,6 +245,7 @@ export function contextMenu(
       locale,
       handlers.setOutfit,
     ),
+    accessoriesItem(model, handlers, locale),
     { type: 'separator' },
     { label: translate('mascot.faceFront', locale), click: () => handlers.faceFront() },
     { label: translate('mascot.resetPosition', locale), click: () => handlers.resetPosition() },

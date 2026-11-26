@@ -188,6 +188,7 @@ const handlers: MascotMenuHandlers = {
   stepScale: (dir) => apply({ type: 'stepScale', dir }),
   setAvatar: (id) => void send({ cmd: 'avatar', id }),
   setOutfit: (id) => void send({ cmd: 'wear', preset: id }),
+  setAccessory: (slot, item) => void send({ cmd: 'wear', slot, item }),
   setMuted,
   faceFront: () => {
     apply({ type: 'faceFront' });
@@ -218,10 +219,20 @@ async function menuModel(): Promise<MascotMenuModel> {
       avatars: snapshot.avatars,
       avatar: snapshot.avatar?.id ?? null,
       outfits: snapshot.vocabulary.wardrobePresets ?? [],
+      accessories: Object.entries(snapshot.vocabulary.wardrobe ?? {})
+        .filter(([, slot]) => slot.accessory === true)
+        .map(([id, slot]) => ({
+          id,
+          label: slot.label,
+          items: slot.items,
+          // `state` is partial, so what is worn may not have been reported at all.
+          worn:
+            snapshot.state?.wardrobe == null ? undefined : (snapshot.state.wardrobe[id] ?? null),
+        })),
     };
   } catch {
     // No server, or no renderer attached yet: the rest of the menu still works.
-    return { ...base, avatars: [], avatar: null, outfits: [] };
+    return { ...base, avatars: [], avatar: null, outfits: [], accessories: [] };
   }
 }
 

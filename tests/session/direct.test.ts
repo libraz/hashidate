@@ -69,13 +69,13 @@ describe('direct control between turns', () => {
 
   it('wear() dresses a slot and reports that it did', () => {
     expect(harness.session.wear({ slot: 'top', item: 'shirt' })).toBe(true);
-    expect(harness.session.state().wardrobe).toEqual({ top: 'shirt' });
+    expect(harness.session.state().wardrobe).toEqual({ top: 'shirt', hat: null });
   });
 
   it('wear() applies a whole preset', () => {
     harness.session.wear({ slot: 'top', item: 'shirt' });
     expect(harness.session.wear({ preset: 'bare' })).toBe(true);
-    expect(harness.session.state().wardrobe).toEqual({ top: null });
+    expect(harness.session.state().wardrobe).toEqual({ top: null, hat: null });
   });
 
   it('wear() with neither slot nor preset is a no-op rather than an error', () => {
@@ -85,9 +85,9 @@ describe('direct control between turns', () => {
   it('wear() with a slot and no item leaves the slot as it is; only null takes it off', () => {
     harness.session.wear({ slot: 'top', item: 'shirt' });
     expect(harness.session.wear({ slot: 'top' })).toBe(false);
-    expect(harness.session.state().wardrobe).toEqual({ top: 'shirt' });
+    expect(harness.session.state().wardrobe).toEqual({ top: 'shirt', hat: null });
     expect(harness.session.wear({ slot: 'top', item: null })).toBe(true);
-    expect(harness.session.state().wardrobe).toEqual({ top: null });
+    expect(harness.session.state().wardrobe).toEqual({ top: null, hat: null });
   });
 
   it('wear() returns false for a session with no wardrobe at all', () => {

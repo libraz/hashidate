@@ -55,7 +55,7 @@ Mode, scale, position, angle and mute are kept in `shell-state.json` beside the 
 
 ### Menus
 
-The tray icon holds show or hide, display mode, size, avatar, mute and quit. The right-click on the character holds display mode, size, outfit, face front, reset position and hide. Hiding leaves the process running and the tray is how it comes back. Mode and size are in both, because the tray is the one that can still be reached when the character is somewhere it cannot be clicked.
+The tray icon holds show or hide, display mode, size, avatar, mute and quit. The right-click on the character holds display mode, size, outfit, accessories, face front, reset position and hide. Accessories lists the slots the avatar marks as accessories: a one-item slot is a checkbox, a slot with several items is a submenu of None and each item. Hiding leaves the process running and the tray is how it comes back. Mode and size are in both, because the tray is the one that can still be reached when the character is somewhere it cannot be clicked.
 
 ## The window's bridge
 

@@ -203,7 +203,11 @@ export const vocabularySchema = z.object({
   /** Slot names are avatar data, so the keys are open. */
   wardrobe: z.record(
     z.string(),
-    z.object({ label: localizedSchema, items: z.array(labelledIdSchema) }),
+    z.object({
+      label: localizedSchema,
+      items: z.array(labelledIdSchema),
+      accessory: z.literal(true).optional(),
+    }),
   ),
   wardrobePresets: z.array(labelledIdSchema),
   /** Where the voice is heard. Empty on a renderer that has no voice at all. */

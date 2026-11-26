@@ -453,6 +453,7 @@ type _WardrobeItemMatchesEngine = Expect<Equals<z.output<typeof wardrobeItemSche
 const wardrobeSlotSchema = z.strictObject({
   label: localizedSchema,
   items: z.array(wardrobeItemSchema),
+  accessory: z.boolean().optional(),
 });
 
 type _WardrobeSlotMatchesEngine = Expect<Equals<z.output<typeof wardrobeSlotSchema>, WardrobeSlot>>;

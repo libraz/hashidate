@@ -409,6 +409,7 @@
           "en": "Apron",
           "ja": "エプロン"
         },
+        "accessory": true,
         "items": [
           {
             "id": "apron",
@@ -428,6 +429,7 @@
           "en": "Neck",
           "ja": "首"
         },
+        "accessory": true,
         "items": [
           {
             "id": "tie",
@@ -535,6 +537,7 @@
           "en": "Animal ears",
           "ja": "獣耳"
         },
+        "accessory": true,
         "items": [
           {
             "id": "kemono",
@@ -554,6 +557,7 @@
           "en": "Accessory",
           "ja": "小物"
         },
+        "accessory": true,
         "items": [
           {
             "id": "set",

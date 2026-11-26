@@ -66,6 +66,12 @@ Every path in `export.json` that comes out of the package (`source`, `extras`, `
 
    Then import it into a fresh clone with `make import`, from the package as downloaded, and confirm `yarn ctl avatars` still reports `nothing unresolved`.
 
+## Accessory slots
+
+A wardrobe slot with `"accessory": true` can be put on and taken off by itself, apart from the presets; a caller that limits what a user may change offers only those slots. Mark the pieces that are meant to be optional, such as headwear, a tie or a prop, and leave the rest, underwear included, to the presets.
+
+Every preset should write every accessory slot, with an item or `null`. A preset applies only the slots it names, so one that omits an accessory slot leaves whatever was worn, and the avatar then looks different when a preset is applied over a choice than when it is reloaded.
+
 ## Before publishing a pack
 
 - Read the model's terms. A pack is only useful for a model whose licence lets its buyer publish rendered video, and it must not ship anything the licence forbids redistributing.

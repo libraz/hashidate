@@ -47,7 +47,7 @@ describe('Session.state', () => {
       hopping: false,
       strain: { L: 0, R: 0 },
     });
-    expect(state.wardrobe).toEqual({ top: null });
+    expect(state.wardrobe).toEqual({ top: null, hat: null });
   });
 
   it('reports null wardrobe for a session built without one', () => {
@@ -74,6 +74,24 @@ describe('Session.state', () => {
     const { session } = build();
     session.setOverlay('FX_BLUSH', 0.4);
     expect(session.state().overlays).toEqual({ FX_BLUSH: 0.4 });
+  });
+});
+
+describe('Session.state wardrobe after wear', () => {
+  it('reports a slot change immediately', () => {
+    const { session } = build({ wardrobe: true });
+    session.wear({ slot: 'hat', item: 'cap' });
+    expect(session.state().wardrobe).toEqual({ top: null, hat: 'cap' });
+    session.wear({ slot: 'hat', item: null });
+    expect(session.state().wardrobe?.hat).toBeNull();
+  });
+
+  it('reports a preset immediately, and only for the slots it writes', () => {
+    const { session } = build({ wardrobe: true });
+    session.wear({ slot: 'top', item: 'shirt' });
+    session.wear({ slot: 'hat', item: 'cap' });
+    session.wear({ preset: 'bare' });
+    expect(session.state().wardrobe).toEqual({ top: null, hat: null });
   });
 });
 
@@ -121,6 +139,12 @@ describe('Session.vocabulary', () => {
     expect(vocabulary.gestures.find((g) => g.id === 'thumbsUp')?.sustain).toBe(true);
   });
 
+  it('marks only the accessory slots of the wardrobe', () => {
+    const { wardrobe } = build({ wardrobe: true }).session.vocabulary();
+    expect(wardrobe.hat).toMatchObject({ accessory: true });
+    expect('accessory' in wardrobe.top).toBe(false);
+  });
+
   it('is discovered from the avatar rather than declared', () => {
     const { session } = build();
     expect(session.vocabulary().expressions.map((e) => e.id)).toEqual(FACES);
@@ -138,6 +162,11 @@ describe('Session.vocabulary', () => {
     const vocabulary = session.vocabulary();
     expect(vocabulary.wardrobe).toEqual({
       top: { label: same('トップス'), items: [{ id: 'shirt', label: same('シャツ') }] },
+      hat: {
+        label: same('帽子'),
+        items: [{ id: 'cap', label: same('キャップ') }],
+        accessory: true,
+      },
     });
     expect(vocabulary.wardrobePresets).toEqual([{ id: 'bare', label: same('素') }]);
   });

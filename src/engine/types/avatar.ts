@@ -298,6 +298,11 @@ export interface WardrobeItem {
 export interface WardrobeSlot {
   label: Localized;
   items: WardrobeItem[];
+  /**
+   * A piece that may be put on and taken off by itself, apart from the presets.
+   * A caller that limits what a user may change offers only these.
+   */
+  accessory?: boolean;
 }
 
 export interface WardrobePreset {

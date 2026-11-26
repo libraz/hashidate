@@ -99,6 +99,21 @@ describe('parseAvatar', () => {
     expect(reject({ ...minimal, gaze: { eyeYaw: true } })).toContain('gaze.eyeYaw');
   });
 
+  it('accepts accessory as a boolean and nothing else', () => {
+    const slot = (accessory: unknown) => ({
+      ...minimal,
+      wardrobe: { slots: { hat: { label, items: [], accessory } } },
+    });
+    expect(accept(slot(true)).wardrobe?.slots.hat.accessory).toBe(true);
+    expect(accept(slot(false)).wardrobe?.slots.hat.accessory).toBe(false);
+    expect(
+      accept({ ...minimal, wardrobe: { slots: { hat: { label, items: [] } } } }).wardrobe?.slots.hat
+        .accessory,
+    ).toBeUndefined();
+    expect(reject(slot('yes'))).toContain('accessory');
+    expect(reject(slot(null))).toContain('accessory');
+  });
+
   it('accepts null exactly where the engine allows it', () => {
     const avatar = accept({
       ...minimal,

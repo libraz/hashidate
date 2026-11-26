@@ -130,7 +130,7 @@ export interface Vocabulary {
     finger: FingerName[];
     note: Localized;
   };
-  wardrobe: Record<string, { label: Localized; items: LabelledId[] }>;
+  wardrobe: Record<string, { label: Localized; items: LabelledId[]; accessory?: true }>;
   wardrobePresets: LabelledId[];
   /**
    * Where the voice is heard. Empty on a renderer with no voice at all, which

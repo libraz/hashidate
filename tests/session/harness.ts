@@ -55,8 +55,13 @@ export const WARDROBE: WardrobeTable = {
       label: same('トップス'),
       items: [{ id: 'shirt', label: same('シャツ'), meshes: ['Shirt'] }],
     },
+    hat: {
+      label: same('帽子'),
+      accessory: true,
+      items: [{ id: 'cap', label: same('キャップ'), meshes: ['Cap'] }],
+    },
   },
-  presets: { bare: { label: same('素'), set: { top: null } } },
+  presets: { bare: { label: same('素'), set: { top: null, hat: null } } },
 };
 
 /** Every mesh a wardrobe table dresses, so the rig carries one of each. */

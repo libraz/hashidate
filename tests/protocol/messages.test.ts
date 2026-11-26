@@ -195,6 +195,16 @@ describe('a real Vocabulary against vocabularySchema', () => {
     };
     expect(vocabularySchema.safeParse(half).success).toBe(false);
   });
+
+  it('takes accessory: true on a wardrobe entry, refuses false, and does not need it', () => {
+    const vocabulary = buildSession().session.vocabulary();
+    const entry = Object.values(vocabulary.wardrobe)[0];
+    const parse = (extra: object) =>
+      vocabularySchema.safeParse({ ...vocabulary, wardrobe: { slot: { ...entry, ...extra } } });
+    expect(parse({ accessory: true }).success).toBe(true);
+    expect(parse({}).success).toBe(true);
+    expect(parse({ accessory: false }).success).toBe(false);
+  });
 });
 
 describe('a real event stream against sessionEventSchema', () => {
