@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useT } from '@/i18n';
 import type { Shot } from '@/protocol';
+import { dragShot, wheelShot } from '@/viewer/shot-gesture';
 import { FeedReceiver, webCodecsDecoder } from './feed';
 import styles from './Picture.module.css';
-import { dragShot, wheelShot } from './shot-drag';
 
 /**
  * The picture in the preview: the stage's feed when one is coming, otherwise a

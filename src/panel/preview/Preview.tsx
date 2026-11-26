@@ -60,7 +60,7 @@ import { throttleShots } from './shot-drag';
  * pointer itself and sends the ordinary `camera` command an orchestrator could
  * have sent, so every renderer swings with it — the same whether the picture is
  * the stage's feed, which has no camera to drag, or the fallback renderer, which
- * no longer takes the pointer. See `shot-drag.ts` and `Shot`.
+ * no longer takes the pointer. See `shot-gesture.ts` and `Shot`.
  *
  * The cost is that a wheel over the picture no longer scrolls the panel. Worth
  * it: the shot is the one thing that can only be judged by looking, and this is

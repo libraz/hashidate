@@ -12,7 +12,7 @@ import type { Listener } from './types';
  * A shot is a named framing plus how far the operator has moved off it, and
  * this owns both halves: `setShot` puts the camera where a command says. A drag
  * in the panel's preview is turned into that command by the panel itself (see
- * `src/panel/preview/shot-drag.ts`), so nothing here reads a shot back. Everything is derived from the framings, so a swap that
+ * `src/viewer/shot-gesture.ts`), so nothing here reads a shot back. Everything is derived from the framings, so a swap that
  * rebuilds them puts the same shot on a differently-proportioned avatar rather
  * than leaving the camera where the last one needed it.
  *
