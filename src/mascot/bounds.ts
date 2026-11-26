@@ -1,6 +1,7 @@
 import { SHOT_LIMITS, type ShotAngle, wrapYaw } from '../engine/types/staging';
 import { type DisplayInfo, displayUnder } from '../shell/displays';
 import {
+  MASCOT_SCALE_FULL,
   MASCOT_SCALE_MAX,
   MASCOT_SCALE_MIN,
   type MascotMode,
@@ -17,7 +18,8 @@ import type { WindowBounds } from '../shell/types';
  * `screen.getAllDisplays()` with the primary display first, and applies the
  * rectangle it is given. A size is a share of the height the display leaves
  * between the menu bar and the dock, so the same setting reads the same on a
- * laptop and on the monitor beside it.
+ * laptop and on the monitor beside it. A window taller than the work area is
+ * lined up with its top and its feet hang below; its display is the one its head is on.
  */
 
 /**
@@ -42,7 +44,8 @@ export const RESET_MODE = 'bottom-right' satisfies MascotMode;
 export const RESET_SCALE = 0.5;
 
 /** The size a mascot filling the height steps down to. */
-const BELOW_FULL_SCALE = MASCOT_SCALE_MAX - SCALE_STEP;
+const BELOW_FULL_SCALE = MASCOT_SCALE_FULL - SCALE_STEP;
+const ABOVE_FULL_SCALE = MASCOT_SCALE_FULL + SCALE_STEP;
 
 /**
  * How long after the last movement of a drag the placement is saved, in ms.
@@ -79,7 +82,12 @@ const clamp = (value: number, low: number, high: number): number =>
   Math.max(low, Math.min(value, high));
 
 function sizeAt(scale: number, display: DisplayInfo): { width: number; height: number } {
-  const height = Math.round((display.workArea.height - EDGE_MARGIN) * scale);
+  const { workArea } = display;
+  // Capped so the width stays inside the work area; the saved scale is untouched.
+  const height = Math.min(
+    Math.round((workArea.height - EDGE_MARGIN) * scale),
+    Math.floor((workArea.width - 2 * EDGE_MARGIN) / WIDTH_RATIO),
+  );
   return { width: Math.round(height * WIDTH_RATIO), height };
 }
 
@@ -88,7 +96,10 @@ function footOf(bounds: WindowBounds): Point {
   return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height };
 }
 
-/** A foot point moved the least it has to be for the window to stand inside the work area. */
+/**
+ * A foot point moved the least it has to be for the window to stand inside the
+ * work area. A window taller than it keeps its top at the work area's top.
+ */
 function settle(foot: Point, scale: number, display: DisplayInfo): Point {
   const area = display.workArea;
   const { width, height } = sizeAt(scale, display);
@@ -130,7 +141,7 @@ export function mascotBounds(
   }
   return {
     x: mode === 'bottom-left' ? area.x + EDGE_MARGIN : area.x + area.width - EDGE_MARGIN - width,
-    y: area.y + area.height - EDGE_MARGIN - height,
+    y: Math.max(area.y, area.y + area.height - EDGE_MARGIN - height),
     width,
     height,
   };
@@ -182,6 +193,26 @@ export function placeMascot(state: MascotState, displays: readonly DisplayInfo[]
   return mascotBounds(state.mode === 'free' ? RESET_MODE : state.mode, state.scale, primary);
 }
 
+/**
+ * The display a window belongs to: the one its top-centre point is on, so a
+ * tall window hanging below one display stays with the display of its head.
+ * Failing that the one its centre is over, then the primary.
+ */
+export function mascotDisplayOf(
+  bounds: WindowBounds,
+  displays: readonly DisplayInfo[],
+): DisplayInfo | undefined {
+  const x = bounds.x + bounds.width / 2;
+  const y = bounds.y;
+  return (
+    displays.find(
+      ({ bounds: b }) => x >= b.x && x < b.x + b.width && y >= b.y && y < b.y + b.height,
+    ) ??
+    displayUnder(bounds, displays) ??
+    displays[0]
+  );
+}
+
 function step(scale: number, dir: 1 | -1): number {
   return clamp(
     Math.round(scale * STEPS_PER_UNIT + dir) / STEPS_PER_UNIT,
@@ -195,11 +226,10 @@ function moved(
   bounds: WindowBounds,
   displays: readonly DisplayInfo[],
 ): MascotState {
-  // A window across two displays belongs to the one its centre is over.
-  const display = displayUnder(bounds, [...displays]) ?? displays[0];
+  const display = mascotDisplayOf(bounds, displays);
   if (display === undefined) return state;
-  // Dragged out of the full height it keeps its size, which is the largest there is.
-  const scale = state.mode === 'full' ? MASCOT_SCALE_MAX : state.scale;
+  // Dragged out of the full height it keeps its size.
+  const scale = state.mode === 'full' ? MASCOT_SCALE_FULL : state.scale;
   return {
     ...state,
     mode: 'free',
@@ -215,7 +245,7 @@ function rescaled(
   displays: readonly DisplayInfo[],
 ): MascotState {
   if (state.mode === 'full') {
-    return scale >= MASCOT_SCALE_MAX ? state : { ...state, mode: RESET_MODE, scale };
+    return scale === MASCOT_SCALE_FULL ? state : { ...state, mode: RESET_MODE, scale };
   }
   if (scale === state.scale) return state;
   // Unless the new size no longer fits there — then the point it was pushed back to is the one kept.
@@ -230,7 +260,7 @@ function rescaled(
 
 function scaled(state: MascotState, dir: 1 | -1, displays: readonly DisplayInfo[]): MascotState {
   if (state.mode === 'full') {
-    return rescaled(state, dir === 1 ? MASCOT_SCALE_MAX : BELOW_FULL_SCALE, displays);
+    return rescaled(state, dir === 1 ? ABOVE_FULL_SCALE : BELOW_FULL_SCALE, displays);
   }
   return rescaled(state, step(state.scale, dir), displays);
 }
@@ -240,8 +270,8 @@ function scaledBy(
   factor: number,
   displays: readonly DisplayInfo[],
 ): MascotState {
-  // The full height is the largest size, so from there a factor is taken against that.
-  const base = state.mode === 'full' ? MASCOT_SCALE_MAX : state.scale;
+  // The full height is a size of its own, so from there a factor is taken against that.
+  const base = state.mode === 'full' ? MASCOT_SCALE_FULL : state.scale;
   return rescaled(state, clamp(base * factor, MASCOT_SCALE_MIN, MASCOT_SCALE_MAX), displays);
 }
 
@@ -261,7 +291,7 @@ function switched(
   // Never dragged, so there is no point to go back to: it is set free where it stands.
   const primary = displays[0];
   if (primary === undefined) return { ...state, mode };
-  const scale = state.mode === 'full' ? MASCOT_SCALE_MAX : state.scale;
+  const scale = state.mode === 'full' ? MASCOT_SCALE_FULL : state.scale;
   const foot = footOf(mascotBounds(state.mode, state.scale, primary));
   return {
     ...state,

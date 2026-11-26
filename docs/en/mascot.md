@@ -32,13 +32,13 @@ It starts the control server and, if this checkout has one, the speech sidecar, 
 | Bottom right, bottom left | A corner of the work area, 16 px from the bottom and from the side |
 | Free | Where it was dragged to |
 
-In every mode the window is 0.45 times as wide as it is tall. In a corner or free it is `scale` times the work area's height less 16 px. `scale` runs from 0.25 to 1.0 and stops at either end. The menus move it in steps of 0.05; the wheel moves it continuously.
+In every mode the window is 0.45 times as wide as it is tall. In a corner or free it is `scale` times the work area's height less 16 px. `scale` runs from 0.25 to 2.0 and stops at either end. Above 1.0 the window is taller than the work area: its top stays at the work area's top and the feet hang below the screen, and a vertical drag springs back so only the sideways move is kept. The width never exceeds the work area's width less 32 px; a size that would is drawn capped, and the saved `scale` keeps its value. The menus move it in steps of 0.05; the wheel moves it continuously.
 
 - **Dragging.** While the character does not have focus, pressing on it and moving more than 4 px moves the window. The first movement switches the mode to Free, and 300 ms after the last one the position and scale are saved.
-- **Size.** While the character has focus, the wheel resizes it continuously: wheel up enlarges, wheel down shrinks, and the turns within a frame are applied together. The tray and the context menu step the size by 0.05. A corner stays put while it grows; a free window keeps its feet where they were.
-- **From Fill the height**, a smaller size goes to bottom right at that fraction of the full scale, and a larger one does nothing.
+- **Size.** While the character has focus, the wheel resizes it continuously: wheel up enlarges, wheel down shrinks, and the turns within a frame are applied together. The tray and the context menu step the size by 0.05. A corner stays put while it grows; a free window keeps its feet where they were, unless it has become taller than the work area.
+- **From Fill the height**, a smaller or a larger size goes to bottom right at that size, so a larger one is 16 px further left than the full-height window was.
 - **Reset position** goes to bottom right at scale 0.5.
-- **Displays.** The window uses the display its centre is on. A saved position whose display is gone is shown in the primary display's bottom-right corner and is not overwritten, so the mascot goes back when the display does.
+- **Displays.** The window uses the display the middle of its top edge is on, so a tall window hanging below one display stays with the display of its head. A saved position whose display is gone is shown in the primary display's bottom-right corner and is not overwritten, so the mascot goes back when the display does.
 
 ### Focus and turning
 

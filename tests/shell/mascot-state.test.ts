@@ -47,7 +47,20 @@ describe('what counts as a mascot placement', () => {
     const at = (scale: unknown) => isValidMascotState({ mode: 'free', scale, muted: false });
     expect(at(0.25)).toBe(true);
     expect(at(1)).toBe(true);
-    for (const bad of [0, -0, 0.2, 1.05, -0.5, Number.NaN, Number.POSITIVE_INFINITY, '0.5', null]) {
+    expect(at(1.05)).toBe(true);
+    expect(at(2)).toBe(true);
+    for (const bad of [
+      0,
+      -0,
+      0.2,
+      2.0001,
+      1e9,
+      -0.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      '0.5',
+      null,
+    ]) {
       expect(at(bad), String(bad)).toBe(false);
     }
   });

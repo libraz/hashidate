@@ -80,9 +80,15 @@ export const MASCOT_MODES = ['full', 'bottom-right', 'bottom-left', 'free'] as c
 
 export type MascotMode = (typeof MASCOT_MODES)[number];
 
-/** The mascot's size, as a share of the height it has to stand in. */
+/**
+ * The mascot's size, as a share of the height it has to stand in. Above 1 the
+ * window is taller than the work area. Unrelated to the bridge's `SCALE_BY_LIMITS`,
+ * which bounds one request's factor.
+ */
 export const MASCOT_SCALE_MIN = 0.25;
-export const MASCOT_SCALE_MAX = 1;
+export const MASCOT_SCALE_MAX = 2;
+/** The size of a mascot filling the height. */
+export const MASCOT_SCALE_FULL = 1;
 
 /**
  * Where a dragged mascot stands: the middle of its bottom edge, in screen

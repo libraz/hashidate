@@ -69,15 +69,15 @@ function modeItem({ state }: MascotMenuModel, handlers: MascotMenuHandlers, loca
 }
 
 function sizeItem({ state }: MascotMenuModel, handlers: MascotMenuHandlers, locale: Locale): Item {
-  // Filling the height is the largest there is, and the one step down from it
-  // is always open; see `nextMascotState`.
+  // From the full height both steps are open, and each leaves for a corner;
+  // see `nextMascotState`.
   const full = state.mode === 'full';
   return {
     label: translate('mascot.size', locale),
     submenu: [
       {
         label: translate('mascot.size.larger', locale),
-        enabled: !full && state.scale < MASCOT_SCALE_MAX,
+        enabled: full || state.scale < MASCOT_SCALE_MAX,
         click: () => handlers.stepScale(1),
       },
       {

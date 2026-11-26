@@ -304,6 +304,8 @@ function makeWindow(): BrowserWindow {
     transparent: true,
     frame: false,
     hasShadow: false,
+    // macOS otherwise clamps the window to the screen, and a size above 1 is taller.
+    enableLargerThanScreen: true,
     // A panel floats over other applications' windows without becoming the
     // active application when it is clicked.
     type: 'panel',

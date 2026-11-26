@@ -33,6 +33,31 @@ function handlers(): MascotMenuHandlers {
 }
 
 describe('the right-click menu', () => {
+  describe('the size steps', () => {
+    const enabled = (state: MascotMenuModel['state']) => {
+      const size = contextMenu({ ...model, state }, handlers(), 'en').find(
+        (item) => item.label === 'Size',
+      );
+      const submenu = (size?.submenu ?? []) as { label: string; enabled?: boolean }[];
+      return Object.fromEntries(submenu.map((item) => [item.label, item.enabled]));
+    };
+    const at = (mode: MascotMenuModel['state']['mode'], scale: number) => ({
+      mode,
+      scale,
+      muted: false,
+    });
+
+    it('opens both from the full height', () => {
+      expect(enabled(at('full', 1))).toEqual({ Larger: true, Smaller: true });
+    });
+
+    it('opens larger up to 2 and smaller down to 0.25', () => {
+      expect(enabled(at('bottom-right', 1.95))).toEqual({ Larger: true, Smaller: true });
+      expect(enabled(at('bottom-right', 2))).toEqual({ Larger: false, Smaller: true });
+      expect(enabled(at('free', 0.25))).toEqual({ Larger: true, Smaller: false });
+    });
+  });
+
   it('lists mode, size, outfit, a rule, then face front, reset position and hide', () => {
     const items = contextMenu(model, handlers(), 'en');
     expect(items.map((item) => item.label ?? item.type)).toEqual([

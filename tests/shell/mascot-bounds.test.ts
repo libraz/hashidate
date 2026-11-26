@@ -3,6 +3,7 @@ import {
   findDisplay,
   type MascotAction,
   mascotBounds,
+  mascotDisplayOf,
   nextMascotState,
   placeMascot,
 } from '@/mascot/bounds';
@@ -136,7 +137,8 @@ function ruleCorner(area: DisplayBounds, scale: number, side: 'left' | 'right'):
   const { width, height } = sized(area, scale);
   return {
     x: side === 'left' ? area.x + EDGE : area.x + area.width - EDGE - width,
-    y: area.y + area.height - EDGE - height,
+    // Taller than the work area, the top stays at the work area's top.
+    y: Math.max(area.y, area.y + area.height - EDGE - height),
     width,
     height,
   };
@@ -211,6 +213,11 @@ const PLACEMENT: readonly [MascotMode, number, DisplayCase, Dock, SavedCase][] =
   ['free', 0.25, 'external-left', 'hidden', 'overflow'],
   ['free', 1, 'external', 'left', 'overflow'],
   ['free', 0.5, 'external-left', 'hidden', 'gone'],
+  ['bottom-right', 2, 'internal', 'bottom', 'none'],
+  ['bottom-left', 1.5, 'external', 'left', 'gone'],
+  ['free', 2, 'external-left', 'hidden', 'same'],
+  ['free', 1.5, 'internal', 'left', 'overflow'],
+  ['full', 2, 'internal', 'hidden', 'none'],
 ];
 
 describe('where the mascot is put', () => {
@@ -224,7 +231,14 @@ describe('where the mascot is put', () => {
 
     expect(placed).toEqual(rulePlace(state, scene, found));
     const home = saved !== undefined && found ? scene.target : (scene.displays[0] as DisplayInfo);
-    expect(inside(placed, home.workArea)).toBe(true);
+    if (placed.height <= home.workArea.height) {
+      expect(inside(placed, home.workArea)).toBe(true);
+    } else {
+      // Taller than the work area: top-aligned, feet below, and still within the sides.
+      expect(placed.y).toBe(home.workArea.y);
+      expect(placed.x).toBeGreaterThanOrEqual(home.workArea.x);
+      expect(placed.x + placed.width).toBeLessThanOrEqual(home.workArea.x + home.workArea.width);
+    }
     // On a display that is there, the rectangle is the one the pure rule gives.
     if (found) expect(placed).toEqual(mascotBounds(mode, scale, home, saved));
   });
@@ -353,6 +367,11 @@ const TRANSITIONS: readonly [MascotMode, number, DisplayCase, Dock, SavedCase, A
   ['free', 1, 'external-left', 'hidden', 'none', 'move'],
   ['full', 0.25, 'internal', 'left', 'gone', 'none'],
   ['bottom-left', 1, 'external', 'left', 'overflow', 'larger'],
+  ['bottom-right', 2, 'internal', 'bottom', 'none', 'larger'],
+  ['bottom-right', 2, 'external', 'left', 'none', 'smaller'],
+  ['free', 1.5, 'external-left', 'left', 'overflow', 'larger'],
+  ['free', 2, 'external', 'hidden', 'same', 'move'],
+  ['full', 1, 'internal', 'bottom', 'none', 'smaller'],
 ];
 
 /** Where a drag leaves the window: well inside the display the saved point names. */
@@ -360,7 +379,7 @@ function dragged({ target }: Desk): WindowBounds {
   return { x: target.workArea.x + 300, y: target.workArea.y + 100, width: 180, height: 400 };
 }
 
-const stepped = (scale: number, dir: 1 | -1) => clamp(Math.round(scale * 20 + dir) / 20, 0.25, 1);
+const stepped = (scale: number, dir: 1 | -1) => clamp(Math.round(scale * 20 + dir) / 20, 0.25, 2);
 
 /** What the transition table says the state becomes, and whether its display is found after. */
 function ruleNext(
@@ -376,7 +395,7 @@ function ruleNext(
     case 'reset':
       return { state: { ...state, mode: 'bottom-right', scale: 0.5 }, found };
     case 'move': {
-      // A mascot filling the height is as large as one can be, and stays so.
+      // A mascot filling the height keeps that size when it is dragged out.
       const scale = state.mode === 'full' ? 1 : state.scale;
       const foot = ruleSettle(area, scale, footOf(dragged(scene)));
       return {
@@ -389,7 +408,7 @@ function ruleNext(
       const dir = action === 'larger' ? 1 : -1;
       if (state.mode === 'full') {
         return {
-          state: dir === 1 ? state : { ...state, mode: 'bottom-right', scale: 0.95 },
+          state: { ...state, mode: 'bottom-right', scale: dir === 1 ? 1.05 : 0.95 },
           found,
         };
       }
@@ -527,9 +546,19 @@ describe('each transition, in figures', () => {
     );
   });
 
-  it('has nowhere to step up to from the full height', () => {
-    const state = at('full', 0.5);
-    expect(nextMascotState(state, { type: 'stepScale', dir: 1 }, displays)).toEqual(state);
+  it('steps up from the full height into the corner at 1.05', () => {
+    expect(nextMascotState(at('full', 0.5), { type: 'stepScale', dir: 1 }, displays)).toEqual(
+      at('bottom-right', 1.05),
+    );
+  });
+
+  it('steps past 1 and stops at 2', () => {
+    let state = at('bottom-right', 1);
+    for (let i = 0; i < 25; i += 1) {
+      state = nextMascotState(state, { type: 'stepScale', dir: 1 }, displays);
+    }
+    expect(state.scale).toBe(2);
+    expect(nextMascotState(state, { type: 'stepScale', dir: 1 }, displays)).toBe(state);
   });
 
   it('walks the whole range in steps of 0.05 and stops at each end', () => {
@@ -542,7 +571,8 @@ describe('each transition, in figures', () => {
     expect(seen).toEqual([
       0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.25, 0.25,
     ]);
-    for (let i = 0; i < 17; i += 1) {
+    // Fifteen steps climb back from 0.25 to 1; the cap at 2 is checked on its own.
+    for (let i = 0; i < 15; i += 1) {
       state = nextMascotState(state, { type: 'stepScale', dir: 1 }, displays);
     }
     expect(state.scale).toBe(1);
@@ -598,11 +628,12 @@ describe('a continuous resize', () => {
 
   it('stops at each end of the range and then changes nothing', () => {
     expect(by(at('bottom-right', 0.5), 0.1).scale).toBe(0.25);
-    expect(by(at('bottom-right', 0.5), 10).scale).toBe(1);
+    expect(by(at('bottom-right', 0.5), 10).scale).toBe(2);
     const small = at('bottom-right', 0.25);
     expect(by(small, 0.5)).toBe(small);
-    const large = at('bottom-right', 1);
+    const large = at('bottom-right', 2);
     expect(by(large, 2)).toBe(large);
+    expect(by(at('bottom-right', 1), 2)).toEqual(at('bottom-right', 2));
   });
 
   it('returns the same state for a factor of 1', () => {
@@ -612,10 +643,13 @@ describe('a continuous resize', () => {
     }
   });
 
-  it('leaves the full height alone when growing and steps down into the corner when shrinking', () => {
+  it('leaves the full height alone for a factor of 1 and moves to the corner at any other', () => {
     const full = at('full', 0.5);
     expect(by(full, 1)).toBe(full);
-    expect(by(full, 1.5)).toBe(full);
+    expect(by(full, 1.5)).toEqual(at('bottom-right', 1.5));
+    expect(by(full, 2)).toEqual(at('bottom-right', 2));
+    expect(by(full, 10)).toEqual(at('bottom-right', 2));
+    expect(by(full, 0.5)).toEqual(at('bottom-right', 0.5));
     expect(by(full, 0.8)).toEqual(at('bottom-right', 0.8));
     expect(by(full, 0.1)).toEqual(at('bottom-right', 0.25));
   });
@@ -627,6 +661,11 @@ describe('a continuous resize', () => {
     const grown = by(at('free', 0.5, edge), 2);
     expect(grown.scale).toBe(1);
     expect(grown.saved?.y).toBe(25 + 871);
+    // Past the work area's height the feet hang below and the top is the work area's.
+    const taller = by(at('free', 0.5, edge), 3);
+    expect(taller.scale).toBe(1.5);
+    expect(taller.saved?.y).toBe(25 + 1307);
+    expect(footOf(placeMascot(taller, displays)).y - 1307).toBe(25);
   });
 
   it('does not match the menu steps off the grid and lands on it again at the next step', () => {
@@ -676,5 +715,79 @@ describe('the direction the character faces', () => {
     expect(front).toEqual(base);
     expect('angle' in front).toBe(false);
     expect(nextMascotState(base, { type: 'faceFront' }, displays)).toEqual(base);
+  });
+});
+
+describe('a window taller than the work area', () => {
+  const { displays, target } = desk('internal', 'bottom');
+  const area = target.workArea;
+
+  it('keeps its top at the work area top in a corner and in the open', () => {
+    expect(mascotBounds('bottom-right', 2, target)).toEqual({
+      x: 1512 - 16 - 784,
+      y: 25,
+      width: 784,
+      height: 1742,
+    });
+    expect(mascotBounds('bottom-left', 1.5, target).y).toBe(area.y);
+    const free = mascotBounds('free', 2, target, { x: 700, y: 400 });
+    expect(free.y).toBe(area.y);
+    expect(free.x).toBe(700 - 392);
+  });
+
+  it('is settled back to the top when dragged down, keeping the sideways move', () => {
+    const bounds = { x: 300, y: 400, width: 784, height: 1742 };
+    const next = nextMascotState(
+      { mode: 'free', scale: 2, muted: false },
+      { type: 'move', bounds },
+      displays,
+    );
+    expect(next.saved?.x).toBe(692);
+    expect(placeMascot(next, displays).y).toBe(area.y);
+  });
+
+  it('caps the height so the width stays inside the work area, leaving the scale alone', () => {
+    const portrait = display(
+      3,
+      'Portrait',
+      false,
+      { x: 0, y: 0, width: 1000, height: 3000 },
+      'hidden',
+    );
+    const placed = mascotBounds('bottom-right', 2, portrait);
+    expect(placed.width).toBeLessThanOrEqual(1000 - 2 * 16);
+    expect(placed.height).toBe(Math.floor((1000 - 32) / 0.45));
+    const state: MascotState = { mode: 'bottom-right', scale: 2, muted: false };
+    expect(placeMascot(state, [portrait]).width).toBe(placed.width);
+    expect(state.scale).toBe(2);
+  });
+});
+
+describe('the display a window belongs to', () => {
+  // Two displays stacked: the upper one 1512 × 982, the lower one below it.
+  const upper = display(1, 'Upper', true, { x: 0, y: 0, width: 1512, height: 982 }, 'hidden');
+  const lower = display(2, 'Lower', false, { x: 0, y: 982, width: 1512, height: 982 }, 'hidden');
+  const displays = [upper, lower];
+
+  it('is the one the middle of the top edge is on, however far the window hangs down', () => {
+    const tall = { x: 300, y: 25, width: 784, height: 1742 };
+    expect(mascotDisplayOf(tall, displays)).toBe(upper);
+    expect(mascotDisplayOf({ ...tall, y: 1000 }, displays)).toBe(lower);
+  });
+
+  it('is the one the move action saves for a tall window hanging over the lower display', () => {
+    const next = nextMascotState(
+      { mode: 'free', scale: 2, muted: false },
+      { type: 'move', bounds: { x: 300, y: 25, width: 784, height: 1742 } },
+      displays,
+    );
+    expect(next.saved?.display.id).toBe(1);
+  });
+
+  it('falls back to the display under the centre, then to the primary', () => {
+    const above = { x: 300, y: -500, width: 100, height: 1200 };
+    expect(mascotDisplayOf(above, displays)).toBe(upper);
+    expect(mascotDisplayOf({ x: 9000, y: 9000, width: 10, height: 10 }, displays)).toBe(upper);
+    expect(mascotDisplayOf({ x: 0, y: 0, width: 10, height: 10 }, [])).toBeUndefined();
   });
 });
