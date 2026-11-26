@@ -653,12 +653,16 @@ describe('pointer', () => {
     expect(isFocused()).toBe(true);
   });
 
-  it('lets go of the focus on blur', () => {
+  it('keeps the focus when the window loses the keyboard with the pointer still on the character', () => {
     focus();
     target.dispatchEvent(new Event('blur'));
-    expect(cursors).toEqual([null]);
-    expect(isFocused()).toBe(false);
-    expect(bridge.setInteractive).not.toHaveBeenCalled();
+    expect(cursors).toEqual([]);
+    expect(isFocused()).toBe(true);
+    mouse('mousedown', 150, 150);
+    mouse('mousemove', 160, 150);
+    frame();
+    expect(cursors).toEqual(['grabbing']);
+    expect(bridge.moveBy).not.toHaveBeenCalled();
   });
 
   it('gives the cursor back when stopped while focused', () => {

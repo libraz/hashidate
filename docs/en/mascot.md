@@ -42,7 +42,7 @@ In every mode the window is 0.45 times as wide as it is tall. In a corner or fre
 
 ### Focus and turning
 
-A tap on the character gives it focus, and the pointer shows a grab cursor. Focus ends when the pointer hands the mouse back or leaves the page, when the window loses focus, or when a shrink leaves the character out from under the pointer.
+A tap on the character gives it focus, and the pointer shows a grab cursor. Focus ends when the pointer hands the mouse back or leaves the page, or when a shrink leaves the character out from under the pointer. Another window taking the keyboard, such as an input box opened beside the character, does not end it.
 
 | While the character | Dragging | Wheel |
 |---|---|---|

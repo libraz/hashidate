@@ -13,10 +13,10 @@ import { dragShot, wheelFactor } from '../shot-gesture';
  * The window lets the mouse through wherever the character is not, so the page
  * tests every pointer move against the drawn meshes and tells the shell when
  * the answer changes. A press on the character is a touch if it stays put, and
- * a tap gives the character focus until the pointer leaves it. A press that
- * travels grabs the window, or turns the camera while focused; the wheel
- * resizes the window while focused and is left alone otherwise. Nothing is
- * decided by a modifier key.
+ * a tap gives the character focus until the pointer leaves it, whichever
+ * window has the keyboard meanwhile. A press that travels grabs the window, or
+ * turns the camera while focused; the wheel resizes the window while focused
+ * and is left alone otherwise. Nothing is decided by a modifier key.
  */
 
 /** A part of the body a touch is reported against. */
@@ -410,8 +410,7 @@ export function watchPointer({
     } else if (phase === 'turning') {
       const { yaw, pitch } = shot.get();
       bridge.turnTo({ yaw, pitch });
-      // A blur in the middle of the turn has already let go of the focus.
-      cursor(focused ? 'grab' : null);
+      cursor('grab');
     }
     seen.x = e.clientX;
     seen.y = e.clientY;
@@ -454,15 +453,12 @@ export function watchPointer({
     miss();
   };
 
-  const onBlur = (): void => unfocus();
-
   target.addEventListener('mousemove', onMove);
   target.addEventListener('mousedown', onDown);
   target.addEventListener('mouseup', onUp);
   target.addEventListener('wheel', onWheel, { passive: false });
   target.addEventListener('resize', onResize);
   target.addEventListener('mouseout', onOut);
-  target.addEventListener('blur', onBlur);
 
   return () => {
     target.removeEventListener('mousemove', onMove);
@@ -471,7 +467,6 @@ export function watchPointer({
     target.removeEventListener('wheel', onWheel);
     target.removeEventListener('resize', onResize);
     target.removeEventListener('mouseout', onOut);
-    target.removeEventListener('blur', onBlur);
     missTimer = clear(missTimer);
     holdTimer = clear(holdTimer);
     runTimer = clear(runTimer);
