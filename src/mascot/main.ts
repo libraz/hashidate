@@ -11,6 +11,7 @@ import {
   Tray,
 } from 'electron';
 import { ControlClient } from '../control/client';
+import type { ShotAngle } from '../engine/types/staging';
 import { getLocale } from '../i18n/locale';
 import { translate } from '../i18n/translate';
 import { type Command, snapshotSchema } from '../protocol';
@@ -35,6 +36,7 @@ import {
   nextMascotState,
   placeMascot,
 } from './bounds';
+import { angleFrom, isScaleFactor } from './limits';
 import { contextMenu, type MascotMenuHandlers, type MascotMenuModel, trayMenu } from './menu';
 import type { MascotCalls } from './preload';
 
@@ -84,6 +86,9 @@ const TRAY_ICON_SIZE = 18;
  */
 const MENU_FETCH_TIMEOUT_MS = 1_000;
 
+/** The angle a character faces with none kept. */
+const FRONT: ShotAngle = { yaw: 0, pitch: 0 };
+
 let store: ShellState | null = null;
 let state: MascotState = DEFAULT_MASCOT_STATE;
 let window: BrowserWindow | null = null;
@@ -129,6 +134,16 @@ function settle(): void {
   place();
 }
 
+/** Save once movement has stopped for `DRAG_SETTLE_MS`, then pull the window back inside an edge. */
+function saveLater(): void {
+  if (settleTimer !== null) clearTimeout(settleTimer);
+  settleTimer = setTimeout(() => {
+    settleTimer = null;
+    save();
+    place();
+  }, DRAG_SETTLE_MS);
+}
+
 function apply(action: MascotAction): void {
   settle();
   state = nextMascotState(state, action, displays());
@@ -162,6 +177,11 @@ function setVisible(visible: boolean): void {
   else target.hide();
 }
 
+/** Tell the page which angle to show. */
+function sendShot(target: BrowserWindow, angle: ShotAngle): void {
+  target.webContents.send('mascot:shot', angle);
+}
+
 const handlers: MascotMenuHandlers = {
   setVisible,
   setMode: (mode: MascotMode) => apply({ type: 'mode', mode }),
@@ -169,7 +189,11 @@ const handlers: MascotMenuHandlers = {
   setAvatar: (id) => void send({ cmd: 'avatar', id }),
   setOutfit: (id) => void send({ cmd: 'wear', preset: id }),
   setMuted,
-  faceFront: () => apply({ type: 'faceFront' }),
+  faceFront: () => {
+    apply({ type: 'faceFront' });
+    const target = liveWindow();
+    if (target !== null) sendShot(target, FRONT);
+  },
   resetPosition: () => apply({ type: 'reset' }),
   quit: () => app.quit(),
 };
@@ -256,17 +280,21 @@ function installBridge(): void {
     // Free from the first movement. The bridge never reports the release, so
     // the drag has ended when this long passes with no further movement.
     state = nextMascotState(state, { type: 'move', bounds: target.getBounds() }, displays());
-    if (settleTimer !== null) clearTimeout(settleTimer);
-    settleTimer = setTimeout(() => {
-      settleTimer = null;
-      save();
-      place();
-    }, DRAG_SETTLE_MS);
+    saveLater();
   });
 
-  onCall('mascot:step-scale', (_target, dir) => {
-    if (dir !== 1 && dir !== -1) return;
-    apply({ type: 'stepScale', dir });
+  onCall('mascot:scale-by', (_target, factor) => {
+    if (!isScaleFactor(factor)) return;
+    const next = nextMascotState(state, { type: 'scaleBy', factor }, displays());
+    if (next === state) return;
+    state = next;
+    place();
+    saveLater();
+  });
+
+  onCall('mascot:turn-to', (_target, yaw, pitch) => {
+    const angle = angleFrom(yaw, pitch);
+    if (angle !== null) apply({ type: 'turn', angle });
   });
 }
 
@@ -306,6 +334,10 @@ function makeWindow(): BrowserWindow {
   created.webContents.on('context-menu', () => void openContextMenu());
   created.webContents.once('did-finish-load', () => {
     if (!created.isDestroyed()) created.showInactive();
+  });
+  // Every load, the mute switch's reload included: a fresh page starts at the front.
+  created.webContents.on('did-finish-load', () => {
+    if (!created.isDestroyed()) sendShot(created, state.angle ?? FRONT);
   });
   created.on('closed', () => {
     if (window === created) window = null;

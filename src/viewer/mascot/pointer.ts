@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import type { BoneSlot, Side } from '@/engine/types';
-import type { SessionEvent } from '@/protocol';
+import type { SessionEvent, Shot } from '@/protocol';
+import { SCALE_BY_LIMITS } from '../../mascot/limits';
 import type { RaycastTargets } from '../scene/runtime';
 import type { MascotBridge } from '../shell-bridge';
+import { dragShot, wheelFactor } from '../shot-gesture';
 
 /**
  * The pointer on a mascot: which pixels are the character, and what a press on
@@ -10,8 +12,11 @@ import type { MascotBridge } from '../shell-bridge';
  *
  * The window lets the mouse through wherever the character is not, so the page
  * tests every pointer move against the drawn meshes and tells the shell when
- * the answer changes. A press on the character is a touch if it stays put and
- * a grab of the window if it travels; nothing is decided by a modifier key.
+ * the answer changes. A press on the character is a touch if it stays put, and
+ * a tap gives the character focus until the pointer leaves it. A press that
+ * travels grabs the window, or turns the camera while focused; the wheel
+ * resizes the window while focused and is left alone otherwise. Nothing is
+ * decided by a modifier key.
  */
 
 /** A part of the body a touch is reported against. */
@@ -46,8 +51,6 @@ export const HOLD_DELAY = 600;
 export const TAP_WINDOW = 350;
 /** Where a run stops counting, which is the most the wire carries. */
 export const MAX_COUNT = 10;
-/** How long after a size step further wheel events are ignored, in ms: a trackpad swipe is many. */
-export const WHEEL_STEP_GAP = 150;
 
 /**
  * The five parts the wire names, by bone slot. Above the shoulders is the
@@ -204,7 +207,15 @@ export interface PointerOptions {
   /** See `createHitTest`. */
   hitTest: (x: number, y: number) => PointerHit | null;
   onTouch: (touch: MascotTouch) => void;
-  /** The frame clock hover tests are held to; the page's own unless a test supplies one. */
+  /** The camera a focused drag turns. */
+  shot: { get(): Required<Shot>; set(shot: Shot): void };
+  /** The picture's height in CSS pixels, which a drag's turn is measured against. */
+  height: () => number;
+  /** Where the window's top left is on the screen. */
+  origin: () => { x: number; y: number };
+  /** Show the pointer as over a focused character (`grab`), turning it (`grabbing`), or as the page's own. */
+  cursor: (kind: 'grab' | 'grabbing' | null) => void;
+  /** The frame clock hover tests, turns and resizes are held to; the page's own unless a test supplies one. */
   frames?: {
     request: (fn: () => void) => number;
     cancel: (id: number) => void;
@@ -218,7 +229,9 @@ interface Press {
   lastX: number;
   lastY: number;
   hit: PointerHit;
-  phase: 'pressed' | 'held' | 'moving';
+  phase: 'pressed' | 'held' | 'moving' | 'turning';
+  /** The shot when the press began, which a turn is measured from. */
+  start: Required<Shot>;
 }
 
 /**
@@ -231,13 +244,25 @@ export function watchPointer({
   bridge,
   hitTest,
   onTouch,
+  shot,
+  height,
+  origin,
+  cursor,
   frames = { request: (fn) => requestAnimationFrame(fn), cancel: (id) => cancelAnimationFrame(id) },
 }: PointerOptions): () => void {
   let interactive = false;
+  let focused = false;
   /** Where the pointer was last seen, in client coordinates. */
   const seen = { x: 0, y: 0 };
+  /** Where the pointer was last seen, in screen coordinates. */
+  const screen = { x: 0, y: 0 };
   let hoverFrame: number | null = null;
-  let wheelTimer: ReturnType<typeof setTimeout> | null = null;
+  let turnFrame: number | null = null;
+  let wheelFrame: number | null = null;
+  /** The wheel's factors since the last resize was sent. */
+  let acc = 1;
+  /** Whether the next `resize` should test the pointer again, the character having moved under it. */
+  let rehover = false;
   let missTimer: ReturnType<typeof setTimeout> | null = null;
   let press: Press | null = null;
   let holdTimer: ReturnType<typeof setTimeout> | null = null;
@@ -249,6 +274,28 @@ export function watchPointer({
     return null;
   };
 
+  const focus = (): void => {
+    focused = true;
+    cursor('grab');
+  };
+
+  const unfocus = (): void => {
+    if (!focused) return;
+    focused = false;
+    cursor(null);
+  };
+
+  /** Hand the mouse back once the delay runs out, unless the pointer returns first. */
+  const miss = (): void => {
+    if (!interactive || missTimer !== null) return;
+    missTimer = setTimeout(() => {
+      missTimer = null;
+      interactive = false;
+      bridge.setInteractive(false);
+      unfocus();
+    }, MISS_DELAY);
+  };
+
   /** Tell the shell when on-the-character changes; going off waits out the delay. */
   const hover = (): void => {
     // A press keeps the mouse wherever it goes: the window is moving under it.
@@ -258,17 +305,22 @@ export function watchPointer({
         interactive = true;
         bridge.setInteractive(true);
       }
-    } else if (interactive && missTimer === null) {
-      missTimer = setTimeout(() => {
-        missTimer = null;
-        interactive = false;
-        bridge.setInteractive(false);
-      }, MISS_DELAY);
+    } else {
+      miss();
     }
+  };
+
+  /** Point the camera where the press has dragged it so far. */
+  const turn = (): void => {
+    if (!press) return;
+    const { yaw, pitch } = dragShot(press.start, screen.x - press.x, screen.y - press.y, height());
+    shot.set({ yaw, pitch });
   };
 
   const onDown = (event: Event): void => {
     const e = event as MouseEvent;
+    screen.x = e.screenX;
+    screen.y = e.screenY;
     if (e.button !== 0) return;
     const hit = hitTest(e.clientX, e.clientY);
     if (!hit) return;
@@ -281,6 +333,7 @@ export function watchPointer({
       lastY: e.screenY,
       hit,
       phase: 'pressed',
+      start: shot.get(),
     };
     holdTimer = setTimeout(() => {
       holdTimer = null;
@@ -295,6 +348,8 @@ export function watchPointer({
 
   const onMove = (event: Event): void => {
     const e = event as MouseEvent;
+    screen.x = e.screenX;
+    screen.y = e.screenY;
     if (!press) {
       // A click-through window forwards every move and a hit test skins the
       // meshes on the CPU, so only the latest position is tested, once a frame.
@@ -307,10 +362,23 @@ export function watchPointer({
       return;
     }
     // Screen coordinates: the window follows the pointer, so the page's own stand still.
-    if (press.phase !== 'moving') {
+    if (press.phase === 'pressed' || press.phase === 'held') {
       if (Math.hypot(e.screenX - press.x, e.screenY - press.y) <= MOVE_THRESHOLD) return;
-      press.phase = 'moving';
       holdTimer = clear(holdTimer);
+      if (focused) {
+        press.phase = 'turning';
+        cursor('grabbing');
+      } else {
+        press.phase = 'moving';
+      }
+    }
+    if (press.phase === 'turning') {
+      // Each turn re-places the camera, so a run of moves is applied once a frame.
+      turnFrame ??= frames.request(() => {
+        turnFrame = null;
+        turn();
+      });
+      return;
     }
     bridge.moveBy(e.screenX - press.lastX, e.screenY - press.lastY);
     press.lastX = e.screenX;
@@ -319,8 +387,15 @@ export function watchPointer({
 
   const onUp = (event: Event): void => {
     const e = event as MouseEvent;
+    screen.x = e.screenX;
+    screen.y = e.screenY;
     if (e.button !== 0 || !press) return;
     const { phase, hit } = press;
+    if (turnFrame !== null) {
+      frames.cancel(turnFrame);
+      turnFrame = null;
+      turn();
+    }
     press = null;
     holdTimer = clear(holdTimer);
     if (phase === 'pressed') {
@@ -331,6 +406,12 @@ export function watchPointer({
         run = 0;
       }, TAP_WINDOW);
       onTouch({ kind: 'tap', ...hit, count: run });
+      focus();
+    } else if (phase === 'turning') {
+      const { yaw, pitch } = shot.get();
+      bridge.turnTo({ yaw, pitch });
+      // A blur in the middle of the turn has already let go of the focus.
+      cursor(focused ? 'grab' : null);
     }
     seen.x = e.clientX;
     seen.y = e.clientY;
@@ -339,32 +420,67 @@ export function watchPointer({
 
   const onWheel = (event: Event): void => {
     const e = event as WheelEvent;
-    if (!e.altKey || e.deltaY === 0) return;
+    if (!focused) return;
     e.preventDefault();
-    if (wheelTimer !== null) return;
-    bridge.stepScale(e.deltaY < 0 ? 1 : -1);
-    wheelTimer = setTimeout(() => {
-      wheelTimer = null;
-    }, WHEEL_STEP_GAP);
+    // A resize in the middle of a turn would change the height the drag is measured against.
+    if (press) return;
+    acc *= wheelFactor(e.deltaY);
+    wheelFrame ??= frames.request(() => {
+      wheelFrame = null;
+      const factor = Math.min(SCALE_BY_LIMITS.max, Math.max(SCALE_BY_LIMITS.min, acc));
+      acc = 1;
+      if (factor === 1) return;
+      bridge.scaleBy(factor);
+      rehover = true;
+    });
   };
+
+  // The window changing size is what says a resize has landed; the IPC round trip takes no set number of frames.
+  const onResize = (): void => {
+    if (!rehover) return;
+    rehover = false;
+    const at = origin();
+    seen.x = screen.x - at.x;
+    seen.y = screen.y - at.y;
+    hover();
+  };
+
+  // `mouseleave` does not bubble and never reaches the window, so leaving the page is a `mouseout` to nowhere.
+  const onOut = (event: Event): void => {
+    if ((event as MouseEvent).relatedTarget !== null || press) return;
+    if (hoverFrame !== null) frames.cancel(hoverFrame);
+    hoverFrame = null;
+    unfocus();
+    miss();
+  };
+
+  const onBlur = (): void => unfocus();
 
   target.addEventListener('mousemove', onMove);
   target.addEventListener('mousedown', onDown);
   target.addEventListener('mouseup', onUp);
   target.addEventListener('wheel', onWheel, { passive: false });
+  target.addEventListener('resize', onResize);
+  target.addEventListener('mouseout', onOut);
+  target.addEventListener('blur', onBlur);
 
   return () => {
     target.removeEventListener('mousemove', onMove);
     target.removeEventListener('mousedown', onDown);
     target.removeEventListener('mouseup', onUp);
     target.removeEventListener('wheel', onWheel);
+    target.removeEventListener('resize', onResize);
+    target.removeEventListener('mouseout', onOut);
+    target.removeEventListener('blur', onBlur);
     missTimer = clear(missTimer);
     holdTimer = clear(holdTimer);
     runTimer = clear(runTimer);
-    wheelTimer = clear(wheelTimer);
-    if (hoverFrame !== null) frames.cancel(hoverFrame);
+    for (const id of [hoverFrame, turnFrame, wheelFrame]) if (id !== null) frames.cancel(id);
     hoverFrame = null;
+    turnFrame = null;
+    wheelFrame = null;
     press = null;
+    unfocus();
     // Nobody is left to hand the mouse back when the pointer leaves.
     if (interactive) bridge.setInteractive(false);
     interactive = false;

@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildProfile } from '@/engine/profile';
+import type { Shot } from '@/protocol';
 import {
   createHitTest,
   HIT_MARGIN,
@@ -12,6 +13,7 @@ import {
 } from '@/viewer/mascot/pointer';
 import { ShotCamera } from '@/viewer/scene/runtime/camera';
 import type { MascotBridge } from '@/viewer/shell-bridge';
+import { dragShot, wheelFactor } from '@/viewer/shot-gesture';
 import { openingFrame, readStageMode } from '@/viewer/stage-mode';
 import { addRigidMesh, addSkinnedRing, buildRig } from '../helpers/scene';
 
@@ -172,6 +174,12 @@ describe('pointer', () => {
   let touches: MascotTouch[];
   let hit: PointerHit;
   let stop: () => void;
+  /** The camera the pointer turns, and every shot it was handed. */
+  let current: Required<Shot>;
+  let shots: Shot[];
+  let cursors: Array<'grab' | 'grabbing' | null>;
+  /** The window's top left on the screen. */
+  let corner: { x: number; y: number };
 
   /** The frames asked for and not yet drawn, by handle. */
   let pending: Map<number, () => void>;
@@ -200,7 +208,17 @@ describe('pointer', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     target = new EventTarget();
-    bridge = { setInteractive: vi.fn(), moveBy: vi.fn(), stepScale: vi.fn() };
+    bridge = {
+      setInteractive: vi.fn(),
+      moveBy: vi.fn(),
+      scaleBy: vi.fn(),
+      turnTo: vi.fn(),
+      onShot: vi.fn(() => () => {}),
+    };
+    current = { frame: 'full', yaw: 10, pitch: 5, zoom: 1 };
+    shots = [];
+    cursors = [];
+    corner = { x: 0, y: 0 };
     touches = [];
     hit = { part: 'head' };
     pending = new Map();
@@ -215,6 +233,16 @@ describe('pointer', () => {
         return inside(x, y) ? hit : null;
       },
       onTouch: (touch) => touches.push(touch),
+      shot: {
+        get: () => ({ ...current }),
+        set: (shot) => {
+          shots.push(shot);
+          current = { ...current, ...shot };
+        },
+      },
+      height: () => HEIGHT,
+      origin: () => corner,
+      cursor: (kind) => cursors.push(kind),
       frames: {
         request: (fn) => {
           pending.set(++handle, fn);
@@ -420,46 +448,278 @@ describe('pointer', () => {
     expect(touches.map((t) => t.count)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10]);
   });
 
-  it('steps the size on an option-wheel, and leaves a bare wheel alone', () => {
+  /** A wheel event, which the page may or may not swallow. */
+  const wheel = (deltaY: number, keys: { ctrlKey?: boolean } = {}) => {
     // happy-dom's WheelEvent drops the modifier keys a real one carries.
-    const wheel = (deltaY: number, altKey: boolean) =>
-      target.dispatchEvent(
-        Object.assign(new WheelEvent('wheel', { deltaY, cancelable: true }), { altKey }),
-      );
+    const event = Object.assign(new WheelEvent('wheel', { deltaY, cancelable: true }), keys);
+    target.dispatchEvent(event);
+    return event;
+  };
+  /** Whether the character has the focus, read off what the wheel does. */
+  const isFocused = (): boolean => {
+    const taken = wheel(0).defaultPrevented;
+    frame();
+    return taken;
+  };
+  /** Tap the character into focus, and let the run of taps lapse. */
+  const focus = () => {
+    tap();
+    vi.advanceTimersByTime(1000);
+    touches.length = 0;
+    cursors.length = 0;
+    bridge.setInteractive.mockClear();
+  };
 
-    wheel(-3, false);
-    expect(bridge.stepScale).not.toHaveBeenCalled();
-
-    wheel(-3, true);
-    wheel(0, true);
-    vi.advanceTimersByTime(150);
-    wheel(120, true);
-    expect(bridge.stepScale.mock.calls).toEqual([[1], [-1]]);
+  it('takes the focus on a tap, which is still reported as a touch', () => {
+    expect(isFocused()).toBe(false);
+    tap();
+    expect(touches).toEqual([{ kind: 'tap', part: 'head', count: 1 }]);
+    expect(cursors).toEqual(['grab']);
+    expect(isFocused()).toBe(true);
   });
 
-  it('takes one step from a swipe, and the next only 150 ms after it', () => {
-    const wheel = (deltaY: number) => {
-      const event = Object.assign(new WheelEvent('wheel', { deltaY, cancelable: true }), {
-        altKey: true,
-      });
-      target.dispatchEvent(event);
-      return event;
-    };
+  it('turns the camera on a focused drag, once a frame, and keeps the angle on release', () => {
+    focus();
+    const start = { ...current };
+    raw('mousedown', 150, 150);
+    raw('mousemove', 155, 150);
+    raw('mousemove', 160, 153);
+    expect(shots).toEqual([]);
+    expect(cursors).toEqual(['grabbing']);
 
-    wheel(-4);
-    for (let i = 0; i < 20; i++) {
-      vi.advanceTimersByTime(7);
-      // Still the page's to swallow, or the swipe would scroll something.
-      expect(wheel(-4).defaultPrevented).toBe(true);
-    }
-    expect(bridge.stepScale.mock.calls).toEqual([[1]]);
+    frame();
+    const first = dragShot(start, 10, 3, HEIGHT);
+    expect(shots).toEqual([{ yaw: first.yaw, pitch: first.pitch }]);
+    frame();
+    expect(shots).toHaveLength(1);
 
-    vi.advanceTimersByTime(9);
-    expect(bridge.stepScale).toHaveBeenCalledTimes(1);
+    // The last move is applied on release even though its frame has not come.
+    raw('mousemove', 170, 140);
+    raw('mouseup', 170, 140);
+    const last = dragShot(start, 20, -10, HEIGHT);
+    expect(shots).toEqual([
+      { yaw: first.yaw, pitch: first.pitch },
+      { yaw: last.yaw, pitch: last.pitch },
+    ]);
+    expect(bridge.turnTo.mock.calls).toEqual([[{ yaw: last.yaw, pitch: last.pitch }]]);
+    expect(cursors).toEqual(['grabbing', 'grab']);
+    expect(pending.size).toBe(0);
+
+    expect(bridge.moveBy).not.toHaveBeenCalled();
+    expect(touches).toEqual([]);
+    expect(isFocused()).toBe(true);
+  });
+
+  it('does not focus on a hold released, and turns after a hold when focused', () => {
+    mouse('mousedown', 150, 150);
+    vi.advanceTimersByTime(600);
+    mouse('mouseup', 150, 150);
+    expect(cursors).toEqual([]);
+    expect(isFocused()).toBe(false);
+
+    focus();
+    mouse('mousedown', 150, 150);
+    vi.advanceTimersByTime(600);
+    mouse('mousemove', 160, 150);
+    mouse('mouseup', 160, 150);
+    expect(bridge.moveBy).not.toHaveBeenCalled();
+    expect(bridge.turnTo).toHaveBeenCalledTimes(1);
+    expect(cursors).toEqual(['grabbing', 'grab']);
+  });
+
+  it('leaves the wheel alone when not focused', () => {
+    expect(wheel(-120).defaultPrevented).toBe(false);
+    expect(wheel(-120, { ctrlKey: true }).defaultPrevented).toBe(false);
+    frame();
+    expect(bridge.scaleBy).not.toHaveBeenCalled();
+  });
+
+  it('resizes by the product of a frame of wheel events, sent once, pinch or not', () => {
+    focus();
+    expect(wheel(-100).defaultPrevented).toBe(true);
+    expect(wheel(-40, { ctrlKey: true }).defaultPrevented).toBe(true);
+    wheel(15);
+    expect(bridge.scaleBy).not.toHaveBeenCalled();
+
+    frame();
+    expect(bridge.scaleBy.mock.calls).toEqual([
+      [1 * wheelFactor(-100) * wheelFactor(-40) * wheelFactor(15)],
+    ]);
+    expect(bridge.scaleBy.mock.calls[0][0]).toBeGreaterThan(1);
+
+    wheel(30, { ctrlKey: true });
+    frame();
+    expect(bridge.scaleBy.mock.calls[1]).toEqual([wheelFactor(30)]);
+    expect(wheelFactor(30)).toBeLessThan(1);
+    frame();
+    expect(bridge.scaleBy).toHaveBeenCalledTimes(2);
+  });
+
+  it('clamps a frame of wheel to what one resize may carry', () => {
+    focus();
+    for (let i = 0; i < 4; i++) wheel(-10000);
+    frame();
+    for (let i = 0; i < 4; i++) wheel(10000);
+    frame();
+    expect(bridge.scaleBy.mock.calls).toEqual([[2], [0.5]]);
+  });
+
+  it('swallows and drops the wheel while a button is down', () => {
+    focus();
+    mouse('mousedown', 150, 150);
+    expect(wheel(-120).defaultPrevented).toBe(true);
+    frame();
+    mouse('mousemove', 160, 150);
+    expect(wheel(-120).defaultPrevented).toBe(true);
+    frame();
+    mouse('mouseup', 160, 150);
+    expect(bridge.scaleBy).not.toHaveBeenCalled();
+
+    wheel(-120);
+    frame();
+    expect(bridge.scaleBy.mock.calls).toEqual([[wheelFactor(-120)]]);
+  });
+
+  it('tests the pointer again when a resize lands, and lets go if the character left it', () => {
+    focus();
+    // The window moving without a resize behind it is not tested.
+    corner = { x: 100, y: 0 };
+    target.dispatchEvent(new Event('resize'));
+    vi.advanceTimersByTime(1000);
+    expect(bridge.setInteractive).not.toHaveBeenCalled();
+
+    wheel(120);
+    frame();
+    expect(bridge.scaleBy).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1000);
+    expect(bridge.setInteractive).not.toHaveBeenCalled();
+    expect(cursors).toEqual([]);
+
+    target.dispatchEvent(new Event('resize'));
+    vi.advanceTimersByTime(199);
+    expect(bridge.setInteractive).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
-    wheel(4);
-    expect(bridge.stepScale.mock.calls).toEqual([[1], [-1]]);
+    expect(bridge.setInteractive.mock.calls).toEqual([[false]]);
+    expect(cursors).toEqual([null]);
+    expect(isFocused()).toBe(false);
   });
+
+  it('keeps the focus when a resize leaves the character under the pointer', () => {
+    focus();
+    wheel(120);
+    frame();
+    corner = { x: 20, y: 20 };
+    target.dispatchEvent(new Event('resize'));
+    vi.advanceTimersByTime(1000);
+    expect(bridge.setInteractive).not.toHaveBeenCalled();
+    expect(isFocused()).toBe(true);
+  });
+
+  it('lets go of the focus when the pointer goes off the character', () => {
+    focus();
+    mouse('mousemove', 50, 50);
+    vi.advanceTimersByTime(199);
+    expect(cursors).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(bridge.setInteractive.mock.calls).toEqual([[false]]);
+    expect(cursors).toEqual([null]);
+    expect(isFocused()).toBe(false);
+  });
+
+  it('lets go of the focus when the pointer leaves the page, and not when it moves within it', () => {
+    focus();
+    target.dispatchEvent(new MouseEvent('mouseout', { relatedTarget: document.body }));
+    vi.advanceTimersByTime(1000);
+    expect(cursors).toEqual([]);
+    expect(isFocused()).toBe(true);
+
+    // A move inside the page whose frame has not come yet does not keep the mouse.
+    raw('mousemove', 150, 150);
+    target.dispatchEvent(new MouseEvent('mouseout', { relatedTarget: null }));
+    expect(cursors).toEqual([null]);
+    frame();
+    vi.advanceTimersByTime(200);
+    expect(bridge.setInteractive.mock.calls).toEqual([[false]]);
+    expect(isFocused()).toBe(false);
+  });
+
+  it('keeps the focus and the mouse when the pointer leaves the page with a button down', () => {
+    focus();
+    mouse('mousedown', 150, 150);
+    target.dispatchEvent(new MouseEvent('mouseout', { relatedTarget: null }));
+    vi.advanceTimersByTime(1000);
+    expect(bridge.setInteractive).not.toHaveBeenCalled();
+    mouse('mouseup', 150, 150);
+    expect(isFocused()).toBe(true);
+  });
+
+  it('lets go of the focus on blur', () => {
+    focus();
+    target.dispatchEvent(new Event('blur'));
+    expect(cursors).toEqual([null]);
+    expect(isFocused()).toBe(false);
+    expect(bridge.setInteractive).not.toHaveBeenCalled();
+  });
+
+  it('gives the cursor back when stopped while focused', () => {
+    focus();
+    stop();
+    expect(cursors).toEqual([null]);
+  });
+
+  /**
+   * Every combination of focus, where the press lands, how far it travels, a
+   * hold and the button: 2 x 2 x 3 x 2 x 2 is small enough to take whole.
+   */
+  describe.each(
+    [false, true].flatMap((focused) =>
+      [true, false].flatMap((onAvatar) =>
+        [0, 4, 5].flatMap((travel) =>
+          [false, true].flatMap((held) =>
+            [0, 2].map((button) => ({ focused, onAvatar, travel, held, button })),
+          ),
+        ),
+      ),
+    ),
+  )(
+    'a press with focus $focused, on the avatar $onAvatar, travelling $travel px, held $held, button $button',
+    ({ focused, onAvatar, travel, held, button }) => {
+      it('does what the state table says', () => {
+        if (focused) focus();
+        const start = { ...current };
+        const x = onAvatar ? 150 : 50;
+        mouse('mousedown', x, x, { button });
+        if (held) vi.advanceTimersByTime(600);
+        mouse('mousemove', x + travel, x, { button });
+        mouse('mouseup', x + travel, x, { button });
+        vi.advanceTimersByTime(1000);
+
+        const pressed = onAvatar && button === 0;
+        const travelled = pressed && travel > 4;
+        // A pointer resting off the character hands the mouse back, and the focus with it.
+        const lost = focused && !onAvatar;
+        const kinds = touches.map((t) => t.kind);
+        expect(kinds).toEqual([
+          ...(pressed && held ? ['hold'] : []),
+          ...(pressed && !held && !travelled ? ['tap'] : []),
+        ]);
+
+        if (travelled && focused) {
+          const turned = dragShot(start, travel, 0, HEIGHT);
+          expect(shots).toEqual([{ yaw: turned.yaw, pitch: turned.pitch }]);
+          expect(bridge.turnTo.mock.calls).toEqual([[{ yaw: turned.yaw, pitch: turned.pitch }]]);
+          expect(bridge.moveBy).not.toHaveBeenCalled();
+          expect(cursors).toEqual(['grabbing', 'grab']);
+        } else {
+          expect(shots).toEqual([]);
+          expect(bridge.turnTo).not.toHaveBeenCalled();
+          expect(bridge.moveBy.mock.calls).toEqual(travelled ? [[travel, 0]] : []);
+          expect(cursors).toEqual(pressed && !held && !travelled ? ['grab'] : lost ? [null] : []);
+        }
+        expect(isFocused()).toBe((focused && !lost) || (pressed && !held && !travelled));
+      });
+    },
+  );
 
   it('drops the frame it was waiting on when stopped', () => {
     raw('mousemove', 150, 150);
