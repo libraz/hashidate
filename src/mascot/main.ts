@@ -309,6 +309,9 @@ function makeWindow(): BrowserWindow {
     // A panel floats over other applications' windows without becoming the
     // active application when it is clicked.
     type: 'panel',
+    // Shown inactive and left that way, so a click would otherwise only activate it
+    // and the tap that gives the character focus would never reach the page.
+    acceptFirstMouse: true,
     resizable: false,
     maximizable: false,
     minimizable: false,
