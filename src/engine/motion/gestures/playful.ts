@@ -105,8 +105,9 @@ export const PLAYFUL = {
         space: 'body',
         at: 'sternum',
         offset: [0.16, 0.2 + vertical, 0.35],
-        hand: [0.1, 0.94, 0.32],
-        palm: [0, 0.05, 1],
+        // Fingers lean inward: upright, the wrist ran out of bend and the elbow swung in.
+        hand: [-0.18, 0.78, 0.6],
+        palm: [-0.13, -0.29, 0.95],
         pole: [0.3, -0.9, 0.3],
       });
       return reachPair(out, paw(-s), paw(s), PAW, PAW, { head: [0.025 + s * 0.12, 0, 0] });

@@ -50,8 +50,9 @@ export const AFFECTION = {
           at: 'mouth',
           offset: [0.98 * depart, -0.71 * depart, 0.2 + 2.9 * depart],
           contact: KISS_CONTACT,
-          hand: [-0.25 + 0.25 * depart, 0.95 - 0.6 * depart, -0.1 + 1.04 * depart],
-          palm: [-0.5 * (1 - depart), 0.94 * depart, -0.87 + 0.53 * depart],
+          // Fingers lean inward: upright, the wrist ran out of bend and the elbow swung in.
+          hand: [-0.65 + 0.31 * depart, 0.75 - 0.42 * depart, 0.16 + 0.72 * depart],
+          palm: [-0.58, -0.05 + 0.72 * depart, -0.81 + 0.35 * depart],
           pole: [0.35, -0.86, -0.28],
           twist: 0.38 * (1 - depart),
         },

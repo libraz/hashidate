@@ -44,8 +44,9 @@ export const PHOTO = {
         {
           at: 'cheek',
           offset: [0.18, -0.36 + b, 0.92],
-          hand: [-0.34, 0.92, -0.21],
-          palm: [-0.71, 0.33, -0.62],
+          // Fingers lean inward: upright, the wrist ran out of bend and the elbow swung in.
+          hand: [-0.72, 0.59, 0.37],
+          palm: [-1, -0.02, -0.09],
           pole: [0.32, -0.78, -0.42],
           twist: 0.4,
         },
@@ -67,8 +68,9 @@ export const PHOTO = {
         {
           at: 'cheek',
           offset: [0.16, -0.36 + b, 0.86],
-          hand: [-0.34, 0.92, -0.21],
-          palm: [-0.71, 0.33, -0.62],
+          // Fingers lean inward: upright, the wrist ran out of bend and the elbow swung in.
+          hand: [-0.72, 0.59, 0.37],
+          palm: [-1, -0.02, -0.09],
           pole: [0.3, -0.8, -0.4],
         },
         POINT_HAND,
@@ -91,8 +93,9 @@ export const PHOTO = {
           // Outside the cheeks so the face stays visible; forward clearance
           // keeps the entrance out of the elbow's fold stop.
           offset: [0.7, -0.6 + b, 1.35],
-          hand: [0.06, 0.93, 0.3],
-          palm: [0, 0.12, 1],
+          // Fingers lean inward: upright, the wrist ran out of bend and the elbow swung in.
+          hand: [-0.2, 0.93, 0.29],
+          palm: [-0.11, 0.11, 0.99],
           pole: [0.42, -0.86, -0.3],
         },
         OPEN_HAND,

@@ -32,8 +32,9 @@ export const CUTE = {
           // comes up under the cheekbone with the hand still low, which keeps
           // the face unobscured and is the pose the gesture is drawn from.
           offset: [0.05, -0.05 + b, 1.15],
-          hand: [-0.34, 0.92, -0.21],
-          palm: [-0.71, 0.33, -0.62],
+          // Fingers lean inward: upright, the wrist ran out of bend and the elbow swung in.
+          hand: [-0.63, 0.75, 0.18],
+          palm: [-0.91, 0.22, -0.36],
           pole: [0.3, -0.75, -0.45],
           twist: 0.45,
         },
@@ -162,8 +163,9 @@ export const CUTE = {
           // folded fingers off the chin.
           offset: [0, b, 0],
           contact: { kind: 'finger', finger: 'index', segment: 1, fraction: 0.5, surface: 'pad' },
-          hand: [-0.25, 0.95, -0.1],
-          palm: [-0.5, 0, -0.87],
+          // Fingers lean inward: upright, the wrist ran out of bend and the elbow swung in.
+          hand: [-0.59, 0.8, 0.12],
+          palm: [-0.57, -0.03, -0.82],
           pole: [0.34, -0.86, -0.22],
           twist: 0.7,
         },

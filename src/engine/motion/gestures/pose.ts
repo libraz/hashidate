@@ -209,8 +209,9 @@ export const POSE = {
           // stop, so this diagonal normal distributes roll through the
           // shoulder and forearm instead.
           offset: [0.4, -0.45, 0.8],
-          hand: [-0.4, 0.8, -0.45],
-          palm: [-0.69, 0.41, -0.73],
+          // Fingers lean inward: upright, the wrist ran out of bend and the elbow swung in.
+          hand: [-0.7, 0.71, -0.04],
+          palm: [-0.88, 0.32, -0.36],
           pole: [0.26, -0.92, 0.3],
         },
         shape({ thumb: 0.3, index: 0.5, middle: 0.7, ring: 0.8, little: 0.85 }),
