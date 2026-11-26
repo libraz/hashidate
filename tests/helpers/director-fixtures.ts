@@ -217,8 +217,12 @@ export type Action =
 export interface Step {
   dt: number;
   actions?: readonly Action[];
-  /** Where the gaze is aimed from this step on, as the viewer's camera moves; defaults to `CAMERA`. */
-  camera?: readonly [number, number, number];
+  /**
+   * Where the gaze is aimed from this step on, as the viewer's camera moves; defaults to `CAMERA`.
+   * Evaluated when the step runs, under the core's transcendentals: the host's `Math` differs
+   * between x64 and arm64 in the last bit.
+   */
+  camera?: () => readonly [number, number, number];
   /** Moves the ancestor wrapper, with no world update. */
   wrapper?: WrapperPose;
 }
@@ -447,7 +451,7 @@ const PATH_FIXTURES: DirectorFixture[] = [
       0: [{ gesture: 'chin', side: 'R' }],
       100: [{ hop: 'spin' }],
       200: [{ gesture: 'cheekPeace', side: 'L' }],
-    }).map((step, frame) => ({ ...step, camera: swingingCamera(frame) })),
+    }).map((step, frame) => ({ ...step, camera: () => swingingCamera(frame) })),
   },
 ];
 
@@ -1020,7 +1024,7 @@ export function runDirectorFixture(
             built.idleAct(sided.act, sided.side);
           } else built.idleFace(choice.face);
         }
-        if (step.camera) gaze.set(...step.camera);
+        if (step.camera) gaze.set(...step.camera());
         built.update(step.dt, { headWorldTarget: gaze });
         root.updateMatrixWorld(true);
         for (const s of skeletons) s.update();
